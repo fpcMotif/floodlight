@@ -1,0 +1,7 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+Native/lib/*.dylib
+Floodlight.xcodeproj/xcuserdata/
+*.xcuserstate
