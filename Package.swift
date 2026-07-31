@@ -29,9 +29,6 @@ let package = Package(
             dependencies: ["CFFF"],
             path: "Sources/Floodlight",
             exclude: ["Resources"],
-            swiftSettings: [
-                .define("FLOODLIGHT")
-            ],
             linkerSettings: [
                 .linkedFramework("Carbon"),
                 .linkedFramework("QuickLookUI"),

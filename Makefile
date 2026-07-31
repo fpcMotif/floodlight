@@ -1,5 +1,4 @@
 FFF_DIR ?= ../fff
-CONFIGURATION ?= release
 
 .PHONY: build build-fff bundle clean debug install run test
 

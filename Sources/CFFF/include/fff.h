@@ -128,17 +128,6 @@ typedef struct FffGrepResult {
     char *regex_fallback_error;
 } FffGrepResult;
 
-struct FffResult *fff_create_instance(
-    const char *base_path,
-    const char *frecency_db_path,
-    const char *history_db_path,
-    bool use_unsafe_no_lock,
-    bool enable_mmap_cache,
-    bool enable_content_indexing,
-    bool watch,
-    bool ai_mode
-);
-
 void fff_destroy(void *fff_handle);
 
 struct FffResult *fff_search(

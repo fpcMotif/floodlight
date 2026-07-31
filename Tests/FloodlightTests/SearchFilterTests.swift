@@ -37,13 +37,35 @@ final class SearchFilterTests: XCTestCase {
         XCTAssertFalse(SearchResultFilter.documents.includes(pdf))
     }
 
-    private func item(kind: SearchItemKind, path: String) -> SearchItem {
-        let url = URL(fileURLWithPath: path, isDirectory: kind == .folder)
+    func testSinglePassFilterCountsMatchFilterPredicates() {
+        let items = [
+            item(kind: .application, path: "/Applications/Floodlight.app"),
+            item(kind: .folder, path: "/Users/test/Documents"),
+            item(kind: .systemSetting, path: nil),
+            item(kind: .file, path: "/Users/test/Downloads/guide.pdf"),
+            item(kind: .file, path: "/Users/test/Desktop/photo.png"),
+            item(kind: .file, path: "/Users/test/Documents/notes.txt"),
+            item(kind: .web, path: nil),
+        ]
+        let counts = SearchFilterCounts(items: items)
+
+        for filter in SearchResultFilter.allCases {
+            XCTAssertEqual(
+                counts[filter],
+                items.lazy.filter(filter.includes).count,
+                "Incorrect count for \(filter)"
+            )
+        }
+    }
+
+    private func item(kind: SearchItemKind, path: String?) -> SearchItem {
+        let url = path.map { URL(fileURLWithPath: $0, isDirectory: kind == .folder) }
+        let actionURL = url ?? URL(fileURLWithPath: "/tmp/\(kind.rawValue)")
         return SearchItem(
-            title: url.lastPathComponent,
-            subtitle: path,
+            title: url?.lastPathComponent ?? kind.label,
+            subtitle: path ?? kind.label,
             kind: kind,
-            action: .open(url),
+            action: .open(actionURL),
             score: 10,
             fileURL: url
         )

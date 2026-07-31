@@ -46,10 +46,6 @@ final class FFFIndex: @unchecked Sendable {
         }
     }
 
-    var root: URL {
-        queue.sync { rootURL }
-    }
-
     func start() async throws {
         try await perform {
             guard self.handle == nil else { return }
@@ -292,9 +288,7 @@ final class FFFIndex: @unchecked Sendable {
             defer { fff_free_scan_progress(progress) }
             return IndexProgress(
                 scannedFiles: progress.pointee.scanned_files_count,
-                isScanning: progress.pointee.is_scanning,
-                isWatcherReady: progress.pointee.is_watcher_ready,
-                isWarmupComplete: progress.pointee.is_warmup_complete
+                isScanning: progress.pointee.is_scanning
             )
         }
     }

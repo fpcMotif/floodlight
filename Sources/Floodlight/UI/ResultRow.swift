@@ -5,6 +5,7 @@ struct ResultRow: View, Equatable {
     let item: SearchItem
     let isSelected: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
 
     static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
         lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
@@ -64,16 +65,22 @@ struct ResultRow: View, Equatable {
         .frame(height: FloodlightMetrics.resultRowHeight)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selectionColor)
+                .fill(backgroundColor)
         }
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 
-    private var selectionColor: Color {
-        guard isSelected else { return .clear }
+    private var backgroundColor: Color {
+        if isSelected {
+            return colorScheme == .dark
+                ? .white.opacity(isHovered ? 0.16 : 0.12)
+                : .black.opacity(isHovered ? 0.11 : 0.08)
+        }
+        guard isHovered else { return .clear }
         return colorScheme == .dark
-            ? .white.opacity(0.12)
-            : .black.opacity(0.08)
+            ? .white.opacity(0.075)
+            : .black.opacity(0.055)
     }
 }
 

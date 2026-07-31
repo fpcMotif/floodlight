@@ -40,6 +40,7 @@ final class FloodlightPanelController {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
         panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -256,7 +257,11 @@ final class FloodlightPanelController {
         case "l":
             model.chooseRoot()
         case "r":
-            model.rebuildIndex()
+            if modifiers.contains(.shift) {
+                model.rebuildIndex()
+            } else {
+                model.revealSelection()
+            }
         case "y":
             model.togglePreview()
         default:

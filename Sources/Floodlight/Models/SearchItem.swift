@@ -95,14 +95,66 @@ enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable 
         }
     }
 
-    private static let imageExtensions: Set<String> = [
+    fileprivate static let imageExtensions: Set<String> = [
         "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp",
     ]
 
-    private static let documentExtensions: Set<String> = [
+    fileprivate static let documentExtensions: Set<String> = [
         "csv", "doc", "docx", "key", "md", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls",
         "xlsx",
     ]
+}
+
+struct SearchFilterCounts: Equatable, Sendable {
+    private var all = 0
+    private var applications = 0
+    private var files = 0
+    private var folders = 0
+    private var settings = 0
+    private var pdfs = 0
+    private var images = 0
+    private var documents = 0
+
+    init() {}
+
+    init(items: [SearchItem]) {
+        for item in items {
+            all += 1
+            switch item.kind {
+            case .application:
+                applications += 1
+            case .file:
+                files += 1
+                let fileExtension = item.fileExtension
+                if fileExtension == "pdf" {
+                    pdfs += 1
+                } else if SearchResultFilter.imageExtensions.contains(fileExtension) {
+                    images += 1
+                } else if SearchResultFilter.documentExtensions.contains(fileExtension) {
+                    documents += 1
+                }
+            case .folder:
+                folders += 1
+            case .systemSetting:
+                settings += 1
+            case .calculator, .web:
+                break
+            }
+        }
+    }
+
+    subscript(filter: SearchResultFilter) -> Int {
+        switch filter {
+        case .all: all
+        case .applications: applications
+        case .files: files
+        case .folders: folders
+        case .settings: settings
+        case .pdfs: pdfs
+        case .images: images
+        case .documents: documents
+        }
+    }
 }
 
 struct SearchFilterOption: Identifiable, Equatable, Sendable {
@@ -133,6 +185,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
     let fileURL: URL?
     let modifiedAt: Date?
     let fileSize: UInt64?
+    private let normalizedFileExtension: String
 
     init(
         id: String? = nil,
@@ -154,15 +207,9 @@ struct SearchItem: Identifiable, Hashable, Sendable {
         self.fileURL = fileURL
         self.modifiedAt = modifiedAt
         self.fileSize = fileSize
-    }
-
-    var isRevealable: Bool {
-        switch kind {
-        case .application, .file, .folder:
-            fileURL != nil
-        case .calculator, .systemSetting, .web:
-            false
-        }
+        normalizedFileExtension = kind == .file
+            ? fileURL?.pathExtension.lowercased() ?? ""
+            : ""
     }
 
     var isPreviewable: Bool {
@@ -170,7 +217,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
     }
 
     fileprivate var fileExtension: String {
-        fileURL?.pathExtension.lowercased() ?? ""
+        normalizedFileExtension
     }
 }
 
@@ -195,6 +242,4 @@ struct IndexedContentItem: Sendable {
 struct IndexProgress: Equatable, Sendable {
     let scannedFiles: UInt64
     let isScanning: Bool
-    let isWatcherReady: Bool
-    let isWarmupComplete: Bool
 }

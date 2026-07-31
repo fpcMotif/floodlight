@@ -7,7 +7,9 @@ enum SystemCatalog {
         let keywords: String
         let pane: String
         let normalizedCandidate: String
+        let asciiCandidate: [UInt8]?
         let words: [String]
+        let characterMask: UInt64
         let url: URL?
 
         init(name: String, keywords: String, pane: String) {
@@ -15,9 +17,12 @@ enum SystemCatalog {
             self.keywords = keywords
             self.pane = pane
             normalizedCandidate = FuzzyMatcher.normalized("\(name) \(keywords)")
+            let bytes = Array(normalizedCandidate.utf8)
+            asciiCandidate = bytes.allSatisfy { $0 < 0x80 } ? bytes : nil
             words = normalizedCandidate
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
                 .map(String.init)
+            characterMask = SystemCatalog.characterMask(normalizedCandidate)
             url = URL(string: "x-apple.systempreferences:\(pane)")
         }
     }
@@ -246,14 +251,34 @@ enum SystemCatalog {
             return SearchItemPage(items: [], totalMatched: 0)
         }
         let normalizedQuery = FuzzyMatcher.normalized(query)
+        let queryBytes = Array(normalizedQuery.utf8)
+        let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
+        let queryCharacterMask = characterMask(normalizedQuery)
+        let requiresWordPrefix = normalizedQuery.count < 4
         let snapshot = settings.withLock { $0 }
         let matches = snapshot.compactMap { setting -> SearchItem? in
-            let hasWordPrefix = setting.words.contains { $0.hasPrefix(normalizedQuery) }
-            guard let score = FuzzyMatcher.score(
-                normalizedQuery: normalizedQuery,
-                normalizedCandidate: setting.normalizedCandidate
-            ),
-                  normalizedQuery.count >= 4 || hasWordPrefix,
+            guard setting.characterMask & queryCharacterMask == queryCharacterMask else {
+                return nil
+            }
+            guard
+                !requiresWordPrefix
+                    || setting.words.contains(where: { $0.hasPrefix(normalizedQuery) })
+            else {
+                return nil
+            }
+            let score: Int?
+            if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
+                score = FuzzyMatcher.scoreASCII(
+                    normalizedQuery: asciiQuery,
+                    normalizedCandidate: asciiCandidate
+                )
+            } else {
+                score = FuzzyMatcher.score(
+                    normalizedQuery: normalizedQuery,
+                    normalizedCandidate: setting.normalizedCandidate
+                )
+            }
+            guard let score,
                   score >= 9_000,
                   let url = setting.url else {
                 return nil
@@ -274,6 +299,25 @@ enum SystemCatalog {
             items: Array(matches.prefix(limit)),
             totalMatched: matches.count
         )
+    }
+
+    private static func characterMask(_ value: String) -> UInt64 {
+        value.utf8.reduce(into: 0) { mask, byte in
+            let bit: UInt64?
+            switch byte {
+            case 0x61...0x7A:
+                bit = UInt64(byte - 0x61)
+            case 0x41...0x5A:
+                bit = UInt64(byte - 0x41)
+            case 0x30...0x39:
+                bit = UInt64(byte - 0x30 + 26)
+            default:
+                bit = nil
+            }
+            if let bit {
+                mask |= 1 << bit
+            }
+        }
     }
 
     private static func discoverInstalledSettings() -> [Setting] {

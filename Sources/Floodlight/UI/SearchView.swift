@@ -191,23 +191,24 @@ private struct ResultList: View {
 
     private var resultRows: some View {
         ForEach(model.results) { item in
-            ResultRow(item: item, isSelected: model.selectedID == item.id)
-                .equatable()
-                .id(item.id)
-                .onTapGesture(count: 2) {
-                    model.select(item)
-                    model.openSelection()
+            Button {
+                model.activate(item)
+            } label: {
+                ResultRow(item: item, isSelected: model.selectedID == item.id)
+                    .equatable()
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .id(item.id)
+            .onDrag {
+                guard let url = item.fileURL else {
+                    return NSItemProvider(object: item.title as NSString)
                 }
-                .onTapGesture {
-                    model.select(item)
-                }
-                .onDrag {
-                    guard let url = item.fileURL else {
-                        return NSItemProvider(object: item.title as NSString)
-                    }
-                    return NSItemProvider(contentsOf: url)
-                        ?? NSItemProvider(object: url.path as NSString)
-                }
+                return NSItemProvider(contentsOf: url)
+                    ?? NSItemProvider(object: url.path as NSString)
+            }
+            .accessibilityLabel(item.title)
+            .accessibilityHint("Open \(item.kind.label)")
         }
     }
 }

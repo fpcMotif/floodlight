@@ -6,26 +6,6 @@ import ServiceManagement
 @MainActor
 @Observable
 final class SearchCoordinator {
-    enum State: Equatable {
-        case error(String)
-        case indexing(UInt64)
-        case ready(UInt64)
-        case starting
-
-        var label: String {
-            switch self {
-            case .error(let message):
-                message
-            case .indexing(let count):
-                "Indexing \(count.formatted()) items…"
-            case .ready(let count):
-                "\(count.formatted()) items indexed"
-            case .starting:
-                "Starting FFF index…"
-            }
-        }
-    }
-
     var query = "" {
         didSet {
             guard query != oldValue else { return }
@@ -43,11 +23,8 @@ final class SearchCoordinator {
     private(set) var results: [SearchItem] = []
     private(set) var selectedFilter: SearchResultFilter = .all
     var selectedID: SearchItem.ID?
-    private(set) var state: State = .starting
     private(set) var isSearching = false
-    private(set) var shortcutLabel = "⌘Space"
     private(set) var rootURL: URL
-    private(set) var launchAtLoginEnabled = false
     var focusGeneration = 0
 
     @ObservationIgnored
@@ -74,6 +51,7 @@ final class SearchCoordinator {
     private let recentStore: RecentStore
     private let quickLook = QuickLookController()
     private var allResults: [SearchItem] = []
+    private var filterCounts = SearchFilterCounts()
     private var applicationMatchCount = 0
     private var settingsMatchCount = 0
     private var isApplicationCatalogLoading = true
@@ -81,7 +59,7 @@ final class SearchCoordinator {
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
-    private var progressTask: Task<Void, Never>?
+    private var startupTask: Task<Void, Never>?
     @ObservationIgnored
     private var generation = 0
     @ObservationIgnored
@@ -100,20 +78,21 @@ final class SearchCoordinator {
             recentStore: recentStore,
             deferDiscovery: true
         )
-        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
     }
 
     deinit {
         searchTask?.cancel()
-        progressTask?.cancel()
+        startupTask?.cancel()
     }
 
     func start() {
-        guard progressTask == nil else { return }
-        state = .starting
-        progressTask = Task { [weak self] in
+        guard startupTask == nil else { return }
+        startupTask = Task { [weak self] in
             guard let self else { return }
             let signpost = FloodlightPerformance.begin("IndexStartup")
+            defer {
+                FloodlightPerformance.end("IndexStartup", id: signpost)
+            }
             do {
                 async let startFiles: Void = index.start()
                 async let startApplications: Void = applicationCatalog.start()
@@ -124,30 +103,17 @@ final class SearchCoordinator {
                 await startSettings
                 isSettingsCatalogLoading = false
                 try await startFiles
-                FloodlightPerformance.end("IndexStartup", id: signpost)
-                await refreshProgress()
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     scheduleSearch(immediate: true)
                 }
-
-                while !Task.isCancelled {
-                    try await Task.sleep(for: .milliseconds(350))
-                    await refreshProgress()
-                }
             } catch is CancellationError {
-                FloodlightPerformance.end("IndexStartup", id: signpost)
                 return
             } catch {
-                FloodlightPerformance.end("IndexStartup", id: signpost)
                 isApplicationCatalogLoading = false
                 isSettingsCatalogLoading = false
-                state = .error(error.localizedDescription)
+                NSLog("Floodlight index startup failed: %@", error.localizedDescription)
             }
         }
-    }
-
-    func setShortcutLabel(_ label: String) {
-        shortcutLabel = label
     }
 
     func prepareForPresentation() {
@@ -165,6 +131,7 @@ final class SearchCoordinator {
         query = ""
         isResetting = false
         allResults = []
+        filterCounts = SearchFilterCounts()
         results = []
         selectedFilter = .all
         applicationMatchCount = 0
@@ -181,8 +148,9 @@ final class SearchCoordinator {
         selectedID = results[nextIndex].id
     }
 
-    func select(_ item: SearchItem) {
+    func activate(_ item: SearchItem) {
         selectedID = item.id
+        performAction(for: item)
     }
 
     func selectFilter(_ filter: SearchResultFilter) {
@@ -197,6 +165,10 @@ final class SearchCoordinator {
 
     func openSelection() {
         guard let item = selectedItem else { return }
+        performAction(for: item)
+    }
+
+    private func performAction(for item: SearchItem) {
         let selectedQuery = query
         onDismiss?()
 
@@ -257,12 +229,11 @@ final class SearchCoordinator {
     }
 
     func rebuildIndex() {
-        state = .indexing(0)
         Task {
             do {
                 try await index.rescan()
             } catch {
-                state = .error(error.localizedDescription)
+                NSLog("Floodlight index rebuild failed: %@", error.localizedDescription)
             }
         }
     }
@@ -274,9 +245,8 @@ final class SearchCoordinator {
             } else {
                 try SMAppService.mainApp.register()
             }
-            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         } catch {
-            state = .error("Launch at login: \(error.localizedDescription)")
+            NSLog("Floodlight launch-at-login update failed: %@", error.localizedDescription)
         }
     }
 
@@ -310,7 +280,6 @@ final class SearchCoordinator {
     }
 
     private func changeRoot(to url: URL) {
-        state = .starting
         Task {
             do {
                 try await index.changeRoot(to: url)
@@ -318,24 +287,7 @@ final class SearchCoordinator {
                 UserDefaults.standard.set(rootURL.path, forKey: "index-root")
                 scheduleSearch(immediate: true)
             } catch {
-                state = .error(error.localizedDescription)
-            }
-        }
-    }
-
-    private func refreshProgress() async {
-        do {
-            let progress = try await index.progress()
-            let newState: State = progress.isScanning
-                ? .indexing(progress.scannedFiles)
-                : .ready(progress.scannedFiles)
-            if newState != state {
-                state = newState
-            }
-        } catch {
-            let newState = State.error(error.localizedDescription)
-            if newState != state {
-                state = newState
+                NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)
             }
         }
     }
@@ -349,6 +301,7 @@ final class SearchCoordinator {
 
         guard !requestQuery.isEmpty else {
             allResults = []
+            filterCounts = SearchFilterCounts()
             results = []
             selectedFilter = .all
             applicationMatchCount = 0
@@ -470,7 +423,7 @@ final class SearchCoordinator {
                 return
             } catch {
                 guard requestGeneration == generation else { return }
-                state = .error(error.localizedDescription)
+                NSLog("Floodlight indexed search failed: %@", error.localizedDescription)
                 publishResults(
                     buildResults(
                         query: requestQuery,
@@ -558,6 +511,7 @@ final class SearchCoordinator {
         resetSelection: Bool = false
     ) {
         allResults = newResults
+        filterCounts = SearchFilterCounts(items: newResults)
         applySelectedFilter(resetSelection: resetSelection)
     }
 
@@ -581,7 +535,7 @@ final class SearchCoordinator {
     }
 
     private func makeFilterOption(_ filter: SearchResultFilter) -> SearchFilterOption {
-        let visibleCount = allResults.lazy.filter(filter.includes).count
+        let visibleCount = filterCounts[filter]
         let count: Int
         switch filter {
         case .applications:

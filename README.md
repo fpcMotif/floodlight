@@ -1,7 +1,8 @@
 # Floodlight
 
 Floodlight is a keyboard-first Spotlight alternative for macOS, written in
-SwiftUI and powered by the [FFF](../fff) Rust indexing engine.
+SwiftUI and powered by the [FFF](https://github.com/dmtrKovalenko/fff) Rust
+indexing engine.
 
 It searches files and folders with FFF's fuzzy ranking, live filesystem watcher,
 query history, and frecency database. Native catalogs add applications and
@@ -15,7 +16,7 @@ mouse.
   Spotlight still owns the shortcut
 - FFF fuzzy search across files and folders
 - Time-budgeted FFF content search when filename matches are sparse
-- Live index updates and visible scan progress
+- Live index updates
 - Persistent FFF frecency and query history
 - FFF-ranked application search via a package-marker index
 - Native System Settings search
@@ -81,8 +82,8 @@ To use the Spotlight shortcut:
 3. Disable “Show Spotlight search.”
 4. Restart Floodlight.
 
-The active shortcut is shown in Floodlight's interface and the menu-bar
-flashlight remains available at all times.
+The menu-bar flashlight remains available if neither keyboard shortcut can be
+registered.
 
 ## Keyboard controls
 
@@ -90,11 +91,11 @@ flashlight remains available at all times.
 | --- | --- |
 | `↑` / `↓` | Move selection |
 | `Return` | Open result or copy calculator answer |
-| `⌘Return` | Reveal file, folder, or app in Finder |
+| `⌘R` or `⌘Return` | Reveal file, folder, or app in Finder |
 | `⌘Y` | Toggle Quick Look for a file |
 | `⌘C` | Copy the selected path, URL, or answer |
 | `⌘L` | Choose the indexed folder |
-| `⌘R` | Rebuild the FFF index |
+| `⇧⌘R` | Rebuild the FFF index |
 | `Escape` | Hide Floodlight |
 
 ## Architecture
@@ -124,8 +125,8 @@ file inside every application.
 ## Search scope and privacy
 
 Floodlight indexes the current user's home directory by default. Change the
-scope with `⌘L` or the gear menu. The index, frecency database, and query history
-stay on the Mac under `~/Library/Application Support/Floodlight`.
+scope with `⌘L` or the menu-bar menu. The index, frecency database, and query
+history stay on the Mac under `~/Library/Application Support/Floodlight`.
 
 macOS privacy rules still apply. To search protected locations, grant Floodlight
 Full Disk Access in System Settings → Privacy & Security.
@@ -138,3 +139,7 @@ web handoff. Apple's private Spotlight sources—such as Mail, Messages, Photos,
 Contacts, Siri suggestions, and proprietary metadata importers—are not exposed
 to third-party apps. Those sources require separate public-framework
 integrations and user permissions rather than FFF filesystem indexing.
+
+## License
+
+Floodlight is available under the [MIT License](LICENSE).

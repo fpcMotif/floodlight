@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         let identifier = EventHotKeyID(signature: fourCharacterCode("FLIT"), id: 1)
-        var status = RegisterEventHotKey(
+        let status = RegisterEventHotKey(
             UInt32(kVK_Space),
             UInt32(cmdKey),
             identifier,
@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         if status != noErr {
-            status = RegisterEventHotKey(
+            let fallbackStatus = RegisterEventHotKey(
                 UInt32(kVK_Space),
                 UInt32(optionKey),
                 identifier,
@@ -105,9 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 0,
                 &hotKeyRef
             )
-            model.setShortcutLabel(status == noErr ? "⌥Space" : "Menu bar")
-        } else {
-            model.setShortcutLabel("⌘Space")
+            if fallbackStatus != noErr {
+                NSLog("Floodlight could not register its global keyboard shortcut.")
+            }
         }
     }
 
@@ -153,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(rebuildIndex),
             keyEquivalent: "r"
         )
+        rebuild.keyEquivalentModifierMask = [.command, .shift]
         rebuild.target = self
         appMenu.addItem(rebuild)
 
