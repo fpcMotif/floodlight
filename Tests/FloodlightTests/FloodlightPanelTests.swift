@@ -22,4 +22,47 @@ final class FloodlightPanelTests: XCTestCase {
             )
         )
     }
+
+    func testAllCommandDigitShortcutsAreRecognized() {
+        for digit in 0...9 {
+            XCTAssertEqual(
+                FloodlightPanelController.filterShortcutIndex(for: String(digit)),
+                digit
+            )
+        }
+        XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: nil))
+        XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: "x"))
+        XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: "10"))
+    }
+
+    func testPanelConsumesHandledKeyEquivalent() throws {
+        let panel = FloodlightPanel(
+            contentRect: .zero,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        var receivedEvent = false
+        panel.keyEquivalentHandler = { _ in
+            receivedEvent = true
+            return true
+        }
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: .command,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "1",
+                charactersIgnoringModifiers: "1",
+                isARepeat: false,
+                keyCode: 18
+            )
+        )
+
+        XCTAssertTrue(panel.performKeyEquivalent(with: event))
+        XCTAssertTrue(receivedEvent)
+    }
 }

@@ -99,6 +99,23 @@ typedef struct FffScanProgress {
     bool is_warmup_complete;
 } FffScanProgress;
 
+FffResult *fff_create_instance3(
+    const char *base_path,
+    const char *frecency_db_path,
+    const char *history_db_path,
+    bool use_unsafe_no_lock,
+    bool enable_mmap_cache,
+    bool enable_content_indexing,
+    bool watch,
+    bool ai_mode,
+    bool include_binary_files,
+    const char *log_file_path,
+    const char *log_level,
+    uint64_t cache_budget_max_files,
+    uint64_t cache_budget_max_bytes,
+    uint64_t cache_budget_max_file_size
+);
+
 typedef struct FffGrepMatch FffGrepMatch;
 typedef struct FffGrepResult {
     struct FffGrepMatch *items;

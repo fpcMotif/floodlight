@@ -31,6 +31,93 @@ enum SearchItemKind: String, Hashable, Sendable {
     }
 }
 
+enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
+    case all
+    case applications
+    case files
+    case folders
+    case settings
+    case pdfs
+    case images
+    case documents
+
+    static let primary: [SearchResultFilter] = [
+        .all,
+        .applications,
+        .files,
+        .folders,
+    ]
+
+    static let dynamic: [SearchResultFilter] = [
+        .settings,
+        .pdfs,
+        .images,
+        .documents,
+    ]
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .applications: "Apps"
+        case .files: "Files"
+        case .folders: "Folders"
+        case .settings: "Settings"
+        case .pdfs: "PDFs"
+        case .images: "Images"
+        case .documents: "Documents"
+        }
+    }
+
+    var isDynamic: Bool {
+        Self.dynamic.contains(self)
+    }
+
+    func includes(_ item: SearchItem) -> Bool {
+        switch self {
+        case .all:
+            true
+        case .applications:
+            item.kind == .application
+        case .files:
+            item.kind == .file
+        case .folders:
+            item.kind == .folder
+        case .settings:
+            item.kind == .systemSetting
+        case .pdfs:
+            item.kind == .file && item.fileExtension == "pdf"
+        case .images:
+            item.kind == .file && Self.imageExtensions.contains(item.fileExtension)
+        case .documents:
+            item.kind == .file && Self.documentExtensions.contains(item.fileExtension)
+        }
+    }
+
+    private static let imageExtensions: Set<String> = [
+        "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp",
+    ]
+
+    private static let documentExtensions: Set<String> = [
+        "csv", "doc", "docx", "key", "md", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls",
+        "xlsx",
+    ]
+}
+
+struct SearchFilterOption: Identifiable, Equatable, Sendable {
+    let filter: SearchResultFilter
+    let count: Int
+    let isLoading: Bool
+
+    var id: SearchResultFilter { filter }
+}
+
+struct SearchItemPage: Sendable {
+    let items: [SearchItem]
+    let totalMatched: Int
+}
+
 enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
@@ -80,6 +167,10 @@ struct SearchItem: Identifiable, Hashable, Sendable {
 
     var isPreviewable: Bool {
         kind == .file && fileURL != nil
+    }
+
+    fileprivate var fileExtension: String {
+        fileURL?.pathExtension.lowercased() ?? ""
     }
 }
 

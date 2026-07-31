@@ -21,3 +21,10 @@ cp "$FFF_SOURCE/target/release/libfff_c.dylib" "$PROJECT_DIR/Native/lib/libfff_c
 install_name_tool \
     -id "@rpath/libfff_c.dylib" \
     "$PROJECT_DIR/Native/lib/libfff_c.dylib"
+
+# SwiftPM also searches its configuration directory while linking. Refresh any
+# existing copies so an incremental build cannot bind against an older FFF ABI.
+for BIN_DIR in "$PROJECT_DIR"/.build/*/debug "$PROJECT_DIR"/.build/*/release; do
+    [ -d "$BIN_DIR" ] || continue
+    cp "$PROJECT_DIR/Native/lib/libfff_c.dylib" "$BIN_DIR/libfff_c.dylib"
+done

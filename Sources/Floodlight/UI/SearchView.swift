@@ -67,13 +67,83 @@ private struct SearchResultsSection: View {
     var body: some View {
         if !model.query.isEmpty {
             Divider().opacity(0.45)
+            SearchFilterBar(model: model)
             ResultList(model: model)
                 .frame(
                     height: FloodlightMetrics.expandedPanelHeight
                         - FloodlightMetrics.searchHeight
                         - 1
+                        - FloodlightMetrics.filterBarHeight
                 )
         }
+    }
+}
+
+private struct SearchFilterBar: View {
+    @Bindable var model: SearchCoordinator
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(model.filterOptions) { option in
+                    SearchFilterChip(
+                        option: option,
+                        isSelected: model.selectedFilter == option.filter
+                    ) {
+                        model.selectFilter(option.filter)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .scrollClipDisabled()
+        .frame(height: FloodlightMetrics.filterBarHeight)
+        .accessibilityLabel("Search filters")
+    }
+}
+
+private struct SearchFilterChip: View {
+    let option: SearchFilterOption
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(option.filter.title)
+
+                Group {
+                    if option.isLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .progressViewStyle(.circular)
+                    } else {
+                        Text(option.count.formatted(.number.notation(.compactName)))
+                            .monospacedDigit()
+                    }
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 27, height: 13)
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.leading, 10)
+            .padding(.trailing, 7)
+            .frame(height: 26)
+            .background(
+                isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.055),
+                in: Capsule()
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .accessibilityLabel(option.filter.title)
+        .accessibilityValue(
+            option.isLoading ? "Loading" : "\(option.count) results"
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

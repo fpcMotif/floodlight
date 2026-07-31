@@ -47,6 +47,7 @@ final class ApplicationCatalog: @unchecked Sendable {
             rootURL: markerRoot,
             storageURL: appIndexRoot.appendingPathComponent("Database", isDirectory: true),
             enableContentIndexing: false,
+            includeBinaryFiles: false,
             watch: false
         )
         if !deferDiscovery {
@@ -104,11 +105,17 @@ final class ApplicationCatalog: @unchecked Sendable {
     }
 
     func fastSearch(_ query: String, limit: Int = 12) -> [SearchItem] {
+        fastSearchPage(query, limit: limit).items
+    }
+
+    func fastSearchPage(_ query: String, limit: Int = 12) -> SearchItemPage {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return [] }
+        guard !query.isEmpty else {
+            return SearchItemPage(items: [], totalMatched: 0)
+        }
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
-        return snapshotApplications().compactMap { application -> SearchItem? in
+        let matches = snapshotApplications().compactMap { application -> SearchItem? in
             guard let score = FuzzyMatcher.score(
                 normalizedQuery: normalizedQuery,
                 normalizedCandidate: application.normalizedName
@@ -130,8 +137,11 @@ final class ApplicationCatalog: @unchecked Sendable {
                 ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
                 : lhs.score > rhs.score
         }
-        .prefix(limit)
-        .map { $0 }
+
+        return SearchItemPage(
+            items: Array(matches.prefix(limit)),
+            totalMatched: matches.count
+        )
     }
 
     func track(query: String, selectedURL: URL) {

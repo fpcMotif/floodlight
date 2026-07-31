@@ -2,8 +2,17 @@ import AppKit
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
+    var keyEquivalentHandler: ((NSEvent) -> Bool)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if keyEquivalentHandler?(event) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
@@ -35,6 +44,9 @@ final class FloodlightPanelController {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.animationBehavior = .utilityWindow
+        panel.keyEquivalentHandler = { [weak self] event in
+            self?.handleCommandKeyEquivalent(event) ?? false
+        }
         panel.contentViewController = Self.makeContentController(model: model)
         panel.setContentSize(
             NSSize(
@@ -213,25 +225,54 @@ final class FloodlightPanelController {
             break
         }
 
-        if modifiers.contains(.command) {
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "c":
-                model.copySelection()
-                return nil
-            case "l":
-                model.chooseRoot()
-                return nil
-            case "r":
-                model.rebuildIndex()
-                return nil
-            case "y":
-                model.togglePreview()
-                return nil
-            default:
-                break
-            }
+        if modifiers.contains(.command), handleCommandKeyEquivalent(event) {
+            return nil
         }
 
         return event
+    }
+
+    private func handleCommandKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard panel.isVisible, event.window === panel || panel.isKeyWindow else {
+            return false
+        }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard modifiers.contains(.command) else { return false }
+
+        let characters = event.charactersIgnoringModifiers?.lowercased()
+        if let index = Self.filterShortcutIndex(for: characters) {
+            let options = model.filterOptions
+            if options.indices.contains(index) {
+                model.selectFilter(options[index].filter)
+            }
+            // Consume every command-digit combination, including currently
+            // unused slots, so it never reaches the field editor and beeps.
+            return true
+        }
+
+        switch characters {
+        case "c":
+            model.copySelection()
+        case "l":
+            model.chooseRoot()
+        case "r":
+            model.rebuildIndex()
+        case "y":
+            model.togglePreview()
+        default:
+            return false
+        }
+        return true
+    }
+
+    static func filterShortcutIndex(for characters: String?) -> Int? {
+        guard
+            let characters,
+            characters.count == 1,
+            let digit = characters.first?.wholeNumberValue
+        else {
+            return nil
+        }
+        return digit
     }
 }

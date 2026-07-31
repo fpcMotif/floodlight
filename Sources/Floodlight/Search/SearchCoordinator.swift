@@ -41,6 +41,7 @@ final class SearchCoordinator {
         }
     }
     private(set) var results: [SearchItem] = []
+    private(set) var selectedFilter: SearchResultFilter = .all
     var selectedID: SearchItem.ID?
     private(set) var state: State = .starting
     private(set) var isSearching = false
@@ -58,10 +59,25 @@ final class SearchCoordinator {
         FloodlightMetrics.panelHeight(hasQuery: !query.isEmpty)
     }
 
+    var filterOptions: [SearchFilterOption] {
+        let primary = SearchResultFilter.primary.map(makeFilterOption)
+        let dynamic = SearchResultFilter.dynamic.compactMap { filter -> SearchFilterOption? in
+            let option = makeFilterOption(filter)
+            guard option.count > 0 || selectedFilter == filter else { return nil }
+            return option
+        }
+        return primary + dynamic
+    }
+
     private let index: FFFIndex
     private let applicationCatalog: ApplicationCatalog
     private let recentStore: RecentStore
     private let quickLook = QuickLookController()
+    private var allResults: [SearchItem] = []
+    private var applicationMatchCount = 0
+    private var settingsMatchCount = 0
+    private var isApplicationCatalogLoading = true
+    private var isSettingsCatalogLoading = true
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
@@ -101,8 +117,13 @@ final class SearchCoordinator {
             do {
                 async let startFiles: Void = index.start()
                 async let startApplications: Void = applicationCatalog.start()
-                try await startFiles
+                async let startSettings: Void = SystemCatalog.start()
+
                 try await startApplications
+                isApplicationCatalogLoading = false
+                await startSettings
+                isSettingsCatalogLoading = false
+                try await startFiles
                 FloodlightPerformance.end("IndexStartup", id: signpost)
                 await refreshProgress()
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -118,6 +139,8 @@ final class SearchCoordinator {
                 return
             } catch {
                 FloodlightPerformance.end("IndexStartup", id: signpost)
+                isApplicationCatalogLoading = false
+                isSettingsCatalogLoading = false
                 state = .error(error.localizedDescription)
             }
         }
@@ -141,7 +164,11 @@ final class SearchCoordinator {
         isResetting = true
         query = ""
         isResetting = false
+        allResults = []
         results = []
+        selectedFilter = .all
+        applicationMatchCount = 0
+        settingsMatchCount = 0
         selectedID = nil
         isSearching = false
         quickLook.close()
@@ -156,6 +183,16 @@ final class SearchCoordinator {
 
     func select(_ item: SearchItem) {
         selectedID = item.id
+    }
+
+    func selectFilter(_ filter: SearchResultFilter) {
+        guard filter != selectedFilter else {
+            focusGeneration += 1
+            return
+        }
+        selectedFilter = filter
+        applySelectedFilter(resetSelection: true)
+        focusGeneration += 1
     }
 
     func openSelection() {
@@ -308,11 +345,35 @@ final class SearchCoordinator {
         generation += 1
         let requestGeneration = generation
         let requestQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let immediateApps = applicationCatalog.fastSearch(requestQuery)
         searchTask?.cancel()
 
-        results = buildResults(query: requestQuery, indexed: [], apps: immediateApps)
-        selectedID = results.first?.id
+        guard !requestQuery.isEmpty else {
+            allResults = []
+            results = []
+            selectedFilter = .all
+            applicationMatchCount = 0
+            settingsMatchCount = 0
+            selectedID = nil
+            isSearching = false
+            FloodlightPerformance.end("ImmediateSearch", id: immediateSignpost)
+            return
+        }
+
+        let immediateAppPage = applicationCatalog.fastSearchPage(requestQuery)
+        let settingsPage = SystemCatalog.searchPage(requestQuery, limit: 24)
+        let immediateApps = immediateAppPage.items
+        applicationMatchCount = immediateAppPage.totalMatched
+        settingsMatchCount = settingsPage.totalMatched
+        isSearching = true
+        publishResults(
+            buildResults(
+                query: requestQuery,
+                indexed: [],
+                apps: immediateApps,
+                system: settingsPage.items
+            ),
+            resetSelection: true
+        )
         FloodlightPerformance.end("ImmediateSearch", id: immediateSignpost)
 
         searchTask = Task { [weak self] in
@@ -326,13 +387,13 @@ final class SearchCoordinator {
 
             let asyncSignpost = FloodlightPerformance.begin("IndexedSearch")
             var indexedSearchEnded = false
-            isSearching = true
             defer {
                 if !indexedSearchEnded {
                     FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
                 }
                 if requestGeneration == generation {
                     isSearching = false
+                    reconcileSelectedFilter()
                 }
             }
 
@@ -360,12 +421,14 @@ final class SearchCoordinator {
                     )
                 }
 
-                results = buildResults(
-                    query: requestQuery,
-                    indexed: mapped,
-                    apps: immediateApps + apps
+                publishResults(
+                    buildResults(
+                        query: requestQuery,
+                        indexed: mapped,
+                        apps: immediateApps + apps,
+                        system: settingsPage.items
+                    )
                 )
-                selectedID = results.first?.id
                 FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
                 indexedSearchEnded = true
 
@@ -395,21 +458,27 @@ final class SearchCoordinator {
                         fileURL: item.url
                     )
                 }
-                results = buildResults(
-                    query: requestQuery,
-                    indexed: mapped + content,
-                    apps: immediateApps + apps
+                publishResults(
+                    buildResults(
+                        query: requestQuery,
+                        indexed: mapped + content,
+                        apps: immediateApps + apps,
+                        system: settingsPage.items
+                    )
                 )
-                selectedID = results.first?.id
+            } catch is CancellationError {
+                return
             } catch {
                 guard requestGeneration == generation else { return }
                 state = .error(error.localizedDescription)
-                results = buildResults(
-                    query: requestQuery,
-                    indexed: [],
-                    apps: immediateApps
+                publishResults(
+                    buildResults(
+                        query: requestQuery,
+                        indexed: [],
+                        apps: immediateApps,
+                        system: settingsPage.items
+                    )
                 )
-                selectedID = results.first?.id
             }
         }
     }
@@ -433,7 +502,8 @@ final class SearchCoordinator {
     private func buildResults(
         query: String,
         indexed: [SearchItem],
-        apps: [SearchItem]
+        apps: [SearchItem],
+        system: [SearchItem]
     ) -> [SearchItem] {
         var output: [SearchItem] = []
 
@@ -452,7 +522,7 @@ final class SearchCoordinator {
         }
 
         output.append(contentsOf: apps)
-        output.append(contentsOf: SystemCatalog.search(query))
+        output.append(contentsOf: system)
         output.append(contentsOf: indexed)
 
         var seen = Set<String>()
@@ -481,5 +551,65 @@ final class SearchCoordinator {
         }
 
         return Array(output.prefix(80))
+    }
+
+    private func publishResults(
+        _ newResults: [SearchItem],
+        resetSelection: Bool = false
+    ) {
+        allResults = newResults
+        applySelectedFilter(resetSelection: resetSelection)
+    }
+
+    private func applySelectedFilter(resetSelection: Bool) {
+        let previousSelection = selectedID
+        results = allResults.filter(selectedFilter.includes)
+
+        if resetSelection
+            || previousSelection == nil
+            || !results.contains(where: { $0.id == previousSelection }) {
+            selectedID = results.first?.id
+        }
+    }
+
+    private func reconcileSelectedFilter() {
+        guard selectedFilter.isDynamic else { return }
+        let option = makeFilterOption(selectedFilter)
+        guard option.count == 0, !option.isLoading else { return }
+        selectedFilter = .all
+        applySelectedFilter(resetSelection: true)
+    }
+
+    private func makeFilterOption(_ filter: SearchResultFilter) -> SearchFilterOption {
+        let visibleCount = allResults.lazy.filter(filter.includes).count
+        let count: Int
+        switch filter {
+        case .applications:
+            count = max(applicationMatchCount, visibleCount)
+        case .settings:
+            count = max(settingsMatchCount, visibleCount)
+        case .all, .files, .folders, .pdfs, .images, .documents:
+            count = visibleCount
+        }
+
+        let isLoading: Bool
+        switch filter {
+        case .all:
+            isLoading = isSearching
+                || isApplicationCatalogLoading
+                || isSettingsCatalogLoading
+        case .applications:
+            isLoading = isApplicationCatalogLoading
+        case .files, .folders, .pdfs, .images, .documents:
+            isLoading = isSearching
+        case .settings:
+            isLoading = isSettingsCatalogLoading
+        }
+
+        return SearchFilterOption(
+            filter: filter,
+            count: count,
+            isLoading: isLoading
+        )
     }
 }

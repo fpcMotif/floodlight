@@ -23,17 +23,20 @@ final class FFFIndex: @unchecked Sendable {
     private var rootURL: URL
     private let storageURL: URL?
     private let enableContentIndexing: Bool
+    private let includeBinaryFiles: Bool
     private let watch: Bool
 
     init(
         rootURL: URL,
         storageURL: URL? = nil,
         enableContentIndexing: Bool = true,
+        includeBinaryFiles: Bool = true,
         watch: Bool = true
     ) {
         self.rootURL = rootURL.standardizedFileURL
         self.storageURL = storageURL
         self.enableContentIndexing = enableContentIndexing
+        self.includeBinaryFiles = includeBinaryFiles
         self.watch = watch
     }
 
@@ -66,7 +69,7 @@ final class FFFIndex: @unchecked Sendable {
             let envelope = self.rootURL.path.withCString { root in
                 frecencyPath.withCString { frecency in
                     historyPath.withCString { history in
-                        fff_create_instance(
+                        fff_create_instance3(
                             root,
                             frecency,
                             history,
@@ -74,7 +77,13 @@ final class FFFIndex: @unchecked Sendable {
                             true,
                             self.enableContentIndexing,
                             self.watch,
-                            false
+                            false,
+                            self.includeBinaryFiles,
+                            nil,
+                            nil,
+                            0,
+                            0,
+                            0
                         )
                     }
                 }

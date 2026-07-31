@@ -3,6 +3,7 @@ import CoreGraphics
 enum FloodlightMetrics {
     static let panelWidth: CGFloat = 680
     static let searchHeight: CGFloat = 60
+    static let filterBarHeight: CGFloat = 40
     static let cornerRadius: CGFloat = searchHeight / 2
     static let resultRowHeight: CGFloat = 58
     static let resultPadding: CGFloat = 7
@@ -12,6 +13,7 @@ enum FloodlightMetrics {
     static var expandedPanelHeight: CGFloat {
         searchHeight
             + 1
+            + filterBarHeight
             + resultPadding * 2
             + CGFloat(maximumVisibleResults) * resultRowHeight
     }

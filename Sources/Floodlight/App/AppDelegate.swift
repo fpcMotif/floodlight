@@ -42,6 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        panelController?.show()
+        return true
+    }
+
     @objc func togglePanel() {
         panelController?.toggle()
     }
