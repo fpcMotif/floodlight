@@ -5,6 +5,20 @@ enum SystemCatalog {
         let name: String
         let keywords: String
         let pane: String
+        let normalizedCandidate: String
+        let words: [String]
+        let url: URL?
+
+        init(name: String, keywords: String, pane: String) {
+            self.name = name
+            self.keywords = keywords
+            self.pane = pane
+            normalizedCandidate = FuzzyMatcher.normalized("\(name) \(keywords)")
+            words = normalizedCandidate
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+            url = URL(string: "x-apple.systempreferences:\(pane)")
+        }
     }
 
     private static let settings = [
@@ -31,16 +45,16 @@ enum SystemCatalog {
 
     static func search(_ query: String, limit: Int = 6) -> [SearchItem] {
         guard !query.isEmpty else { return [] }
+        let normalizedQuery = FuzzyMatcher.normalized(query)
         return settings.compactMap { setting -> SearchItem? in
-            let candidate = "\(setting.name) \(setting.keywords)"
-            let normalizedQuery = query.lowercased()
-            let hasWordPrefix = candidate.lowercased()
-                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                .contains { $0.hasPrefix(normalizedQuery) }
-            guard let score = FuzzyMatcher.score(query: query, candidate: candidate),
+            let hasWordPrefix = setting.words.contains { $0.hasPrefix(normalizedQuery) }
+            guard let score = FuzzyMatcher.score(
+                normalizedQuery: normalizedQuery,
+                normalizedCandidate: setting.normalizedCandidate
+            ),
                   normalizedQuery.count >= 4 || hasWordPrefix,
                   score >= 9_000,
-                  let url = URL(string: "x-apple.systempreferences:\(setting.pane)") else {
+                  let url = setting.url else {
                 return nil
             }
             return SearchItem(

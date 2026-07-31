@@ -26,9 +26,18 @@ final class FFFIndexTests: XCTestCase {
 
         let fileResults = try await index.search("needle")
         XCTAssertTrue(fileResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
+        let fileOnlyResults = try await index.searchFiles("needle")
+        XCTAssertTrue(fileOnlyResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
+        XCTAssertFalse(fileOnlyResults.contains(where: \.isDirectory))
 
         let folderResults = try await index.search("Projects")
         XCTAssertTrue(folderResults.contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
+        let directoryOnlyResults = try await index.searchDirectories("Projects")
+        XCTAssertTrue(
+            directoryOnlyResults.contains {
+                $0.isDirectory && $0.url.lastPathComponent == "Projects"
+            }
+        )
 
         let contentResults = try await index.searchContent("integration test", timeBudgetMilliseconds: 500)
         XCTAssertTrue(contentResults.contains { $0.url.lastPathComponent == file.lastPathComponent })

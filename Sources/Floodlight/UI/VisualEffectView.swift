@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+struct FloodlightSurface: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+        } else {
+            content.background {
+                VisualEffectView(
+                    material: .hudWindow,
+                    blendingMode: .behindWindow
+                )
+            }
+        }
+    }
+}
+
 struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode

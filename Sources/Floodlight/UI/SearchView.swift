@@ -1,93 +1,143 @@
 import SwiftUI
 
 struct SearchView: View {
-    @ObservedObject var model: SearchCoordinator
-    @FocusState private var searchFocused: Bool
+    let model: SearchCoordinator
 
     var body: some View {
         VStack(spacing: 0) {
-            searchBar
-            if !model.query.isEmpty {
-                Divider().opacity(0.45)
-                results
-            }
+            SearchBar(model: model)
+            SearchResultsSection(model: model)
         }
-        .frame(width: 680, height: model.panelHeight)
-        .background {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.18), lineWidth: 0.75)
-        }
-        .onAppear {
-            searchFocused = true
-        }
-        .onChange(of: model.focusGeneration) {
-            searchFocused = true
-        }
+        .frame(width: FloodlightMetrics.panelWidth)
+        .modifier(FloodlightSurface())
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: FloodlightMetrics.cornerRadius,
+                style: .continuous
+            )
+        )
     }
+}
 
-    private var searchBar: some View {
-        HStack(spacing: 14) {
+private struct SearchBar: View {
+    @Bindable var model: SearchCoordinator
+
+    var body: some View {
+        HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 23, weight: .regular))
+                .font(.system(size: 22, weight: .regular))
                 .foregroundStyle(.secondary)
 
-            TextField("Floodlight Search", text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .regular))
-                .focused($searchFocused)
-
-            if model.isSearching {
-                ProgressView()
-                    .controlSize(.small)
-            } else if !model.query.isEmpty {
-                Button {
-                    model.query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+            FloodlightTextField(
+                text: $model.query,
+                placeholder: "Floodlight search",
+                focusGeneration: model.focusGeneration,
+                onSubmit: model.openSelection,
+                onCommandSubmit: model.revealSelection,
+                onCancel: {
+                    model.onDismiss?()
                 }
-                .buttonStyle(.plain)
+            )
+
+            ZStack {
+                if !model.query.isEmpty {
+                    Button {
+                        model.query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(width: 20, height: 20)
+            .transaction { transaction in
+                transaction.animation = nil
+                transaction.disablesAnimations = true
             }
         }
-        .padding(.horizontal, 19)
-        .frame(height: 72)
+        .padding(.horizontal, 20)
+        .frame(height: FloodlightMetrics.searchHeight)
     }
+}
 
-    private var results: some View {
+private struct SearchResultsSection: View {
+    @Bindable var model: SearchCoordinator
+
+    var body: some View {
+        if !model.query.isEmpty {
+            Divider().opacity(0.45)
+            ResultList(model: model)
+                .frame(
+                    height: FloodlightMetrics.expandedPanelHeight
+                        - FloodlightMetrics.searchHeight
+                        - 1
+                )
+        }
+    }
+}
+
+private struct ResultList: View {
+    @Bindable var model: SearchCoordinator
+
+    var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(model.results) { item in
-                        ResultRow(item: item, isSelected: model.selectedID == item.id)
-                            .id(item.id)
-                            .onTapGesture(count: 2) {
-                                model.select(item)
-                                model.openSelection()
-                            }
-                            .onTapGesture {
-                                model.select(item)
-                            }
-                            .onDrag {
-                                guard let url = item.fileURL else {
-                                    return NSItemProvider(object: item.title as NSString)
-                                }
-                                return NSItemProvider(contentsOf: url)
-                                    ?? NSItemProvider(object: url.path as NSString)
-                            }
-                    }
-                }
-                .padding(6)
+                resultStack
+                    .padding(FloodlightMetrics.resultPadding)
             }
             .onChange(of: model.selectedID) {
                 guard let selectedID = model.selectedID else { return }
-                withAnimation(.easeOut(duration: 0.08)) {
-                    proxy.scrollTo(selectedID, anchor: .center)
+                guard let index = model.results.firstIndex(where: { $0.id == selectedID }) else {
+                    return
                 }
+                guard
+                    index == 0
+                        || index >= FloodlightMetrics.maximumVisibleResults
+                else {
+                    return
+                }
+                proxy.scrollTo(selectedID)
             }
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+    }
+
+    @ViewBuilder
+    private var resultStack: some View {
+        if FloodlightMetrics.shouldVirtualizeResults(count: model.results.count) {
+            LazyVStack(spacing: 0) {
+                resultRows
+            }
+        } else {
+            VStack(spacing: 0) {
+                resultRows
+            }
+        }
+    }
+
+    private var resultRows: some View {
+        ForEach(model.results) { item in
+            ResultRow(item: item, isSelected: model.selectedID == item.id)
+                .equatable()
+                .id(item.id)
+                .onTapGesture(count: 2) {
+                    model.select(item)
+                    model.openSelection()
+                }
+                .onTapGesture {
+                    model.select(item)
+                }
+                .onDrag {
+                    guard let url = item.fileURL else {
+                        return NSItemProvider(object: item.title as NSString)
+                    }
+                    return NSItemProvider(contentsOf: url)
+                        ?? NSItemProvider(object: url.path as NSString)
+                }
         }
     }
 }

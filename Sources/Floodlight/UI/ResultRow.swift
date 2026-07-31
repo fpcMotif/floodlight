@@ -1,9 +1,14 @@
 import AppKit
 import SwiftUI
 
-struct ResultRow: View {
+struct ResultRow: View, Equatable {
     let item: SearchItem
     let isSelected: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
+        lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -13,16 +18,16 @@ struct ResultRow: View {
                 HStack(spacing: 7) {
                     Text(item.title)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(isSelected ? .white : .primary)
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     Text(item.kind.label)
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(isSelected ? .white.opacity(0.82) : .secondary)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(
-                            isSelected ? .white.opacity(0.16) : .secondary.opacity(0.12),
+                            .secondary.opacity(0.12),
                             in: Capsule()
                         )
                 }
@@ -42,7 +47,7 @@ struct ResultRow: View {
                     }
                 }
                 .font(.system(size: 11))
-                .foregroundStyle(isSelected ? .white.opacity(0.76) : .secondary)
+                .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
@@ -50,28 +55,36 @@ struct ResultRow: View {
             if isSelected {
                 Image(systemName: "return")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(.secondary)
                     .padding(7)
-                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                    .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 58)
+        .frame(height: FloodlightMetrics.resultRowHeight)
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor : .clear)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(selectionColor)
         }
         .contentShape(Rectangle())
+    }
+
+    private var selectionColor: Color {
+        guard isSelected else { return .clear }
+        return colorScheme == .dark
+            ? .white.opacity(0.12)
+            : .black.opacity(0.08)
     }
 }
 
 private struct ResultIcon: View {
     let item: SearchItem
+    @State private var fileIcon: NSImage?
 
     var body: some View {
         Group {
-            if let url = item.fileURL {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+            if let fileIcon {
+                Image(nsImage: fileIcon)
                     .resizable()
                     .scaledToFit()
             } else {
@@ -84,6 +97,17 @@ private struct ResultIcon: View {
             }
         }
         .frame(width: 38, height: 38)
+        .task(id: item.fileURL?.path) {
+            guard let url = item.fileURL else {
+                fileIcon = nil
+                return
+            }
+            if let cached = FileIconCache.shared.cachedIcon(for: url) {
+                fileIcon = cached
+            } else {
+                fileIcon = await FileIconCache.shared.icon(for: url)
+            }
+        }
     }
 
     private var iconColor: Color {

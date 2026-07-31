@@ -29,4 +29,26 @@ final class CatalogTests: XCTestCase {
         XCTAssertTrue(SystemCatalog.search("arc").isEmpty)
         XCTAssertEqual(SystemCatalog.search("bluetooth").first?.title, "Bluetooth")
     }
+
+    func testFastApplicationSearchDoesNotWaitForFFF() throws {
+        let suiteName = "FloodlightTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloodlightFastCatalogTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL
+        )
+        let start = ContinuousClock.now
+        let results = catalog.fastSearch("claude")
+        let elapsed = start.duration(to: .now)
+
+        XCTAssertLessThan(elapsed, .milliseconds(100))
+        if FileManager.default.fileExists(atPath: "/Applications/Claude.app") {
+            XCTAssertEqual(results.first?.fileURL?.lastPathComponent, "Claude.app")
+        }
+    }
 }

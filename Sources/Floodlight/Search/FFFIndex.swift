@@ -17,6 +17,8 @@ enum FFFIndexError: LocalizedError {
 
 final class FFFIndex: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.floodlight.fff", qos: .userInitiated)
+    private let searchGenerationLock = NSLock()
+    private var latestSearchGeneration: UInt64 = 0
     private var handle: UnsafeMutableRawPointer?
     private var rootURL: URL
     private let storageURL: URL?
@@ -83,7 +85,11 @@ final class FFFIndex: @unchecked Sendable {
     }
 
     func search(_ query: String, limit: UInt32 = 60) async throws -> [IndexedSearchItem] {
-        try await perform {
+        let requestGeneration = reserveSearchGeneration()
+        return try await perform {
+            guard self.isLatestSearch(requestGeneration) else {
+                throw CancellationError()
+            }
             guard let handle = self.handle else {
                 throw FFFIndexError.message("The FFF index has not started.")
             }
@@ -134,6 +140,128 @@ final class FFFIndex: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    func searchFiles(_ query: String, limit: UInt32 = 60) async throws -> [IndexedSearchItem] {
+        let requestGeneration = reserveSearchGeneration()
+        return try await perform {
+            guard self.isLatestSearch(requestGeneration) else {
+                throw CancellationError()
+            }
+            guard let handle = self.handle else {
+                throw FFFIndexError.message("The FFF index has not started.")
+            }
+
+            let envelope = query.withCString {
+                fff_search(handle, $0, nil, 0, 0, limit, 100, 3)
+            }
+            guard let envelope else { throw FFFIndexError.invalidResult }
+            defer { fff_free_result(envelope) }
+
+            guard envelope.pointee.success else {
+                throw FFFIndexError.message(Self.errorMessage(from: envelope))
+            }
+            guard let raw = envelope.pointee.handle else { return [] }
+
+            let result = raw.assumingMemoryBound(to: FffSearchResult.self)
+            defer { fff_free_search_result(result) }
+
+            return (0..<result.pointee.count).compactMap { index in
+                guard let item = fff_search_result_get_item(result, index),
+                      let namePointer = item.pointee.file_name,
+                      let pathPointer = item.pointee.relative_path else {
+                    return nil
+                }
+
+                let relativePath = String(cString: pathPointer)
+                if relativePath.split(separator: "/").dropLast()
+                    .contains(where: { $0.lowercased().hasSuffix(".app") }) {
+                    return nil
+                }
+
+                let scorePointer = fff_search_result_get_score(result, index)
+                let url = self.rootURL.appendingPathComponent(relativePath)
+                return IndexedSearchItem(
+                    name: String(cString: namePointer),
+                    relativePath: relativePath,
+                    url: url,
+                    isDirectory: false,
+                    score: Int(scorePointer?.pointee.total ?? 0),
+                    modified: item.pointee.modified,
+                    size: item.pointee.size
+                )
+            }
+        }
+    }
+
+    func searchDirectories(
+        _ query: String,
+        limit: UInt32 = 24
+    ) async throws -> [IndexedSearchItem] {
+        let requestGeneration = reserveSearchGeneration()
+        return try await perform {
+            guard self.isLatestSearch(requestGeneration) else {
+                throw CancellationError()
+            }
+            guard let handle = self.handle else {
+                throw FFFIndexError.message("The FFF index has not started.")
+            }
+
+            let envelope = query.withCString {
+                fff_search_directories(handle, $0, nil, 0, 0, limit)
+            }
+            guard let envelope else { throw FFFIndexError.invalidResult }
+            defer { fff_free_result(envelope) }
+
+            guard envelope.pointee.success else {
+                throw FFFIndexError.message(Self.errorMessage(from: envelope))
+            }
+            guard let raw = envelope.pointee.handle else { return [] }
+
+            let result = raw.assumingMemoryBound(to: FffDirSearchResult.self)
+            defer { fff_free_dir_search_result(result) }
+
+            return (0..<result.pointee.count).compactMap { index in
+                guard let item = fff_dir_search_result_get_item(result, index),
+                      let namePointer = item.pointee.dir_name,
+                      let pathPointer = item.pointee.relative_path else {
+                    return nil
+                }
+
+                let relativePath = String(cString: pathPointer)
+                if relativePath.split(separator: "/")
+                    .contains(where: { $0.lowercased().hasSuffix(".app") }) {
+                    return nil
+                }
+
+                let scorePointer = fff_dir_search_result_get_score(result, index)
+                return IndexedSearchItem(
+                    name: String(cString: namePointer),
+                    relativePath: relativePath,
+                    url: self.rootURL.appendingPathComponent(
+                        relativePath,
+                        isDirectory: true
+                    ),
+                    isDirectory: true,
+                    score: Int(scorePointer?.pointee.total ?? 0),
+                    modified: 0,
+                    size: 0
+                )
+            }
+        }
+    }
+
+    private func reserveSearchGeneration() -> UInt64 {
+        searchGenerationLock.lock()
+        defer { searchGenerationLock.unlock() }
+        latestSearchGeneration &+= 1
+        return latestSearchGeneration
+    }
+
+    private func isLatestSearch(_ generation: UInt64) -> Bool {
+        searchGenerationLock.lock()
+        defer { searchGenerationLock.unlock() }
+        return generation == latestSearchGeneration
     }
 
     func progress() async throws -> IndexProgress {

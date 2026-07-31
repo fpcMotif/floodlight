@@ -13,9 +13,12 @@ if [ ! -d "$SOURCE_APP" ]; then
 fi
 
 mkdir -p "$INSTALL_DIR"
+pkill -x Floodlight 2>/dev/null || true
 ditto "$SOURCE_APP" "$TARGET_APP"
 codesign --verify --deep --strict "$TARGET_APP"
 
 echo "Installed Floodlight at: $TARGET_APP"
 echo "Privacy grants will persist for this stable app identity and path."
-open "$TARGET_APP"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -f "$TARGET_APP"
+open -n "$TARGET_APP"

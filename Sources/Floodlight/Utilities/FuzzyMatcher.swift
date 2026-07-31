@@ -2,9 +2,13 @@ import Foundation
 
 enum FuzzyMatcher {
     static func score(query: String, candidate: String) -> Int? {
-        let query = normalized(query)
-        let candidate = normalized(candidate)
+        score(
+            normalizedQuery: normalized(query),
+            normalizedCandidate: normalized(candidate)
+        )
+    }
 
+    static func score(normalizedQuery query: String, normalizedCandidate candidate: String) -> Int? {
         guard !query.isEmpty else { return 1 }
         if candidate == query { return 20_000 }
         if candidate.hasPrefix(query) { return 15_000 - candidate.count }
@@ -42,7 +46,7 @@ enum FuzzyMatcher {
         return queryIndex == query.endIndex ? score : nil
     }
 
-    private static func normalized(_ value: String) -> String {
+    static func normalized(_ value: String) -> String {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 

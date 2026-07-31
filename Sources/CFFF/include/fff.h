@@ -34,6 +34,41 @@ typedef struct FffScore {
     char *match_type;
 } FffScore;
 
+typedef struct FffFileItem {
+    char *relative_path;
+    char *file_name;
+    char *git_status;
+    uint64_t size;
+    uint64_t modified;
+    int64_t access_frecency_score;
+    int64_t modification_frecency_score;
+    int64_t total_frecency_score;
+    bool is_binary;
+} FffFileItem;
+
+typedef struct FffSearchResult {
+    struct FffFileItem *items;
+    struct FffScore *scores;
+    uint32_t count;
+    uint32_t total_matched;
+    uint32_t total_files;
+    struct FffLocation location;
+} FffSearchResult;
+
+typedef struct FffDirItem {
+    char *relative_path;
+    char *dir_name;
+    int32_t max_access_frecency;
+} FffDirItem;
+
+typedef struct FffDirSearchResult {
+    struct FffDirItem *items;
+    struct FffScore *scores;
+    uint32_t count;
+    uint32_t total_matched;
+    uint32_t total_dirs;
+} FffDirSearchResult;
+
 typedef struct FffMixedItem {
     uint8_t item_type;
     char *relative_path;
@@ -88,6 +123,50 @@ struct FffResult *fff_create_instance(
 );
 
 void fff_destroy(void *fff_handle);
+
+struct FffResult *fff_search(
+    void *fff_handle,
+    const char *query,
+    const char *current_file,
+    uint32_t max_threads,
+    uint32_t page_index,
+    uint32_t page_size,
+    int32_t combo_boost_multiplier,
+    uint32_t min_combo_count
+);
+
+const struct FffFileItem *fff_search_result_get_item(
+    const struct FffSearchResult *result,
+    uint32_t index
+);
+
+const struct FffScore *fff_search_result_get_score(
+    const struct FffSearchResult *result,
+    uint32_t index
+);
+
+void fff_free_search_result(struct FffSearchResult *result);
+
+struct FffResult *fff_search_directories(
+    void *fff_handle,
+    const char *query,
+    const char *current_file,
+    uint32_t max_threads,
+    uint32_t page_index,
+    uint32_t page_size
+);
+
+const struct FffDirItem *fff_dir_search_result_get_item(
+    const struct FffDirSearchResult *result,
+    uint32_t index
+);
+
+const struct FffScore *fff_dir_search_result_get_score(
+    const struct FffDirSearchResult *result,
+    uint32_t index
+);
+
+void fff_free_dir_search_result(struct FffDirSearchResult *result);
 
 struct FffResult *fff_search_mixed(
     void *fff_handle,

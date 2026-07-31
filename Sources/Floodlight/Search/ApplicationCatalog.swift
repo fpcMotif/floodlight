@@ -6,15 +6,29 @@ final class ApplicationCatalog: @unchecked Sendable {
         let name: String
         let url: URL
         let markerName: String
+        let id: String
+        let subtitle: String
+        let normalizedName: String
     }
 
-    private let applicationsByMarker: [String: Application]
-    private let markerByApplicationPath: [String: String]
+    private let lock = NSLock()
+    private let discoveryQueue = DispatchQueue(
+        label: "com.floodlight.application-catalog",
+        qos: .userInitiated
+    )
+    private var applications: [Application] = []
+    private var applicationsByMarker: [String: Application] = [:]
+    private var markerByApplicationPath: [String: String] = [:]
+    private var isPrepared = false
     private let markerRoot: URL
     private let index: FFFIndex
     private let recentStore: RecentStore
 
-    init(recentStore: RecentStore, supportURL: URL? = nil) {
+    init(
+        recentStore: RecentStore,
+        supportURL: URL? = nil,
+        deferDiscovery: Bool = false
+    ) {
         self.recentStore = recentStore
 
         let fileManager = FileManager.default
@@ -29,27 +43,28 @@ final class ApplicationCatalog: @unchecked Sendable {
             .appendingPathComponent("ApplicationIndex", isDirectory: true)
         markerRoot = appIndexRoot.appendingPathComponent("Items", isDirectory: true)
 
-        let applications = Self.discoverApplications()
-        let marked = Self.assignMarkerNames(to: applications)
-        applicationsByMarker = Dictionary(uniqueKeysWithValues: marked.map { ($0.markerName, $0) })
-        markerByApplicationPath = Dictionary(
-            uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
-        )
-
-        Self.synchronizeMarkers(
-            applications: marked,
-            markerRoot: markerRoot,
-            fileManager: fileManager
-        )
         index = FFFIndex(
             rootURL: markerRoot,
             storageURL: appIndexRoot.appendingPathComponent("Database", isDirectory: true),
             enableContentIndexing: false,
             watch: false
         )
+        if !deferDiscovery {
+            prepare(fileManager: fileManager)
+        }
     }
 
     func start() async throws {
+        if !prepared {
+            let signpost = FloodlightPerformance.begin("ApplicationDiscovery")
+            await withCheckedContinuation { continuation in
+                discoveryQueue.async { [self] in
+                    prepare(fileManager: .default)
+                    continuation.resume()
+                }
+            }
+            FloodlightPerformance.end("ApplicationDiscovery", id: signpost)
+        }
         try await index.start()
         for _ in 0..<200 {
             let progress = try await index.progress()
@@ -61,23 +76,23 @@ final class ApplicationCatalog: @unchecked Sendable {
     }
 
     func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
-        let indexed = try await index.search(
+        let applicationsByMarker = snapshotApplicationsByMarker()
+        let indexed = try await index.searchFiles(
             query,
-            limit: UInt32(max(applicationsByMarker.count, limit))
+            limit: UInt32(max(limit * 2, limit))
         )
 
         return indexed.compactMap { result -> SearchItem? in
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
-            let id = "application:\(application.url.path)"
             return SearchItem(
-                id: id,
+                id: application.id,
                 title: application.name,
-                subtitle: application.url.deletingLastPathComponent().path,
+                subtitle: application.subtitle,
                 kind: .application,
                 action: .open(application.url),
-                score: result.score + recentStore.boost(for: id),
+                score: result.score + recentStore.boost(for: application.id),
                 fileURL: application.url
             )
         }
@@ -88,7 +103,39 @@ final class ApplicationCatalog: @unchecked Sendable {
         .map { $0 }
     }
 
+    func fastSearch(_ query: String, limit: Int = 12) -> [SearchItem] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let normalizedQuery = FuzzyMatcher.normalized(query)
+
+        return snapshotApplications().compactMap { application -> SearchItem? in
+            guard let score = FuzzyMatcher.score(
+                normalizedQuery: normalizedQuery,
+                normalizedCandidate: application.normalizedName
+            ) else {
+                return nil
+            }
+            return SearchItem(
+                id: application.id,
+                title: application.name,
+                subtitle: application.subtitle,
+                kind: .application,
+                action: .open(application.url),
+                score: 100_000 + score + recentStore.boost(for: application.id),
+                fileURL: application.url
+            )
+        }
+        .sorted { lhs, rhs in
+            lhs.score == rhs.score
+                ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                : lhs.score > rhs.score
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
     func track(query: String, selectedURL: URL) {
+        let markerByApplicationPath = snapshotMarkersByApplicationPath()
         guard let markerName = markerByApplicationPath[selectedURL.standardizedFileURL.path] else {
             return
         }
@@ -96,6 +143,51 @@ final class ApplicationCatalog: @unchecked Sendable {
             query: query,
             selectedURL: markerRoot.appendingPathComponent(markerName)
         )
+    }
+
+    private var prepared: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isPrepared
+    }
+
+    private func prepare(fileManager: FileManager) {
+        let discovered = Self.discoverApplications()
+        let marked = Self.assignMarkerNames(to: discovered)
+        Self.synchronizeMarkers(
+            applications: marked,
+            markerRoot: markerRoot,
+            fileManager: fileManager
+        )
+
+        lock.lock()
+        applications = marked
+        applicationsByMarker = Dictionary(
+            uniqueKeysWithValues: marked.map { ($0.markerName, $0) }
+        )
+        markerByApplicationPath = Dictionary(
+            uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
+        )
+        isPrepared = true
+        lock.unlock()
+    }
+
+    private func snapshotApplications() -> [Application] {
+        lock.lock()
+        defer { lock.unlock() }
+        return applications
+    }
+
+    private func snapshotApplicationsByMarker() -> [String: Application] {
+        lock.lock()
+        defer { lock.unlock() }
+        return applicationsByMarker
+    }
+
+    private func snapshotMarkersByApplicationPath() -> [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return markerByApplicationPath
     }
 
     private static func discoverApplications() -> [(name: String, url: URL)] {
@@ -176,7 +268,10 @@ final class ApplicationCatalog: @unchecked Sendable {
             return Application(
                 name: application.name,
                 url: application.url,
-                markerName: "\(safeName)\(suffix).app"
+                markerName: "\(safeName)\(suffix).app",
+                id: "application:\(application.url.path)",
+                subtitle: application.url.deletingLastPathComponent().path,
+                normalizedName: FuzzyMatcher.normalized(application.name)
             )
         }
     }

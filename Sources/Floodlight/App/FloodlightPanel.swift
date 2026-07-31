@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
@@ -12,12 +11,17 @@ final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
     private var localKeyMonitor: Any?
-    private var sizeObservation: AnyCancellable?
+    private var resignActiveObservation: NSObjectProtocol?
 
     init(model: SearchCoordinator) {
         self.model = model
         panel = FloodlightPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 72),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: FloodlightMetrics.panelWidth,
+                height: FloodlightMetrics.searchHeight
+            ),
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: true
@@ -26,23 +30,41 @@ final class FloodlightPanelController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.animationBehavior = .utilityWindow
-        panel.contentViewController = NSHostingController(rootView: SearchView(model: model))
-        panel.setContentSize(NSSize(width: 680, height: 72))
+        panel.contentViewController = Self.makeContentController(model: model)
+        panel.setContentSize(
+            NSSize(
+                width: FloodlightMetrics.panelWidth,
+                height: FloodlightMetrics.searchHeight
+            )
+        )
+        if #unavailable(macOS 26.0) {
+            panel.contentView?.wantsLayer = true
+            panel.contentView?.layer?.cornerRadius = FloodlightMetrics.cornerRadius
+            panel.contentView?.layer?.cornerCurve = .continuous
+            panel.contentView?.layer?.masksToBounds = true
+        }
 
-        sizeObservation = Publishers.CombineLatest(model.$query, model.$results)
-            .map { [weak model] _, _ in model?.panelHeight ?? 72 }
-            .removeDuplicates()
-            .sink { [weak self] height in
-                self?.resize(to: height)
-            }
+        model.onPanelHeightChange = { [weak self] height in
+            self?.resize(to: height)
+        }
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
+        }
+        resignActiveObservation = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard self?.panel.isVisible == true else { return }
+                self?.hide()
+            }
         }
     }
 
@@ -50,22 +72,102 @@ final class FloodlightPanelController {
         if let localKeyMonitor {
             NSEvent.removeMonitor(localKeyMonitor)
         }
+        if let resignActiveObservation {
+            NotificationCenter.default.removeObserver(resignActiveObservation)
+        }
+    }
+
+    private static func makeContentController(model: SearchCoordinator) -> NSViewController {
+        let hostingController = NSHostingController(rootView: SearchView(model: model))
+        guard #available(macOS 26.0, *) else {
+            return hostingController
+        }
+
+        let glassView = NSGlassEffectView()
+        glassView.style = .regular
+        glassView.cornerRadius = FloodlightMetrics.cornerRadius
+        glassView.contentView = hostingController.view
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+
+        let backdropView = NSVisualEffectView()
+        backdropView.material = .hudWindow
+        backdropView.blendingMode = .behindWindow
+        backdropView.state = .active
+        backdropView.maskImage = makeCapsuleMask()
+        backdropView.addSubview(glassView)
+        NSLayoutConstraint.activate([
+            glassView.leadingAnchor.constraint(equalTo: backdropView.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: backdropView.trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: backdropView.topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: backdropView.bottomAnchor),
+        ])
+
+        let glassController = NSViewController()
+        glassController.view = backdropView
+        glassController.addChild(hostingController)
+        return glassController
+    }
+
+    @available(macOS 26.0, *)
+    private static func makeCapsuleMask() -> NSImage {
+        let diameter = FloodlightMetrics.cornerRadius * 2
+        let size = NSSize(width: diameter, height: diameter)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.white.setFill()
+            NSBezierPath(
+                roundedRect: rect,
+                xRadius: FloodlightMetrics.cornerRadius,
+                yRadius: FloodlightMetrics.cornerRadius
+            ).fill()
+            return true
+        }
+        let capInset = FloodlightMetrics.cornerRadius - 1
+        image.capInsets = NSEdgeInsets(
+            top: capInset,
+            left: capInset,
+            bottom: capInset,
+            right: capInset
+        )
+        image.resizingMode = .stretch
+        return image
     }
 
     func toggle() {
-        panel.isVisible ? hide() : show()
+        if Self.shouldHideOnToggle(
+            panelIsVisible: panel.isVisible,
+            panelIsKeyWindow: panel.isKeyWindow,
+            applicationIsActive: NSApp.isActive
+        ) {
+            hide()
+        } else {
+            show()
+        }
+    }
+
+    static func shouldHideOnToggle(
+        panelIsVisible: Bool,
+        panelIsKeyWindow: Bool,
+        applicationIsActive: Bool
+    ) -> Bool {
+        panelIsVisible && panelIsKeyWindow && applicationIsActive
     }
 
     func show() {
+        let signpost = FloodlightPerformance.begin("ShowPanel")
         positionOnActiveScreen()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         model.prepareForPresentation()
+        DispatchQueue.main.async {
+            FloodlightPerformance.end("ShowPanel", id: signpost)
+        }
     }
 
     func hide() {
+        let signpost = FloodlightPerformance.begin("HidePanel")
         panel.orderOut(nil)
         model.reset()
+        FloodlightPerformance.end("HidePanel", id: signpost)
     }
 
     private func positionOnActiveScreen() {
@@ -89,13 +191,15 @@ final class FloodlightPanelController {
         guard abs(panel.frame.height - height) > 0.5 else { return }
         var frame = panel.frame
         let top = frame.maxY
-        frame.size = NSSize(width: 680, height: height)
+        frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
-        panel.animator().setFrame(frame, display: true)
+        panel.setFrame(frame, display: false, animate: false)
     }
 
     private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
-        guard panel.isKeyWindow else { return event }
+        guard panel.isVisible, event.window === panel || panel.isKeyWindow else {
+            return event
+        }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         switch event.keyCode {
@@ -104,16 +208,6 @@ final class FloodlightPanelController {
             return nil
         case 126:
             model.moveSelection(by: -1)
-            return nil
-        case 36, 76:
-            if modifiers.contains(.command) {
-                model.revealSelection()
-            } else {
-                model.openSelection()
-            }
-            return nil
-        case 53:
-            hide()
             return nil
         default:
             break
