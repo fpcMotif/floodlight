@@ -31,6 +31,8 @@ jobs:
           node-version: 24
         env:
           PUBLIC_GITHUB_REPOSITORY: ${{ github.repository }}
+          SITE_URL: https://floodlight.vmg.dev
+          BASE_PATH: /
 
   deploy:
     needs: build
