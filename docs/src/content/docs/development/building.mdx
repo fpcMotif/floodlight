@@ -1,0 +1,96 @@
+---
+title: Build from source
+description: Build Floodlight and its FFF C bridge on a development Mac.
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+## Requirements
+
+- macOS 14 or later
+- Xcode command-line tools with Swift 5.10 or later
+- Rust and Cargo
+- Node.js 24 only when working on this documentation site
+
+## Checkout layout
+
+Floodlight’s build script expects FFF next to the repository:
+
+```text
+code/
+├── floodlight/
+└── fff/
+```
+
+<Steps>
+
+1. **Clone both repositories**
+
+   ```sh
+   git clone https://github.com/YOUR_ACCOUNT/floodlight.git
+   git clone https://github.com/dmtrKovalenko/fff.git
+   ```
+
+2. **Pin and patch FFF**
+
+   ```sh
+   git -C fff checkout e8dd50ce5a6857f2dc7f827746163a4b1040ba9c
+   git -C fff apply ../floodlight/patches/fff/floodlight-compatibility.patch
+   ```
+
+   The patch exposes Floodlight’s opt-in filename indexing for PDFs, images,
+   and other common binary formats without content-indexing their bytes. It
+   also adds every ancestor directory to FFF’s directory table so nested
+   folders and `.app` bundle roots are searchable as first-class results, and
+   keeps files, folders, content, and application bundles current after live
+   filesystem changes.
+
+3. **Build and test**
+
+   ```sh
+   cd floodlight
+   make test
+   ```
+
+4. **Create the application bundle**
+
+   ```sh
+   make bundle
+   open .build/Floodlight.app
+   ```
+
+5. **Create a local DMG**
+
+   ```sh
+   make dmg
+   ```
+
+</Steps>
+
+<Aside type="caution" title="Local builds are ad-hoc signed">
+  `make bundle` uses ad-hoc signing unless `CODE_SIGN_IDENTITY` names a
+  Developer ID Application certificate. Ad-hoc builds are for development and
+  are not equivalent to the notarized release asset.
+</Aside>
+
+## Icon assets
+
+`Sources/Floodlight/Resources/AppIcon.png` is the 1024-pixel application icon
+master used by Finder and the DMG installation flow. Run `make icons` to
+generate `.build/Floodlight.icns`; `make bundle` does this automatically.
+
+The menu bar intentionally uses a separate 18-point black-and-clear vector:
+`Sources/Floodlight/Resources/FloodlightMenuBar.svg`. Floodlight marks it as an
+AppKit template image so macOS applies the correct light, dark, highlighted, and
+accessibility treatment instead of shrinking the full-color application icon.
+
+## Documentation
+
+```sh frame="none"
+cd docs
+npm install
+npm run dev
+```
+
+Run `npm run build` before submitting documentation changes. Astro emits the
+static site under `docs/dist`.

@@ -1,0 +1,1002 @@
+diff --git a/crates/fff-c/include/fff.h b/crates/fff-c/include/fff.h
+index 8a51e99..734edfe 100644
+--- a/crates/fff-c/include/fff.h
++++ b/crates/fff-c/include/fff.h
+@@ -413,6 +413,28 @@ struct FffResult *fff_create_instance2(const char *base_path,
+                                        uint64_t cache_budget_max_bytes,
+                                        uint64_t cache_budget_max_file_size);
+ 
++/**
++ * Create a new file finder instance (v3).
++ *
++ * `include_binary_files` retains common binary file types in non-git indexes
++ * for filename and metadata search. Their contents remain excluded from
++ * content indexing.
++ */
++struct FffResult *fff_create_instance3(const char *base_path,
++                                       const char *frecency_db_path,
++                                       const char *history_db_path,
++                                       bool _use_unsafe_no_lock,
++                                       bool enable_mmap_cache,
++                                       bool enable_content_indexing,
++                                       bool watch,
++                                       bool ai_mode,
++                                       bool include_binary_files,
++                                       const char *log_file_path,
++                                       const char *log_level,
++                                       uint64_t cache_budget_max_files,
++                                       uint64_t cache_budget_max_bytes,
++                                       uint64_t cache_budget_max_file_size);
++
+ /**
+  * Destroy a file finder instance and free all its resources.
+  *
+diff --git a/crates/fff-c/src/lib.rs b/crates/fff-c/src/lib.rs
+index 63fc288..7271fa6 100644
+--- a/crates/fff-c/src/lib.rs
++++ b/crates/fff-c/src/lib.rs
+@@ -147,6 +147,50 @@ pub unsafe extern "C" fn fff_create_instance(
+ 
+ /// Create a new file finder instance (v2, with full options).
+ ///
++/// Retained for ABI compatibility. Known binary file types are excluded from
++/// non-git roots, matching the historical FFF behavior. Use
++/// [`fff_create_instance3`] to make their filenames searchable.
++///
++/// ## Safety
++/// String parameters must be valid null-terminated UTF-8 or NULL.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn fff_create_instance2(
++    base_path: *const c_char,
++    frecency_db_path: *const c_char,
++    history_db_path: *const c_char,
++    use_unsafe_no_lock: bool,
++    enable_mmap_cache: bool,
++    enable_content_indexing: bool,
++    watch: bool,
++    ai_mode: bool,
++    log_file_path: *const c_char,
++    log_level: *const c_char,
++    cache_budget_max_files: u64,
++    cache_budget_max_bytes: u64,
++    cache_budget_max_file_size: u64,
++) -> *mut FffResult {
++    unsafe {
++        fff_create_instance3(
++            base_path,
++            frecency_db_path,
++            history_db_path,
++            use_unsafe_no_lock,
++            enable_mmap_cache,
++            enable_content_indexing,
++            watch,
++            ai_mode,
++            false,
++            log_file_path,
++            log_level,
++            cache_budget_max_files,
++            cache_budget_max_bytes,
++            cache_budget_max_file_size,
++        )
++    }
++}
++
++/// Create a new file finder instance (v3, with binary filename indexing).
++///
+ /// Returns an opaque pointer that must be passed to all other `fff_*` calls
+ /// and eventually freed with `fff_destroy`.
+ ///
+@@ -164,6 +208,9 @@ pub unsafe extern "C" fn fff_create_instance(
+ /// * `enable_content_indexing`     – build content index after the initial scan
+ /// * `watch`                       – start a background file-system watcher for live updates
+ /// * `ai_mode`                     – enable AI-agent optimizations
++/// * `include_binary_files`        – retain known binary file types in non-git
++///   indexes so their filenames and metadata can be searched. Their contents
++///   remain excluded from content indexing.
+ /// * `log_file_path`               – tracing log file path (NULL/empty to skip).
+ ///   Only the first successful call in a process installs the subscriber;
+ ///   subsequent calls are no-ops at the log layer.
+@@ -180,7 +227,7 @@ pub unsafe extern "C" fn fff_create_instance(
+ /// ## Safety
+ /// String parameters must be valid null-terminated UTF-8 or NULL.
+ #[unsafe(no_mangle)]
+-pub unsafe extern "C" fn fff_create_instance2(
++pub unsafe extern "C" fn fff_create_instance3(
+     base_path: *const c_char,
+     frecency_db_path: *const c_char,
+     history_db_path: *const c_char,
+@@ -189,6 +236,7 @@ pub unsafe extern "C" fn fff_create_instance2(
+     enable_content_indexing: bool,
+     watch: bool,
+     ai_mode: bool,
++    include_binary_files: bool,
+     log_file_path: *const c_char,
+     log_level: *const c_char,
+     cache_budget_max_files: u64,
+@@ -261,7 +309,7 @@ pub unsafe extern "C" fn fff_create_instance2(
+     );
+ 
+     // Initialize file picker (writes directly into shared_picker)
+-    if let Err(e) = FilePicker::new_with_shared_state(
++    if let Err(e) = FilePicker::new_with_shared_state_and_binary_files(
+         shared_picker.clone(),
+         shared_frecency.clone(),
+         fff::FilePickerOptions {
+@@ -272,6 +320,7 @@ pub unsafe extern "C" fn fff_create_instance2(
+             mode,
+             cache_budget,
+         },
++        include_binary_files,
+     ) {
+         return FffResult::err(&format!("Failed to init file picker: {}", e));
+     }
+@@ -902,23 +951,31 @@ pub unsafe extern "C" fn fff_restart_index(
+         Err(e) => return FffResult::err(&format!("Failed to acquire file picker lock: {}", e)),
+     };
+ 
+-    let (warmup_caches, content_indexing, watch, mode) = if let Some(mut picker) = guard.take() {
+-        let warmup = picker.has_mmap_cache();
+-        let enable_content_indexing = picker.has_content_indexing();
+-        let watch = picker.has_watcher();
+-        let mode = picker.mode();
+-
+-        picker.stop_background_monitor();
+-
+-        (warmup, enable_content_indexing, watch, mode)
+-    } else {
+-        // this is error state anyway
+-        (false, true, true, FFFMode::default())
+-    };
++    let (warmup_caches, content_indexing, include_binary_files, watch, mode) =
++        if let Some(mut picker) = guard.take() {
++            let warmup = picker.has_mmap_cache();
++            let enable_content_indexing = picker.has_content_indexing();
++            let include_binary_files = picker.includes_binary_files();
++            let watch = picker.has_watcher();
++            let mode = picker.mode();
++
++            picker.stop_background_monitor();
++
++            (
++                warmup,
++                enable_content_indexing,
++                include_binary_files,
++                watch,
++                mode,
++            )
++        } else {
++            // this is error state anyway
++            (false, true, false, true, FFFMode::default())
++        };
+ 
+     drop(guard);
+ 
+-    match FilePicker::new_with_shared_state(
++    match FilePicker::new_with_shared_state_and_binary_files(
+         inst.picker.clone(),
+         inst.frecency.clone(),
+         fff::FilePickerOptions {
+@@ -929,6 +986,7 @@ pub unsafe extern "C" fn fff_restart_index(
+             mode,
+             cache_budget: None,
+         },
++        include_binary_files,
+     ) {
+         Ok(()) => FffResult::ok_empty(),
+         Err(e) => FffResult::err(&format!("Failed to init file picker: {}", e)),
+diff --git a/crates/fff-core/src/background_watcher.rs b/crates/fff-core/src/background_watcher.rs
+index a86dd3b..5dcf5a2 100644
+--- a/crates/fff-core/src/background_watcher.rs
++++ b/crates/fff-core/src/background_watcher.rs
+@@ -561,6 +561,17 @@ fn handle_debounced_events(
+             for path in &paths_to_remove {
+                 let removed = picker.remove_file_by_path(path);
+                 debug!("remove_file_by_path({:?}) -> {}", path, removed);
++                if !removed {
++                    // macOS commonly reports a renamed-away directory as
++                    // Modify(Name(Any)). Once the path is gone we cannot stat
++                    // it to recover its former type, so fall back to evicting
++                    // indexed descendants when it was not an indexed file.
++                    let count = picker.remove_all_files_in_dir(path);
++                    debug!(
++                        "remove_all_files_in_dir({:?}) fallback -> {} files",
++                        path, count
++                    );
++                }
+             }
+ 
+             let mut files_to_update = Vec::with_capacity(paths_to_add_or_modify.len());
+@@ -719,17 +730,32 @@ fn track_files_from_new_directories(
+     shared_frecency: &SharedFrecency,
+     git_workdir: &Option<PathBuf>,
+ ) {
+-    let Ok(entries) = std::fs::read_dir(dir) else {
+-        return;
+-    };
+-
+     let repo = git_workdir.as_ref().and_then(|p| Repository::open(p).ok());
+     let mut files_to_add = Vec::new();
+-
+-    for entry in entries.flatten() {
+-        if entry.file_type().is_ok_and(|ft| ft.is_file()) {
++    let mut directories_to_visit = vec![dir.to_path_buf()];
++
++    // A rename can move an already-populated directory tree into the watched
++    // scope while producing only one directory event (not one event per
++    // descendant) on FSEvents. Walk that new subtree so folders, package
++    // bundles, and their files become visible without a full rescan.
++    while let Some(directory) = directories_to_visit.pop() {
++        let Ok(entries) = std::fs::read_dir(directory) else {
++            continue;
++        };
++        for entry in entries.flatten() {
+             let path = entry.path();
+-            if should_include_file(&path, &repo) {
++            let Ok(file_type) = entry.file_type() else {
++                continue;
++            };
++            if file_type.is_dir() {
++                let is_hidden = entry
++                    .file_name()
++                    .to_str()
++                    .is_some_and(|name| name.starts_with('.'));
++                if !is_hidden && !is_path_ignored(&path, &repo) {
++                    directories_to_visit.push(path);
++                }
++            } else if file_type.is_file() && should_include_file(&path, &repo) {
+                 files_to_add.push(path);
+             }
+         }
+diff --git a/crates/fff-core/src/file_picker.rs b/crates/fff-core/src/file_picker.rs
+index a143a07..0db69fd 100644
+--- a/crates/fff-core/src/file_picker.rs
++++ b/crates/fff-core/src/file_picker.rs
+@@ -50,6 +50,7 @@ use crate::types::{
+ use fff_query_parser::FFFQuery;
+ use git2::{Repository, Status};
+ use rayon::prelude::*;
++use std::collections::HashSet;
+ use std::fmt::Debug;
+ use std::ops::ControlFlow;
+ use std::path::{Path, PathBuf};
+@@ -131,9 +132,13 @@ pub(crate) struct FileSync {
+     files: Vec<FileItem>,
+     indexable_count: usize,
+     base_count: usize,
+-    /// Sorted directory table. Each entry is a unique parent directory of at
+-    /// least one file in `files`. Sorted by absolute path for O(log n) lookup.
++    /// Sorted directory table. Each entry is a unique parent directory or
++    /// ancestor of at least one file in `files`. Sorted by absolute path for
++    /// O(log n) lookup.
+     dirs: Vec<DirItem>,
++    /// Number of scan-time directories in `dirs`. Incremental directories
++    /// live in the overflow arena and are appended after this boundary.
++    base_dir_count: usize,
+     /// Shared builder for overflow file paths. Each overflow file's ChunkedString
+     /// uses `arena_override` pointing into this builder's arena.
+     overflow_builder: Option<crate::simd_path::ChunkedPathStoreBuilder>,
+@@ -156,6 +161,7 @@ impl FileSync {
+             indexable_count: 0,
+             base_count: 0,
+             dirs: Vec::new(),
++            base_dir_count: 0,
+             overflow_builder: None,
+             git_workdir: None,
+             bigram_index: None,
+@@ -247,8 +253,7 @@ impl FileSync {
+         // Binary search dirs to find the parent directory index.
+         // Dir items store the relative path including trailing '/' (e.g. "src/components/").
+         let mut dir_buf = [0u8; crate::simd_path::PATH_BUF_SIZE];
+-        let dir_idx = match self
+-            .dirs
++        let dir_idx = match self.dirs[..self.base_dir_count]
+             .binary_search_by(|d| d.read_relative_path(arena, &mut dir_buf).cmp(dir_rel))
+         {
+             Ok(idx) => idx as u32,
+@@ -292,41 +297,86 @@ impl FileSync {
+             .map(|pos| self.base_count + pos)
+     }
+ 
+-    fn retain_files_with_arena<F>(&mut self, mut predicate: F) -> usize
+-    where
+-        F: FnMut(&FileItem, ArenaPtr) -> bool,
+-    {
++    fn find_directory_index(&self, relative_path: &str) -> Option<usize> {
+         let base_arena = self.arena_base_ptr();
++        let mut path_buf = [0u8; crate::simd_path::PATH_BUF_SIZE];
++        if let Ok(index) = self.dirs[..self.base_dir_count].binary_search_by(|dir| {
++            dir.read_relative_path(base_arena, &mut path_buf)
++                .cmp(relative_path)
++        }) {
++            return Some(index);
++        }
++
+         let overflow_arena = self.overflow_arena_ptr();
++        self.dirs[self.base_dir_count..]
++            .iter()
++            .position(|dir| dir.read_relative_path(overflow_arena, &mut path_buf) == relative_path)
++            .map(|position| self.base_dir_count + position)
++    }
+ 
+-        let indexable_count = self.indexable_count;
+-        let base_count = self.base_count;
+-        let initial_len = self.files.len();
++    fn ensure_directories_for_file(&mut self, relative_path: &str) -> u32 {
++        let filename_offset = relative_path
++            .rfind(std::path::is_separator)
++            .map_or(0, |index| index + 1);
++        let direct_parent = &relative_path[..filename_offset];
++        let mut directory_paths = Vec::new();
++        push_directory_and_ancestors(direct_parent, &mut directory_paths);
++
++        let mut direct_parent_index = u32::MAX;
++        for directory_path in directory_paths {
++            let index = if let Some(index) = self.find_directory_index(directory_path) {
++                self.dirs[index].set_deleted(false);
++                index
++            } else {
++                let path = self
++                    .overflow_builder
++                    .get_or_insert_with(|| crate::simd_path::ChunkedPathStoreBuilder::new(64))
++                    .add_dir_immediate(directory_path);
++                self.dirs.push(DirItem::new_overflow(
++                    path,
++                    directory_last_segment_offset(directory_path),
++                ));
++                self.dirs.len() - 1
++            };
++            if directory_path == direct_parent {
++                direct_parent_index = index as u32;
++            }
++        }
++        direct_parent_index
++    }
+ 
+-        let indexable_retained = self.files[..indexable_count]
+-            .iter()
+-            .filter(|f| predicate(f, base_arena))
+-            .count();
+-        let base_retained = self.files[indexable_count..base_count]
+-            .iter()
+-            .filter(|f| predicate(f, base_arena))
+-            .count()
+-            + indexable_retained;
+-
+-        self.files.retain(|f| {
+-            predicate(
+-                f,
+-                if f.is_overflow() {
+-                    overflow_arena
+-                } else {
+-                    base_arena
+-                },
+-            )
+-        });
++    fn refresh_directory_liveness(&mut self) {
++        let base_arena = self.arena_base_ptr();
++        let overflow_arena = self.overflow_arena_ptr();
++        let mut live_directories = HashSet::new();
+ 
+-        self.indexable_count = indexable_retained;
+-        self.base_count = base_retained;
+-        initial_len - self.files.len()
++        for file in self.files.iter().filter(|file| !file.is_deleted()) {
++            let arena = if file.is_overflow() {
++                overflow_arena
++            } else {
++                base_arena
++            };
++            let relative_path = file.relative_path(arena);
++            let filename_offset = relative_path
++                .rfind(std::path::is_separator)
++                .map_or(0, |index| index + 1);
++            let direct_parent = &relative_path[..filename_offset];
++            let mut ancestors = Vec::new();
++            push_directory_and_ancestors(direct_parent, &mut ancestors);
++            live_directories.extend(ancestors.into_iter().map(str::to_owned));
++        }
++
++        let base_dir_count = self.base_dir_count;
++        for (index, directory) in self.dirs.iter_mut().enumerate() {
++            let arena = if index < base_dir_count {
++                base_arena
++            } else {
++                overflow_arena
++            };
++            let mut path_buf = [0u8; crate::simd_path::PATH_BUF_SIZE];
++            let path = directory.read_relative_path(arena, &mut path_buf);
++            directory.set_deleted(!live_directories.contains(path));
++        }
+     }
+ }
+ 
+@@ -467,6 +517,7 @@ pub struct FilePicker {
+     scanned_files_count: Arc<AtomicUsize>,
+     enable_mmap_cache: bool,
+     enable_content_indexing: bool,
++    include_binary_files: bool,
+     watch: bool,
+ }
+ 
+@@ -517,6 +568,10 @@ impl FilePicker {
+         self.enable_content_indexing
+     }
+ 
++    pub fn includes_binary_files(&self) -> bool {
++        self.include_binary_files
++    }
++
+     pub fn has_watcher(&self) -> bool {
+         self.watch
+     }
+@@ -707,6 +762,7 @@ impl FilePicker {
+             sync_data: FileSync::new(),
+             enable_mmap_cache: options.enable_mmap_cache,
+             enable_content_indexing: options.enable_content_indexing,
++            include_binary_files: false,
+             watch: options.watch,
+         })
+     }
+@@ -718,18 +774,33 @@ impl FilePicker {
+         shared_frecency: SharedFrecency,
+         options: FilePickerOptions,
+     ) -> Result<(), Error> {
+-        let picker = Self::new(options)?;
++        Self::new_with_shared_state_and_binary_files(shared_picker, shared_frecency, options, false)
++    }
++
++    /// Create a picker while choosing whether known binary file types are
++    /// retained in non-git indexes. Binary files remain excluded from content
++    /// indexing; this only makes their names and metadata searchable.
++    pub fn new_with_shared_state_and_binary_files(
++        shared_picker: SharedFilePicker,
++        shared_frecency: SharedFrecency,
++        options: FilePickerOptions,
++        include_binary_files: bool,
++    ) -> Result<(), Error> {
++        let mut picker = Self::new(options)?;
++        picker.include_binary_files = include_binary_files;
+ 
+         info!(
+-            "Spawning background threads: base_path={}, warmup={}, content_indexing={}, mode={:?}",
++            "Spawning background threads: base_path={}, warmup={}, content_indexing={}, include_binary_files={}, mode={:?}",
+             picker.base_path.display(),
+             picker.enable_mmap_cache,
+             picker.enable_content_indexing,
++            picker.include_binary_files,
+             picker.mode,
+         );
+ 
+         let warmup = picker.enable_mmap_cache;
+         let content_indexing = picker.enable_content_indexing;
++        let include_binary_files = picker.include_binary_files;
+         let watch = picker.watch;
+         let mode = picker.mode;
+ 
+@@ -756,6 +827,7 @@ impl FilePicker {
+             ScanConfig {
+                 warmup,
+                 content_indexing,
++                include_binary_files,
+                 watch,
+                 auto_cache_budget: true,
+                 install_watcher: true,
+@@ -788,6 +860,7 @@ impl FilePicker {
+             &self.scanned_files_count,
+             &empty_frecency,
+             self.mode,
++            self.include_binary_files,
+         )?;
+ 
+         self.sync_data = sync;
+@@ -982,10 +1055,16 @@ impl FilePicker {
+         };
+ 
+         let arena = self.sync_data.arena_base_ptr();
++        let overflow_arena = self.sync_data.overflow_arena_ptr();
+         let time = std::time::Instant::now();
+ 
+-        let (items, scores, total_matched) =
+-            crate::score::fuzzy_match_and_score_dirs(dirs, &context, arena);
++        let (items, scores, total_matched) = crate::score::fuzzy_match_and_score_dirs(
++            dirs,
++            &context,
++            self.sync_data.base_dir_count,
++            arena,
++            overflow_arena,
++        );
+ 
+         info!(
+             ?query,
+@@ -1447,6 +1526,7 @@ impl FilePicker {
+             FileItem::new(path_for_index.to_path_buf(), &self.base_path, None);
+ 
+         // Lazily create the shared overflow builder if not exists yet
++        let parent_dir_index = self.sync_data.ensure_directories_for_file(&rel_path);
+         let builder = self
+             .sync_data
+             .overflow_builder
+@@ -1454,6 +1534,7 @@ impl FilePicker {
+ 
+         let chunked_path = builder.add_file_immediate(&rel_path, file_item.path.filename_offset);
+         file_item.set_path(chunked_path);
++        file_item.set_parent_dir(parent_dir_index);
+         file_item.set_overflow(true);
+ 
+         self.sync_data.files.push(file_item);
+@@ -1463,7 +1544,7 @@ impl FilePicker {
+     /// Tombstone a file instead of removing it, keeping base indices stable.
+     pub fn remove_file_by_path(&mut self, path: impl AsRef<Path>) -> bool {
+         let path = path.as_ref();
+-        match self.sync_data.find_file_index(path, &self.base_path) {
++        let removed = match self.sync_data.find_file_index(path, &self.base_path) {
+             Ok(index) => {
+                 let file = &mut self.sync_data.files[index];
+                 file.set_deleted(true);
+@@ -1494,7 +1575,11 @@ impl FilePicker {
+                     false
+                 }
+             }
++        };
++        if removed {
++            self.sync_data.refresh_directory_liveness();
+         }
++        removed
+     }
+ 
+     // TODO make this O(n)
+@@ -1511,9 +1596,47 @@ impl FilePicker {
+             format!("{}{}", relative_dir, std::path::MAIN_SEPARATOR)
+         };
+ 
+-        self.sync_data.retain_files_with_arena(|file, arena| {
+-            !file.relative_path_starts_with(arena, &dir_prefix)
+-        })
++        let base_arena = self.sync_data.arena_base_ptr();
++        let overflow_arena = self.sync_data.overflow_arena_ptr();
++        let base_count = self.sync_data.base_count;
++        let overlay = self.sync_data.bigram_overlay.as_ref().map(Arc::clone);
++        let mut removed = 0;
++
++        // Base entries are referenced by stable positions in the content
++        // index. Tombstone them instead of compacting the vector, which would
++        // make every later bigram index point at the wrong file.
++        for index in 0..base_count {
++            let should_remove = {
++                let file = &self.sync_data.files[index];
++                !file.is_deleted() && file.relative_path_starts_with(base_arena, &dir_prefix)
++            };
++            if should_remove {
++                let file = &mut self.sync_data.files[index];
++                file.set_deleted(true);
++                file.git_status = None;
++                file.invalidate_mmap(&self.cache_budget);
++                if let Some(ref overlay) = overlay {
++                    overlay.write().delete_file(index);
++                }
++                removed += 1;
++            }
++        }
++
++        // Overflow entries are not referenced by the immutable base bigram
++        // index, so they can still be removed outright.
++        let initial_len = self.sync_data.files.len();
++        let mut index = 0;
++        self.sync_data.files.retain(|file| {
++            let keep =
++                index < base_count || !file.relative_path_starts_with(overflow_arena, &dir_prefix);
++            index += 1;
++            keep
++        });
++        removed += initial_len - self.sync_data.files.len();
++        if removed > 0 {
++            self.sync_data.refresh_directory_liveness();
++        }
++        removed
+     }
+ 
+     /// Use this to prevent any substantial background threads from acquiring the locks
+@@ -1716,6 +1839,7 @@ impl FileSync {
+         synced_files_count: &Arc<AtomicUsize>,
+         shared_frecency: &SharedFrecency,
+         mode: FFFMode,
++        include_binary_files: bool,
+     ) -> Result<FileSync, Error> {
+         use ignore::WalkBuilder;
+ 
+@@ -1768,7 +1892,7 @@ impl FileSync {
+                         return ignore::WalkState::Continue;
+                     }
+ 
+-                    if !is_git_repo && is_known_binary_extension(path) {
++                    if !include_binary_files && !is_git_repo && is_known_binary_extension(path) {
+                         return ignore::WalkState::Continue;
+                     }
+ 
+@@ -1882,11 +2006,13 @@ impl FileSync {
+ 
+         let base_count = files.len();
+ 
++        let base_dir_count = dirs.len();
+         Ok(FileSync {
+             files,
+             indexable_count,
+             base_count,
+             dirs,
++            base_dir_count,
+             overflow_builder: None,
+             git_workdir,
+             bigram_index: None,
+@@ -1898,43 +2024,53 @@ impl FileSync {
+ 
+ /// This does both thing (yes sorry all the OOP morons)
+ /// in one go: populates files chunked storage and creates new directories
+-fn populates_dirs_files_chunked_storage<'a>(
+-    pairs: &'a mut [(FileItem, String)],
++fn populates_dirs_files_chunked_storage(
++    pairs: &mut [(FileItem, String)],
+     builder: &mut crate::simd_path::ChunkedPathStoreBuilder,
+ ) -> Vec<DirItem> {
+-    let mut dirs: Vec<DirItem> = Vec::new();
+-
+-    let mut prev_dir: &'a str = "";
+-    let mut prev_dir_valid = false;
+-    let mut current_dir_idx: u32 = 0;
+-
+-    for (file, rel) in pairs.iter_mut() {
+-        let rel: &'a str = rel;
+-        let dir_part: &'a str = &rel[..file.path.filename_offset as usize];
+-
+-        if !prev_dir_valid || prev_dir != dir_part {
+-            let dir_string = builder.add_dir_immediate(dir_part);
+-
+-            // Compute last-segment offset: for "src/components/" -> 4 (points to "components/")
+-            let last_seg = if dir_part.is_empty() {
+-                0
+-            } else {
+-                let trimmed = dir_part.trim_end_matches(std::path::is_separator);
+-                trimmed
+-                    .rfind(std::path::is_separator)
+-                    .map(|i| i + 1)
+-                    .unwrap_or(0) as u16
+-            };
+-
+-            dirs.push(DirItem::new(dir_string, last_seg));
+-            current_dir_idx = (dirs.len() - 1) as u32;
+-
+-            prev_dir = dir_part;
+-            prev_dir_valid = true;
++    // `pairs` is sorted by parent directory, so collect ancestors only once
++    // per distinct direct parent. Borrow the existing relative path strings;
++    // no path copies or per-directory String allocations are needed.
++    let mut dir_paths = Vec::with_capacity(pairs.len());
++    let mut previous_direct_parent: Option<&str> = None;
++    for (file, rel) in pairs.iter() {
++        let rel = rel.as_str();
++        let dir_part = &rel[..file.path.filename_offset as usize];
++        if previous_direct_parent != Some(dir_part) {
++            push_directory_and_ancestors(dir_part, &mut dir_paths);
++            previous_direct_parent = Some(dir_part);
++        }
++    }
++    dir_paths.sort_unstable();
++    dir_paths.dedup();
++
++    let mut dirs = Vec::with_capacity(dir_paths.len());
++    for dir_part in &dir_paths {
++        let dir_string = builder.add_dir_immediate(dir_part);
++        // Compute last-segment offset: for "src/components/" -> 4 (points to "components/")
++        let last_seg = directory_last_segment_offset(dir_part);
++        dirs.push(DirItem::new(dir_string, last_seg));
++    }
++
++    let mut parent_indices = Vec::with_capacity(pairs.len());
++    let mut previous_direct_parent: Option<&str> = None;
++    let mut current_dir_idx = 0;
++    for (file, rel) in pairs.iter() {
++        let dir_part = &rel[..file.path.filename_offset as usize];
++        if previous_direct_parent != Some(dir_part) {
++            current_dir_idx = dir_paths
++                .binary_search(&dir_part)
++                .expect("every file parent is inserted into the directory table")
++                as u32;
++            previous_direct_parent = Some(dir_part);
+         }
++        parent_indices.push(current_dir_idx);
++    }
++    drop(dir_paths);
+ 
++    for ((file, rel), current_dir_idx) in pairs.iter_mut().zip(parent_indices) {
++        let rel = rel.as_str();
+         let cs = builder.add_file_immediate(rel, file.path.filename_offset);
+-
+         file.set_path(cs);
+         file.set_parent_dir(current_dir_idx);
+     }
+@@ -1942,6 +2078,30 @@ fn populates_dirs_files_chunked_storage<'a>(
+     dirs
+ }
+ 
++fn push_directory_and_ancestors<'a>(dir_path: &'a str, output: &mut Vec<&'a str>) {
++    if dir_path.is_empty() {
++        output.push(dir_path);
++        return;
++    }
++
++    output.extend(
++        dir_path
++            .char_indices()
++            .filter(|(_, character)| std::path::is_separator(*character))
++            .map(|(index, _)| &dir_path[..=index]),
++    );
++}
++
++fn directory_last_segment_offset(directory_path: &str) -> u16 {
++    if directory_path.is_empty() {
++        return 0;
++    }
++    directory_path
++        .trim_end_matches(std::path::is_separator)
++        .rfind(std::path::is_separator)
++        .map_or(0, |index| index + 1) as u16
++}
++
+ pub(crate) fn apply_git_status_and_frecency(
+     shared_picker: &SharedFilePicker,
+     shared_frecency: &SharedFrecency,
+@@ -2159,10 +2319,8 @@ mod tests {
+     use super::*;
+ 
+     /// The watcher must watch every ancestor directory up to `base_path`,
+-    /// not just the immediate parents of indexed files. Intermediate dirs
+-    /// that contain only subdirectories (no direct files) are NOT in
+-    /// `sync_data.dirs` — yet they must still appear in `extract_watch_dirs`
+-    /// so Create events on new subdirectories below them fire.
++    /// not just the immediate parents of indexed files, so Create events on
++    /// new subdirectories below them fire.
+     ///
+     /// Correctness regression guard for any refactor that replaces the
+     /// ancestor walk with a direct `sync_data.dirs` iteration.
+@@ -2260,4 +2418,51 @@ mod tests {
+         // "src" is emitted-as-dir; "src/x" extends it — full "src" is shared.
+         assert_eq!(common_dir_prefix_len("src", "src/x"), 3);
+     }
++
++    #[test]
++    fn directory_collection_includes_every_ancestor() {
++        let mut directories = Vec::new();
++        push_directory_and_ancestors("Downloads/Sample.app/Contents/MacOS/", &mut directories);
++
++        assert_eq!(
++            directories,
++            [
++                "Downloads/",
++                "Downloads/Sample.app/",
++                "Downloads/Sample.app/Contents/",
++                "Downloads/Sample.app/Contents/MacOS/",
++            ]
++        );
++    }
++
++    #[test]
++    fn binary_filename_indexing_is_opt_in_for_non_git_roots() {
++        let dir = tempfile::tempdir().unwrap();
++        std::fs::write(dir.path().join("notes.txt"), b"searchable text").unwrap();
++        std::fs::write(dir.path().join("download.pdf"), b"%PDF").unwrap();
++        std::fs::write(dir.path().join("photo.png"), b"\x89PNG").unwrap();
++
++        let options = || FilePickerOptions {
++            base_path: dir.path().to_string_lossy().into_owned(),
++            watch: false,
++            ..Default::default()
++        };
++
++        let mut default_picker = FilePicker::new(options()).unwrap();
++        default_picker.collect_files().unwrap();
++        assert_eq!(default_picker.get_files().len(), 1);
++
++        let mut desktop_picker = FilePicker::new(options()).unwrap();
++        desktop_picker.include_binary_files = true;
++        desktop_picker.collect_files().unwrap();
++        assert_eq!(desktop_picker.get_files().len(), 3);
++        assert_eq!(
++            desktop_picker
++                .get_files()
++                .iter()
++                .filter(|file| file.is_binary())
++                .count(),
++            2,
++        );
++    }
+ }
+diff --git a/crates/fff-core/src/scan.rs b/crates/fff-core/src/scan.rs
+index d97ed4d..be88e98 100644
+--- a/crates/fff-core/src/scan.rs
++++ b/crates/fff-core/src/scan.rs
+@@ -59,6 +59,7 @@ pub(crate) struct ScanSignals {
+ pub(crate) struct ScanConfig {
+     pub(crate) warmup: bool,
+     pub(crate) content_indexing: bool,
++    pub(crate) include_binary_files: bool,
+     pub(crate) watch: bool,
+     pub(crate) auto_cache_budget: bool,
+     pub(crate) install_watcher: bool,
+@@ -110,6 +111,7 @@ impl ScanJob {
+             config: ScanConfig {
+                 warmup: picker.has_mmap_cache(),
+                 content_indexing: picker.has_content_indexing(),
++                include_binary_files: picker.includes_binary_files(),
+                 watch: picker.has_watcher(),
+                 auto_cache_budget: !picker.has_explicit_cache_budget(),
+                 install_watcher,
+@@ -176,6 +178,7 @@ impl ScanJob {
+             &scanned_files_counter,
+             &shared_frecency,
+             mode,
++            config.include_binary_files,
+         ) {
+             Ok(sync) => sync,
+             Err(e) => {
+diff --git a/crates/fff-core/src/score.rs b/crates/fff-core/src/score.rs
+index 4c33d55..67c0607 100644
+--- a/crates/fff-core/src/score.rs
++++ b/crates/fff-core/src/score.rs
+@@ -175,6 +175,9 @@ fn resolve_dir_chunks(
+     arena: ArenaPtr,
+     buf: &mut [*const u8; 32],
+ ) -> Option<(usize, u16)> {
++    if dir.is_deleted() {
++        return None;
++    }
+     let ptrs = dir.path.resolve_ptrs(arena, buf);
+     Some((ptrs.len(), dir.path.byte_len))
+ }
+@@ -266,10 +269,32 @@ fn match_fuzzy_parts_dirs(
+ pub(crate) fn fuzzy_match_and_score_dirs<'a>(
+     dirs: &'a [DirItem],
+     context: &ScoringContext,
+-    arena: ArenaPtr,
++    base_count: usize,
++    base_arena: ArenaPtr,
++    overflow_arena: ArenaPtr,
+ ) -> (Vec<&'a DirItem>, Vec<Score>, usize) {
++    let results = if dirs.len() > base_count {
++        let mut results =
++            match_and_score_dirs_in_arena(&dirs[base_count..], context, overflow_arena);
++        results.extend(match_and_score_dirs_in_arena(
++            &dirs[..base_count],
++            context,
++            base_arena,
++        ));
++        results
++    } else {
++        match_and_score_dirs_in_arena(dirs, context, base_arena)
++    };
++    sort_and_paginate_dirs(results, context)
++}
++
++fn match_and_score_dirs_in_arena<'a>(
++    dirs: &'a [DirItem],
++    context: &ScoringContext,
++    arena: ArenaPtr,
++) -> Vec<(&'a DirItem, Score)> {
+     if dirs.is_empty() {
+-        return (vec![], vec![], 0);
++        return vec![];
+     }
+ 
+     let parsed_query = context.query;
+@@ -278,7 +303,7 @@ pub(crate) fn fuzzy_match_and_score_dirs<'a>(
+     } else {
+         match apply_constraints(dirs, &parsed_query.constraints, arena) {
+             Some(filtered) if !filtered.is_empty() => filtered,
+-            Some(_) => return (vec![], vec![], 0),
++            Some(_) => return vec![],
+             None => dirs.iter().collect(),
+         }
+     };
+@@ -287,7 +312,7 @@ pub(crate) fn fuzzy_match_and_score_dirs<'a>(
+         FuzzyQuery::Text(t) if t.len() >= 2 => std::slice::from_ref(t),
+         FuzzyQuery::Parts(parts) if !parts.is_empty() => parts.as_slice(),
+         _ => {
+-            return score_dirs_by_frecency(&working_dirs, context);
++            return score_dirs_by_frecency(&working_dirs);
+         }
+     };
+ 
+@@ -312,7 +337,7 @@ pub(crate) fn fuzzy_match_and_score_dirs<'a>(
+         .collect();
+ 
+     if valid_parts.is_empty() {
+-        return score_dirs_by_frecency(&working_dirs, context);
++        return score_dirs_by_frecency(&working_dirs);
+     }
+ 
+     let has_uppercase = valid_parts
+@@ -409,16 +434,14 @@ pub(crate) fn fuzzy_match_and_score_dirs<'a>(
+         })
+         .collect();
+ 
+-    sort_and_paginate_dirs(results, context)
++    results
+ }
+ 
+-fn score_dirs_by_frecency<'a>(
+-    dirs: &[&'a DirItem],
+-    context: &ScoringContext,
+-) -> (Vec<&'a DirItem>, Vec<Score>, usize) {
+-    let results: Vec<(&DirItem, Score)> = dirs
+-        .iter()
+-        .map(|&dir| {
++fn score_dirs_by_frecency<'a>(dirs: &[&'a DirItem]) -> Vec<(&'a DirItem, Score)> {
++    dirs.iter()
++        .copied()
++        .filter(|dir| !dir.is_deleted())
++        .map(|dir| {
+             let score = Score {
+                 total: dir.max_access_frecency(),
+                 frecency_boost: dir.max_access_frecency(),
+@@ -428,9 +451,7 @@ fn score_dirs_by_frecency<'a>(
+ 
+             (dir, score)
+         })
+-        .collect();
+-
+-    sort_and_paginate_dirs(results, context)
++        .collect()
+ }
+ 
+ /// Sort dir results by total score (descending) and apply pagination.
+diff --git a/crates/fff-core/src/types.rs b/crates/fff-core/src/types.rs
+index 79adfc2..50fd0db 100644
+--- a/crates/fff-core/src/types.rs
++++ b/crates/fff-core/src/types.rs
+@@ -81,6 +81,7 @@ pub struct DirFlags;
+ 
+ impl DirFlags {
+     pub const OVERFLOW: u8 = 1 << 0;
++    pub const DELETED: u8 = 1 << 1;
+ }
+ 
+ /// A directory in the file index. Shares chunk arena with file paths.
+@@ -110,7 +111,12 @@ impl Clone for DirItem {
+ impl DirItem {
+     #[inline(always)]
+     pub fn is_overflow(&self) -> bool {
+-        self.flags & DirFlags::OVERFLOW == 0
++        self.flags & DirFlags::OVERFLOW != 0
++    }
++
++    #[inline(always)]
++    pub fn is_deleted(&self) -> bool {
++        self.flags & DirFlags::DELETED != 0
+     }
+ 
+     pub(crate) fn new(path: crate::simd_path::ChunkedString, last_segment_offset: u16) -> Self {
+@@ -122,6 +128,26 @@ impl DirItem {
+         }
+     }
+ 
++    pub(crate) fn new_overflow(
++        path: crate::simd_path::ChunkedString,
++        last_segment_offset: u16,
++    ) -> Self {
++        Self {
++            path,
++            flags: DirFlags::OVERFLOW,
++            last_segment_offset,
++            max_access_frecency: AtomicI32::new(0),
++        }
++    }
++
++    pub(crate) fn set_deleted(&mut self, deleted: bool) {
++        if deleted {
++            self.flags |= DirFlags::DELETED;
++        } else {
++            self.flags &= !DirFlags::DELETED;
++        }
++    }
++
+     /// Byte offset of the last path segment within the directory path.
+     #[inline]
+     pub fn last_segment_offset(&self) -> u16 {

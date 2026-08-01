@@ -9,6 +9,7 @@ final class SearchCoordinator {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
+            selectionWasUserDriven = false
             if query.isEmpty != oldValue.isEmpty {
                 let height = panelHeight
                 DispatchQueue.main.async { [weak self] in
@@ -17,6 +18,10 @@ final class SearchCoordinator {
                 }
             }
             guard !isResetting else { return }
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                refreshApplicationsIfNeeded()
+                refreshSettingsIfNeeded()
+            }
             scheduleSearch()
         }
     }
@@ -31,6 +36,8 @@ final class SearchCoordinator {
     var onDismiss: (() -> Void)?
     @ObservationIgnored
     var onPanelHeightChange: ((CGFloat) -> Void)?
+    @ObservationIgnored
+    var onShowSettings: (() -> Void)?
 
     var panelHeight: CGFloat {
         FloodlightMetrics.panelHeight(hasQuery: !query.isEmpty)
@@ -61,9 +68,15 @@ final class SearchCoordinator {
     @ObservationIgnored
     private var startupTask: Task<Void, Never>?
     @ObservationIgnored
+    private var applicationRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var settingsRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
     private var generation = 0
     @ObservationIgnored
     private var isResetting = false
+    @ObservationIgnored
+    private var selectionWasUserDriven = false
 
     init() {
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
@@ -83,6 +96,8 @@ final class SearchCoordinator {
     deinit {
         searchTask?.cancel()
         startupTask?.cancel()
+        applicationRefreshTask?.cancel()
+        settingsRefreshTask?.cancel()
     }
 
     func start() {
@@ -118,8 +133,44 @@ final class SearchCoordinator {
 
     func prepareForPresentation() {
         focusGeneration += 1
+        refreshApplicationsIfNeeded()
+        refreshSettingsIfNeeded()
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             scheduleSearch(immediate: true)
+        }
+    }
+
+    private func refreshApplicationsIfNeeded() {
+        guard !isApplicationCatalogLoading, applicationRefreshTask == nil else { return }
+        applicationRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { applicationRefreshTask = nil }
+
+            do {
+                let changed = try await applicationCatalog.refreshIfNeeded()
+                guard changed else { return }
+                if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    scheduleSearch(immediate: true)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                NSLog("Floodlight application-catalog refresh failed: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    private func refreshSettingsIfNeeded() {
+        guard !isSettingsCatalogLoading, settingsRefreshTask == nil else { return }
+        settingsRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { settingsRefreshTask = nil }
+
+            let changed = await SystemCatalog.refreshIfNeeded()
+            guard changed else { return }
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scheduleSearch(immediate: true)
+            }
         }
     }
 
@@ -137,6 +188,7 @@ final class SearchCoordinator {
         applicationMatchCount = 0
         settingsMatchCount = 0
         selectedID = nil
+        selectionWasUserDriven = false
         isSearching = false
         quickLook.close()
     }
@@ -146,14 +198,21 @@ final class SearchCoordinator {
         let currentIndex = selectedID.flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
         let nextIndex = min(max(currentIndex + delta, 0), results.count - 1)
         selectedID = results[nextIndex].id
+        selectionWasUserDriven = true
     }
 
     func activate(_ item: SearchItem) {
-        selectedID = item.id
+        select(item)
         performAction(for: item)
     }
 
+    func select(_ item: SearchItem) {
+        selectedID = item.id
+        selectionWasUserDriven = true
+    }
+
     func selectFilter(_ filter: SearchResultFilter) {
+        selectionWasUserDriven = true
         guard filter != selectedFilter else {
             focusGeneration += 1
             return
@@ -183,6 +242,8 @@ final class SearchCoordinator {
             } else if item.kind == .application {
                 applicationCatalog.track(query: selectedQuery, selectedURL: url)
             }
+        case .showFloodlightSettings:
+            onShowSettings?()
         }
         recentStore.record(item.id)
     }
@@ -203,6 +264,8 @@ final class SearchCoordinator {
             value = text
         case .open(let url):
             value = url.isFileURL ? url.path : url.absoluteString
+        case .showFloodlightSettings:
+            value = item.title
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
@@ -213,19 +276,21 @@ final class SearchCoordinator {
         quickLook.toggle(url)
     }
 
-    func chooseRoot() {
+    @discardableResult
+    func chooseRoot() -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "Choose Floodlight Search Scope"
-        panel.message = "FFF will index this folder and keep it updated."
-        panel.prompt = "Index Folder"
+        panel.title = "Choose a folder to search"
+        panel.message = "Floodlight will search this folder and keep results up to date."
+        panel.prompt = "Choose Folder"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = rootURL
 
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return nil }
         changeRoot(to: selectedURL)
+        return selectedURL
     }
 
     func rebuildIndex() {
@@ -238,17 +303,42 @@ final class SearchCoordinator {
         }
     }
 
-    func toggleLaunchAtLogin() {
+    var launchesAtLogin: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    /// Registers the login item on the very first launch only.
+    ///
+    /// A launcher is only useful once it is already running, so Floodlight opts
+    /// in for you. The `launch-at-login-configured` flag makes this a one-time
+    /// decision: if you later turn it off — here or in System Settings — the
+    /// next launch leaves it off instead of switching it back on.
+    func enableLaunchAtLoginOnFirstRun() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.launchAtLoginConfiguredKey) else { return }
+        defaults.set(true, forKey: Self.launchAtLoginConfiguredKey)
+
+        guard SMAppService.mainApp.status != .enabled else { return }
         do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
+            try SMAppService.mainApp.register()
         } catch {
-            NSLog("Floodlight launch-at-login update failed: %@", error.localizedDescription)
+            NSLog(
+                "Floodlight could not enable launch at login: %@",
+                error.localizedDescription
+            )
         }
     }
+
+    func setLaunchAtLogin(_ enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+        UserDefaults.standard.set(true, forKey: Self.launchAtLoginConfiguredKey)
+    }
+
+    private static let launchAtLoginConfiguredKey = "launch-at-login-configured"
 
     private var selectedItem: SearchItem? {
         guard let selectedID else { return results.first }
@@ -357,22 +447,7 @@ final class SearchCoordinator {
                 let apps = try await applications
                 guard !Task.isCancelled, requestGeneration == generation else { return }
 
-                let mapped = fffItems.map { item in
-                    let kind: SearchItemKind = item.isDirectory ? .folder : .file
-                    return SearchItem(
-                        id: "\(kind.rawValue):\(item.url.path)",
-                        title: item.name,
-                        subtitle: item.relativePath,
-                        kind: kind,
-                        action: .open(item.url),
-                        score: item.score,
-                        fileURL: item.url,
-                        modifiedAt: item.modified > 0
-                            ? Date(timeIntervalSince1970: TimeInterval(item.modified))
-                            : nil,
-                        fileSize: item.isDirectory ? nil : item.size
-                    )
-                }
+                let mapped = fffItems.map { $0.makeSearchItem() }
 
                 publishResults(
                     buildResults(
@@ -380,7 +455,8 @@ final class SearchCoordinator {
                         indexed: mapped,
                         apps: immediateApps + apps,
                         system: settingsPage.items
-                    )
+                    ),
+                    promoteWebFallback: true
                 )
                 FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
                 indexedSearchEnded = true
@@ -417,7 +493,8 @@ final class SearchCoordinator {
                         indexed: mapped + content,
                         apps: immediateApps + apps,
                         system: settingsPage.items
-                    )
+                    ),
+                    promoteWebFallback: true
                 )
             } catch is CancellationError {
                 return
@@ -474,6 +551,7 @@ final class SearchCoordinator {
             )
         }
 
+        output.append(contentsOf: FloodlightCommandCatalog.search(query))
         output.append(contentsOf: apps)
         output.append(contentsOf: system)
         output.append(contentsOf: indexed)
@@ -493,7 +571,7 @@ final class SearchCoordinator {
            let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
             output.append(
                 SearchItem(
-                    id: "web-search",
+                    id: Self.webSearchResultID,
                     title: "Search the Web for “\(query)”",
                     subtitle: "Open in your default browser",
                     kind: .web,
@@ -508,22 +586,51 @@ final class SearchCoordinator {
 
     private func publishResults(
         _ newResults: [SearchItem],
-        resetSelection: Bool = false
+        resetSelection: Bool = false,
+        promoteWebFallback: Bool = false
     ) {
         allResults = newResults
         filterCounts = SearchFilterCounts(items: newResults)
-        applySelectedFilter(resetSelection: resetSelection)
+        applySelectedFilter(
+            resetSelection: resetSelection,
+            promoteWebFallback: promoteWebFallback
+        )
     }
 
-    private func applySelectedFilter(resetSelection: Bool) {
+    private func applySelectedFilter(
+        resetSelection: Bool,
+        promoteWebFallback: Bool = false
+    ) {
         let previousSelection = selectedID
         results = allResults.filter(selectedFilter.includes)
+        selectedID = Self.reconciledSelectionID(
+            previousSelection: previousSelection,
+            results: results,
+            resetSelection: resetSelection,
+            promoteWebFallback: promoteWebFallback && !selectionWasUserDriven
+        )
+    }
 
-        if resetSelection
-            || previousSelection == nil
-            || !results.contains(where: { $0.id == previousSelection }) {
-            selectedID = results.first?.id
+    static func reconciledSelectionID(
+        previousSelection: SearchItem.ID?,
+        results: [SearchItem],
+        resetSelection: Bool,
+        promoteWebFallback: Bool
+    ) -> SearchItem.ID? {
+        guard let first = results.first else { return nil }
+        if resetSelection {
+            return first.id
         }
+        if promoteWebFallback,
+           previousSelection == webSearchResultID,
+           first.id != webSearchResultID {
+            return first.id
+        }
+        if let previousSelection,
+           results.contains(where: { $0.id == previousSelection }) {
+            return previousSelection
+        }
+        return first.id
     }
 
     private func reconcileSelectedFilter() {
@@ -566,4 +673,6 @@ final class SearchCoordinator {
             isLoading: isLoading
         )
     }
+
+    private static let webSearchResultID = "web-search"
 }

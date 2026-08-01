@@ -1,0 +1,83 @@
+---
+title: Quickstart
+description: Install Floodlight, give it access, and run your first search.
+---
+
+import { Steps } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
+import DownloadButton from "../../../components/DownloadButton.astro";
+import setupScreenshot from "../../../assets/screenshots/setup.png";
+import settingsScreenshot from "../../../assets/screenshots/settings.png";
+
+Install Floodlight, complete the setup window, and run your first search.
+
+<Steps>
+
+1. **Download**
+
+   <DownloadButton label="Download" />
+
+   Or [build from source](../../development/building/).
+
+2. **Move it to Applications**
+
+   Open `Floodlight.dmg`, then drag **Floodlight** onto the **Applications**
+   shortcut.
+
+3. **Complete setup**
+
+   The setup window opens on first launch. From here you can:
+
+   - choose <kbd>⌘ Space</kbd> or <kbd>⌥ Space</kbd>;
+   - open automatically when you sign in;
+   - choose the folder included in search; and
+   - grant Full Disk Access for protected files.
+
+   If Spotlight owns <kbd>⌘ Space</kbd>, select **Replace Spotlight…**. macOS
+   opens its shortcut controls; turn off **Show Spotlight search**, then return
+   to setup. Floodlight retries <kbd>⌘ Space</kbd> automatically.
+
+   Full Disk Access is optional. Select **Grant access**, enable Floodlight in
+   System Settings, return to setup, and select **Done**.
+
+   <figure class="fl-doc-shot">
+     <Image
+       src={setupScreenshot}
+       alt="Floodlight setup window with controls for the keyboard shortcut, launch at login, search folder, and Full Disk Access."
+     />
+     <figcaption>Everything needed for initial setup is available in one window.</figcaption>
+   </figure>
+
+4. **Search**
+
+   <kbd>⌘ Space</kbd> is used when available, with <kbd>⌥ Space</kbd> as the
+   fallback while Spotlight still owns it. Press the active shortcut,
+   type an app, file, folder, or setting, then press
+   <kbd>Return</kbd>. Use <kbd>↑</kbd> and <kbd>↓</kbd> to move through results,
+   single-click a result to select it, or double-click it to open it.
+
+   Follow [Replace Spotlight](../replace-spotlight/) if you want to free
+   <kbd>⌘ Space</kbd>. You can open **Settings…** at any time from the menu-bar
+   flashlight.
+
+</Steps>
+
+## Change settings later
+
+Click the flashlight in the macOS menu bar and choose **Settings…**. The same
+window lets you change the shortcut, launch-at-login behavior, and search
+folder. You can also open Full Disk Access settings to grant or revoke access.
+
+<figure class="fl-doc-shot">
+  <Image
+    src={settingsScreenshot}
+    alt="Floodlight settings window with Option-Space selected, a Replace Spotlight action, and Full Disk Access granted."
+  />
+  <figcaption>Settings remain available from the menu-bar flashlight after setup.</figcaption>
+</figure>
+
+## Next
+
+- Learn [what appears in search](../../guides/search/).
+- Memorize the small set of [keyboard shortcuts](../../guides/keyboard-shortcuts/).
+- Fix missing files with [Troubleshooting](../../reference/troubleshooting/).

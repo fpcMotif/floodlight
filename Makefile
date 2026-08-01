@@ -1,6 +1,6 @@
 FFF_DIR ?= ../fff
 
-.PHONY: build build-fff bundle clean debug install run test
+.PHONY: build build-fff bundle clean debug dmg docs icons install run test
 
 build-fff:
 	FFF_DIR="$(FFF_DIR)" ./scripts/build-fff.sh
@@ -19,6 +19,15 @@ test: build-fff
 
 bundle: build
 	./scripts/bundle.sh
+
+icons:
+	./scripts/build-app-icon.sh
+
+dmg: bundle
+	./scripts/create-dmg.sh
+
+docs:
+	npm --prefix docs run build
 
 install: bundle
 	./scripts/install.sh

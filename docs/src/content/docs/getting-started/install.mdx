@@ -1,0 +1,67 @@
+---
+title: Install & permissions
+description: Install Floodlight and configure macOS file access.
+---
+
+import { Steps } from "@astrojs/starlight/components";
+import DownloadButton from "../../../components/DownloadButton.astro";
+
+<div class="fl-download-row">
+  <DownloadButton label="Download Floodlight.dmg" />
+  <span class="fl-system-note">Newest published GitHub release</span>
+</div>
+
+The button resolves to the newest tagged release. Before the first release is
+published, [build Floodlight from source](../../development/building/) instead.
+
+## System requirements
+
+- Apple-silicon Mac
+- macOS 14 Sonoma or later
+- 10 MB of free disk space
+
+## Install
+
+<Steps>
+
+1. Open `Floodlight.dmg`.
+2. Drag **Floodlight** to **Applications**.
+3. Eject the Floodlight disk image.
+4. Open Floodlight from Applications.
+
+</Steps>
+
+## Folder access
+
+Floodlight indexes your home folder by default. You can change that scope from
+the first-launch window or later through **Settings…** in the menu-bar menu.
+Without Full Disk Access, macOS can still prevent Floodlight from reading
+protected locations inside that scope.
+
+### Full Disk Access
+
+Full Disk Access is optional. Grant it if you want protected locations in your
+home folder to appear in search. Click **Grant access** in Floodlight settings,
+then:
+
+1. If Floodlight is already listed, enable it. Otherwise, click **+**, choose
+   `/Applications/Floodlight.app`, and select **Open**.
+2. Return to Floodlight. During initial setup, select **Done** to start the
+   index. If you grant access later, press <kbd>⇧ ⌘ R</kbd> to rebuild it.
+
+If protected files still do not appear, quit and reopen Floodlight once, then
+rebuild the index.
+
+To remove the permission later, open Floodlight **Settings…**, click
+**Revoke…**, then switch Floodlight off in the Full Disk Access pane.
+
+## Launch at login
+
+Use the **Launch at Login** switch during setup. You can change it later from
+the menu-bar flashlight or under **System Settings → General → Login Items &
+Extensions**.
+
+## Update
+
+Download the newest DMG, quit Floodlight, and replace the existing copy in
+Applications.

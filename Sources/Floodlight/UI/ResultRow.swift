@@ -90,7 +90,11 @@ private struct ResultIcon: View {
 
     var body: some View {
         Group {
-            if let fileIcon {
+            if item.iconSource == .floodlightApplication {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
+            } else if let fileIcon {
                 Image(nsImage: fileIcon)
                     .resizable()
                     .scaledToFit()

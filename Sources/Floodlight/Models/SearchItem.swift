@@ -173,6 +173,12 @@ struct SearchItemPage: Sendable {
 enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
+    case showFloodlightSettings
+}
+
+enum SearchItemIconSource: Hashable, Sendable {
+    case inferred
+    case floodlightApplication
 }
 
 struct SearchItem: Identifiable, Hashable, Sendable {
@@ -181,6 +187,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
     let subtitle: String
     let kind: SearchItemKind
     let action: SearchItemAction
+    let iconSource: SearchItemIconSource
     let score: Int
     let fileURL: URL?
     let modifiedAt: Date?
@@ -193,6 +200,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
         subtitle: String,
         kind: SearchItemKind,
         action: SearchItemAction,
+        iconSource: SearchItemIconSource = .inferred,
         score: Int,
         fileURL: URL? = nil,
         modifiedAt: Date? = nil,
@@ -203,6 +211,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
         self.subtitle = subtitle
         self.kind = kind
         self.action = action
+        self.iconSource = iconSource
         self.score = score
         self.fileURL = fileURL
         self.modifiedAt = modifiedAt
@@ -229,6 +238,36 @@ struct IndexedSearchItem: Sendable {
     let score: Int
     let modified: UInt64
     let size: UInt64
+
+    var isApplicationBundle: Bool {
+        isDirectory && url.pathExtension.caseInsensitiveCompare("app") == .orderedSame
+    }
+
+    func makeSearchItem() -> SearchItem {
+        let kind: SearchItemKind
+        let title: String
+        if isApplicationBundle {
+            kind = .application
+            title = url.deletingPathExtension().lastPathComponent
+        } else {
+            kind = isDirectory ? .folder : .file
+            title = name
+        }
+
+        return SearchItem(
+            id: "\(kind.rawValue):\(url.path)",
+            title: title,
+            subtitle: relativePath,
+            kind: kind,
+            action: .open(url),
+            score: score,
+            fileURL: url,
+            modifiedAt: modified > 0
+                ? Date(timeIntervalSince1970: TimeInterval(modified))
+                : nil,
+            fileSize: isDirectory ? nil : size
+        )
+    }
 }
 
 struct IndexedContentItem: Sendable {
@@ -242,4 +281,5 @@ struct IndexedContentItem: Sendable {
 struct IndexProgress: Equatable, Sendable {
     let scannedFiles: UInt64
     let isScanning: Bool
+    let isWatcherReady: Bool
 }

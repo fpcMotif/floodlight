@@ -1,0 +1,44 @@
+---
+title: Indexing
+description: See what Floodlight searches, what it excludes, and how results stay current.
+---
+
+## What is indexed
+
+Floodlight indexes your home directory. Choose another folder with
+<kbd>⌘ L</kbd>; the selection persists across launches. Floodlight can search
+only the locations macOS allows it to read.
+
+Applications in standard macOS locations and inside the selected folder appear
+as launchable results. System Settings panes are searchable by name and common
+keywords.
+
+## Live updates
+
+New, renamed, moved, and deleted items appear without restarting Floodlight.
+Newly installed applications and System Settings changes also refresh in the
+background. Use <kbd>⇧ ⌘ R</kbd> when you want to rebuild the file index
+immediately.
+
+## Content search
+
+Floodlight can search supported text content when filename matches are sparse.
+Images and PDFs are searchable by filename, not by their contents.
+
+## Intentional exclusions
+
+Floodlight skips hidden paths and noisy dependency or build directories such as
+`node_modules`, Python virtual environments and caches, and Rust build output.
+It also skips `Library/Caches`, `Library/Application Support`,
+`Library/Containers`, and `Library/Group Containers`. Git ignore rules are
+honored when the selected folder is a repository.
+
+An empty folder does not appear until it contains an indexable file.
+Permission-denied paths, ignored paths, and anything outside the selected scope
+are not indexed. Full Disk Access can broaden readable coverage but does not
+override intentional exclusions.
+
+## Rebuild the index
+
+Press <kbd>⇧ ⌘ R</kbd> to rebuild the file index. Rebuilding never deletes or
+modifies your files.

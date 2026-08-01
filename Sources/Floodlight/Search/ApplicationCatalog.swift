@@ -20,16 +20,23 @@ final class ApplicationCatalog: @unchecked Sendable {
     private var applicationsByMarker: [String: Application] = [:]
     private var markerByApplicationPath: [String: String] = [:]
     private var isPrepared = false
+    private var lastDiscoveryTime: TimeInterval = 0
+    private var applicationDirectoryFingerprint: [String: Date] = [:]
     private let markerRoot: URL
     private let index: FFFIndex
     private let recentStore: RecentStore
+    private let discoveryProvider: @Sendable () -> [(name: String, url: URL)]
 
     init(
         recentStore: RecentStore,
         supportURL: URL? = nil,
-        deferDiscovery: Bool = false
+        deferDiscovery: Bool = false,
+        discoveryProvider: @escaping @Sendable () -> [(name: String, url: URL)] = {
+            ApplicationCatalog.discoverApplications()
+        }
     ) {
         self.recentStore = recentStore
+        self.discoveryProvider = discoveryProvider
 
         let fileManager = FileManager.default
         let defaultSupport = (try? fileManager.url(
@@ -53,6 +60,47 @@ final class ApplicationCatalog: @unchecked Sendable {
         if !deferDiscovery {
             prepare(fileManager: fileManager)
         }
+    }
+
+    /// Refreshes the standard application catalog without blocking the caller.
+    ///
+    /// Discovery runs on the catalog's serial background queue. The common case
+    /// (nothing was installed or removed) only checks application-directory
+    /// modification dates; a full walk, marker synchronization, and the
+    /// secondary FFF rescan happen only after a directory changes.
+    func refreshIfNeeded(
+        minimumInterval: TimeInterval = 2,
+        forceDiscovery: Bool = false
+    ) async throws -> Bool {
+        guard reserveRefresh(minimumInterval: minimumInterval) else { return false }
+
+        let signpost = FloodlightPerformance.begin("ApplicationRefresh")
+        let changed: Bool = await withCheckedContinuation { continuation in
+            discoveryQueue.async { [self] in
+                guard forceDiscovery || applicationDirectoriesChanged(fileManager: .default) else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                continuation.resume(returning: prepare(fileManager: .default))
+            }
+        }
+        FloodlightPerformance.end("ApplicationRefresh", id: signpost)
+
+        guard changed else { return false }
+        try await index.start()
+        try await index.rescan()
+        return true
+    }
+
+    private func reserveRefresh(minimumInterval: TimeInterval) -> Bool {
+        let now = Date.timeIntervalSinceReferenceDate
+        lock.lock()
+        defer { lock.unlock() }
+        guard now - lastDiscoveryTime >= minimumInterval else { return false }
+        // Reserve this refresh window so repeated keystrokes cannot enqueue
+        // duplicate filesystem walks while discovery is in flight.
+        lastDiscoveryTime = now
+        return true
     }
 
     func start() async throws {
@@ -161,9 +209,26 @@ final class ApplicationCatalog: @unchecked Sendable {
         return isPrepared
     }
 
-    private func prepare(fileManager: FileManager) {
-        let discovered = Self.discoverApplications()
+    @discardableResult
+    private func prepare(fileManager: FileManager) -> Bool {
+        let discovered = discoveryProvider()
         let marked = Self.assignMarkerNames(to: discovered)
+        applicationDirectoryFingerprint = Self.makeApplicationDirectoryFingerprint(
+            applications: marked,
+            fileManager: fileManager
+        )
+
+        lock.lock()
+        let changed = !isPrepared || Self.signature(of: applications) != Self.signature(of: marked)
+        lock.unlock()
+
+        guard changed else {
+            lock.lock()
+            lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
+            lock.unlock()
+            return false
+        }
+
         Self.synchronizeMarkers(
             applications: marked,
             markerRoot: markerRoot,
@@ -179,7 +244,51 @@ final class ApplicationCatalog: @unchecked Sendable {
             uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
         )
         isPrepared = true
+        lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
         lock.unlock()
+        return true
+    }
+
+    private static func signature(of applications: [Application]) -> [String] {
+        applications.map { "\($0.id)\u{0}\($0.name)\u{0}\($0.markerName)" }
+    }
+
+    private func applicationDirectoriesChanged(fileManager: FileManager) -> Bool {
+        guard !applicationDirectoryFingerprint.isEmpty else { return true }
+        return applicationDirectoryFingerprint.contains { path, previousDate in
+            Self.modificationDate(ofDirectoryAtPath: path, fileManager: fileManager)
+                != previousDate
+        }
+    }
+
+    private static func makeApplicationDirectoryFingerprint(
+        applications: [Application],
+        fileManager: FileManager
+    ) -> [String: Date] {
+        var paths = Set(applicationRoots(fileManager: fileManager).map(\.standardizedFileURL.path))
+        paths.formUnion(
+            standaloneApplications.map {
+                $0.deletingLastPathComponent().standardizedFileURL.path
+            }
+        )
+        paths.formUnion(
+            applications.map {
+                $0.url.deletingLastPathComponent().standardizedFileURL.path
+            }
+        )
+        return Dictionary(
+            uniqueKeysWithValues: paths.map { path in
+                (path, modificationDate(ofDirectoryAtPath: path, fileManager: fileManager))
+            }
+        )
+    }
+
+    private static func modificationDate(
+        ofDirectoryAtPath path: String,
+        fileManager: FileManager
+    ) -> Date {
+        let attributes = try? fileManager.attributesOfItem(atPath: path)
+        return attributes?[.modificationDate] as? Date ?? .distantPast
     }
 
     private func snapshotApplications() -> [Application] {
@@ -202,17 +311,20 @@ final class ApplicationCatalog: @unchecked Sendable {
 
     private static func discoverApplications() -> [(name: String, url: URL)] {
         let fileManager = FileManager.default
-        let roots = [
-            URL(fileURLWithPath: "/Applications", isDirectory: true),
-            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
-            fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
-        ]
+        let roots = applicationRoots(fileManager: fileManager)
 
         var seen = Set<String>()
         var applications: [(name: String, url: URL)] = []
         let keys: [URLResourceKey] = [.isApplicationKey, .isPackageKey, .nameKey]
 
-        for root in roots where fileManager.fileExists(atPath: root.path) {
+        for url in standaloneApplications where isApplication(url) {
+            appendApplication(url, fileManager: fileManager, seen: &seen, to: &applications)
+        }
+
+        var seenRoots = Set<String>()
+        for root in roots
+            where seenRoots.insert(root.standardizedFileURL.path).inserted
+                && fileManager.fileExists(atPath: root.path) {
             // Finder-hidden Cryptex links such as Safari still belong in the catalog.
             let directChildren = (try? fileManager.contentsOfDirectory(
                 at: root,
@@ -243,6 +355,35 @@ final class ApplicationCatalog: @unchecked Sendable {
         }
     }
 
+    private static func applicationRoots(fileManager: FileManager) -> [URL] {
+        // Keep the familiar paths first so duplicate Cryptex-backed apps retain
+        // stable URLs, result IDs, subtitles, and learned recency.
+        var roots = [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications", isDirectory: true),
+        ]
+        roots.append(contentsOf: fileManager.urls(for: .applicationDirectory, in: .allDomainsMask))
+        roots.append(
+            URL(
+                fileURLWithPath: "/System/Library/CoreServices/Applications",
+                isDirectory: true
+            )
+        )
+        roots.append(
+            URL(
+                fileURLWithPath: "/System/Library/CoreServices/Finder.app/Contents/Applications",
+                isDirectory: true
+            )
+        )
+        return roots
+    }
+
+    private static let standaloneApplications = [
+        URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app", isDirectory: true),
+    ]
+
     private static func isApplication(_ url: URL) -> Bool {
         if url.pathExtension.lowercased() == "app" {
             return true
@@ -258,7 +399,8 @@ final class ApplicationCatalog: @unchecked Sendable {
         to applications: inout [(name: String, url: URL)]
     ) {
         let standardized = url.standardizedFileURL
-        guard seen.insert(standardized.path).inserted else { return }
+        let canonicalPath = standardized.resolvingSymlinksInPath().path
+        guard seen.insert(canonicalPath).inserted else { return }
         let displayName = fileManager.displayName(atPath: standardized.path)
             .replacingOccurrences(of: ".app", with: "")
         applications.append((displayName, standardized))

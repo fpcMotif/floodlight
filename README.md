@@ -15,11 +15,14 @@ mouse.
 - Global `⌘Space` invocation, with automatic `⌥Space` fallback while Apple's
   Spotlight still owns the shortcut
 - FFF fuzzy search across files and folders
+- Relative, absolute, and `~/` path queries with directory-only trailing-slash
+  search
 - Time-budgeted FFF content search when filename matches are sparse
-- Live index updates
+- Live file and folder index updates
 - Persistent FFF frecency and query history
 - FFF-ranked application search via a package-marker index
 - Native System Settings search
+- Searchable Floodlight settings for shortcuts, permissions, and scope
 - Arithmetic with precedence, parentheses, powers, and percentages
 - Web-search fallback in the default browser
 - Open, Finder reveal, Quick Look, copy, and drag actions
@@ -71,32 +74,39 @@ Run the test suite:
 make test
 ```
 
+Build the Astro documentation site:
+
+```sh
+npm --prefix docs install
+make docs
+```
+
+Create a local development DMG:
+
+```sh
+make dmg
+```
+
+Local bundles and DMGs use ad-hoc signing. Tagged GitHub releases use the
+Developer ID signing and notarization workflow described in
+[`docs/src/content/docs/development/releases.mdx`](docs/src/content/docs/development/releases.mdx).
+
+The Finder/DMG icon is generated from
+`Sources/Floodlight/Resources/AppIcon.png` with `make icons`. The menu bar uses
+the separate monochrome `FloodlightMenuBar.svg` vector as a template image so
+macOS supplies the correct foreground color for every appearance and state.
+
 ## Make `⌘Space` belong to Floodlight
 
-macOS does not allow two applications to register the same global shortcut.
-Floodlight tries `⌘Space` first and falls back to `⌥Space` if Spotlight owns it.
-To use the Spotlight shortcut:
-
-1. Open System Settings.
-2. Open Keyboard → Keyboard Shortcuts → Spotlight.
-3. Disable “Show Spotlight search.”
-4. Restart Floodlight.
-
-The menu-bar flashlight remains available if neither keyboard shortcut can be
-registered.
+Floodlight tries `⌘Space` first and falls back to `⌥Space` when another macOS
+feature owns the shortcut. Follow the
+[Replace Spotlight guide](docs/src/content/docs/getting-started/replace-spotlight.mdx)
+to use `⌘Space` and restore Spotlight later if needed.
 
 ## Keyboard controls
 
-| Shortcut | Action |
-| --- | --- |
-| `↑` / `↓` | Move selection |
-| `Return` | Open result or copy calculator answer |
-| `⌘R` or `⌘Return` | Reveal file, folder, or app in Finder |
-| `⌘Y` | Toggle Quick Look for a file |
-| `⌘C` | Copy the selected path, URL, or answer |
-| `⌘L` | Choose the indexed folder |
-| `⇧⌘R` | Rebuild the FFF index |
-| `Escape` | Hide Floodlight |
+See the complete [keyboard shortcut
+reference](docs/src/content/docs/guides/keyboard-shortcuts.mdx).
 
 ## Architecture
 
@@ -110,35 +120,39 @@ SwiftUI search panel
       └─ QuickLookController / NSWorkspace
 ```
 
-All FFF calls run on one high-priority serial queue. Search input is debounced
-for 35 ms and stale generations are discarded, keeping typing and selection on
-the main actor responsive while the Rust engine searches in parallel.
+Each FFF instance serializes its own calls on a high-priority queue. Application
+and System Settings matches are published immediately; the asynchronous file
+and application-marker searches then run concurrently. File search waits 35 ms
+when there is no immediate app match, or 180 ms when an app is already visible,
+and stale generations are discarded.
 
 macOS applications are directory packages, while FFF indexes regular files and
-derives directories from their immediate parents. Floodlight discovers real
-`.app` packages without descending into them, writes one empty marker per app
-under its private Application Support directory, and gives that marker tree to
-a dedicated FFF instance. The marker result maps back to the real bundle URL,
-so app fuzzy scoring, frecency, and query history use FFF without indexing every
-file inside every application.
+derives directories from indexed file paths. Floodlight discovers apps in
+standard system, user, and CoreServices locations without descending into their
+packages. It writes one empty marker per app under its private Application
+Support directory and gives that marker tree to a dedicated FFF instance. The
+marker result maps back to the real bundle URL, so app fuzzy scoring, frecency,
+and query history use FFF without indexing every package file. `.app` bundles
+elsewhere inside the selected scope are also recognized by the main FFF index.
 
 ## Search scope and privacy
 
 Floodlight indexes the current user's home directory by default. Change the
-scope with `⌘L` or the menu-bar menu. The index, frecency database, and query
-history stay on the Mac under `~/Library/Application Support/Floodlight`.
+scope with `⌘L`, or from the menu-bar flashlight. The main file
+index is rebuilt in memory at launch. Persistent FFF history, frecency data, and
+private app markers stay on the Mac under
+`~/Library/Application Support/Floodlight`.
 
 macOS privacy rules still apply. To search protected locations, grant Floodlight
 Full Disk Access in System Settings → Privacy & Security.
 
 ## Current compatibility boundary
 
-Floodlight implements the core local-search workflow users rely on in Spotlight:
-global access, apps, files, folders, settings, calculator answers, previews, and
-web handoff. Apple's private Spotlight sources—such as Mail, Messages, Photos,
-Contacts, Siri suggestions, and proprietary metadata importers—are not exposed
-to third-party apps. Those sources require separate public-framework
-integrations and user permissions rather than FFF filesystem indexing.
+Floodlight currently covers local apps, files, folders, settings, calculations,
+previews, and web handoff. See [sources not yet
+integrated](docs/src/content/docs/guides/search.mdx#sources-not-yet-integrated)
+for the current Contacts, Photos, Mail, Messages, and Spotlight metadata
+boundaries.
 
 ## License
 

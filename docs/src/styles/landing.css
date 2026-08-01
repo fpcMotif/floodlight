@@ -1,0 +1,890 @@
+@import "./components.css";
+
+/* Floodlight landing page — one hero and a footer, nothing else.
+
+   The hero publishes --sec-* variables so every child reads its foreground,
+   hairline, and link color from the section rather than from a theme selector.
+   That keeps specificity flat: there is no `.sec--dark .card` rule anywhere in
+   this file. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--fl-black);
+  color: var(--fl-light);
+  font-family: var(--fl-font);
+  font-size: var(--fl-t-body);
+  line-height: 1.47;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:where(h1, h2, h3, p, ul, ol) {
+  margin: 0;
+}
+
+:where(img, svg) {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background: var(--fl-amber);
+  color: var(--fl-amber-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--fl-amber);
+  outline-offset: 3px;
+  border-radius: 0.35rem;
+}
+
+.fl-skip {
+  position: fixed;
+  z-index: 100;
+  top: 0.5rem;
+  left: 50%;
+  padding: 0.7rem 1.1rem;
+  border-radius: var(--fl-r-pill);
+  background: var(--fl-amber);
+  color: var(--fl-amber-ink);
+  font-size: var(--fl-t-small);
+  font-weight: 600;
+  text-decoration: none;
+  translate: -50% -250%;
+}
+
+.fl-skip:focus-visible {
+  translate: -50% 0;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--fl-container);
+  margin-inline: auto;
+  padding-inline: var(--fl-gutter);
+}
+
+.wrap--wide {
+  max-width: var(--fl-container-wide);
+}
+
+/* Type ------------------------------------------------------------------- */
+
+.h1 {
+  font-size: var(--fl-t-hero);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 34rem;
+  color: var(--sec-mute);
+  font-size: var(--fl-t-lede);
+  font-weight: 400;
+  line-height: 1.38;
+  letter-spacing: -0.012em;
+  text-wrap: pretty;
+}
+
+.fine {
+  color: var(--sec-mute);
+  font-size: var(--fl-t-fine);
+  letter-spacing: 0.004em;
+}
+
+/* Navigation ------------------------------------------------------------- */
+
+.nav {
+  position: sticky;
+  z-index: 50;
+  top: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(0 0 0 / 72%);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nav__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  height: 2.875rem;
+  max-width: var(--fl-container-wide);
+  margin-inline: auto;
+  padding-inline: var(--fl-gutter);
+}
+
+.nav__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--fl-light);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+
+.nav__mark {
+  width: 1.375rem;
+  height: 1.375rem;
+  border-radius: 0.4rem;
+}
+
+.nav__links {
+  display: flex;
+  align-items: center;
+  gap: 1.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nav__links a {
+  color: rgb(245 245 247 / 82%);
+  font-size: var(--fl-t-fine);
+  letter-spacing: 0.005em;
+  text-decoration: none;
+  transition: color 150ms var(--fl-ease);
+}
+
+.nav__links a:hover {
+  color: var(--fl-white);
+}
+
+.nav__icon-link {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  place-items: center;
+}
+
+.nav__icon-link svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.nav__cta {
+  color: var(--fl-amber);
+  font-weight: 600;
+}
+
+@media (max-width: 46rem) {
+  .nav__links {
+    gap: 1rem;
+  }
+
+  .nav__links li:not(.nav__keep):not(.nav__github) {
+    display: none;
+  }
+}
+
+/* Hero ------------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding-block: clamp(1.75rem, 5vh, 4.5rem) 0;
+  background: var(--fl-black);
+  color: var(--fl-light);
+  isolation: isolate;
+  --sec-mute: var(--fl-gray-on-dark);
+  --sec-line: var(--fl-hairline-dark);
+  --sec-fg: var(--fl-light);
+  --sec-link: var(--fl-blue-dark);
+}
+
+@keyframes beam-on {
+  to {
+    opacity: 1;
+  }
+}
+
+.hero__copy {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: clamp(0.7rem, 1.8vh, 1.25rem);
+  text-align: center;
+}
+
+.hero__copy .lede {
+  max-width: 42rem;
+}
+
+.hero__meta {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+}
+
+.credit {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2rem 0.45rem;
+  color: rgb(161 161 166 / 72%);
+  font-size: var(--fl-t-fine);
+  letter-spacing: 0.004em;
+}
+
+.credit a {
+  color: rgb(245 245 247 / 82%);
+  text-decoration-color: rgb(245 245 247 / 30%);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.credit a:hover {
+  color: var(--fl-white);
+  text-decoration-color: currentColor;
+}
+
+.credit__social {
+  display: inline-grid;
+  width: 1.05rem;
+  height: 1.05rem;
+  align-self: center;
+  text-decoration: none;
+  place-items: center;
+}
+
+.credit__social svg {
+  width: 0.72rem;
+  height: 0.72rem;
+}
+
+.hero__copy > * {
+  opacity: 0;
+  translate: 0 0.75rem;
+  animation: rise 900ms var(--fl-ease) forwards;
+}
+
+.hero__copy > :nth-child(1) {
+  animation-delay: 60ms;
+}
+.hero__copy > :nth-child(2) {
+  animation-delay: 150ms;
+}
+.hero__copy > :nth-child(3) {
+  animation-delay: 260ms;
+}
+.hero__copy > :nth-child(4) {
+  animation-delay: 370ms;
+}
+
+@keyframes rise {
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.hero__stage {
+  display: grid;
+  /* Wide enough to clear the flash message, which hangs below the panel. */
+  gap: clamp(2rem, 4.5vh, 3rem);
+  justify-items: center;
+  padding-inline: var(--fl-gutter);
+  padding-block: clamp(1.35rem, 3.5vh, 2.5rem) clamp(2.25rem, 6vh, 4.5rem);
+  opacity: 0;
+  translate: 0 2rem;
+  animation: rise 1100ms var(--fl-ease) 520ms forwards;
+}
+
+/* Centred blocks need their wrapped buttons centred too. */
+.hero__copy .cta-row {
+  justify-content: center;
+}
+
+/* A quiet sheet of glass over the beam, rather than another solid button. */
+.hero__copy .btn--glass {
+  border-color: rgb(255 255 255 / 18%);
+  background: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 13%),
+    rgb(255 255 255 / 5%)
+  );
+  box-shadow:
+    inset 0 1px rgb(255 255 255 / 17%),
+    inset 0 -1px rgb(0 0 0 / 18%),
+    0 0.75rem 2.25rem rgb(0 0 0 / 18%);
+  backdrop-filter: blur(1.25rem) saturate(155%);
+  -webkit-backdrop-filter: blur(1.25rem) saturate(155%);
+}
+
+.hero__copy .btn--glass:hover {
+  border-color: rgb(255 255 255 / 30%);
+  background: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 18%),
+    rgb(255 255 255 / 8%)
+  );
+  box-shadow:
+    inset 0 1px rgb(255 255 255 / 24%),
+    inset 0 -1px rgb(0 0 0 / 16%),
+    0 1rem 2.75rem rgb(0 0 0 / 22%);
+}
+
+/* The beam. Anchored to the panel's top edge and widening upward — the same
+   cone as the app icon, cast by the product onto the words above it. The
+   wrapper owns the page-load fade; the two layers inside respond to typing, so
+   nothing fights over `opacity`. */
+
+.stage {
+  position: relative;
+  width: min(38rem, 100%);
+  min-width: 0;
+}
+
+.stage__light {
+  position: absolute;
+  z-index: -1;
+  bottom: calc(100% - 1.5rem);
+  left: 50%;
+  width: min(46rem, 125vw);
+  height: min(21rem, 36vh);
+  opacity: 0;
+  translate: -50% 0;
+  animation: beam-on 1900ms var(--fl-ease) 260ms forwards;
+  pointer-events: none;
+}
+
+.stage__beam {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgb(255 221 150 / 74%),
+    rgb(255 190 70 / 30%) 26%,
+    rgb(255 176 32 / 10%) 54%,
+    rgb(255 176 32 / 0%) 86%
+  );
+  clip-path: polygon(42% 100%, 4% 0%, 96% 0%, 58% 100%);
+  filter: blur(4rem);
+  opacity: calc(0.62 + var(--beam, 0) * 0.38);
+  transition: opacity 550ms var(--fl-ease);
+}
+
+.stage__flare {
+  position: absolute;
+  bottom: -1.5rem;
+  left: 50%;
+  width: 23rem;
+  height: 9.5rem;
+  background: radial-gradient(
+    ellipse at 50% 100%,
+    rgb(255 226 168 / 72%),
+    transparent 70%
+  );
+  filter: blur(1.75rem);
+  opacity: calc(0.45 + var(--beam, 0) * 0.55);
+  translate: -50% 0;
+  transition: opacity 550ms var(--fl-ease);
+}
+
+/* The panel — Floodlight itself, running in the page ---------------------- */
+
+.panel {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--fl-panel-line);
+  border-radius: var(--fl-r-panel);
+  background: var(--fl-panel-bg);
+  box-shadow:
+    0 2.5rem 5rem rgb(0 0 0 / 55%),
+    0 0 0 0.5px rgb(255 255 255 / 6%),
+    inset 0 1px rgb(255 255 255 / 8%);
+  backdrop-filter: blur(2.5rem) saturate(150%);
+  -webkit-backdrop-filter: blur(2.5rem) saturate(150%);
+  color: #f5f5f7;
+  text-align: left;
+}
+
+.panel__field {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1.15rem;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+
+.panel--idle .panel__field {
+  border-bottom: 0;
+}
+
+.panel__glass {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: rgb(245 245 247 / 45%);
+}
+
+.panel__input {
+  width: 100%;
+  /* An <input> defaults to a ~20-character intrinsic width, which would push
+     the whole panel past the viewport on a phone. */
+  min-width: 0;
+  min-height: 3.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #f5f5f7;
+  font-family: var(--fl-font);
+  font-size: 1.625rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.panel__input::placeholder {
+  color: rgb(245 245 247 / 34%);
+}
+
+.panel__input:focus {
+  outline: none;
+}
+
+.panel__clear {
+  display: grid;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgb(245 245 247 / 32%);
+  cursor: pointer;
+  place-items: center;
+  transition: color 140ms var(--fl-ease);
+}
+
+.panel__clear:hover {
+  color: rgb(245 245 247 / 60%);
+}
+
+/* `display` on the class would otherwise beat the user-agent [hidden] rule. */
+.panel__clear[hidden] {
+  display: none;
+}
+
+.panel__clear svg {
+  width: 100%;
+  height: 100%;
+}
+
+.panel__chips {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  scrollbar-width: none;
+}
+
+.panel__chips[hidden],
+.panel__results[hidden] {
+  display: none;
+}
+
+.panel__chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: var(--fl-r-pill);
+  background: rgb(255 255 255 / 5%);
+  color: rgb(245 245 247 / 62%);
+  font-family: var(--fl-font);
+  font-size: var(--fl-t-fine);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms var(--fl-ease),
+    color 140ms var(--fl-ease);
+}
+
+.chip[hidden] {
+  display: none;
+}
+
+.chip:hover {
+  background: rgb(255 255 255 / 10%);
+  color: rgb(245 245 247 / 90%);
+}
+
+.chip[aria-pressed="true"] {
+  border-color: rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 15%);
+  color: #fff;
+}
+
+.chip__n {
+  color: rgb(245 245 247 / 45%);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip[aria-pressed="true"] .chip__n {
+  color: rgb(255 255 255 / 70%);
+}
+
+.panel__results {
+  max-height: min(17rem, 30vh);
+  overflow-y: auto;
+  padding: 0.4rem;
+  scrollbar-width: thin;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.75rem;
+  cursor: default;
+}
+
+.row:hover {
+  background: rgb(255 255 255 / 6%);
+}
+
+.row[aria-selected="true"] {
+  background: rgb(255 255 255 / 12%);
+  box-shadow: inset 0 1px rgb(255 255 255 / 6%);
+}
+
+.row__icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  place-items: center;
+  border-radius: 0.55rem;
+  color: #fff;
+}
+
+.row__icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/* Icons come from the system at full tile size, already carrying their own
+   shape and shadow, so the tile itself stays out of the way. */
+.row__icon--art {
+  border-radius: 0;
+  background: none;
+}
+
+.row__icon--art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.row__icon--calc {
+  background: linear-gradient(160deg, #ffb020, #c9760c);
+  color: var(--fl-amber-ink);
+}
+
+.row__icon--web {
+  background: linear-gradient(160deg, #6fd0ff, #1d7fc4);
+}
+
+.row__text {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.row__head {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 0.45rem;
+}
+
+.row__title,
+.row__sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row__title {
+  color: #f7f7f9;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.row__sub {
+  color: rgb(245 245 247 / 47%);
+  font-size: var(--fl-t-fine);
+}
+
+/* The kind badge sits beside the name, not out at the trailing edge. */
+.row__kind {
+  flex: none;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  background: rgb(255 255 255 / 8%);
+  color: rgb(245 245 247 / 55%);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.row__go {
+  display: grid;
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: none;
+  place-items: center;
+  border-radius: 0.4rem;
+  background: rgb(255 255 255 / 10%);
+  color: rgb(245 245 247 / 70%);
+  font-size: 0.8125rem;
+  opacity: 0;
+}
+
+.row[aria-selected="true"] .row__go {
+  opacity: 1;
+}
+
+/* Empty until you try to open something, and taken out of flow so saying so
+   never nudges the page. */
+.stage__note {
+  position: absolute;
+  top: calc(100% + 0.75rem);
+  right: 0;
+  left: 0;
+  margin: 0;
+  color: var(--fl-amber);
+  font-size: var(--fl-t-fine);
+  text-align: center;
+}
+
+@media (max-width: 34rem) {
+  .row__kind {
+    display: none;
+  }
+
+  .row__go {
+    display: none;
+  }
+}
+
+/* Claims — four statements under the panel, with no implied order. */
+
+.claims {
+  display: grid;
+  width: min(38rem, 100%);
+  gap: 0.625rem;
+  grid-template-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.claims li {
+  display: grid;
+  grid-template-columns: 2.375rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 0.9rem;
+  background: rgb(255 255 255 / 3.5%);
+  color: var(--sec-mute);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.2;
+}
+
+.claims__icon {
+  display: grid;
+  width: 2.375rem;
+  height: 2.375rem;
+  border: 1px solid rgb(255 183 40 / 18%);
+  border-radius: 0.7rem;
+  background: linear-gradient(
+    145deg,
+    rgb(255 188 52 / 13%),
+    rgb(255 188 52 / 5%)
+  );
+  box-shadow: inset 0 1px rgb(255 255 255 / 8%);
+  color: rgb(255 197 83 / 88%);
+  place-items: center;
+}
+
+.claims__icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.claims__copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+/* Its own line, so the bright clause never breaks mid-phrase. */
+.claims__lead {
+  display: block;
+  color: var(--sec-fg);
+}
+
+@media (min-width: 23rem) and (max-width: 41.999rem) {
+  .claims {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .claims li {
+    grid-template-columns: 1fr;
+    align-content: start;
+    align-items: start;
+    gap: 0.5rem;
+    padding: 0.6rem;
+    font-size: 0.9375rem;
+  }
+
+  .claims__icon {
+    width: 2.125rem;
+    height: 2.125rem;
+    border-radius: 0.65rem;
+  }
+
+  .claims__icon svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+@media (min-width: 42rem) {
+  .claims {
+    width: min(48rem, 100%);
+    gap: 1.5rem 2rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .claims li {
+    grid-template-columns: 1.875rem minmax(0, 1fr);
+    align-items: start;
+    gap: 0.65rem;
+    padding: 0.85rem 0 0;
+    border: 0;
+    border-top: 1px solid rgb(255 255 255 / 30%);
+    border-radius: 0;
+    background: none;
+    font-size: 1.0625rem;
+    letter-spacing: -0.018em;
+    line-height: 1.25;
+  }
+
+  .claims__icon {
+    width: 1.875rem;
+    height: 1.875rem;
+    border-radius: 0.55rem;
+  }
+
+  .claims__icon svg {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+}
+
+@media (min-width: 52rem) {
+  .claims {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Footer ----------------------------------------------------------------- */
+
+.foot {
+  padding-block: 3rem 3.5rem;
+  border-top: 1px solid rgb(255 255 255 / 9%);
+  background: var(--fl-black);
+  color: var(--fl-gray);
+  font-size: var(--fl-t-fine);
+}
+
+.foot__cols {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  padding-bottom: 2.25rem;
+}
+
+.foot__h {
+  margin-bottom: 0.85rem;
+  color: var(--fl-light);
+  font-size: var(--fl-t-fine);
+  font-weight: 600;
+}
+
+.foot ul {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.foot a {
+  color: var(--fl-gray);
+  text-decoration: none;
+}
+
+.foot a:hover {
+  color: var(--fl-light);
+  text-decoration: underline;
+}
+
+.foot__legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgb(255 255 255 / 9%);
+}
+
+/* Motion preferences ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__copy > *,
+  .hero__stage,
+  .stage__light {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+
+  .stage__beam,
+  .stage__flare {
+    transition: none;
+  }
+
+  .btn,
+  .link::after {
+    transition: none;
+  }
+}

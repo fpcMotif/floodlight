@@ -192,13 +192,19 @@ private struct ResultList: View {
     private var resultRows: some View {
         ForEach(model.results) { item in
             Button {
-                model.activate(item)
+                model.select(item)
             } label: {
                 ResultRow(item: item, isSelected: model.selectedID == item.id)
                     .equatable()
             }
             .buttonStyle(.plain)
             .focusable(false)
+            .simultaneousGesture(
+                TapGesture(count: 2)
+                    .onEnded {
+                        model.activate(item)
+                    }
+            )
             .id(item.id)
             .onDrag {
                 guard let url = item.fileURL else {
@@ -208,7 +214,11 @@ private struct ResultList: View {
                     ?? NSItemProvider(object: url.path as NSString)
             }
             .accessibilityLabel(item.title)
-            .accessibilityHint("Open \(item.kind.label)")
+            .accessibilityHint("Select \(item.kind.label). Double-click or press Return to open.")
+            .accessibilityAddTraits(model.selectedID == item.id ? .isSelected : [])
+            .accessibilityAction(.default) {
+                model.activate(item)
+            }
         }
     }
 }

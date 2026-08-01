@@ -4,10 +4,24 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 FFF_SOURCE=${FFF_DIR:-"$PROJECT_DIR/../fff"}
+FFF_HEADER="$FFF_SOURCE/crates/fff-c/include/fff.h"
+FFF_FILE_PICKER="$FFF_SOURCE/crates/fff-core/src/file_picker.rs"
+FFF_WATCHER="$FFF_SOURCE/crates/fff-core/src/background_watcher.rs"
+FFF_PATCH="$PROJECT_DIR/patches/fff/floodlight-compatibility.patch"
 
 if [ ! -f "$FFF_SOURCE/crates/fff-c/Cargo.toml" ]; then
     echo "FFF was not found at: $FFF_SOURCE" >&2
     echo "Set FFF_DIR to the fff repository path." >&2
+    exit 1
+fi
+
+if ! grep -q "fff_create_instance3" "$FFF_HEADER" \
+    || ! grep -q "push_directory_and_ancestors" "$FFF_FILE_PICKER" \
+    || ! grep -q "base_dir_count" "$FFF_FILE_PICKER" \
+    || ! grep -q "track_files_from_new_directories" "$FFF_WATCHER"; then
+    echo "FFF is missing Floodlight's compatibility changes." >&2
+    echo "Apply the bundled compatibility patch:" >&2
+    echo "  git -C \"$FFF_SOURCE\" apply \"$FFF_PATCH\"" >&2
     exit 1
 fi
 

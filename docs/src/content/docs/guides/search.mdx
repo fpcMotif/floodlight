@@ -1,0 +1,76 @@
+---
+title: Search
+description: Find applications, files, folders, settings, calculations, and web results.
+---
+
+The search field is focused when the panel opens. Start typing immediately; the
+highest-ranked result is ready for <kbd>Return</kbd>.
+
+## Applications
+
+Apps in standard macOS locations and inside your selected search folder are
+searchable. Each `.app` bundle appears as one launchable result, and newly
+installed applications become searchable without a restart.
+
+## Files and folders
+
+Search covers filenames and folder paths under the selected folder. The default
+is your home folder.
+
+- Press <kbd>Return</kbd> to open the selected item.
+- Press <kbd>⌘ R</kbd> or <kbd>⌘ Return</kbd> to reveal it in Finder.
+- Press <kbd>⌘ Y</kbd> to toggle Quick Look for a file.
+- Drag a result into another application.
+
+When filename matches are sparse, supported text content can also be searched.
+See [Indexing](../../reference/indexing/) for supported content, live updates,
+and exclusions.
+
+## Paths
+
+Path-like queries keep an exact, existing match at the top of the results. You
+can type a path relative to the selected search folder, such as `code/minion`,
+or use `~/code` while your home folder is in scope. Absolute paths work when
+they are inside the selected folder.
+
+Add a trailing slash, as in `~/code/`, to show directories only. Paths outside
+the selected folder or locations macOS does not let Floodlight read are not
+available.
+
+## System Settings
+
+Search settings by their visible name or a familiar keyword. For example,
+`bluetooth`, `wallpaper`, or `login items` can open the relevant System Settings
+pane directly.
+
+## Floodlight settings
+
+Search for `Floodlight settings`, `permissions`, `shortcut`, or `search scope`
+to open the same settings window available from the menu-bar flashlight.
+
+## Calculator
+
+Type an arithmetic expression such as:
+
+```text
+(128 * 3.5) + 20%
+```
+
+Press <kbd>Return</kbd> to copy the result.
+
+## Web fallback
+
+Every non-empty query includes a final web-search action. It stays below local
+results and opens in the default browser.
+
+## Ranking
+
+Ranking learns from local recency and frequency data. A result you repeatedly
+select for the same query receives a boost the next time. That data remains on
+the Mac.
+
+## Not currently searchable
+
+Floodlight does not currently search Mail, Messages, Photos, or Contacts. Those
+sources need dedicated integrations and separate permissions; Full Disk Access
+alone does not add them to results.

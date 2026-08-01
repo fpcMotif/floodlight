@@ -1,0 +1,135 @@
+/* Pieces shared by the landing page and the documentation theme.
+
+   Each rule falls back to a sensible value when the surrounding section has not
+   published a --sec-* variable, so these work inside Starlight too. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Pill buttons ----------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.875rem;
+  padding: 0.6rem 1.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--fl-r-pill);
+  background: var(--fl-amber);
+  box-shadow: 0 0 2.75rem rgb(255 176 32 / 32%);
+  color: var(--fl-amber-ink);
+  font-family: var(--fl-font);
+  font-size: var(--fl-t-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    scale 200ms var(--fl-ease),
+    box-shadow 200ms var(--fl-ease),
+    background 200ms var(--fl-ease);
+}
+
+.btn:hover {
+  background: #ffc352;
+  box-shadow: 0 0 3.5rem rgb(255 176 32 / 45%);
+  color: var(--fl-amber-ink);
+  scale: 1.018;
+}
+
+.btn:active {
+  scale: 0.99;
+}
+
+.btn--ghost {
+  border-color: var(--sec-line, var(--fl-hairline));
+  background: transparent;
+  box-shadow: none;
+  color: var(--sec-fg, var(--fl-ink));
+}
+
+.btn--ghost:hover {
+  border-color: var(--sec-fg, var(--fl-ink));
+  background: transparent;
+  box-shadow: none;
+  color: var(--sec-fg, var(--fl-ink));
+}
+
+.btn__arrow {
+  font-size: 1.05em;
+  line-height: 0;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+/* Chevron links ---------------------------------------------------------- */
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18em;
+  color: var(--sec-link, var(--fl-blue));
+  font-size: var(--fl-t-body);
+  text-decoration: none;
+}
+
+.link::after {
+  content: "\203A";
+  font-size: 1.18em;
+  line-height: 0;
+  transition: translate 180ms var(--fl-ease);
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.link:hover::after {
+  translate: 0.15em 0;
+}
+
+/* Mac keycaps ------------------------------------------------------------ */
+
+.keycombo {
+  display: inline-flex;
+  flex: none;
+  gap: 0.25rem;
+}
+
+.keycap {
+  display: grid;
+  min-width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  padding-inline: 0.5rem;
+  border: 1px solid var(--sec-line, var(--fl-hairline));
+  border-radius: 0.45rem;
+  background: var(--sec-tile, var(--fl-white));
+  box-shadow: 0 1px 0 var(--sec-line, var(--fl-hairline));
+  color: var(--sec-fg, var(--fl-ink));
+  font-family: var(--fl-font);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .link::after {
+    transition: none;
+  }
+}

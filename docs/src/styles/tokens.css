@@ -1,0 +1,66 @@
+/* Floodlight design tokens.
+   Shared by the marketing landing page and the Starlight documentation theme.
+
+   The palette is macOS-native: true black and Apple's #f5f5f7 light gray carry
+   the page, system blue carries links, and one amber — the beam from the app
+   icon — is the only brand color. Amber is reserved for the product itself
+   (the panel, the beam, the download button) so it stays meaningful. */
+
+:root {
+  /* Typeface --------------------------------------------------------------
+     San Francisco on macOS, where nearly every visitor to a macOS-only app
+     will be. Helvetica Neue and Arial keep the same metrics elsewhere. */
+  --fl-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --fl-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    monospace;
+
+  /* Neutrals — Apple's system values */
+  --fl-black: #000;
+  --fl-ink: #1d1d1f;
+  --fl-light: #f5f5f7;
+  --fl-white: #fff;
+  --fl-gray: #86868b;
+  --fl-gray-on-dark: #a1a1a6; /* secondary text needs more lift on black */
+  --fl-gray-deep: #6e6e73;
+  --fl-hairline: #d2d2d7;
+  --fl-hairline-dark: rgb(255 255 255 / 13%);
+
+  /* Brand — the beam */
+  --fl-amber: #ffb020;
+  --fl-amber-hot: #ffdd9c;
+  --fl-amber-deep: #b3660f;
+  --fl-amber-ink: #1a1102;
+
+  /* System blue, for links only */
+  --fl-blue: #06c;
+  --fl-blue-dark: #2997ff;
+
+  /* macOS panel vibrancy */
+  --fl-panel-bg: rgb(30 30 34 / 72%);
+  --fl-panel-line: rgb(255 255 255 / 10%);
+
+  /* Radii — Apple's pill button plus panel and card corners */
+  --fl-r-pill: 980px;
+  --fl-r-panel: 1.875rem;
+  --fl-r-card: 1.125rem;
+  --fl-r-sm: 0.625rem;
+
+  /* Layout */
+  --fl-container: 61.25rem; /* 980px, Apple's content width */
+  --fl-container-wide: 77.5rem;
+  --fl-gutter: clamp(1.25rem, 4vw, 2.5rem);
+  --fl-section-y: clamp(3.5rem, 10vw, 8.5rem);
+
+  /* Type scale */
+  --fl-t-hero: clamp(2.375rem, 5.4vw, 4.5rem);
+  --fl-t-h2: clamp(2rem, 4.8vw, 3.25rem);
+  --fl-t-h3: clamp(1.375rem, 2.4vw, 1.75rem);
+  --fl-t-lede: clamp(1.125rem, 2.1vw, 1.5rem);
+  --fl-t-body: 1.0625rem; /* 17px, Apple's body size */
+  --fl-t-small: 0.875rem;
+  --fl-t-fine: 0.75rem;
+
+  /* Motion */
+  --fl-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}

@@ -1,0 +1,160 @@
+name: Release Floodlight
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      FFF_DIR: ${{ github.workspace }}/../fff
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@v6
+
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$GITHUB_REF_NAME" \
+            | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Release tags must use the form v1.2.3." >&2
+            exit 1
+          fi
+
+      - name: Validate Apple signing secrets
+        run: |
+          missing=0
+          for name in \
+            APPLE_CERTIFICATE_P12_BASE64 \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_KEYCHAIN_PASSWORD \
+            APPLE_ID \
+            APPLE_TEAM_ID \
+            APPLE_APP_SPECIFIC_PASSWORD
+          do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then
+              echo "Missing required repository secret: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check out the pinned FFF source
+        run: |
+          git clone --filter=blob:none \
+            https://github.com/dmtrKovalenko/fff.git "$FFF_DIR"
+          git -C "$FFF_DIR" checkout \
+            e8dd50ce5a6857f2dc7f827746163a4b1040ba9c
+          git -C "$FFF_DIR" apply \
+            "$GITHUB_WORKSPACE/patches/fff/floodlight-compatibility.patch"
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Import the Developer ID certificate
+        run: |
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/floodlight-signing.keychain-db"
+
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" \
+            | base64 -D > "$certificate_path"
+          security create-keychain \
+            -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain \
+            -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$APPLE_KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security default-keychain -s "$keychain_path"
+
+          identity=$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | awk -F '"' '/Developer ID Application/ { print $2; exit }'
+          )
+          if [ -z "$identity" ]; then
+            echo "No Developer ID Application identity was imported." >&2
+            exit 1
+          fi
+          echo "CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Set the app version from the tag
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          plist="Sources/Floodlight/Resources/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $version" "$plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$plist"
+
+      - name: Build and sign Floodlight
+        run: make bundle FFF_DIR="$FFF_DIR"
+
+      - name: Create and sign the DMG
+        run: |
+          ./scripts/create-dmg.sh
+          codesign \
+            --force \
+            --sign "$CODE_SIGN_IDENTITY" \
+            --timestamp \
+            .build/Floodlight.dmg
+          codesign --verify --verbose=2 .build/Floodlight.dmg
+
+      - name: Notarize and staple the DMG
+        run: |
+          xcrun notarytool submit .build/Floodlight.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple .build/Floodlight.dmg
+          xcrun stapler validate .build/Floodlight.dmg
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=4 \
+            .build/Floodlight.dmg
+
+      - name: Generate the checksum
+        run: |
+          cd .build
+          shasum -a 256 Floodlight.dmg > Floodlight.dmg.sha256
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" \
+            .build/Floodlight.dmg \
+            .build/Floodlight.dmg.sha256 \
+            --verify-tag \
+            --generate-notes \
+            --latest \
+            --title "Floodlight $version"

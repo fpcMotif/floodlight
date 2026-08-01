@@ -1,0 +1,57 @@
+---
+title: Troubleshooting
+description: Fix missing files, shortcut conflicts, permission prompts, and stale results.
+---
+
+## Command-Space needs two presses or does not work
+
+Follow [Replace Spotlight](../../getting-started/replace-spotlight/) to remove
+shortcut conflicts caused by Spotlight or Input Sources, then select
+<kbd>⌘ Space</kbd> again in **Settings…**.
+
+If <kbd>⌘ Space</kbd> is unavailable, Floodlight keeps <kbd>⌥ Space</kbd>
+registered and explains the conflict in setup.
+
+## Downloads, Desktop, or Documents are missing
+
+1. Confirm Floodlight is installed at `/Applications/Floodlight.app`.
+2. Open **Settings…** from the menu-bar flashlight and click **Grant access**
+   beside Full Disk Access.
+3. Enable Floodlight in the System Settings pane that opens. If it is not
+   listed, click **+** and add `/Applications/Floodlight.app` first.
+4. Return to Floodlight and press <kbd>⇧ ⌘ R</kbd>. If the permission is not yet
+   reflected, quit and reopen Floodlight once, then rebuild again.
+
+Changing the search scope with <kbd>⌘ L</kbd> can also exclude part of the home
+folder. Choose your home folder again if needed.
+
+## Permission requests return after an update
+
+Replace the existing `/Applications/Floodlight.app` with the downloaded copy.
+Do not launch Floodlight from the DMG, Downloads, or a development build
+directory; moving the app after approval can make macOS ask again.
+
+## An application is missing
+
+Floodlight searches standard application folders and apps inside the selected
+search scope.
+
+- If the app was just installed in a standard application folder, open the
+  Floodlight panel and search again. Newly installed apps appear without a
+  restart.
+- If it lives elsewhere, confirm that its folder is inside the scope shown by
+  the menu-bar menu, is readable, and is not under an ignored or hidden path.
+  Then press <kbd>⇧ ⌘ R</kbd>.
+- Install the latest Floodlight release if Finder or another built-in app does
+  not appear.
+
+## Results look stale
+
+Press <kbd>⇧ ⌘ R</kbd> to rebuild the file index. If a selected custom scope no
+longer exists, choose a readable folder with <kbd>⌘ L</kbd>.
+
+## The app cannot be opened
+
+Download the latest DMG, drag Floodlight to Applications, and open that copy.
+If macOS rejects the download, remove it and download the DMG again from the
+Floodlight GitHub release.

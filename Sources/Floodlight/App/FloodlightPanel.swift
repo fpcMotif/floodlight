@@ -241,10 +241,12 @@ final class FloodlightPanelController {
         guard modifiers.contains(.command) else { return false }
 
         let characters = event.charactersIgnoringModifiers?.lowercased()
-        if let index = Self.filterShortcutIndex(for: characters) {
-            let options = model.filterOptions
-            if options.indices.contains(index) {
-                model.selectFilter(options[index].filter)
+        if Self.commandDigit(for: characters) != nil {
+            if let index = Self.filterShortcutIndex(for: characters) {
+                let options = model.filterOptions
+                if options.indices.contains(index) {
+                    model.selectFilter(options[index].filter)
+                }
             }
             // Consume every command-digit combination, including currently
             // unused slots, so it never reaches the field editor and beeps.
@@ -270,7 +272,7 @@ final class FloodlightPanelController {
         return true
     }
 
-    static func filterShortcutIndex(for characters: String?) -> Int? {
+    static func commandDigit(for characters: String?) -> Int? {
         guard
             let characters,
             characters.count == 1,
@@ -279,5 +281,12 @@ final class FloodlightPanelController {
             return nil
         }
         return digit
+    }
+
+    static func filterShortcutIndex(for characters: String?) -> Int? {
+        guard let digit = commandDigit(for: characters), (1...5).contains(digit) else {
+            return nil
+        }
+        return digit - 1
     }
 }

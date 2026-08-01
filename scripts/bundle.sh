@@ -6,17 +6,42 @@ PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 BIN_DIR=$(cd "$PROJECT_DIR" && swift build -c release --show-bin-path)
 APP_DIR="$PROJECT_DIR/.build/Floodlight.app"
 CONTENTS="$APP_DIR/Contents"
+SIGN_IDENTITY=${CODE_SIGN_IDENTITY:--}
+FFF_LIBRARY="$CONTENTS/Frameworks/libfff_c.dylib"
+RESOURCE_SOURCE="$PROJECT_DIR/Sources/Floodlight/Resources"
 
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Frameworks" "$CONTENTS/Resources"
 cp "$BIN_DIR/Floodlight" "$CONTENTS/MacOS/Floodlight"
-cp "$PROJECT_DIR/Native/lib/libfff_c.dylib" "$CONTENTS/Frameworks/libfff_c.dylib"
-cp "$PROJECT_DIR/Sources/Floodlight/Resources/Info.plist" "$CONTENTS/Info.plist"
+cp "$PROJECT_DIR/Native/lib/libfff_c.dylib" "$FFF_LIBRARY"
+cp "$RESOURCE_SOURCE/Info.plist" "$CONTENTS/Info.plist"
+cp "$RESOURCE_SOURCE/FloodlightMenuBar.svg" "$CONTENTS/Resources/"
+"$SCRIPT_DIR/build-app-icon.sh" \
+    "$RESOURCE_SOURCE/AppIcon.png" \
+    "$CONTENTS/Resources/Floodlight.icns"
 
-codesign \
-    --force \
-    --deep \
-    --sign "${CODE_SIGN_IDENTITY:--}" \
-    --identifier "com.floodlight.search" \
-    --requirements '=designated => identifier "com.floodlight.search"' \
-    "$APP_DIR"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --sign - "$FFF_LIBRARY"
+    codesign \
+        --force \
+        --sign - \
+        --identifier "com.floodlight.search" \
+        --requirements '=designated => identifier "com.floodlight.search"' \
+        "$APP_DIR"
+else
+    codesign \
+        --force \
+        --sign "$SIGN_IDENTITY" \
+        --options runtime \
+        --timestamp \
+        "$FFF_LIBRARY"
+    codesign \
+        --force \
+        --sign "$SIGN_IDENTITY" \
+        --identifier "com.floodlight.search" \
+        --options runtime \
+        --timestamp \
+        "$APP_DIR"
+fi
+
+codesign --verify --deep --strict "$APP_DIR"
 echo "$APP_DIR"

@@ -23,16 +23,34 @@ final class FloodlightPanelTests: XCTestCase {
         )
     }
 
-    func testAllCommandDigitShortcutsAreRecognized() {
-        for digit in 0...9 {
+    func testCommandDigitsOneThroughFiveMapToVisibleFilterSlots() {
+        for digit in 1...5 {
             XCTAssertEqual(
                 FloodlightPanelController.filterShortcutIndex(for: String(digit)),
-                digit
+                digit - 1
+            )
+        }
+
+        for digit in [0, 6, 7, 8, 9] {
+            XCTAssertNil(
+                FloodlightPanelController.filterShortcutIndex(for: String(digit))
             )
         }
         XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: nil))
         XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: "x"))
         XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: "10"))
+    }
+
+    func testAllCommandDigitsAreRecognizedForConsumption() {
+        for digit in 0...9 {
+            XCTAssertEqual(
+                FloodlightPanelController.commandDigit(for: String(digit)),
+                digit
+            )
+        }
+        XCTAssertNil(FloodlightPanelController.commandDigit(for: nil))
+        XCTAssertNil(FloodlightPanelController.commandDigit(for: "x"))
+        XCTAssertNil(FloodlightPanelController.commandDigit(for: "10"))
     }
 
     func testPanelConsumesHandledKeyEquivalent() throws {

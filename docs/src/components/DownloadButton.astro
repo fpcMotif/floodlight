@@ -1,0 +1,40 @@
+---
+interface Props {
+  label?: string;
+  secondary?: boolean;
+}
+
+const {
+  label = "Download for Mac",
+  secondary = false,
+} = Astro.props;
+const repository =
+  import.meta.env.PUBLIC_GITHUB_REPOSITORY ??
+  process.env.GITHUB_REPOSITORY ??
+  "victorgarcia/floodlight";
+const downloadURL =
+  `https://github.com/${repository}/releases/latest/download/Floodlight.dmg`;
+---
+
+<a
+  class:list={["btn", { "btn--ghost": secondary }]}
+  href={downloadURL}
+  data-download="latest"
+>
+  <svg
+    width="15"
+    height="15"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M8 2v8.5"></path>
+    <path d="M4.5 7.5 8 11l3.5-3.5"></path>
+    <path d="M2.5 13.5h11"></path>
+  </svg>
+  <span>{label}</span>
+</a>

@@ -1,0 +1,597 @@
+---
+/**
+ * An interactive approximation of the Floodlight panel, running in the page.
+ *
+ * Layout, chips, and row anatomy follow the shipping app: the kind badge sits
+ * beside the title, files carry size and age, and dynamic Settings, PDFs,
+ * Images, and Documents chips appear only when a query produces them. The
+ * browser demo approximates FFF's fuzzy matching; it does not run the Rust
+ * index. Nothing opens; pressing Return says so.
+ */
+---
+
+<div class="panel panel--idle" data-panel>
+  <div class="panel__field">
+    <svg class="panel__glass" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.75" stroke="currentColor" stroke-width="2"></circle>
+      <path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+    </svg>
+
+    <input
+      class="panel__input"
+      type="text"
+      id="fl-input"
+      role="combobox"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      placeholder="Floodlight search"
+      aria-label="Search the Floodlight demo index"
+      aria-expanded="false"
+      aria-controls="fl-list"
+      aria-autocomplete="list"
+      data-input
+    />
+
+    <button class="panel__clear" type="button" aria-label="Clear the search field" data-clear hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9.5" fill="currentColor"></circle>
+        <path
+          d="M9 9l6 6M15 9l-6 6"
+          stroke="#1b1b20"
+          stroke-width="2"
+          stroke-linecap="round"></path>
+      </svg>
+    </button>
+  </div>
+
+  <div class="panel__chips" role="group" aria-label="Filter results by kind" data-chips hidden>
+    <button class="chip" type="button" aria-pressed="true" data-filter="all">
+      All <span class="chip__n" data-count="all">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="app">
+      Apps <span class="chip__n" data-count="app">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="file">
+      Files <span class="chip__n" data-count="file">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="folder">
+      Folders <span class="chip__n" data-count="folder">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="setting" hidden>
+      Settings <span class="chip__n" data-count="setting">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="pdf" hidden>
+      PDFs <span class="chip__n" data-count="pdf">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="image" hidden>
+      Images <span class="chip__n" data-count="image">0</span>
+    </button>
+    <button class="chip" type="button" aria-pressed="false" data-filter="document" hidden>
+      Documents <span class="chip__n" data-count="document">0</span>
+    </button>
+  </div>
+
+  <div class="panel__results" id="fl-list" role="listbox" aria-label="Results" data-results hidden></div>
+
+  <p class="sr-only" role="status" aria-live="polite" data-live></p>
+</div>
+
+<p class="stage__note" data-note></p>
+
+<script>
+  type Kind = "app" | "file" | "folder" | "setting";
+  type Group = "pdf" | "image" | "document";
+
+  interface Entry {
+    title: string;
+    sub: string;
+    kind: Kind;
+    art?: string;
+    group?: Group;
+    size?: string;
+    age?: string;
+  }
+
+  /* The icons macOS itself draws, pulled from the installed bundles and the
+     system UTI table so a row matches what the app shows on screen. */
+  import ghostty from "../assets/icons/ghostty.png?url";
+  import claude from "../assets/icons/claude.png?url";
+  import music from "../assets/icons/music.png?url";
+  import safari from "../assets/icons/safari.png?url";
+  import terminal from "../assets/icons/terminal.png?url";
+  import xcode from "../assets/icons/xcode.png?url";
+  import calculator from "../assets/icons/calculator.png?url";
+  import settings from "../assets/icons/settings.png?url";
+  import folder from "../assets/icons/folder.png?url";
+  import genericDoc from "../assets/icons/document.png?url";
+  import pdf from "../assets/icons/pdf.png?url";
+  import png from "../assets/icons/png.png?url";
+  import json from "../assets/icons/json.png?url";
+  import markdown from "../assets/icons/markdown.png?url";
+  import swift from "../assets/icons/swift.png?url";
+
+  const ART: Record<string, string> = {
+    ghostty,
+    claude,
+    music,
+    safari,
+    terminal,
+    xcode,
+    calculator,
+    settings,
+    folder,
+  };
+
+  const EXT_ART: Record<string, string> = { pdf, png, json, md: markdown, swift };
+
+  const INDEX: Entry[] = [
+    { title: "Ghostty", sub: "/Applications", kind: "app", art: "ghostty" },
+    { title: "Claude Code", sub: "/Applications", kind: "app", art: "claude" },
+    { title: "Projects", sub: "Developer", kind: "folder" },
+    { title: "Music", sub: "/System/Applications", kind: "app", art: "music" },
+
+    { title: "Safari", sub: "/Applications", kind: "app", art: "safari" },
+    { title: "Terminal", sub: "/System/Applications/Utilities", kind: "app", art: "terminal" },
+    { title: "Xcode", sub: "/Applications", kind: "app", art: "xcode" },
+    { title: "Calculator", sub: "/System/Applications", kind: "app", art: "calculator" },
+
+    { title: "Screenshots", sub: "Pictures", kind: "folder" },
+    { title: "Archive", sub: "Documents", kind: "folder" },
+
+    {
+      title: "SearchCoordinator.swift",
+      sub: "Developer/floodlight/Sources/Floodlight/Search",
+      kind: "file",
+      size: "18 KB",
+      age: "2 hr, 14 min",
+    },
+    {
+      title: "Package.swift",
+      sub: "Developer/floodlight",
+      kind: "file",
+      size: "1.4 KB",
+      age: "3 days",
+    },
+    {
+      title: "release-notes.md",
+      sub: "Developer/floodlight/docs",
+      kind: "file",
+      group: "document",
+      size: "6 KB",
+      age: "1 day",
+    },
+    {
+      title: "keyboard-reference.pdf",
+      sub: "Documents/Reading",
+      kind: "file",
+      group: "pdf",
+      size: "2.1 MB",
+      age: "1 wk, 2 days",
+    },
+    {
+      title: "panel-mockup.png",
+      sub: "Pictures/Screenshots",
+      kind: "file",
+      group: "image",
+      size: "840 KB",
+      age: "6 hr, 3 min",
+    },
+    {
+      title: "menu-bar-icon.png",
+      sub: "Developer/floodlight/Resources",
+      kind: "file",
+      group: "image",
+      size: "12 KB",
+      age: "4 days",
+    },
+    {
+      title: "preferences.json",
+      sub: "Documents/Notes",
+      kind: "file",
+      size: "512 bytes",
+      age: "20 min",
+    },
+
+    { title: "Keyboard", sub: "System Settings", kind: "setting" },
+    { title: "Bluetooth", sub: "System Settings", kind: "setting" },
+    { title: "Displays", sub: "System Settings", kind: "setting" },
+    { title: "Sound", sub: "System Settings", kind: "setting" },
+    { title: "Privacy & Security", sub: "System Settings", kind: "setting" },
+    { title: "Login Items & Extensions", sub: "System Settings", kind: "setting" },
+    { title: "Full Disk Access", sub: "System Settings", kind: "setting" },
+  ];
+
+  const KIND_LABEL: Record<Kind, string> = {
+    app: "Application",
+    file: "File",
+    folder: "Folder",
+    setting: "System Setting",
+  };
+
+  const GLYPH: Record<string, string> = {
+    calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 9h16M4 15h16"/></svg>',
+    web: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.7" ry="8.5"/><path d="M3.8 9.4h16.4M3.8 14.6h16.4"/></svg>',
+  };
+
+  /* Fuzzy subsequence scoring, in the spirit of FFF's ranking. */
+  function score(query: string, target: string): number | null {
+    const t = target.toLowerCase();
+    let cursor = 0;
+    let previous = -2;
+    let total = 0;
+
+    for (const char of query) {
+      const at = t.indexOf(char, cursor);
+      if (at < 0) return null;
+
+      if (at === previous + 1) total += 9;
+      if (at === 0) total += 14;
+      else if (/[\s/\-_.&›]/.test(t[at - 1])) total += 11;
+      total -= Math.min(at - previous - 1, 6);
+
+      previous = at;
+      cursor = at + 1;
+    }
+
+    return total - t.length * 0.09;
+  }
+
+  /* Arithmetic with precedence, parentheses, powers, and percentages. */
+  function calculate(raw: string): string | null {
+    const src = raw.replace(/[\s,]/g, "");
+    if (!/^[-+*/^%().\d]+$/.test(src)) return null;
+    if (!/\d/.test(src) || !/[-+*/^%]/.test(src)) return null;
+
+    let i = 0;
+    const peek = () => src[i];
+
+    function primary(): number {
+      if (peek() === "(") {
+        i++;
+        const value = expression();
+        if (peek() !== ")") throw new Error("unbalanced");
+        i++;
+        return value;
+      }
+      const start = i;
+      while (i < src.length && /[\d.]/.test(src[i])) i++;
+      if (i === start) throw new Error("expected a number");
+      const value = Number(src.slice(start, i));
+      if (!Number.isFinite(value)) throw new Error("not a number");
+      return value;
+    }
+
+    function postfix(): number {
+      let value = primary();
+      while (peek() === "%") {
+        i++;
+        value /= 100;
+      }
+      return value;
+    }
+
+    function unary(): number {
+      if (peek() === "-") {
+        i++;
+        return -unary();
+      }
+      if (peek() === "+") {
+        i++;
+        return unary();
+      }
+      return postfix();
+    }
+
+    function power(): number {
+      const base = unary();
+      if (peek() === "^") {
+        i++;
+        return base ** power();
+      }
+      return base;
+    }
+
+    function term(): number {
+      let value = power();
+      for (;;) {
+        if (peek() === "*") {
+          i++;
+          value *= power();
+        } else if (peek() === "/") {
+          i++;
+          value /= power();
+        } else {
+          return value;
+        }
+      }
+    }
+
+    function expression(): number {
+      let value = term();
+      for (;;) {
+        if (peek() === "+") {
+          i++;
+          value += term();
+        } else if (peek() === "-") {
+          i++;
+          value -= term();
+        } else {
+          return value;
+        }
+      }
+    }
+
+    try {
+      const value = expression();
+      if (i !== src.length || !Number.isFinite(value)) return null;
+      return new Intl.NumberFormat("en-US", { maximumFractionDigits: 10 }).format(value);
+    } catch {
+      return null;
+    }
+  }
+
+  function escapeHTML(value: string) {
+    return value.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  }
+
+  interface Row {
+    id: string;
+    icon: string;
+    iconClass: string;
+    title: string;
+    kind: string;
+    sub: string;
+  }
+
+  function artFor(entry: Entry) {
+    if (entry.kind === "file") {
+      const ext = (entry.title.split(".").pop() ?? "").toLowerCase();
+      return EXT_ART[ext] ?? genericDoc;
+    }
+    if (entry.kind === "folder") return ART.folder;
+    if (entry.kind === "setting") return ART.settings;
+    return ART[entry.art ?? ""] ?? genericDoc;
+  }
+
+  function entryRow(entry: Entry, index: number): Row {
+    const detail = [entry.sub, entry.size, entry.age].filter(Boolean).join(" · ");
+    return {
+      id: `fl-opt-${index}`,
+      icon: `<img src="${artFor(entry)}" alt="" width="72" height="72" />`,
+      iconClass: "row__icon--art",
+      title: escapeHTML(entry.title),
+      kind: KIND_LABEL[entry.kind],
+      sub: escapeHTML(detail),
+    };
+  }
+
+  const panel = document.querySelector<HTMLElement>("[data-panel]");
+  if (panel) {
+    const activePanel = panel;
+    const input = panel.querySelector<HTMLInputElement>("[data-input]")!;
+    const clear = panel.querySelector<HTMLButtonElement>("[data-clear]")!;
+    const chipBar = panel.querySelector<HTMLElement>("[data-chips]")!;
+    const results = panel.querySelector<HTMLElement>("[data-results]")!;
+    const chips = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-filter]"));
+    const live = panel.querySelector<HTMLElement>("[data-live]")!;
+    const note = document.querySelector<HTMLElement>("[data-note]")!;
+
+    let filter: Kind | Group | "all" = "all";
+    let selected = 0;
+    let rows: Row[] = [];
+    let noteTimer = 0;
+
+    function build() {
+      const query = input.value.trim();
+      const compact = query.toLowerCase().replace(/\s+/g, "");
+      const counts: Record<string, number> = {
+        all: 0,
+        app: 0,
+        file: 0,
+        folder: 0,
+        setting: 0,
+        pdf: 0,
+        image: 0,
+        document: 0,
+      };
+      const next: Row[] = [];
+
+      clear.hidden = input.value.length === 0;
+      const hasQuery = compact.length > 0;
+      chipBar.hidden = !hasQuery;
+      results.hidden = !hasQuery;
+      activePanel.classList.toggle("panel--idle", !hasQuery);
+      input.setAttribute("aria-expanded", String(hasQuery));
+
+      if (!hasQuery) {
+        filter = "all";
+      }
+
+      const answer = calculate(query);
+      let matches: Array<{ entry: Entry; total: number }> = [];
+
+      if (hasQuery) {
+        for (const entry of INDEX) {
+          const onTitle = score(compact, entry.title);
+          if (onTitle !== null) {
+            matches.push({ entry, total: onTitle });
+            continue;
+          }
+          const onPath = score(compact, `${entry.title} ${entry.sub}`);
+          if (onPath !== null) matches.push({ entry, total: onPath - 30 });
+        }
+        matches.sort((a, b) => b.total - a.total);
+      }
+
+      for (const match of matches) {
+        counts[match.entry.kind]++;
+        if (match.entry.group) counts[match.entry.group]++;
+      }
+      counts.all = matches.length + (answer ? 1 : 0) + (hasQuery ? 1 : 0);
+
+      /* Settings, PDFs, Images, and Documents are dynamic in the app. */
+      for (const chip of chips) {
+        const key = chip.dataset.filter!;
+        chip.querySelector("[data-count]")!.textContent = String(counts[key] ?? 0);
+        if (key === "setting" || key === "pdf" || key === "image" || key === "document") {
+          chip.hidden = counts[key] === 0;
+          if (chip.hidden && filter === key) filter = "all";
+        }
+      }
+      for (const chip of chips) {
+        chip.setAttribute("aria-pressed", String(chip.dataset.filter === filter));
+      }
+
+      if (answer && filter === "all") {
+        next.push({
+          id: "fl-opt-calc",
+          icon: GLYPH.calc,
+          iconClass: "row__icon--calc",
+          title: escapeHTML(answer),
+          kind: "Calculator",
+          sub: `${escapeHTML(query)} = ${escapeHTML(answer)} · Press Return to copy`,
+        });
+      }
+
+      const visible =
+        filter === "all"
+          ? matches
+          : matches.filter((m) => m.entry.kind === filter || m.entry.group === filter);
+
+      visible.slice(0, 24).forEach((match, index) => {
+        next.push(entryRow(match.entry, index));
+      });
+
+      if (hasQuery && filter === "all") {
+        next.push({
+          id: "fl-opt-web",
+          icon: GLYPH.web,
+          iconClass: "row__icon--web",
+          title: `Search the Web for “${escapeHTML(query)}”`,
+          kind: "Web Search",
+          sub: "Open in your default browser",
+        });
+      }
+
+      rows = next;
+      selected = Math.min(selected, Math.max(rows.length - 1, 0));
+      paint();
+
+      const label = !hasQuery
+        ? "Search field is empty"
+        : `${counts.all} ${counts.all === 1 ? "result" : "results"} for ${query}`;
+      live.textContent = label;
+
+      document.dispatchEvent(
+        new CustomEvent("fl:query", { detail: { length: compact.length } }),
+      );
+    }
+
+    function paint() {
+      if (!rows.length) {
+        results.innerHTML = "";
+        input.removeAttribute("aria-activedescendant");
+        return;
+      }
+
+      results.innerHTML = rows
+        .map(
+          (row, index) => `
+        <div class="row" role="option" id="${row.id}" aria-selected="${index === selected}">
+          <span class="row__icon ${row.iconClass}" aria-hidden="true">${row.icon}</span>
+          <span class="row__text">
+            <span class="row__head">
+              <span class="row__title">${row.title}</span>
+              <span class="row__kind">${row.kind}</span>
+            </span>
+            <span class="row__sub">${row.sub}</span>
+          </span>
+          <span class="row__go" aria-hidden="true">↵</span>
+        </div>`,
+        )
+        .join("");
+
+      input.setAttribute("aria-activedescendant", rows[selected].id);
+
+      /* Scroll the list itself. `scrollIntoView` also scrolls ancestors, which
+         on a narrow viewport shifts the whole page sideways. */
+      const row = results.children[selected] as HTMLElement | undefined;
+      if (row) {
+        const top = row.offsetTop;
+        const bottom = top + row.offsetHeight;
+        if (top < results.scrollTop) {
+          results.scrollTop = top;
+        } else if (bottom > results.scrollTop + results.clientHeight) {
+          results.scrollTop = bottom - results.clientHeight;
+        }
+      }
+    }
+
+    function flash(message: string) {
+      note.textContent = message;
+      window.clearTimeout(noteTimer);
+      noteTimer = window.setTimeout(() => {
+        note.textContent = "";
+      }, 2600);
+    }
+
+    function move(delta: number) {
+      if (!rows.length) return;
+      selected = (selected + delta + rows.length) % rows.length;
+      paint();
+    }
+
+    input.addEventListener("input", () => {
+      selected = 0;
+      build();
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        move(1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        move(-1);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        const row = rows[selected];
+        if (row) {
+          const title = results.children[selected]?.querySelector(".row__title")?.textContent ?? "";
+          flash(`Floodlight would run the selected action for ${title} on your Mac.`);
+        }
+      } else if (event.key === "Escape") {
+        input.value = "";
+        selected = 0;
+        build();
+      }
+    });
+
+    clear.addEventListener("click", () => {
+      input.value = "";
+      selected = 0;
+      build();
+      input.focus();
+    });
+
+    for (const chip of chips) {
+      chip.addEventListener("click", () => {
+        filter = chip.dataset.filter as Kind | Group | "all";
+        selected = 0;
+        build();
+      });
+    }
+
+    results.addEventListener("click", (event) => {
+      const row = (event.target as HTMLElement).closest(".row");
+      if (!row) return;
+      selected = Array.from(results.children).indexOf(row);
+      paint();
+      flash("Demo only — nothing opens from this page.");
+    });
+
+    build();
+  }
+</script>

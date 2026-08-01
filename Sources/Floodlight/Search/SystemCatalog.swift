@@ -2,6 +2,19 @@ import Foundation
 import os
 
 enum SystemCatalog {
+    struct DiscoveredSetting: Equatable, Sendable {
+        let name: String
+        let keywords: String
+        let pane: String
+    }
+
+    private struct DiscoveryState {
+        var hasStarted = false
+        var refreshInFlight = false
+        var lastDiscoveryTime: TimeInterval = 0
+        var directoryFingerprint: [String: Date] = [:]
+    }
+
     private struct Setting: Sendable {
         let name: String
         let keywords: String
@@ -222,24 +235,104 @@ enum SystemCatalog {
     ]
 
     private static let settings = OSAllocatedUnfairLock(initialState: builtInSettings)
-    private static let discoveryStarted = OSAllocatedUnfairLock(initialState: false)
+    private static let discoveryState = OSAllocatedUnfairLock(initialState: DiscoveryState())
 
     static func start() async {
-        let shouldDiscover = discoveryStarted.withLock { started in
-            guard !started else { return false }
-            started = true
+        let shouldDiscover = discoveryState.withLock { state in
+            guard !state.hasStarted else { return false }
+            state.hasStarted = true
             return true
         }
         guard shouldDiscover else { return }
+        _ = await refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+    }
 
-        let discovered = await Task.detached(priority: .utility) {
+    static func refreshIfNeeded(
+        minimumInterval: TimeInterval = 2,
+        forceDiscovery: Bool = false,
+        discoveryProvider: @escaping @Sendable () -> [DiscoveredSetting] = {
             discoverInstalledSettings()
+        }
+    ) async -> Bool {
+        let now = Date.timeIntervalSinceReferenceDate
+        let previousFingerprint = discoveryState.withLock { state -> [String: Date]? in
+            guard !state.refreshInFlight,
+                  now - state.lastDiscoveryTime >= minimumInterval else {
+                return nil
+            }
+            state.refreshInFlight = true
+            state.lastDiscoveryTime = now
+            return state.directoryFingerprint
+        }
+        guard let previousFingerprint else { return false }
+
+        let discovery = await Task.detached(priority: .utility) {
+            let fingerprint = makeDirectoryFingerprint(fileManager: .default)
+            guard forceDiscovery || fingerprint != previousFingerprint else {
+                return (settings: Optional<[DiscoveredSetting]>.none, fingerprint: fingerprint)
+            }
+            return (settings: Optional(discoveryProvider()), fingerprint: fingerprint)
         }.value
 
-        settings.withLock { current in
-            var knownPanes = Set(current.map(\.pane))
-            current.append(contentsOf: discovered.filter { knownPanes.insert($0.pane).inserted })
+        discoveryState.withLock { state in
+            state.refreshInFlight = false
+            state.directoryFingerprint = discovery.fingerprint
         }
+        guard let discovered = discovery.settings else { return false }
+
+        let installed = discovered.map {
+            Setting(name: $0.name, keywords: $0.keywords, pane: $0.pane)
+        }
+        return settings.withLock { current in
+            var knownPanes = Set<String>()
+            let replacement = (builtInSettings + installed).filter {
+                knownPanes.insert($0.pane).inserted
+            }
+            let changed = current.map(\.pane) != replacement.map(\.pane)
+                || current.map(\.name) != replacement.map(\.name)
+                || current.map(\.keywords) != replacement.map(\.keywords)
+            current = replacement
+            return changed
+        }
+    }
+
+    private static func makeDirectoryFingerprint(fileManager: FileManager) -> [String: Date] {
+        Dictionary(uniqueKeysWithValues: installedSettingsRoots(fileManager: fileManager).map {
+            let attributes = try? fileManager.attributesOfItem(atPath: $0.url.path)
+            let modificationDate = attributes?[.modificationDate] as? Date ?? .distantPast
+            return ($0.url.standardizedFileURL.path, modificationDate)
+        })
+    }
+
+    private static func installedSettingsRoots(
+        fileManager: FileManager
+    ) -> [(url: URL, pathExtension: String, requiresSettingsMarker: Bool)] {
+        [
+            (
+                URL(fileURLWithPath: "/System/Library/ExtensionKit/Extensions", isDirectory: true),
+                "appex",
+                true
+            ),
+            (
+                URL(
+                    fileURLWithPath: "/System/Applications/System Settings.app/Contents/PlugIns",
+                    isDirectory: true
+                ),
+                "appex",
+                true
+            ),
+            (
+                URL(fileURLWithPath: "/Library/PreferencePanes", isDirectory: true),
+                "prefPane",
+                false
+            ),
+            (
+                fileManager.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Library/PreferencePanes", isDirectory: true),
+                "prefPane",
+                false
+            ),
+        ]
     }
 
     static func search(_ query: String, limit: Int = 6) -> [SearchItem] {
@@ -320,36 +413,11 @@ enum SystemCatalog {
         }
     }
 
-    private static func discoverInstalledSettings() -> [Setting] {
+    private static func discoverInstalledSettings() -> [DiscoveredSetting] {
         let fileManager = FileManager.default
-        let roots: [(url: URL, pathExtension: String, requiresSettingsMarker: Bool)] = [
-            (
-                URL(fileURLWithPath: "/System/Library/ExtensionKit/Extensions", isDirectory: true),
-                "appex",
-                true
-            ),
-            (
-                URL(
-                    fileURLWithPath: "/System/Applications/System Settings.app/Contents/PlugIns",
-                    isDirectory: true
-                ),
-                "appex",
-                true
-            ),
-            (
-                URL(fileURLWithPath: "/Library/PreferencePanes", isDirectory: true),
-                "prefPane",
-                false
-            ),
-            (
-                fileManager.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Library/PreferencePanes", isDirectory: true),
-                "prefPane",
-                false
-            ),
-        ]
+        let roots = installedSettingsRoots(fileManager: fileManager)
 
-        var discovered: [Setting] = []
+        var discovered: [DiscoveredSetting] = []
         for root in roots {
             let children = (try? fileManager.contentsOfDirectory(
                 at: root.url,
@@ -373,7 +441,7 @@ enum SystemCatalog {
                 }
 
                 discovered.append(
-                    Setting(
+                    DiscoveredSetting(
                         name: name,
                         keywords: identifier.replacingOccurrences(
                             of: "[^A-Za-z0-9]+",

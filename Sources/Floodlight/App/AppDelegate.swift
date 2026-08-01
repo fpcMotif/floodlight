@@ -15,22 +15,32 @@ private func floodlightHotKeyHandler(
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = SearchCoordinator()
     private var panelController: FloodlightPanelController?
+    private var onboardingController: OnboardingWindowController?
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    private var activeShortcut: FloodlightShortcut?
     private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
+    private var launchAtLoginItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         panelController = FloodlightPanelController(model: model)
         model.onDismiss = { [weak self] in self?.panelController?.hide() }
+        model.onShowSettings = { [weak self] in self?.showSettingsFromSearch() }
         installMenu()
         installStatusItem()
         installGlobalHotKey()
-        model.start()
-        panelController?.show()
+        model.enableLaunchAtLoginOnFirstRun()
+        if OnboardingSession.shouldPresent() {
+            showInitialSetup()
+        } else {
+            model.start()
+            panelController?.show()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -46,16 +56,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
+        if onboardingController?.window?.isVisible == true {
+            onboardingController?.show()
+            return true
+        }
         panelController?.show()
         return true
     }
 
     @objc func togglePanel() {
+        if onboardingController?.window?.isVisible == true {
+            onboardingController?.show()
+            return
+        }
         panelController?.toggle()
     }
 
     @objc private func showPanel() {
+        if onboardingController?.window?.isVisible == true {
+            onboardingController?.show()
+            return
+        }
         panelController?.show()
+    }
+
+    private func showInitialSetup() {
+        showConfiguration(
+            presentation: .onboarding,
+            showSearchOnFinish: true,
+            showSearchOnDismiss: false
+        )
+    }
+
+    @objc private func showSettings() {
+        showConfiguration(
+            presentation: .settings,
+            showSearchOnFinish: false,
+            showSearchOnDismiss: false
+        )
+    }
+
+    @objc private func showSettingsFromSearch() {
+        showConfiguration(
+            presentation: .settings,
+            showSearchOnFinish: true,
+            showSearchOnDismiss: true
+        )
+    }
+
+    private func showConfiguration(
+        presentation: FloodlightConfigurationPresentation,
+        showSearchOnFinish: Bool,
+        showSearchOnDismiss: Bool
+    ) {
+        if let onboardingController, onboardingController.window?.isVisible == true {
+            onboardingController.show()
+            return
+        }
+
+        panelController?.hide()
+        let controller = OnboardingWindowController(
+            presentation: presentation,
+            activeShortcut: activeShortcut ?? FloodlightShortcut.preferred(),
+            launchesAtLogin: model.launchesAtLogin,
+            rootURL: model.rootURL,
+            selectShortcut: { [weak self] shortcut in
+                self?.selectShortcut(shortcut) ?? false
+            },
+            setLaunchAtLogin: { [weak self] enabled in
+                guard let self else { return "Floodlight is no longer running." }
+                do {
+                    try model.setLaunchAtLogin(enabled)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            },
+            chooseScope: { [weak self] in
+                self?.model.chooseRoot()
+            },
+            onFinished: { [weak self] in
+                self?.configurationClosed(showSearch: showSearchOnFinish)
+            },
+            onDismissed: { [weak self] in
+                self?.configurationClosed(showSearch: showSearchOnDismiss)
+            }
+        )
+        onboardingController = controller
+        controller.show()
     }
 
     @objc private func chooseRoot() {
@@ -68,7 +156,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleLaunchAtLogin() {
-        model.toggleLaunchAtLogin()
+        let wanted = !model.launchesAtLogin
+        do {
+            try model.setLaunchAtLogin(wanted)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = wanted
+                ? "Floodlight could not be added to Login Items."
+                : "Floodlight could not be removed from Login Items."
+            alert.informativeText = """
+                \(error.localizedDescription)
+
+                You can change this yourself in System Settings → General → \
+                Login Items & Extensions.
+                """
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
     }
 
     private func installGlobalHotKey() {
@@ -86,45 +190,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             &eventHandlerRef
         )
 
+        let preferred = FloodlightShortcut.preferred()
+        if let registered = registerHotKey(preferred) {
+            hotKeyRef = registered
+            activeShortcut = preferred
+        } else if let registered = registerHotKey(preferred.fallback) {
+            hotKeyRef = registered
+            activeShortcut = preferred.fallback
+        } else {
+            NSLog("Floodlight could not register its global keyboard shortcut.")
+        }
+    }
+
+    private func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
+        guard shortcut != activeShortcut else {
+            shortcut.save()
+            return true
+        }
+
+        let previous = activeShortcut
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+            activeShortcut = nil
+        }
+
+        if let registered = registerHotKey(shortcut) {
+            hotKeyRef = registered
+            activeShortcut = shortcut
+            shortcut.save()
+            return true
+        }
+
+        if let previous, let restored = registerHotKey(previous) {
+            hotKeyRef = restored
+            activeShortcut = previous
+        }
+        return false
+    }
+
+    private func registerHotKey(_ shortcut: FloodlightShortcut) -> EventHotKeyRef? {
         let identifier = EventHotKeyID(signature: fourCharacterCode("FLIT"), id: 1)
+        var reference: EventHotKeyRef?
         let status = RegisterEventHotKey(
             UInt32(kVK_Space),
-            UInt32(cmdKey),
+            shortcut.carbonModifiers,
             identifier,
             GetApplicationEventTarget(),
             0,
-            &hotKeyRef
+            &reference
         )
+        return status == noErr ? reference : nil
+    }
 
-        if status != noErr {
-            let fallbackStatus = RegisterEventHotKey(
-                UInt32(kVK_Space),
-                UInt32(optionKey),
-                identifier,
-                GetApplicationEventTarget(),
-                0,
-                &hotKeyRef
-            )
-            if fallbackStatus != noErr {
-                NSLog("Floodlight could not register its global keyboard shortcut.")
-            }
+    private func configurationClosed(showSearch: Bool) {
+        model.start()
+        if showSearch {
+            panelController?.show()
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.onboardingController = nil
         }
     }
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.image = NSImage(
-                systemSymbolName: "flashlight.on.fill",
-                accessibilityDescription: "Floodlight"
-            )
-            button.target = self
-            button.action = #selector(togglePanel)
+            button.image = FloodlightMenuBarIcon.image()
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
             button.toolTip = "Floodlight"
+            button.setAccessibilityLabel("Floodlight")
         }
         statusItem = item
+        let menu = makeStatusMenu()
+        menu.delegate = self
+        statusMenu = menu
+        item.menu = menu
     }
 
+    /// Floodlight is an `LSUIElement` agent, so it never shows an application
+    /// menu bar. Without this menu, everything in `installMenu()` is reachable
+    /// only by key equivalent — and Launch at Login has none.
+    func makeStatusMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        let show = NSMenuItem(
+            title: "Show Floodlight",
+            action: #selector(showPanel),
+            keyEquivalent: " "
+        )
+        show.keyEquivalentModifierMask = [.command]
+        show.target = self
+        menu.addItem(show)
+        menu.addItem(.separator())
+
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ""
+        )
+        settings.target = self
+        menu.addItem(settings)
+
+        let scope = NSMenuItem(
+            title: "Choose Search Scope…",
+            action: #selector(chooseRoot),
+            keyEquivalent: "l"
+        )
+        scope.target = self
+        menu.addItem(scope)
+
+        let rebuild = NSMenuItem(
+            title: "Rebuild Index",
+            action: #selector(rebuildIndex),
+            keyEquivalent: "r"
+        )
+        rebuild.keyEquivalentModifierMask = [.command, .shift]
+        rebuild.target = self
+        menu.addItem(rebuild)
+
+        let launch = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLogin),
+            keyEquivalent: ""
+        )
+        launch.target = self
+        menu.addItem(launch)
+        launchAtLoginItem = launch
+
+        menu.addItem(.separator())
+        menu.addItem(
+            withTitle: "Quit Floodlight",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+
+        return menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === statusMenu else { return }
+        launchAtLoginItem?.state = model.launchesAtLogin ? .on : .off
+    }
+
+    /// This menu is never drawn — Floodlight is an agent app. It exists so the
+    /// key equivalents below work while the panel is key. Anything a user has
+    /// to click belongs in `makeStatusMenu()` instead.
     private func installMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -139,6 +351,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         show.target = self
         appMenu.addItem(show)
         appMenu.addItem(.separator())
+
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettingsFromSearch),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        appMenu.addItem(settings)
 
         let scope = NSMenuItem(
             title: "Choose Search Scope…",
@@ -157,13 +377,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuild.target = self
         appMenu.addItem(rebuild)
 
-        let launch = NSMenuItem(
-            title: "Toggle Launch at Login",
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: ""
-        )
-        launch.target = self
-        appMenu.addItem(launch)
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Quit Floodlight",
