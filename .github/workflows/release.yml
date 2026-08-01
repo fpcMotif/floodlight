@@ -15,17 +15,11 @@ concurrency:
 jobs:
   release:
     runs-on: macos-15
-    env:
-      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+    environment: release
 
     steps:
       - name: Check out Floodlight
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Validate release tag
         run: |
@@ -36,6 +30,13 @@ jobs:
           fi
 
       - name: Validate Apple signing secrets
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           missing=0
           for name in \
@@ -54,7 +55,23 @@ jobs:
           done
           exit "$missing"
 
+      - name: Set the app version from the tag
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          plist="Sources/Floodlight/Resources/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $version" "$plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$plist"
+
+      - name: Build Floodlight
+        run: make bundle
+
       - name: Import the Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
           certificate_path="$RUNNER_TEMP/developer-id.p12"
           keychain_path="$RUNNER_TEMP/floodlight-signing.keychain-db"
@@ -69,7 +86,8 @@ jobs:
           security import "$certificate_path" \
             -k "$keychain_path" \
             -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
             -t cert \
             -f pkcs12
           security set-key-partition-list \
@@ -88,18 +106,18 @@ jobs:
             exit 1
           fi
           echo "CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
 
-      - name: Set the app version from the tag
+      - name: Sign Floodlight
         run: |
-          version=${GITHUB_REF_NAME#v}
-          plist="Sources/Floodlight/Resources/Info.plist"
-          /usr/libexec/PlistBuddy \
-            -c "Set :CFBundleShortVersionString $version" "$plist"
-          /usr/libexec/PlistBuddy \
-            -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$plist"
-
-      - name: Build and sign Floodlight
-        run: make bundle
+          codesign \
+            --force \
+            --sign "$CODE_SIGN_IDENTITY" \
+            --identifier "com.floodlight.search" \
+            --options runtime \
+            --timestamp \
+            .build/Floodlight.app
+          codesign --verify --deep --strict --verbose=2 .build/Floodlight.app
 
       - name: Create and sign the DMG
         run: |
@@ -112,6 +130,10 @@ jobs:
           codesign --verify --verbose=2 .build/Floodlight.dmg
 
       - name: Notarize and staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           xcrun notarytool submit .build/Floodlight.dmg \
             --apple-id "$APPLE_ID" \
@@ -125,6 +147,14 @@ jobs:
             --context context:primary-signature \
             --verbose=4 \
             .build/Floodlight.dmg
+
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN" || true
+          fi
+          rm -f "$RUNNER_TEMP/developer-id.p12"
 
       - name: Generate the checksum
         run: |
