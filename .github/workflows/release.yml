@@ -16,7 +16,6 @@ jobs:
   release:
     runs-on: macos-15
     env:
-      FFF_DIR: ${{ github.workspace }}/../fff
       APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
@@ -54,20 +53,6 @@ jobs:
             fi
           done
           exit "$missing"
-
-      - name: Check out the pinned FFF source
-        run: |
-          git clone --filter=blob:none \
-            https://github.com/dmtrKovalenko/fff.git "$FFF_DIR"
-          git -C "$FFF_DIR" checkout \
-            e8dd50ce5a6857f2dc7f827746163a4b1040ba9c
-          git -C "$FFF_DIR" apply \
-            "$GITHUB_WORKSPACE/patches/fff/floodlight-compatibility.patch"
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
 
       - name: Import the Developer ID certificate
         run: |
@@ -114,7 +99,7 @@ jobs:
             -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$plist"
 
       - name: Build and sign Floodlight
-        run: make bundle FFF_DIR="$FFF_DIR"
+        run: make bundle
 
       - name: Create and sign the DMG
         run: |

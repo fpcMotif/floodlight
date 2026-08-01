@@ -1,8 +1,8 @@
 # Floodlight
 
 Floodlight is a keyboard-first Spotlight alternative for macOS, written in
-SwiftUI and powered by the [FFF](https://github.com/dmtrKovalenko/fff) Rust
-indexing engine.
+SwiftUI and powered by the [FFF Swift](https://github.com/vmg-dev/fff-swift)
+package.
 
 It searches files and folders with FFF's fuzzy ranking, live filesystem watcher,
 query history, and frecency database. Native catalogs add applications and
@@ -34,8 +34,6 @@ mouse.
 
 - macOS 14 or newer
 - Xcode command-line tools with Swift 5.10 or newer
-- Rust and Cargo
-- A local checkout of FFF (the default expected path is `../fff`)
 
 ## Build and run
 
@@ -43,12 +41,8 @@ mouse.
 make run
 ```
 
-The first build compiles FFF as an optimized `libfff_c.dylib`; this can take a
-few minutes because FFF enables release LTO. Override the location when needed:
-
-```sh
-make run FFF_DIR=/absolute/path/to/fff
-```
+Swift Package Manager downloads the versioned FFFKit XCFramework automatically.
+Building Floodlight does not require Rust or a separate FFF checkout.
 
 Create a signed ad-hoc application bundle:
 
@@ -88,8 +82,8 @@ make dmg
 ```
 
 Local bundles and DMGs use ad-hoc signing. Tagged GitHub releases use the
-Developer ID signing and notarization workflow described in
-[`docs/src/content/docs/development/releases.mdx`](docs/src/content/docs/development/releases.mdx).
+Developer ID signing and notarization workflow in
+[`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 The Finder/DMG icon is generated from
 `Sources/Floodlight/Resources/AppIcon.png` with `make icons`. The menu bar uses
@@ -113,7 +107,7 @@ reference](docs/src/content/docs/guides/keyboard-shortcuts.mdx).
 ```text
 SwiftUI search panel
   └─ SearchCoordinator
-      ├─ FFFIndex → CFFF shim → libfff_c.dylib → fff-search
+      ├─ FFFKit → static XCFramework → vendored fff-search
       ├─ ApplicationCatalog → private app markers → a second FFFIndex
       ├─ SystemCatalog
       ├─ Calculator

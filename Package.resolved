@@ -1,0 +1,15 @@
+{
+  "originHash" : "d26b7631dff6d53448bfb8a3e2a657f696f599d33ea758ebb5625db2d77a79ce",
+  "pins" : [
+    {
+      "identity" : "fff-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vmg-dev/fff-swift",
+      "state" : {
+        "revision" : "23ac44fc572967f60e3ddf3c857438f30c60111c",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

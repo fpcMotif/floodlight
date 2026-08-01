@@ -79,13 +79,32 @@ final class SearchCoordinator {
     private var selectionWasUserDriven = false
 
     init() {
+        let fileManager = FileManager.default
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
         let initialRoot = savedRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.homeDirectoryForCurrentUser
+            ?? fileManager.homeDirectoryForCurrentUser
+        let fallbackStorage = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(
+                "Library/Application Support/Floodlight",
+                isDirectory: true
+            )
+        let indexStorage = (try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Floodlight", isDirectory: true))
+            ?? fallbackStorage
+        let environment = ProcessInfo.processInfo.environment
         let recentStore = RecentStore()
 
         rootURL = initialRoot
-        index = FFFIndex(rootURL: initialRoot)
+        index = FFFIndex(
+            rootURL: initialRoot,
+            storageURL: indexStorage,
+            logFilePath: environment["FLOODLIGHT_FFF_LOG"],
+            logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
+        )
         self.recentStore = recentStore
         applicationCatalog = ApplicationCatalog(
             recentStore: recentStore,

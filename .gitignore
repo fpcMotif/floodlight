@@ -5,6 +5,5 @@ DerivedData/
 docs/.astro/
 docs/dist/
 docs/node_modules/
-Native/lib/*.dylib
 Floodlight.xcodeproj/xcuserdata/
 *.xcuserstate

@@ -1,20 +1,15 @@
-FFF_DIR ?= ../fff
+.PHONY: build bundle clean debug dmg docs icons install run test
 
-.PHONY: build build-fff bundle clean debug dmg docs icons install run test
-
-build-fff:
-	FFF_DIR="$(FFF_DIR)" ./scripts/build-fff.sh
-
-debug: build-fff
+debug:
 	swift build
 
-build: build-fff
+build:
 	swift build -c release
 
 run: debug
 	./scripts/run.sh
 
-test: build-fff
+test:
 	swift test
 
 bundle: build

@@ -1,6 +1,6 @@
 ---
 title: Build from source
-description: Build Floodlight and its FFF C bridge on a development Mac.
+description: Build Floodlight on a development Mac.
 ---
 
 import { Steps, Aside } from "@astrojs/starlight/components";
@@ -9,57 +9,31 @@ import { Steps, Aside } from "@astrojs/starlight/components";
 
 - macOS 14 or later
 - Xcode command-line tools with Swift 5.10 or later
-- Rust and Cargo
 - Node.js 24 only when working on this documentation site
-
-## Checkout layout
-
-Floodlight’s build script expects FFF next to the repository:
-
-```text
-code/
-├── floodlight/
-└── fff/
-```
 
 <Steps>
 
-1. **Clone both repositories**
+1. **Clone the repository**
 
    ```sh
    git clone https://github.com/vmg-dev/floodlight.git
-   git clone https://github.com/dmtrKovalenko/fff.git
-   ```
-
-2. **Pin and patch FFF**
-
-   ```sh
-   git -C fff checkout e8dd50ce5a6857f2dc7f827746163a4b1040ba9c
-   git -C fff apply ../floodlight/patches/fff/floodlight-compatibility.patch
-   ```
-
-   The patch exposes Floodlight’s opt-in filename indexing for PDFs, images,
-   and other common binary formats without content-indexing their bytes. It
-   also adds every ancestor directory to FFF’s directory table so nested
-   folders and `.app` bundle roots are searchable as first-class results, and
-   keeps files, folders, content, and application bundles current after live
-   filesystem changes.
-
-3. **Build and test**
-
-   ```sh
    cd floodlight
+   ```
+
+2. **Build and test**
+
+   ```sh
    make test
    ```
 
-4. **Create the application bundle**
+3. **Create the application bundle**
 
    ```sh
    make bundle
    open .build/Floodlight.app
    ```
 
-5. **Create a local DMG**
+4. **Create a local DMG**
 
    ```sh
    make dmg

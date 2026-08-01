@@ -10,23 +10,18 @@ let package = Package(
     products: [
         .executable(name: "Floodlight", targets: ["Floodlight"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/vmg-dev/fff-swift",
+            from: "0.1.0"
+        )
+    ],
     targets: [
-        .target(
-            name: "CFFF",
-            path: "Sources/CFFF",
-            publicHeadersPath: "include",
-            linkerSettings: [
-                .unsafeFlags([
-                    "-LNative/lib",
-                    "-Xlinker", "-rpath",
-                    "-Xlinker", "@executable_path/../Frameworks"
-                ]),
-                .linkedLibrary("fff_c")
-            ]
-        ),
         .executableTarget(
             name: "Floodlight",
-            dependencies: ["CFFF"],
+            dependencies: [
+                .product(name: "FFFKit", package: "fff-swift")
+            ],
             path: "Sources/Floodlight",
             exclude: ["Resources"],
             linkerSettings: [

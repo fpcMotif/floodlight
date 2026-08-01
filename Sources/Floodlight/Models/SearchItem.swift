@@ -230,15 +230,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
     }
 }
 
-struct IndexedSearchItem: Sendable {
-    let name: String
-    let relativePath: String
-    let url: URL
-    let isDirectory: Bool
-    let score: Int
-    let modified: UInt64
-    let size: UInt64
-
+extension IndexedSearchItem {
     var isApplicationBundle: Bool {
         isDirectory && url.pathExtension.caseInsensitiveCompare("app") == .orderedSame
     }
@@ -268,18 +260,4 @@ struct IndexedSearchItem: Sendable {
             fileSize: isDirectory ? nil : size
         )
     }
-}
-
-struct IndexedContentItem: Sendable {
-    let name: String
-    let relativePath: String
-    let url: URL
-    let line: UInt64
-    let snippet: String
-}
-
-struct IndexProgress: Equatable, Sendable {
-    let scannedFiles: UInt64
-    let isScanning: Bool
-    let isWatcherReady: Bool
 }

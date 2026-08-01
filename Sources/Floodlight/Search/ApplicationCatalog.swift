@@ -39,6 +39,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         self.discoveryProvider = discoveryProvider
 
         let fileManager = FileManager.default
+        let environment = ProcessInfo.processInfo.environment
         let defaultSupport = (try? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -55,7 +56,9 @@ final class ApplicationCatalog: @unchecked Sendable {
             storageURL: appIndexRoot.appendingPathComponent("Database", isDirectory: true),
             enableContentIndexing: false,
             includeBinaryFiles: false,
-            watch: false
+            watch: false,
+            logFilePath: environment["FLOODLIGHT_FFF_LOG"],
+            logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
         )
         if !deferDiscovery {
             prepare(fileManager: fileManager)
