@@ -18,7 +18,7 @@ const socialImage = new URL(iconURL, Astro.site ?? Astro.url).href;
 const repository =
   import.meta.env.PUBLIC_GITHUB_REPOSITORY ??
   process.env.GITHUB_REPOSITORY ??
-  "victorgarcia/floodlight";
+  "vmg-dev/floodlight";
 const repositoryURL = `https://github.com/${repository}`;
 
 const docs = (slug: string) => `${root}${slug}/`;
