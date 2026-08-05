@@ -548,7 +548,7 @@ final class SearchCoordinator {
         return try await applicationCatalog.search(query)
     }
 
-    private func buildResults(
+    func buildResults(
         query: String,
         indexed: [SearchItem],
         apps: [SearchItem],
@@ -616,7 +616,7 @@ final class SearchCoordinator {
         )
     }
 
-    private func applySelectedFilter(
+    func applySelectedFilter(
         resetSelection: Bool,
         promoteWebFallback: Bool = false
     ) {
