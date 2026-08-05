@@ -24,13 +24,11 @@ enum FloodlightConfigurationPresentation {
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let presentation: FloodlightConfigurationPresentation
     private let session: OnboardingSession
-    private let selectShortcut: (FloodlightShortcut) -> Bool
+    private let flow: OnboardingFlowState
     private let setLaunchAtLogin: (Bool) -> String?
     private let chooseScope: () -> URL?
     private let onFinished: () -> Void
     private let onDismissed: () -> Void
-    private var didFinish = false
-    private var pendingShortcut: FloodlightShortcut?
 
     init(
         presentation: FloodlightConfigurationPresentation = .onboarding,
@@ -44,12 +42,17 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         onDismissed: @escaping () -> Void
     ) {
         self.presentation = presentation
-        session = OnboardingSession(
+        let session = OnboardingSession(
             activeShortcut: activeShortcut,
             launchesAtLogin: launchesAtLogin,
             rootURL: rootURL
         )
-        self.selectShortcut = selectShortcut
+        self.session = session
+        flow = OnboardingFlowState(
+            session: session,
+            selectShortcut: selectShortcut,
+            openSpotlightSettings: OnboardingWindowController.openSpotlightSettings
+        )
         self.setLaunchAtLogin = setLaunchAtLogin
         self.chooseScope = chooseScope
         self.onFinished = onFinished
@@ -79,11 +82,11 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         let view = OnboardingView(
             presentation: presentation,
             session: session,
-            onSelectShortcut: { [weak self] in self?.handleShortcutSelection($0) },
+            onSelectShortcut: { [weak self] in self?.flow.handleShortcutSelection($0) },
             onSetLaunchAtLogin: { [weak self] in self?.handleLaunchAtLogin($0) },
             onChooseScope: { [weak self] in self?.handleChooseScope() },
             onOpenSpotlightSettings: { [weak self] in
-                self?.beginSpotlightReplacement()
+                self?.flow.beginSpotlightReplacement()
             },
             onOpenFullDiskAccess: Self.openFullDiskAccess,
             onFinish: { [weak self] in self?.finish() }
@@ -108,57 +111,13 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard !didFinish else { return }
+        guard !flow.didFinish else { return }
         onDismissed()
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
         session.refreshFullDiskAccess()
-        retryPendingShortcut()
-    }
-
-    private func handleShortcutSelection(_ shortcut: FloodlightShortcut) {
-        pendingShortcut = nil
-
-        guard shortcut != session.activeShortcut else {
-            session.shortcutMessage = nil
-            return
-        }
-
-        if selectShortcut(shortcut) {
-            session.activeShortcut = shortcut
-            session.shortcutMessage = nil
-        } else if shortcut == .commandSpace {
-            session.shortcutMessage =
-                "Spotlight or another app still owns ⌘ Space. Floodlight kept \(session.activeShortcut.displayName) active."
-        } else {
-            session.shortcutMessage =
-                "macOS could not register ⌥ Space. Floodlight kept \(session.activeShortcut.displayName) active."
-        }
-    }
-
-    private func beginSpotlightReplacement() {
-        pendingShortcut = .commandSpace
-        session.shortcutMessage =
-            "Turn off “Show Spotlight search” in the pane that opens, then return here."
-        Self.openSpotlightSettings()
-    }
-
-    private func retryPendingShortcut() {
-        guard let pendingShortcut else { return }
-        guard pendingShortcut != session.activeShortcut else {
-            self.pendingShortcut = nil
-            return
-        }
-
-        if selectShortcut(pendingShortcut) {
-            session.activeShortcut = pendingShortcut
-            session.shortcutMessage = "⌘ Space is ready."
-            self.pendingShortcut = nil
-        } else {
-            session.shortcutMessage =
-                "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here."
-        }
+        flow.retryPendingShortcut()
     }
 
     private func handleLaunchAtLogin(_ enabled: Bool) {
@@ -179,7 +138,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         if presentation == .onboarding {
             session.complete()
         }
-        didFinish = true
+        flow.markFinished()
         close()
         onFinished()
     }

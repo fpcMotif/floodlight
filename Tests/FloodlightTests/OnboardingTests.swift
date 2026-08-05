@@ -163,6 +163,153 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(FloodlightConfigurationPresentation.settings.title, "Settings")
     }
 
+    func testSelectingTheActiveShortcutClearsTheMessageWithoutReregistering() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        session.shortcutMessage = "stale"
+
+        flow.handleShortcutSelection(.optionSpace)
+
+        XCTAssertNil(session.shortcutMessage)
+        XCTAssertEqual(session.activeShortcut, .optionSpace)
+        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+    }
+
+    func testSelectingAnAvailableShortcutAdoptsIt() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectResult = true
+
+        flow.handleShortcutSelection(.commandSpace)
+
+        XCTAssertEqual(session.activeShortcut, .commandSpace)
+        XCTAssertNil(session.shortcutMessage)
+        XCTAssertEqual(spy.selectedShortcuts, [.commandSpace])
+    }
+
+    func testRefusedCommandSpaceReportsSpotlightOwnership() throws {
+        let (flow, session, _) = try makeFlow(activeShortcut: .optionSpace)
+
+        flow.handleShortcutSelection(.commandSpace)
+
+        XCTAssertEqual(session.activeShortcut, .optionSpace)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "Spotlight or another app still owns ⌘ Space. Floodlight kept ⌥ Space active."
+        )
+    }
+
+    func testRefusedOptionSpaceReportsARegistrationFailure() throws {
+        let (flow, session, _) = try makeFlow(activeShortcut: .commandSpace)
+
+        flow.handleShortcutSelection(.optionSpace)
+
+        XCTAssertEqual(session.activeShortcut, .commandSpace)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "macOS could not register ⌥ Space. Floodlight kept ⌘ Space active."
+        )
+    }
+
+    func testBeginningSpotlightReplacementQueuesCommandSpaceAndOpensSettings() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+
+        flow.beginSpotlightReplacement()
+
+        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "Turn off “Show Spotlight search” in the pane that opens, then return here."
+        )
+        XCTAssertEqual(spy.spotlightSettingsOpenCount, 1)
+        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+    }
+
+    func testRetryingWithoutAPendingShortcutDoesNothing() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+
+        flow.retryPendingShortcut()
+
+        XCTAssertNil(session.shortcutMessage)
+        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+    }
+
+    func testRetryingAdoptsCommandSpaceOnceSpotlightReleasesIt() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        flow.beginSpotlightReplacement()
+        spy.selectResult = true
+
+        flow.retryPendingShortcut()
+
+        XCTAssertEqual(session.activeShortcut, .commandSpace)
+        XCTAssertEqual(session.shortcutMessage, "⌘ Space is ready.")
+        XCTAssertNil(flow.pendingShortcut)
+        XCTAssertEqual(spy.selectedShortcuts, [.commandSpace])
+    }
+
+    func testRetryingKeepsWaitingWhileSpotlightStillOwnsCommandSpace() throws {
+        let (flow, session, _) = try makeFlow(activeShortcut: .optionSpace)
+        flow.beginSpotlightReplacement()
+
+        flow.retryPendingShortcut()
+
+        XCTAssertEqual(session.activeShortcut, .optionSpace)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here."
+        )
+        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
+    }
+
+    func testRetryingDropsAPendingShortcutThatIsAlreadyActive() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        flow.beginSpotlightReplacement()
+        session.activeShortcut = .commandSpace
+
+        flow.retryPendingShortcut()
+
+        XCTAssertNil(flow.pendingShortcut)
+        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+    }
+
+    func testSelectingAShortcutCancelsThePendingRetry() throws {
+        let (flow, _, _) = try makeFlow(activeShortcut: .optionSpace)
+        flow.beginSpotlightReplacement()
+
+        flow.handleShortcutSelection(.optionSpace)
+
+        XCTAssertNil(flow.pendingShortcut)
+    }
+
+    func testFinishingIsRecordedSoDismissalIsNotReported() throws {
+        let (flow, _, _) = try makeFlow(activeShortcut: .optionSpace)
+        XCTAssertFalse(flow.didFinish)
+
+        flow.markFinished()
+
+        XCTAssertTrue(flow.didFinish)
+    }
+
+    private func makeFlow(
+        activeShortcut: FloodlightShortcut
+    ) throws -> (flow: OnboardingFlowState, session: OnboardingSession, spy: OnboardingFlowSpy) {
+        let (defaults, suiteName) = try makeDefaults()
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+
+        let session = OnboardingSession(
+            activeShortcut: activeShortcut,
+            launchesAtLogin: true,
+            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            defaults: defaults,
+            fullDiskAccessProvider: { false }
+        )
+        let spy = OnboardingFlowSpy()
+        let flow = OnboardingFlowState(
+            session: session,
+            selectShortcut: spy.selectShortcut,
+            openSpotlightSettings: spy.openSpotlightSettings
+        )
+        return (flow, session, spy)
+    }
+
     private func makeView(
         session: OnboardingSession,
         presentation: FloodlightConfigurationPresentation = .onboarding
@@ -197,5 +344,21 @@ final class OnboardingTests: XCTestCase {
             representation.representation(using: .png, properties: [:])
         )
         try data.write(to: url)
+    }
+}
+
+@MainActor
+private final class OnboardingFlowSpy {
+    var selectResult = false
+    private(set) var selectedShortcuts: [FloodlightShortcut] = []
+    private(set) var spotlightSettingsOpenCount = 0
+
+    func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
+        selectedShortcuts.append(shortcut)
+        return selectResult
+    }
+
+    func openSpotlightSettings() {
+        spotlightSettingsOpenCount += 1
     }
 }
