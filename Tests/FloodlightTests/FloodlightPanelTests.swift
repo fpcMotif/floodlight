@@ -53,6 +53,62 @@ final class FloodlightPanelTests: XCTestCase {
         XCTAssertNil(FloodlightPanelController.commandDigit(for: "10"))
     }
 
+    func testCommandChordsMapToPanelCommands() {
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "c", shiftHeld: false),
+            .copySelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "l", shiftHeld: false),
+            .chooseRoot
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "y", shiftHeld: false),
+            .togglePreview
+        )
+    }
+
+    func testShiftDistinguishesRebuildIndexFromRevealSelection() {
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "r", shiftHeld: true),
+            .rebuildIndex
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
+            .revealSelection
+        )
+    }
+
+    func testShiftIsIgnoredByChordsOtherThanRebuildIndex() {
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "c", shiftHeld: true),
+            .copySelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "l", shiftHeld: true),
+            .chooseRoot
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "y", shiftHeld: true),
+            .togglePreview
+        )
+    }
+
+    func testUnmatchedCharactersProduceNoPanelCommand() {
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "q", shiftHeld: false),
+            .unmatched
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false),
+            .unmatched
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: nil, shiftHeld: false),
+            .unmatched
+        )
+    }
+
     func testSearchFieldHandlesStandardEditingShortcutsDirectly() {
         let editor = NSTextView()
         editor.isFieldEditor = true
