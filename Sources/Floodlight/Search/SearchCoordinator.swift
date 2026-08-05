@@ -160,13 +160,41 @@ final class SearchCoordinator {
     }
 
     private func refreshApplicationsIfNeeded() {
-        guard !isApplicationCatalogLoading, applicationRefreshTask == nil else { return }
-        applicationRefreshTask = Task { [weak self] in
+        refreshCatalogIfNeeded(
+            isLoading: isApplicationCatalogLoading,
+            task: \.applicationRefreshTask,
+            label: "application-catalog"
+        ) { coordinator in
+            try await coordinator.applicationCatalog.refreshIfNeeded()
+        }
+    }
+
+    private func refreshSettingsIfNeeded() {
+        refreshCatalogIfNeeded(
+            isLoading: isSettingsCatalogLoading,
+            task: \.settingsRefreshTask,
+            label: "settings-catalog"
+        ) { _ in
+            await SystemCatalog.refreshIfNeeded()
+        }
+    }
+
+    /// Runs `refresh` at most once at a time per catalog, re-searching whenever
+    /// the catalog reports a change. A catalog still loading its initial
+    /// contents, or one whose refresh is already in flight, is left alone.
+    private func refreshCatalogIfNeeded(
+        isLoading: Bool,
+        task: ReferenceWritableKeyPath<SearchCoordinator, Task<Void, Never>?>,
+        label: String,
+        refresh: @escaping (SearchCoordinator) async throws -> Bool
+    ) {
+        guard !isLoading, self[keyPath: task] == nil else { return }
+        self[keyPath: task] = Task { [weak self] in
             guard let self else { return }
-            defer { applicationRefreshTask = nil }
+            defer { self[keyPath: task] = nil }
 
             do {
-                let changed = try await applicationCatalog.refreshIfNeeded()
+                let changed = try await refresh(self)
                 guard changed else { return }
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     scheduleSearch(immediate: true)
@@ -174,21 +202,7 @@ final class SearchCoordinator {
             } catch is CancellationError {
                 return
             } catch {
-                NSLog("Floodlight application-catalog refresh failed: %@", error.localizedDescription)
-            }
-        }
-    }
-
-    private func refreshSettingsIfNeeded() {
-        guard !isSettingsCatalogLoading, settingsRefreshTask == nil else { return }
-        settingsRefreshTask = Task { [weak self] in
-            guard let self else { return }
-            defer { settingsRefreshTask = nil }
-
-            let changed = await SystemCatalog.refreshIfNeeded()
-            guard changed else { return }
-            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                scheduleSearch(immediate: true)
+                NSLog("Floodlight %@ refresh failed: %@", label, error.localizedDescription)
             }
         }
     }
