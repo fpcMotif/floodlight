@@ -125,6 +125,40 @@ final class CatalogTests: XCTestCase {
         }
     }
 
+    func testFastAndIndexedApplicationSearchAgreeOnScore() async throws {
+        let suiteName = "FloodlightScoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloodlightScoreTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let orbital = (
+            name: "Orbital Launcher",
+            url: URL(fileURLWithPath: "/Applications/Orbital Launcher.app", isDirectory: true)
+        )
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [orbital] }
+        )
+        try await catalog.start()
+
+        for query in ["orbital", "launcher"] {
+            try await assertEventually("The marker index did not return Orbital Launcher") {
+                try await catalog.search(query).contains { $0.fileURL == orbital.url }
+            }
+
+            let fast = try XCTUnwrap(
+                catalog.fastSearchPage(query).items.first { $0.fileURL == orbital.url },
+                query
+            )
+            let indexed = try await catalog.search(query).first { $0.fileURL == orbital.url }
+            XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
+        }
+    }
+
     func testRefreshTracksApplicationInstallRenameAndRemovalAfterStartup() async throws {
         let suiteName = "FloodlightRefreshTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

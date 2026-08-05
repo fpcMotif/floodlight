@@ -128,29 +128,36 @@ final class ApplicationCatalog: @unchecked Sendable {
     }
 
     func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let normalizedQuery = FuzzyMatcher.normalized(query)
+
         let applicationsByMarker = snapshotApplicationsByMarker()
         let indexed = try await index.searchFiles(
             query,
             limit: UInt32(max(limit * 2, limit))
         )
 
-        return indexed.compactMap { result -> SearchItem? in
+        return indexed.enumerated().compactMap { rank, result -> SearchItem? in
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
+            // The index also recalls applications no name match reaches — the
+            // ones learned from `track(query:selectedURL:)`. They rank under the
+            // band, keeping the index's order among themselves.
+            let score = Self.score(of: application, normalizedQuery: normalizedQuery)
+                ?? Self.applicationBand - (rank + 1)
             return SearchItem(
                 id: application.id,
                 title: application.name,
                 subtitle: application.subtitle,
                 kind: .application,
                 action: .open(application.url),
-                score: result.score + recentStore.boost(for: application.id),
+                score: score + recentStore.boost(for: application.id),
                 fileURL: application.url
             )
         }
-        .sorted { lhs, rhs in
-            lhs.score == rhs.score ? lhs.title < rhs.title : lhs.score > rhs.score
-        }
+        .sorted(by: Self.ranksBefore)
         .prefix(limit)
         .map { $0 }
     }
@@ -167,9 +174,9 @@ final class ApplicationCatalog: @unchecked Sendable {
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
         let matches = snapshotApplications().compactMap { application -> SearchItem? in
-            guard let score = FuzzyMatcher.score(
-                normalizedQuery: normalizedQuery,
-                normalizedCandidate: application.normalizedName
+            guard let score = Self.score(
+                of: application,
+                normalizedQuery: normalizedQuery
             ) else {
                 return nil
             }
@@ -179,15 +186,11 @@ final class ApplicationCatalog: @unchecked Sendable {
                 subtitle: application.subtitle,
                 kind: .application,
                 action: .open(application.url),
-                score: 100_000 + score + recentStore.boost(for: application.id),
+                score: score + recentStore.boost(for: application.id),
                 fileURL: application.url
             )
         }
-        .sorted { lhs, rhs in
-            lhs.score == rhs.score
-                ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                : lhs.score > rhs.score
-        }
+        .sorted(by: Self.ranksBefore)
 
         return SearchItemPage(
             items: Array(matches.prefix(limit)),
@@ -204,6 +207,30 @@ final class ApplicationCatalog: @unchecked Sendable {
             query: query,
             selectedURL: markerRoot.appendingPathComponent(markerName)
         )
+    }
+
+    /// Chosen to sit above `SystemCatalog`'s settings, which score an order of
+    /// magnitude lower, and below `FloodlightCommandCatalog`'s band.
+    private static let applicationBand = 100_000
+
+    /// The score both search paths publish for `application` against a query.
+    ///
+    /// `fastSearchPage` matches names directly while `search` goes through the
+    /// FFF index, whose own result score lives on an unrelated scale. Scoring
+    /// both paths here keeps one ranking: whichever path served the query, an
+    /// application lands on the same number.
+    private static func score(of application: Application, normalizedQuery: String) -> Int? {
+        FuzzyMatcher.score(
+            normalizedQuery: normalizedQuery,
+            normalizedCandidate: application.normalizedName
+        )
+        .map { applicationBand + $0 }
+    }
+
+    private static func ranksBefore(_ lhs: SearchItem, _ rhs: SearchItem) -> Bool {
+        lhs.score == rhs.score
+            ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            : lhs.score > rhs.score
     }
 
     private var prepared: Bool {

@@ -372,7 +372,7 @@ enum SystemCatalog {
                 )
             }
             guard let score,
-                  score >= 9_000,
+                  score >= FuzzyMatcher.confidentMatchThreshold,
                   let url = setting.url else {
                 return nil
             }
