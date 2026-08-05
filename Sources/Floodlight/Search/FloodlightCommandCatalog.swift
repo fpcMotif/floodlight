@@ -16,7 +16,7 @@ enum FloodlightCommandCatalog {
                 normalizedQuery: normalizedQuery,
                 normalizedCandidate: settingsCandidate
             ),
-            score >= 9_000
+            score >= FuzzyMatcher.confidentMatchThreshold
         else {
             return []
         }
