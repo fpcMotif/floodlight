@@ -587,52 +587,18 @@ final class SearchCoordinator {
         return try await applicationCatalog.indexedItems(for: query, limit: 12)
     }
 
-    func buildResults(
+    private func buildResults(
         query: String,
         indexed: [SearchItem],
         apps: [SearchItem],
         system: [SearchItem]
     ) -> [SearchItem] {
-        var output: [SearchItem] = []
-
-        if let value = Calculator.evaluate(query) {
-            let answer = Calculator.format(value)
-            output.append(
-                SearchItem(
-                    id: "calculator",
-                    title: answer,
-                    subtitle: "\(query) = \(answer) · Press Return to copy",
-                    kind: .calculator,
-                    action: .copy(answer),
-                    score: SearchItemRanking.calculator
-                )
-            )
-        }
-
-        output.append(contentsOf: FloodlightCommandCatalog.search(query))
-        output.append(contentsOf: apps)
-        output.append(contentsOf: system)
-        output.append(contentsOf: indexed)
-
-        var seen = Set<String>()
-        output = SearchItemRanking.ranked(output.filter { seen.insert($0.id).inserted })
-
-        if !query.isEmpty,
-           let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
-            output.append(
-                SearchItem(
-                    id: Self.webSearchResultID,
-                    title: "Search the Web for “\(query)”",
-                    subtitle: "Open in your default browser",
-                    kind: .web,
-                    action: .open(url),
-                    score: SearchItemRanking.webFallback
-                )
-            )
-        }
-
-        return Array(output.prefix(80))
+        SearchResultMerge.merge(
+            query: query,
+            indexed: indexed,
+            apps: apps,
+            system: system
+        )
     }
 
     private func publishResults(
@@ -648,7 +614,7 @@ final class SearchCoordinator {
         )
     }
 
-    func applySelectedFilter(
+    private func applySelectedFilter(
         resetSelection: Bool,
         promoteWebFallback: Bool = false
     ) {
@@ -725,5 +691,5 @@ final class SearchCoordinator {
         )
     }
 
-    private static let webSearchResultID = "web-search"
+    private static let webSearchResultID = SearchResultMerge.webSearchResultID
 }

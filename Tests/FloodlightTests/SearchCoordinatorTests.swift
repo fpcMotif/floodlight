@@ -2,8 +2,51 @@ import Foundation
 import XCTest
 @testable import Floodlight
 
+/// A catalog that answers from a fixed list, so a coordinator under test has
+/// deterministic sources instead of whatever this machine happens to have
+/// installed.
+private struct StubCatalog: Catalog {
+    var items: [SearchItem] = []
+
+    func start() async throws {}
+
+    func refreshIfNeeded(minimumInterval: TimeInterval, forceDiscovery: Bool) async throws -> Bool {
+        false
+    }
+
+    func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        SearchItemRanking.page(items, limit: limit)
+    }
+}
+
 @MainActor
 final class SearchCoordinatorTests: XCTestCase {
+    /// A coordinator over stub catalogs and a scratch index.
+    private func makeCoordinator(
+        apps: [SearchItem] = [],
+        settings: [SearchItem] = []
+    ) throws -> SearchCoordinator {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloodlightCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: scratch) }
+
+        let suiteName = "FloodlightCoordinatorTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+
+        return SearchCoordinator(
+            index: FFFIndex(
+                rootURL: scratch,
+                storageURL: scratch.appendingPathComponent("Database", isDirectory: true),
+                watch: false
+            ),
+            applicationCatalog: StubCatalog(items: apps),
+            settingsCatalog: StubCatalog(items: settings),
+            recentStore: RecentStore(defaults: defaults),
+            rootURL: scratch
+        )
+    }
+
     func testRealResultReplacesAutomaticWebFallbackSelection() {
         let folder = makeFolder()
         let web = makeWebResult()
@@ -35,9 +78,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testCalculatorAnswerLeadsResultsForAnExpression() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: "12 * 12",
             indexed: [makeIndexedFile(name: "budget.numbers", score: 5_000)],
             apps: [makeApplication(name: "Calculator", score: 99_000)],
@@ -52,9 +93,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testQueriesThatAreNotExpressionsSkipTheCalculator() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: Self.unmatchedQuery,
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
             apps: [],
@@ -65,12 +104,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEverySourceContributesToTheMergedResults() {
-        let coordinator = SearchCoordinator()
         let app = makeApplication(name: "Shortcuts", score: 100_000)
         let setting = makeSetting(title: "Keyboard Shortcuts", score: 11_000)
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
 
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: "shortcut",
             indexed: [file],
             apps: [app],
@@ -86,12 +124,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEarlierSourcesWinWhenIdentifiersCollide() throws {
-        let coordinator = SearchCoordinator()
         let commandID = "floodlight-command:settings"
         let appsVersusSystemID = "collision:apps-versus-system"
         let systemVersusIndexedID = "collision:system-versus-indexed"
 
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: "shortcut",
             indexed: [
                 makeIndexedFile(
@@ -125,9 +162,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testResultsSortByScoreThenNaturalTitleOrder() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: Self.unmatchedQuery,
             indexed: [
                 makeIndexedFile(name: "Result 10", score: 5),
@@ -146,9 +181,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testWebFallbackTrailsResultsWithTheLowestScore() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: "shortcut",
             indexed: [makeIndexedFile(name: "shortcut-notes.txt", score: 500)],
             apps: [],
@@ -166,9 +199,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEmptyQueryOmitsTheWebFallback() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: "",
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
             apps: [],
@@ -179,12 +210,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testMergedResultsTruncateToEightyRows() {
-        let coordinator = SearchCoordinator()
         let indexed = (0..<100).map { index in
             makeIndexedFile(name: "file-\(index).txt", score: 1_000 - index)
         }
 
-        let results = coordinator.buildResults(
+        let results = SearchResultMerge.merge(
             query: Self.unmatchedQuery,
             indexed: indexed,
             apps: [],
@@ -197,8 +227,9 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertFalse(results.contains { $0.kind == .web })
     }
 
-    func testSelectingAFilterNarrowsPublishedResults() {
-        let coordinator = SearchCoordinator()
+    func testSelectingAFilterNarrowsPublishedResults() throws {
+        let setting = makeSetting(title: "Keyboard Shortcuts", score: 11_000)
+        let coordinator = try makeCoordinator(settings: [setting])
         coordinator.query = "shortcut"
 
         XCTAssertTrue(coordinator.results.contains { $0.kind == .web })
@@ -206,7 +237,7 @@ final class SearchCoordinatorTests: XCTestCase {
 
         coordinator.selectFilter(.settings)
 
-        XCTAssertFalse(coordinator.results.isEmpty)
+        XCTAssertTrue(coordinator.results.contains { $0.id == setting.id })
         XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
         XCTAssertFalse(coordinator.results.contains { $0.kind == .web })
         XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
@@ -219,31 +250,28 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.selectedID)
     }
 
-    func testApplySelectedFilterReconcilesSelectionWithVisibleResults() {
-        let coordinator = SearchCoordinator()
+    func testFilteringReconcilesSelectionWithVisibleResults() throws {
+        let setting = makeSetting(title: "Keyboard Shortcuts", score: 11_000)
+        let coordinator = try makeCoordinator(settings: [setting])
         coordinator.query = "shortcut"
+
         let unfiltered = coordinator.results
         XCTAssertGreaterThan(unfiltered.count, 1)
-
-        coordinator.selectedID = unfiltered.last?.id
-        coordinator.applySelectedFilter(resetSelection: false)
-
-        XCTAssertEqual(coordinator.selectedID, unfiltered.last?.id)
-
-        coordinator.applySelectedFilter(resetSelection: true)
-
         XCTAssertEqual(coordinator.selectedID, unfiltered.first?.id)
 
+        // A selection the user moved to stays put while it remains visible.
+        coordinator.moveSelection(by: 1)
+        XCTAssertEqual(coordinator.selectedID, unfiltered[1].id)
+
+        // Filtering that selection away falls back to the first visible row.
         coordinator.selectFilter(.settings)
-        let visible = coordinator.results
-        XCTAssertFalse(visible.isEmpty)
-        XCTAssertFalse(visible.contains { $0.id == "web-search" })
+        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
+        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
 
-        coordinator.selectedID = "web-search"
-        coordinator.applySelectedFilter(resetSelection: false)
-
-        XCTAssertEqual(coordinator.results.map(\.id), visible.map(\.id))
-        XCTAssertEqual(coordinator.selectedID, visible.first?.id)
+        // Returning to All restores the full list and selects its head.
+        coordinator.selectFilter(.all)
+        XCTAssertEqual(coordinator.results.map(\.id), unfiltered.map(\.id))
+        XCTAssertEqual(coordinator.selectedID, unfiltered.first?.id)
     }
 
     /// A query the calculator cannot evaluate and whose characters never appear
