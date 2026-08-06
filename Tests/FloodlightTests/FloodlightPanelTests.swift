@@ -25,8 +25,7 @@ final class FloodlightPanelTests: XCTestCase {
 
     func testCommandDigitsOneThroughFiveMapToVisibleFilterSlots() {
         for digit in 1...5 {
-            XCTAssertEqual(
-                FloodlightPanelController.filterShortcutIndex(for: String(digit)),
+            XCTAssertEqual(                FloodlightPanelController.filterShortcutIndex(for: String(digit)),
                 digit - 1
             )
         }
@@ -43,8 +42,7 @@ final class FloodlightPanelTests: XCTestCase {
 
     func testAllCommandDigitsAreRecognizedForConsumption() {
         for digit in 0...9 {
-            XCTAssertEqual(
-                FloodlightPanelController.commandDigit(for: String(digit)),
+            XCTAssertEqual(                FloodlightPanelController.commandDigit(for: String(digit)),
                 digit
             )
         }
@@ -54,59 +52,40 @@ final class FloodlightPanelTests: XCTestCase {
     }
 
     func testCommandChordsMapToPanelCommands() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "c", shiftHeld: false),
-            .copySelection
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "l", shiftHeld: false),
-            .chooseRoot
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "y", shiftHeld: false),
-            .togglePreview
-        )
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "c", shiftHeld: false), .copySelection)
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "l", shiftHeld: false), .chooseScope)
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "y", shiftHeld: false), .togglePreview)
     }
 
     func testShiftDistinguishesRebuildIndexFromRevealSelection() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "r", shiftHeld: true),
-            .rebuildIndex
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
-            .revealSelection
-        )
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "r", shiftHeld: true), .rebuildIndex)
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "r", shiftHeld: false), .revealSelection)
     }
 
     func testShiftIsIgnoredByChordsOtherThanRebuildIndex() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "c", shiftHeld: true),
-            .copySelection
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "l", shiftHeld: true),
-            .chooseRoot
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "y", shiftHeld: true),
-            .togglePreview
-        )
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "c", shiftHeld: true), .copySelection)
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "l", shiftHeld: true), .chooseScope)
+        XCTAssertEqual(FloodlightCommand.panelCommand(for: "y", shiftHeld: true), .togglePreview)
     }
 
     func testUnmatchedCharactersProduceNoPanelCommand() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "q", shiftHeld: false),
-            .unmatched
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false),
-            .unmatched
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: nil, shiftHeld: false),
-            .unmatched
-        )
+        XCTAssertNil(FloodlightCommand.panelCommand(for: "q", shiftHeld: false))
+        XCTAssertNil(FloodlightCommand.panelCommand(for: "cl", shiftHeld: false))
+        XCTAssertNil(FloodlightCommand.panelCommand(for: nil, shiftHeld: false))
+    }
+
+    /// The menu bar and the panel must not drift apart on a shared chord.
+    func testMenusAndPanelReadTheSameChordForSharedCommands() {
+        for command in [FloodlightCommand.chooseScope, .rebuildIndex] {
+            XCTAssertEqual(
+                FloodlightCommand.panelCommand(
+                    for: command.keyEquivalent,
+                    shiftHeld: command.modifiers.contains(.shift)
+                ),
+                command,
+                command.title
+            )
+        }
     }
 
     func testSearchFieldHandlesStandardEditingShortcutsDirectly() {

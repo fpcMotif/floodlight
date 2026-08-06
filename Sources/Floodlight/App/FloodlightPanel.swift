@@ -253,13 +253,13 @@ final class FloodlightPanelController {
             return true
         }
 
-        switch Self.panelCommand(
+        switch FloodlightCommand.panelCommand(
             for: characters,
             shiftHeld: modifiers.contains(.shift)
         ) {
         case .copySelection:
             model.copySelection()
-        case .chooseRoot:
+        case .chooseScope:
             model.chooseRoot()
         case .rebuildIndex:
             model.rebuildIndex()
@@ -267,34 +267,10 @@ final class FloodlightPanelController {
             model.revealSelection()
         case .togglePreview:
             model.togglePreview()
-        case .unmatched:
+        case .showSearch, .showSettings, .quit, nil:
             return false
         }
         return true
-    }
-
-    enum PanelCommand: Hashable, Sendable {
-        case copySelection
-        case chooseRoot
-        case rebuildIndex
-        case revealSelection
-        case togglePreview
-        case unmatched
-    }
-
-    static func panelCommand(for characters: String?, shiftHeld: Bool) -> PanelCommand {
-        switch characters {
-        case "c":
-            return .copySelection
-        case "l":
-            return .chooseRoot
-        case "r":
-            return shiftHeld ? .rebuildIndex : .revealSelection
-        case "y":
-            return .togglePreview
-        default:
-            return .unmatched
-        }
     }
 
     static func performSearchTextEditingCommand(

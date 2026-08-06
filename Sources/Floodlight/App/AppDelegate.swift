@@ -275,40 +275,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let show = NSMenuItem(
-            title: "Show Floodlight",
-            action: #selector(showPanel),
-            keyEquivalent: " "
+        menu.addItem(
+            NSMenuItem(command: .showSearch, action: #selector(showPanel), target: self)
         )
-        show.keyEquivalentModifierMask = [.command]
-        show.target = self
-        menu.addItem(show)
         menu.addItem(.separator())
 
+        // The status menu is clicked, not typed at, so Settings carries no
+        // chord here — ⌘, belongs to the main menu, which is always loaded.
         let settings = NSMenuItem(
-            title: "Settings…",
+            title: FloodlightCommand.showSettings.title,
             action: #selector(showSettings),
             keyEquivalent: ""
         )
         settings.target = self
         menu.addItem(settings)
 
-        let scope = NSMenuItem(
-            title: "Choose Search Scope…",
-            action: #selector(chooseRoot),
-            keyEquivalent: "l"
+        menu.addItem(
+            NSMenuItem(command: .chooseScope, action: #selector(chooseRoot), target: self)
         )
-        scope.target = self
-        menu.addItem(scope)
-
-        let rebuild = NSMenuItem(
-            title: "Rebuild Index",
-            action: #selector(rebuildIndex),
-            keyEquivalent: "r"
+        menu.addItem(
+            NSMenuItem(command: .rebuildIndex, action: #selector(rebuildIndex), target: self)
         )
-        rebuild.keyEquivalentModifierMask = [.command, .shift]
-        rebuild.target = self
-        menu.addItem(rebuild)
 
         let launch = NSMenuItem(
             title: "Launch at Login",
@@ -321,9 +308,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(
-            withTitle: "Quit Floodlight",
+            withTitle: FloodlightCommand.quit.title,
             action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
+            keyEquivalent: FloodlightCommand.quit.keyEquivalent
         )
 
         return menu
@@ -346,46 +333,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "Floodlight")
 
-        let show = NSMenuItem(
-            title: "Show Floodlight",
-            action: #selector(showPanel),
-            keyEquivalent: " "
+        appMenu.addItem(
+            NSMenuItem(command: .showSearch, action: #selector(showPanel), target: self)
         )
-        show.keyEquivalentModifierMask = [.command]
-        show.target = self
-        appMenu.addItem(show)
         appMenu.addItem(.separator())
-
-        let settings = NSMenuItem(
-            title: "Settings…",
-            action: #selector(showSettingsFromSearch),
-            keyEquivalent: ","
+        appMenu.addItem(
+            NSMenuItem(
+                command: .showSettings,
+                action: #selector(showSettingsFromSearch),
+                target: self
+            )
         )
-        settings.target = self
-        appMenu.addItem(settings)
-
-        let scope = NSMenuItem(
-            title: "Choose Search Scope…",
-            action: #selector(chooseRoot),
-            keyEquivalent: "l"
+        appMenu.addItem(
+            NSMenuItem(command: .chooseScope, action: #selector(chooseRoot), target: self)
         )
-        scope.target = self
-        appMenu.addItem(scope)
-
-        let rebuild = NSMenuItem(
-            title: "Rebuild Index",
-            action: #selector(rebuildIndex),
-            keyEquivalent: "r"
+        appMenu.addItem(
+            NSMenuItem(command: .rebuildIndex, action: #selector(rebuildIndex), target: self)
         )
-        rebuild.keyEquivalentModifierMask = [.command, .shift]
-        rebuild.target = self
-        appMenu.addItem(rebuild)
 
         appMenu.addItem(.separator())
         appMenu.addItem(
-            withTitle: "Quit Floodlight",
+            withTitle: FloodlightCommand.quit.title,
             action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
+            keyEquivalent: FloodlightCommand.quit.keyEquivalent
         )
 
         appItem.submenu = appMenu
