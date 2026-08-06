@@ -1,18 +1,11 @@
 import Foundation
 import os
 
-enum SystemCatalog {
+final class SystemCatalog: Catalog {
     struct DiscoveredSetting: Equatable, Sendable {
         let name: String
         let keywords: String
         let pane: String
-    }
-
-    private struct DiscoveryState {
-        var hasStarted = false
-        var refreshInFlight = false
-        var lastDiscoveryTime: TimeInterval = 0
-        var directoryFingerprint: [String: Date] = [:]
     }
 
     private struct Setting: Sendable {
@@ -234,50 +227,48 @@ enum SystemCatalog {
         ),
     ]
 
-    private static let settings = OSAllocatedUnfairLock(initialState: builtInSettings)
-    private static let discoveryState = OSAllocatedUnfairLock(initialState: DiscoveryState())
+    private let settings = OSAllocatedUnfairLock(initialState: SystemCatalog.builtInSettings)
+    private let refreshGuard = CatalogRefreshGuard()
+    private let directoryFingerprint = OSAllocatedUnfairLock(initialState: [String: Date]())
+    private let hasStarted = OSAllocatedUnfairLock(initialState: false)
+    private let discoveryProvider: @Sendable () -> [DiscoveredSetting]
 
-    static func start() async {
-        let shouldDiscover = discoveryState.withLock { state in
-            guard !state.hasStarted else { return false }
-            state.hasStarted = true
+    init(
+        discoveryProvider: @escaping @Sendable () -> [DiscoveredSetting] = {
+            SystemCatalog.discoverInstalledSettings()
+        }
+    ) {
+        self.discoveryProvider = discoveryProvider
+    }
+
+    func start() async {
+        let shouldDiscover = hasStarted.withLock { started in
+            guard !started else { return false }
+            started = true
             return true
         }
         guard shouldDiscover else { return }
         _ = await refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
     }
 
-    static func refreshIfNeeded(
-        minimumInterval: TimeInterval = 2,
-        forceDiscovery: Bool = false,
-        discoveryProvider: @escaping @Sendable () -> [DiscoveredSetting] = {
-            discoverInstalledSettings()
-        }
+    func refreshIfNeeded(
+        minimumInterval: TimeInterval,
+        forceDiscovery: Bool
     ) async -> Bool {
-        let now = Date.timeIntervalSinceReferenceDate
-        let previousFingerprint = discoveryState.withLock { state -> [String: Date]? in
-            guard !state.refreshInFlight,
-                  now - state.lastDiscoveryTime >= minimumInterval else {
-                return nil
-            }
-            state.refreshInFlight = true
-            state.lastDiscoveryTime = now
-            return state.directoryFingerprint
-        }
-        guard let previousFingerprint else { return false }
+        guard refreshGuard.reserve(minimumInterval: minimumInterval) else { return false }
+        defer { refreshGuard.release() }
 
+        let previousFingerprint = directoryFingerprint.withLock { $0 }
+        let discoveryProvider = discoveryProvider
         let discovery = await Task.detached(priority: .utility) {
-            let fingerprint = makeDirectoryFingerprint(fileManager: .default)
+            let fingerprint = Self.makeDirectoryFingerprint(fileManager: .default)
             guard forceDiscovery || fingerprint != previousFingerprint else {
                 return (settings: Optional<[DiscoveredSetting]>.none, fingerprint: fingerprint)
             }
             return (settings: Optional(discoveryProvider()), fingerprint: fingerprint)
         }.value
 
-        discoveryState.withLock { state in
-            state.refreshInFlight = false
-            state.directoryFingerprint = discovery.fingerprint
-        }
+        directoryFingerprint.withLock { $0 = discovery.fingerprint }
         guard let discovered = discovery.settings else { return false }
 
         let installed = discovered.map {
@@ -285,7 +276,7 @@ enum SystemCatalog {
         }
         return settings.withLock { current in
             var knownPanes = Set<String>()
-            let replacement = (builtInSettings + installed).filter {
+            let replacement = (Self.builtInSettings + installed).filter {
                 knownPanes.insert($0.pane).inserted
             }
             let changed = current.map(\.pane) != replacement.map(\.pane)
@@ -297,11 +288,10 @@ enum SystemCatalog {
     }
 
     private static func makeDirectoryFingerprint(fileManager: FileManager) -> [String: Date] {
-        Dictionary(uniqueKeysWithValues: installedSettingsRoots(fileManager: fileManager).map {
-            let attributes = try? fileManager.attributesOfItem(atPath: $0.url.path)
-            let modificationDate = attributes?[.modificationDate] as? Date ?? .distantPast
-            return ($0.url.standardizedFileURL.path, modificationDate)
-        })
+        CatalogDirectoryFingerprint.make(
+            for: installedSettingsRoots(fileManager: fileManager).map(\.url),
+            fileManager: fileManager
+        )
     }
 
     private static func installedSettingsRoots(
@@ -335,18 +325,15 @@ enum SystemCatalog {
         ]
     }
 
-    static func search(_ query: String, limit: Int = 6) -> [SearchItem] {
-        searchPage(query, limit: limit).items
-    }
-
-    static func searchPage(_ query: String, limit: Int = 6) -> SearchItemPage {
+    func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             return SearchItemPage(items: [], totalMatched: 0)
         }
         let normalizedQuery = FuzzyMatcher.normalized(query)
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
-        let queryCharacterMask = characterMask(normalizedQuery)
+        let queryCharacterMask = Self.characterMask(normalizedQuery)
         let requiresWordPrefix = normalizedQuery.count < 4
         let snapshot = settings.withLock { $0 }
         let matches = snapshot.compactMap { setting -> SearchItem? in
@@ -382,16 +369,12 @@ enum SystemCatalog {
                 subtitle: "System Settings",
                 kind: .systemSetting,
                 action: .open(url),
-                score: score + 2_000,
+                score: SearchItemRanking.setting + score,
                 fileURL: nil
             )
         }
-        .sorted { $0.score > $1.score }
 
-        return SearchItemPage(
-            items: Array(matches.prefix(limit)),
-            totalMatched: matches.count
-        )
+        return SearchItemRanking.page(matches, limit: limit)
     }
 
     private static func characterMask(_ value: String) -> UInt64 {

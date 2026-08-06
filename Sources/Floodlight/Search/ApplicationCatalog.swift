@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-final class ApplicationCatalog: @unchecked Sendable {
+final class ApplicationCatalog: Catalog, @unchecked Sendable {
     private struct Application: Sendable {
         let name: String
         let url: URL
@@ -12,6 +12,7 @@ final class ApplicationCatalog: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let refreshGuard = CatalogRefreshGuard()
     private let discoveryQueue = DispatchQueue(
         label: "com.floodlight.application-catalog",
         qos: .userInitiated
@@ -20,7 +21,6 @@ final class ApplicationCatalog: @unchecked Sendable {
     private var applicationsByMarker: [String: Application] = [:]
     private var markerByApplicationPath: [String: String] = [:]
     private var isPrepared = false
-    private var lastDiscoveryTime: TimeInterval = 0
     private var applicationDirectoryFingerprint: [String: Date] = [:]
     private let markerRoot: URL
     private let index: FFFIndex
@@ -72,10 +72,11 @@ final class ApplicationCatalog: @unchecked Sendable {
     /// modification dates; a full walk, marker synchronization, and the
     /// secondary FFF rescan happen only after a directory changes.
     func refreshIfNeeded(
-        minimumInterval: TimeInterval = 2,
-        forceDiscovery: Bool = false
+        minimumInterval: TimeInterval,
+        forceDiscovery: Bool
     ) async throws -> Bool {
-        guard reserveRefresh(minimumInterval: minimumInterval) else { return false }
+        guard refreshGuard.reserve(minimumInterval: minimumInterval) else { return false }
+        defer { refreshGuard.release() }
 
         let signpost = FloodlightPerformance.begin("ApplicationRefresh")
         let changed: Bool = await withCheckedContinuation { continuation in
@@ -92,17 +93,6 @@ final class ApplicationCatalog: @unchecked Sendable {
         guard changed else { return false }
         try await index.start()
         try await index.rescan()
-        return true
-    }
-
-    private func reserveRefresh(minimumInterval: TimeInterval) -> Bool {
-        let now = Date.timeIntervalSinceReferenceDate
-        lock.lock()
-        defer { lock.unlock() }
-        guard now - lastDiscoveryTime >= minimumInterval else { return false }
-        // Reserve this refresh window so repeated keystrokes cannot enqueue
-        // duplicate filesystem walks while discovery is in flight.
-        lastDiscoveryTime = now
         return true
     }
 
@@ -127,7 +117,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         }
     }
 
-    func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
+    func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         let normalizedQuery = FuzzyMatcher.normalized(query)
@@ -157,16 +147,12 @@ final class ApplicationCatalog: @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: Self.ranksBefore)
+        .sorted(by: SearchItemRanking.ranksBefore)
         .prefix(limit)
         .map { $0 }
     }
 
-    func fastSearch(_ query: String, limit: Int = 12) -> [SearchItem] {
-        fastSearchPage(query, limit: limit).items
-    }
-
-    func fastSearchPage(_ query: String, limit: Int = 12) -> SearchItemPage {
+    func immediatePage(for query: String, limit: Int) -> SearchItemPage {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             return SearchItemPage(items: [], totalMatched: 0)
@@ -190,12 +176,8 @@ final class ApplicationCatalog: @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: Self.ranksBefore)
 
-        return SearchItemPage(
-            items: Array(matches.prefix(limit)),
-            totalMatched: matches.count
-        )
+        return SearchItemRanking.page(matches, limit: limit)
     }
 
     func track(query: String, selectedURL: URL) {
@@ -253,9 +235,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         lock.unlock()
 
         guard changed else {
-            lock.lock()
-            lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
-            lock.unlock()
+            refreshGuard.markRefreshed()
             return false
         }
 
@@ -274,8 +254,8 @@ final class ApplicationCatalog: @unchecked Sendable {
             uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
         )
         isPrepared = true
-        lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
         lock.unlock()
+        refreshGuard.markRefreshed()
         return true
     }
 

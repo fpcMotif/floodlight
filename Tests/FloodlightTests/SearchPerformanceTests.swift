@@ -29,7 +29,7 @@ final class SearchPerformanceTests: XCTestCase {
         ]
 
         for query in queries {
-            _ = catalog.fastSearch(query)
+            _ = catalog.immediatePage(for: query, limit: 12).items
         }
 
         let iterations = 80
@@ -38,7 +38,7 @@ final class SearchPerformanceTests: XCTestCase {
 
         for _ in 0..<9 {
             let sample = measure(iterations: iterations, queries: queries) { query in
-                catalog.fastSearch(query)
+                catalog.immediatePage(for: query, limit: 12).items
             }
             samples.append(sample.microsecondsPerQuery)
             resultCount += sample.resultCount
@@ -54,7 +54,8 @@ final class SearchPerformanceTests: XCTestCase {
     }
 
     func testNewSearchFeaturePerformanceBaselines() async {
-        await SystemCatalog.start()
+        let settingsCatalog = SystemCatalog()
+        await settingsCatalog.start()
 
         let items = makeFilterFixture()
         let allFilters = SearchResultFilter.primary + SearchResultFilter.dynamic
@@ -94,12 +95,12 @@ final class SearchPerformanceTests: XCTestCase {
             "wifi",
         ]
         for query in settingsQueries {
-            _ = SystemCatalog.searchPage(query, limit: 24)
+            _ = settingsCatalog.immediatePage(for: query, limit: 24)
         }
         let settingsSamples = (0..<sampleCount).map { _ in
             measureCPU(iterations: settingsIterations) {
                 settingsQueries.reduce(into: 0) { count, query in
-                    count += SystemCatalog.searchPage(query, limit: 24).totalMatched
+                    count += settingsCatalog.immediatePage(for: query, limit: 24).totalMatched
                 }
             }
         }

@@ -54,7 +54,8 @@ final class SearchCoordinator {
     }
 
     private let index: FFFIndex
-    private let applicationCatalog: ApplicationCatalog
+    private let applicationCatalog: any Catalog
+    private let settingsCatalog: any Catalog
     private let recentStore: RecentStore
     private let quickLook = QuickLookController()
     private var allResults: [SearchItem] = []
@@ -78,7 +79,28 @@ final class SearchCoordinator {
     @ObservationIgnored
     private var selectionWasUserDriven = false
 
-    init() {
+    /// Builds a coordinator over already-constructed sources.
+    ///
+    /// Every dependency arrives here, so a test can hand in in-memory catalogs
+    /// and assert on `results` through the same interface the panel uses,
+    /// instead of reaching past it for a pure helper.
+    init(
+        index: FFFIndex,
+        applicationCatalog: any Catalog,
+        settingsCatalog: any Catalog,
+        recentStore: RecentStore,
+        rootURL: URL
+    ) {
+        self.index = index
+        self.applicationCatalog = applicationCatalog
+        self.settingsCatalog = settingsCatalog
+        self.recentStore = recentStore
+        self.rootURL = rootURL
+    }
+
+    /// The live wiring: search scope from preferences, index and catalogs over
+    /// the real filesystem.
+    convenience init() {
         let fileManager = FileManager.default
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
         let initialRoot = savedRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -98,17 +120,20 @@ final class SearchCoordinator {
         let environment = ProcessInfo.processInfo.environment
         let recentStore = RecentStore()
 
-        rootURL = initialRoot
-        index = FFFIndex(
-            rootURL: initialRoot,
-            storageURL: indexStorage,
-            logFilePath: environment["FLOODLIGHT_FFF_LOG"],
-            logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
-        )
-        self.recentStore = recentStore
-        applicationCatalog = ApplicationCatalog(
+        self.init(
+            index: FFFIndex(
+                rootURL: initialRoot,
+                storageURL: indexStorage,
+                logFilePath: environment["FLOODLIGHT_FFF_LOG"],
+                logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
+            ),
+            applicationCatalog: ApplicationCatalog(
+                recentStore: recentStore,
+                deferDiscovery: true
+            ),
+            settingsCatalog: SystemCatalog(),
             recentStore: recentStore,
-            deferDiscovery: true
+            rootURL: initialRoot
         )
     }
 
@@ -130,11 +155,11 @@ final class SearchCoordinator {
             do {
                 async let startFiles: Void = index.start()
                 async let startApplications: Void = applicationCatalog.start()
-                async let startSettings: Void = SystemCatalog.start()
+                async let startSettings: Void = settingsCatalog.start()
 
                 try await startApplications
                 isApplicationCatalogLoading = false
-                await startSettings
+                try await startSettings
                 isSettingsCatalogLoading = false
                 try await startFiles
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -174,8 +199,8 @@ final class SearchCoordinator {
             isLoading: isSettingsCatalogLoading,
             task: \.settingsRefreshTask,
             label: "settings-catalog"
-        ) { _ in
-            await SystemCatalog.refreshIfNeeded()
+        ) { coordinator in
+            try await coordinator.settingsCatalog.refreshIfNeeded()
         }
     }
 
@@ -435,8 +460,8 @@ final class SearchCoordinator {
             return
         }
 
-        let immediateAppPage = applicationCatalog.fastSearchPage(requestQuery)
-        let settingsPage = SystemCatalog.searchPage(requestQuery, limit: 24)
+        let immediateAppPage = applicationCatalog.immediatePage(for: requestQuery, limit: 12)
+        let settingsPage = settingsCatalog.immediatePage(for: requestQuery, limit: 24)
         let immediateApps = immediateAppPage.items
         applicationMatchCount = immediateAppPage.totalMatched
         settingsMatchCount = settingsPage.totalMatched
@@ -516,7 +541,7 @@ final class SearchCoordinator {
                         subtitle: "\(item.relativePath):\(item.line) · \(item.snippet)",
                         kind: .file,
                         action: .open(item.url),
-                        score: 1_000,
+                        score: SearchItemRanking.content,
                         fileURL: item.url
                     )
                 }
@@ -559,7 +584,7 @@ final class SearchCoordinator {
         defer {
             FloodlightPerformance.end("ApplicationIndexSearch", id: signpost)
         }
-        return try await applicationCatalog.search(query)
+        return try await applicationCatalog.indexedItems(for: query, limit: 12)
     }
 
     func buildResults(
@@ -579,7 +604,7 @@ final class SearchCoordinator {
                     subtitle: "\(query) = \(answer) · Press Return to copy",
                     kind: .calculator,
                     action: .copy(answer),
-                    score: 100_000
+                    score: SearchItemRanking.calculator
                 )
             )
         }
@@ -590,14 +615,7 @@ final class SearchCoordinator {
         output.append(contentsOf: indexed)
 
         var seen = Set<String>()
-        output = output
-            .filter { seen.insert($0.id).inserted }
-            .sorted { lhs, rhs in
-                if lhs.score == rhs.score {
-                    return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                }
-                return lhs.score > rhs.score
-            }
+        output = SearchItemRanking.ranked(output.filter { seen.insert($0.id).inserted })
 
         if !query.isEmpty,
            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -609,7 +627,7 @@ final class SearchCoordinator {
                     subtitle: "Open in your default browser",
                     kind: .web,
                     action: .open(url),
-                    score: Int.min
+                    score: SearchItemRanking.webFallback
                 )
             )
         }
