@@ -260,7 +260,7 @@ final class FloodlightPanelController {
         case .copySelection:
             model.copySelection()
         case .chooseRoot:
-            model.chooseRoot()
+            RootFolderPicker.choose(for: model)
         case .rebuildIndex:
             model.rebuildIndex()
         case .revealSelection:

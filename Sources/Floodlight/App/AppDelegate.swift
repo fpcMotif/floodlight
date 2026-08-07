@@ -133,7 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             },
             chooseScope: { [weak self] in
-                self?.model.chooseRoot()
+                guard let self else { return nil }
+                return RootFolderPicker.choose(for: model)
             },
             onFinished: { [weak self] in
                 self?.configurationClosed(showSearch: showSearchOnFinish)
@@ -148,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func chooseRoot() {
         panelController?.show()
-        model.chooseRoot()
+        RootFolderPicker.choose(for: model)
     }
 
     @objc private func rebuildIndex() {
