@@ -296,23 +296,6 @@ final class SearchCoordinator {
         return selectedItem.fileURL
     }
 
-    @discardableResult
-    func chooseRoot() -> URL? {
-        let panel = NSOpenPanel()
-        panel.title = "Choose a folder to search"
-        panel.message = "Floodlight will search this folder and keep results up to date."
-        panel.prompt = "Choose Folder"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = rootURL
-
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return nil }
-        changeRoot(to: selectedURL)
-        return selectedURL
-    }
-
     func rebuildIndex() {
         Task {
             do {
@@ -352,7 +335,7 @@ final class SearchCoordinator {
         }
     }
 
-    private func changeRoot(to url: URL) {
+    func changeRoot(to url: URL) {
         Task {
             do {
                 try await index.changeRoot(to: url)
