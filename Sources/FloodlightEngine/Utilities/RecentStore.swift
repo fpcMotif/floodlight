@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-final class RecentStore: @unchecked Sendable {
+package final class RecentStore: @unchecked Sendable {
     private struct Entry: Codable {
         var launches: Int
         var lastOpened: Date
@@ -15,7 +15,7 @@ final class RecentStore: @unchecked Sendable {
         qos: .utility
     )
 
-    init(defaults: UserDefaults = .standard) {
+    package init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: key),
            let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
@@ -25,7 +25,7 @@ final class RecentStore: @unchecked Sendable {
         }
     }
 
-    func record(_ id: String) {
+    package func record(_ id: String) {
         persistenceQueue.async { [self] in
             let snapshot = entries.withLock { entries in
                 var entry = entries[id] ?? Entry(launches: 0, lastOpened: .distantPast)
@@ -38,7 +38,7 @@ final class RecentStore: @unchecked Sendable {
         }
     }
 
-    func boost(for id: String) -> Int {
+    package func boost(for id: String) -> Int {
         entries.withLock { entries in
             guard let entry = entries[id] else { return 0 }
             return Self.boost(for: entry, now: .now)

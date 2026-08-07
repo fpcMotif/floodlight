@@ -1,4 +1,5 @@
 import AppKit
+import FloodlightEngine
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {

@@ -1,13 +1,13 @@
 import Foundation
 
-enum FuzzyMatcher {
+package enum FuzzyMatcher {
     /// The lowest score that counts as a confident match.
     ///
     /// Exact, prefix, and substring hits land far above it. Underneath sits the
     /// subsequence band the per-character loops open at 8_000, where a query's
     /// characters merely happen to appear in order — noise, until consecutive
     /// runs and word boundaries carry a candidate past this cutoff.
-    static let confidentMatchThreshold = 9_000
+    package static let confidentMatchThreshold = 9_000
 
     static func score(query: String, candidate: String) -> Int? {
         score(
@@ -16,7 +16,7 @@ enum FuzzyMatcher {
         )
     }
 
-    static func score(normalizedQuery query: String, normalizedCandidate candidate: String) -> Int? {
+    package static func score(normalizedQuery query: String, normalizedCandidate candidate: String) -> Int? {
         guard !query.isEmpty else { return 1 }
         if candidate == query { return 20_000 }
         if candidate.hasPrefix(query) { return 15_000 - candidate.count }
@@ -54,7 +54,7 @@ enum FuzzyMatcher {
         return queryIndex == query.endIndex ? score : nil
     }
 
-    static func scoreASCII(
+    package static func scoreASCII(
         normalizedQuery query: [UInt8],
         normalizedCandidate candidate: [UInt8]
     ) -> Int? {
@@ -101,7 +101,7 @@ enum FuzzyMatcher {
         return queryIndex == query.count ? score : nil
     }
 
-    static func normalized(_ value: String) -> String {
+    package static func normalized(_ value: String) -> String {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
