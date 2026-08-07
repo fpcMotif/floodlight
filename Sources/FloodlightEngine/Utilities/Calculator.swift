@@ -1,7 +1,7 @@
 import Foundation
 
-enum Calculator {
-    static func evaluate(_ source: String) -> Double? {
+package enum Calculator {
+    package static func evaluate(_ source: String) -> Double? {
         let normalized = source
             .replacingOccurrences(of: "×", with: "*")
             .replacingOccurrences(of: "÷", with: "/")
@@ -16,7 +16,7 @@ enum Calculator {
         return value
     }
 
-    static func format(_ value: Double) -> String {
+    package static func format(_ value: Double) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.maximumFractionDigits = 10
