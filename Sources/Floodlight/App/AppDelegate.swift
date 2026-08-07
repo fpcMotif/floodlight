@@ -132,7 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             },
             chooseScope: { [weak self] in
-                self?.model.chooseRoot()
+                guard let self, let url = RootPicker.choose(startingAt: model.rootURL) else {
+                    return nil
+                }
+                model.changeRoot(to: url)
+                return url
             },
             onFinished: { [weak self] in
                 self?.configurationClosed(showSearch: showSearchOnFinish)
@@ -147,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func chooseRoot() {
         panelController?.show()
-        model.chooseRoot()
+        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
+        model.changeRoot(to: url)
     }
 
     @objc private func rebuildIndex() {

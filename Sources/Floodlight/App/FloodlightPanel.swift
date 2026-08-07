@@ -276,7 +276,7 @@ final class FloodlightPanelController {
         case .copySelection:
             model.copySelection()
         case .chooseRoot:
-            model.chooseRoot()
+            chooseRoot()
         case .rebuildIndex:
             model.rebuildIndex()
         case .revealSelection:
@@ -292,6 +292,11 @@ final class FloodlightPanelController {
     private func togglePreview() {
         guard let url = model.previewableSelectionURL else { return }
         quickLook.toggle(url)
+    }
+
+    private func chooseRoot() {
+        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
+        model.changeRoot(to: url)
     }
 
     enum PanelCommand: Hashable, Sendable {
