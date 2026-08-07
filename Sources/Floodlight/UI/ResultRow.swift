@@ -1,4 +1,5 @@
 import AppKit
+import FloodlightEngine
 import SwiftUI
 
 struct ResultRow: View, Equatable {

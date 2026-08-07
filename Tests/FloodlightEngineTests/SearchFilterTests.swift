@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import Floodlight
+@testable import FloodlightEngine
 
 final class SearchFilterTests: XCTestCase {
     func testPrimaryFiltersSeparateAppsFilesAndFolders() {

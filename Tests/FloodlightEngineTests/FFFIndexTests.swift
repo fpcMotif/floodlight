@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import XCTest
-@testable import Floodlight
+@testable import FloodlightEngine
 
 final class FFFIndexTests: XCTestCase {
     func testCanChooseScopeBeforeInitialIndexStarts() async throws {
