@@ -9,13 +9,6 @@ final class SearchCoordinator {
         didSet {
             guard query != oldValue else { return }
             selectionWasUserDriven = false
-            if query.isEmpty != oldValue.isEmpty {
-                let height = panelHeight
-                DispatchQueue.main.async { [weak self] in
-                    guard self?.panelHeight == height else { return }
-                    self?.onPanelHeightChange?(height)
-                }
-            }
             guard !isResetting else { return }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 refreshApplicationsIfNeeded()
@@ -34,13 +27,7 @@ final class SearchCoordinator {
     @ObservationIgnored
     var onDismiss: (() -> Void)?
     @ObservationIgnored
-    var onPanelHeightChange: ((CGFloat) -> Void)?
-    @ObservationIgnored
     var onShowSettings: (() -> Void)?
-
-    var panelHeight: CGFloat {
-        FloodlightMetrics.panelHeight(hasQuery: !query.isEmpty)
-    }
 
     var filterOptions: [SearchFilterOption] {
         let primary = SearchResultFilter.primary.map(makeFilterOption)

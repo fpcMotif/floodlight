@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
@@ -63,9 +64,7 @@ final class FloodlightPanelController {
             panel.contentView?.layer?.masksToBounds = true
         }
 
-        model.onPanelHeightChange = { [weak self] height in
-            self?.resize(to: height)
-        }
+        observeQueryEmptyState()
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
@@ -209,6 +208,21 @@ final class FloodlightPanelController {
         frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
         panel.setFrame(frame, display: false, animate: false)
+    }
+
+    /// Resizes to the height for the model's current query-empty state, then
+    /// re-registers so the next transition is observed too — a change fires
+    /// `onChange` exactly once. `resize(to:)`'s half-point no-op keeps a fast
+    /// type-then-clear from resizing twice, the same guarantee the coordinator's
+    /// old deferred height push made deliberately.
+    private func observeQueryEmptyState() {
+        withObservationTracking {
+            resize(to: FloodlightMetrics.panelHeight(hasQuery: !model.query.isEmpty))
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                self?.observeQueryEmptyState()
+            }
+        }
     }
 
     private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
