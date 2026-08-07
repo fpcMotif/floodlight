@@ -23,6 +23,27 @@ private final class ApplicationDiscoveryFixture: @unchecked Sendable {
     }
 }
 
+private final class SystemSettingsDiscoveryFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var settings: [SystemCatalog.DiscoveredSetting]
+
+    init(_ settings: [SystemCatalog.DiscoveredSetting]) {
+        self.settings = settings
+    }
+
+    func snapshot() -> [SystemCatalog.DiscoveredSetting] {
+        lock.lock()
+        defer { lock.unlock() }
+        return settings
+    }
+
+    func replace(with settings: [SystemCatalog.DiscoveredSetting]) {
+        lock.lock()
+        self.settings = settings
+        lock.unlock()
+    }
+}
+
 final class CatalogTests: XCTestCase {
     func testDiscoversFinderAndUserFacingCoreServicesApplications() throws {
         let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
@@ -45,19 +66,19 @@ final class CatalogTests: XCTestCase {
             supportURL: supportURL
         )
 
-        let finder = catalog.fastSearch("finder")
+        let finder = catalog.immediatePage(for: "finder").items
         XCTAssertTrue(finder.contains { $0.fileURL == finderURL })
 
         let archiveUtilityURL = URL(
             fileURLWithPath: "/System/Library/CoreServices/Applications/Archive Utility.app"
         )
         if FileManager.default.fileExists(atPath: archiveUtilityURL.path) {
-            let archiveUtility = catalog.fastSearch("archive utility")
+            let archiveUtility = catalog.immediatePage(for: "archive utility").items
             XCTAssertTrue(archiveUtility.contains { $0.fileURL == archiveUtilityURL })
         }
 
         let dockAgentURL = URL(fileURLWithPath: "/System/Library/CoreServices/Dock.app")
-        XCTAssertFalse(catalog.fastSearch("dock").contains { $0.fileURL == dockAgentURL })
+        XCTAssertFalse(catalog.immediatePage(for: "dock").items.contains { $0.fileURL == dockAgentURL })
     }
 
     func testDiscoversSymlinkedSystemApplications() async throws {
@@ -78,7 +99,7 @@ final class CatalogTests: XCTestCase {
             supportURL: supportURL
         )
         try await catalog.start()
-        let results = try await catalog.search("safari")
+        let results = try await catalog.indexedItems(for: "safari")
         XCTAssertTrue(results.contains { $0.fileURL?.lastPathComponent == "Safari.app" })
         XCTAssertEqual(
             results.filter { $0.fileURL?.lastPathComponent == "Safari.app" }.count,
@@ -87,8 +108,9 @@ final class CatalogTests: XCTestCase {
     }
 
     func testSystemSettingsAvoidLooseShortSubsequences() {
-        XCTAssertTrue(SystemCatalog.search("arc").isEmpty)
-        XCTAssertEqual(SystemCatalog.search("bluetooth").first?.title, "Bluetooth")
+        let catalog = SystemCatalog()
+        XCTAssertTrue(catalog.immediatePage(for: "arc").items.isEmpty)
+        XCTAssertEqual(catalog.immediatePage(for: "bluetooth").items.first?.title, "Bluetooth")
     }
 
     func testFloodlightSettingsAreSearchableBySetupTerms() {
@@ -115,7 +137,7 @@ final class CatalogTests: XCTestCase {
             supportURL: supportURL
         )
         let start = ContinuousClock.now
-        let page = catalog.fastSearchPage("claude")
+        let page = catalog.immediatePage(for: "claude")
         let elapsed = start.duration(to: .now)
 
         XCTAssertLessThan(elapsed, .milliseconds(100))
@@ -147,14 +169,14 @@ final class CatalogTests: XCTestCase {
 
         for query in ["orbital", "launcher"] {
             try await assertEventually("The marker index did not return Orbital Launcher") {
-                try await catalog.search(query).contains { $0.fileURL == orbital.url }
+                try await catalog.indexedItems(for: query).contains { $0.fileURL == orbital.url }
             }
 
             let fast = try XCTUnwrap(
-                catalog.fastSearchPage(query).items.first { $0.fileURL == orbital.url },
+                catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
                 query
             )
-            let indexed = try await catalog.search(query).first { $0.fileURL == orbital.url }
+            let indexed = try await catalog.indexedItems(for: query).first { $0.fileURL == orbital.url }
             XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
         }
     }
@@ -184,7 +206,7 @@ final class CatalogTests: XCTestCase {
         )
 
         try await catalog.start()
-        XCTAssertTrue(catalog.fastSearch("raycast").isEmpty)
+        XCTAssertTrue(catalog.immediatePage(for: "raycast").items.isEmpty)
 
         discovery.replace(with: [notes, raycast])
         let didAddRaycast = try await catalog.refreshIfNeeded(
@@ -192,9 +214,9 @@ final class CatalogTests: XCTestCase {
             forceDiscovery: true
         )
         XCTAssertTrue(didAddRaycast)
-        XCTAssertEqual(catalog.fastSearch("raycast").first?.fileURL, raycast.url)
+        XCTAssertEqual(catalog.immediatePage(for: "raycast").items.first?.fileURL, raycast.url)
         try await assertEventually("The application marker index did not add Raycast") {
-            try await catalog.search("raycast").contains { $0.fileURL == raycast.url }
+            try await catalog.indexedItems(for: "raycast").contains { $0.fileURL == raycast.url }
         }
 
         let orbital = (
@@ -207,11 +229,14 @@ final class CatalogTests: XCTestCase {
             forceDiscovery: true
         )
         XCTAssertTrue(didRenameRaycast)
-        XCTAssertFalse(catalog.fastSearch("raycast").contains { $0.fileURL == raycast.url })
-        XCTAssertEqual(catalog.fastSearch("orbital launcher").first?.fileURL, orbital.url)
+        XCTAssertFalse(catalog.immediatePage(for: "raycast").items.contains { $0.fileURL == raycast.url })
+        XCTAssertEqual(
+            catalog.immediatePage(for: "orbital launcher").items.first?.fileURL,
+            orbital.url
+        )
         try await assertEventually("The application marker index did not replace renamed Raycast") {
-            let oldResults = try await catalog.search("raycast")
-            let newResults = try await catalog.search("orbital launcher")
+            let oldResults = try await catalog.indexedItems(for: "raycast")
+            let newResults = try await catalog.indexedItems(for: "orbital launcher")
             return !oldResults.contains { $0.fileURL == raycast.url }
                 && newResults.contains { $0.fileURL == orbital.url }
         }
@@ -222,9 +247,11 @@ final class CatalogTests: XCTestCase {
             forceDiscovery: true
         )
         XCTAssertTrue(didRemoveOrbital)
-        XCTAssertFalse(catalog.fastSearch("orbital launcher").contains { $0.fileURL == orbital.url })
+        XCTAssertFalse(
+            catalog.immediatePage(for: "orbital launcher").items.contains { $0.fileURL == orbital.url }
+        )
         try await assertEventually("The application marker index did not remove Orbital") {
-            try await catalog.search("orbital launcher").allSatisfy { $0.fileURL != orbital.url }
+            try await catalog.indexedItems(for: "orbital launcher").allSatisfy { $0.fileURL != orbital.url }
         }
 
         let didChangeAgain = try await catalog.refreshIfNeeded(
@@ -234,11 +261,12 @@ final class CatalogTests: XCTestCase {
         XCTAssertFalse(didChangeAgain)
     }
 
-    func testIndexesInstalledSystemSettings() async {
-        await SystemCatalog.start()
+    func testIndexesInstalledSystemSettings() async throws {
+        let catalog = SystemCatalog()
+        try await catalog.start()
 
-        let appearance = SystemCatalog.searchPage("appearance", limit: 24)
-        let wifi = SystemCatalog.searchPage("wifi", limit: 24)
+        let appearance = catalog.immediatePage(for: "appearance", limit: 24)
+        let wifi = catalog.immediatePage(for: "wifi", limit: 24)
 
         XCTAssertTrue(appearance.items.contains { $0.title == "Appearance" })
         XCTAssertTrue(wifi.items.contains { $0.title == "Wi-Fi" || $0.title == "Network" })
@@ -252,38 +280,38 @@ final class CatalogTests: XCTestCase {
             keywords: "floodlight dynamic fixture",
             pane: pane
         )
-        let didInstall = await SystemCatalog.refreshIfNeeded(
-            minimumInterval: 0,
-            forceDiscovery: true,
-            discoveryProvider: { [aurora] }
-        )
+        let discovery = SystemSettingsDiscoveryFixture([aurora])
+        let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
+
+        let didInstall = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
         XCTAssertTrue(didInstall)
-        XCTAssertEqual(SystemCatalog.search("Aurora Controls").first?.id, "setting:\(pane)")
+        XCTAssertEqual(
+            catalog.immediatePage(for: "Aurora Controls").items.first?.id,
+            "setting:\(pane)"
+        )
 
         let nebula = SystemCatalog.DiscoveredSetting(
             name: "Nebula Controls",
             keywords: "floodlight renamed fixture",
             pane: pane
         )
-        let didRename = await SystemCatalog.refreshIfNeeded(
-            minimumInterval: 0,
-            forceDiscovery: true,
-            discoveryProvider: { [nebula] }
-        )
+        discovery.replace(with: [nebula])
+        let didRename = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
         XCTAssertTrue(didRename)
-        XCTAssertFalse(SystemCatalog.search("Aurora Controls").contains { $0.id == "setting:\(pane)" })
-        XCTAssertEqual(SystemCatalog.search("Nebula Controls").first?.id, "setting:\(pane)")
-
-        let didRemove = await SystemCatalog.refreshIfNeeded(
-            minimumInterval: 0,
-            forceDiscovery: true,
-            discoveryProvider: { [] }
+        XCTAssertFalse(
+            catalog.immediatePage(for: "Aurora Controls").items.contains { $0.id == "setting:\(pane)" }
         )
-        XCTAssertTrue(didRemove)
-        XCTAssertFalse(SystemCatalog.search("Nebula Controls").contains { $0.id == "setting:\(pane)" })
+        XCTAssertEqual(
+            catalog.immediatePage(for: "Nebula Controls").items.first?.id,
+            "setting:\(pane)"
+        )
 
-        // Restore the real installed-settings snapshot for subsequent tests.
-        _ = await SystemCatalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+        discovery.replace(with: [])
+        let didRemove = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+        XCTAssertTrue(didRemove)
+        XCTAssertFalse(
+            catalog.immediatePage(for: "Nebula Controls").items.contains { $0.id == "setting:\(pane)" }
+        )
     }
 
     private func assertEventually(

@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-final class ApplicationCatalog: @unchecked Sendable {
+final class ApplicationCatalog: Catalog, @unchecked Sendable {
     private struct Application: Sendable {
         let name: String
         let url: URL
@@ -127,7 +127,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         }
     }
 
-    func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
+    func indexedItems(for query: String, limit: Int = 12) async throws -> [SearchItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         let normalizedQuery = FuzzyMatcher.normalized(query)
@@ -146,7 +146,7 @@ final class ApplicationCatalog: @unchecked Sendable {
             // ones learned from `track(query:selectedURL:)`. They rank under the
             // band, keeping the index's order among themselves.
             let score = Self.score(of: application, normalizedQuery: normalizedQuery)
-                ?? Self.applicationBand - (rank + 1)
+                ?? SearchItemRanking.application - (rank + 1)
             return SearchItem(
                 id: application.id,
                 title: application.name,
@@ -157,16 +157,12 @@ final class ApplicationCatalog: @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: Self.ranksBefore)
+        .sorted(by: SearchItemRanking.ranksBefore)
         .prefix(limit)
         .map { $0 }
     }
 
-    func fastSearch(_ query: String, limit: Int = 12) -> [SearchItem] {
-        fastSearchPage(query, limit: limit).items
-    }
-
-    func fastSearchPage(_ query: String, limit: Int = 12) -> SearchItemPage {
+    func immediatePage(for query: String, limit: Int = 12) -> SearchItemPage {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             return SearchItemPage(items: [], totalMatched: 0)
@@ -190,7 +186,7 @@ final class ApplicationCatalog: @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: Self.ranksBefore)
+        .sorted(by: SearchItemRanking.ranksBefore)
 
         return SearchItemPage(
             items: Array(matches.prefix(limit)),
@@ -209,28 +205,18 @@ final class ApplicationCatalog: @unchecked Sendable {
         )
     }
 
-    /// Chosen to sit above `SystemCatalog`'s settings, which score an order of
-    /// magnitude lower, and below `FloodlightCommandCatalog`'s band.
-    private static let applicationBand = 100_000
-
     /// The score both search paths publish for `application` against a query.
     ///
-    /// `fastSearchPage` matches names directly while `search` goes through the
-    /// FFF index, whose own result score lives on an unrelated scale. Scoring
-    /// both paths here keeps one ranking: whichever path served the query, an
-    /// application lands on the same number.
+    /// `immediatePage` matches names directly while `indexedItems` goes through
+    /// the FFF index, whose own result score lives on an unrelated scale.
+    /// Scoring both paths here keeps one ranking: whichever path served the
+    /// query, an application lands on the same number.
     private static func score(of application: Application, normalizedQuery: String) -> Int? {
         FuzzyMatcher.score(
             normalizedQuery: normalizedQuery,
             normalizedCandidate: application.normalizedName
         )
-        .map { applicationBand + $0 }
-    }
-
-    private static func ranksBefore(_ lhs: SearchItem, _ rhs: SearchItem) -> Bool {
-        lhs.score == rhs.score
-            ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-            : lhs.score > rhs.score
+        .map { SearchItemRanking.application + $0 }
     }
 
     private var prepared: Bool {
@@ -286,8 +272,10 @@ final class ApplicationCatalog: @unchecked Sendable {
     private func applicationDirectoriesChanged(fileManager: FileManager) -> Bool {
         guard !applicationDirectoryFingerprint.isEmpty else { return true }
         return applicationDirectoryFingerprint.contains { path, previousDate in
-            Self.modificationDate(ofDirectoryAtPath: path, fileManager: fileManager)
-                != previousDate
+            CatalogDirectoryFingerprint.modificationDate(
+                ofDirectoryAtPath: path,
+                fileManager: fileManager
+            ) != previousDate
         }
     }
 
@@ -306,19 +294,7 @@ final class ApplicationCatalog: @unchecked Sendable {
                 $0.url.deletingLastPathComponent().standardizedFileURL.path
             }
         )
-        return Dictionary(
-            uniqueKeysWithValues: paths.map { path in
-                (path, modificationDate(ofDirectoryAtPath: path, fileManager: fileManager))
-            }
-        )
-    }
-
-    private static func modificationDate(
-        ofDirectoryAtPath path: String,
-        fileManager: FileManager
-    ) -> Date {
-        let attributes = try? fileManager.attributesOfItem(atPath: path)
-        return attributes?[.modificationDate] as? Date ?? .distantPast
+        return CatalogDirectoryFingerprint.make(forPaths: paths, fileManager: fileManager)
     }
 
     private func snapshotApplications() -> [Application] {

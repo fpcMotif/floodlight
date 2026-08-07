@@ -29,7 +29,7 @@ enum FloodlightCommandCatalog {
                 kind: .systemSetting,
                 action: .showFloodlightSettings,
                 iconSource: .floodlightApplication,
-                score: 200_000 + score
+                score: SearchItemRanking.command + score
             ),
         ]
     }
