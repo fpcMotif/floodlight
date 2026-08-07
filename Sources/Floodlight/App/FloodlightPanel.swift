@@ -1,5 +1,6 @@
 import AppKit
 import FloodlightEngine
+import Observation
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
@@ -20,6 +21,7 @@ final class FloodlightPanel: NSPanel {
 final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
+    private let quickLook = QuickLookController()
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
 
@@ -63,9 +65,7 @@ final class FloodlightPanelController {
             panel.contentView?.layer?.masksToBounds = true
         }
 
-        model.onPanelHeightChange = { [weak self] height in
-            self?.resize(to: height)
-        }
+        observeQueryEmptyState()
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
@@ -181,6 +181,7 @@ final class FloodlightPanelController {
         let signpost = FloodlightPerformance.begin("HidePanel")
         panel.orderOut(nil)
         model.reset()
+        quickLook.close()
         FloodlightPerformance.end("HidePanel", id: signpost)
     }
 
@@ -208,6 +209,21 @@ final class FloodlightPanelController {
         frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
         panel.setFrame(frame, display: false, animate: false)
+    }
+
+    /// Resizes to the height for the model's current query-empty state, then
+    /// re-registers so the next transition is observed too — a change fires
+    /// `onChange` exactly once. `resize(to:)`'s half-point no-op keeps a fast
+    /// type-then-clear from resizing twice, the same guarantee the coordinator's
+    /// old deferred height push made deliberately.
+    private func observeQueryEmptyState() {
+        withObservationTracking {
+            resize(to: FloodlightMetrics.panelHeight(hasQuery: !model.query.isEmpty))
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                self?.observeQueryEmptyState()
+            }
+        }
     }
 
     private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
@@ -261,17 +277,27 @@ final class FloodlightPanelController {
         case .copySelection:
             model.copySelection()
         case .chooseRoot:
-            model.chooseRoot()
+            chooseRoot()
         case .rebuildIndex:
             model.rebuildIndex()
         case .revealSelection:
             model.revealSelection()
         case .togglePreview:
-            model.togglePreview()
+            togglePreview()
         case .unmatched:
             return false
         }
         return true
+    }
+
+    private func togglePreview() {
+        guard let url = model.previewableSelectionURL else { return }
+        quickLook.toggle(url)
+    }
+
+    private func chooseRoot() {
+        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
+        model.changeRoot(to: url)
     }
 
     enum PanelCommand: Hashable, Sendable {

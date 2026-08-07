@@ -16,7 +16,10 @@ package enum FuzzyMatcher {
         )
     }
 
-    package static func score(normalizedQuery query: String, normalizedCandidate candidate: String) -> Int? {
+    package static func score(
+        normalizedQuery query: String,
+        normalizedCandidate candidate: String
+    ) -> Int? {
         guard !query.isEmpty else { return 1 }
         if candidate == query { return 20_000 }
         if candidate.hasPrefix(query) { return 15_000 - candidate.count }

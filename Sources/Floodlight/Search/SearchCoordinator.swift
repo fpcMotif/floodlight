@@ -2,7 +2,6 @@ import AppKit
 import FloodlightEngine
 import Foundation
 import Observation
-import ServiceManagement
 
 @MainActor
 @Observable
@@ -11,13 +10,6 @@ final class SearchCoordinator {
         didSet {
             guard query != oldValue else { return }
             selectionWasUserDriven = false
-            if query.isEmpty != oldValue.isEmpty {
-                let height = panelHeight
-                DispatchQueue.main.async { [weak self] in
-                    guard self?.panelHeight == height else { return }
-                    self?.onPanelHeightChange?(height)
-                }
-            }
             guard !isResetting else { return }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 refreshApplicationsIfNeeded()
@@ -36,13 +28,7 @@ final class SearchCoordinator {
     @ObservationIgnored
     var onDismiss: (() -> Void)?
     @ObservationIgnored
-    var onPanelHeightChange: ((CGFloat) -> Void)?
-    @ObservationIgnored
     var onShowSettings: (() -> Void)?
-
-    var panelHeight: CGFloat {
-        FloodlightMetrics.panelHeight(hasQuery: !query.isEmpty)
-    }
 
     var filterOptions: [SearchFilterOption] {
         let primary = SearchResultFilter.primary.map(makeFilterOption)
@@ -58,7 +44,6 @@ final class SearchCoordinator {
     private let applicationCatalog: any Catalog
     private let settingsCatalog: any Catalog
     private let recentStore: RecentStore
-    private let quickLook = QuickLookController()
     private var allResults: [SearchItem] = []
     private var filterCounts = SearchFilterCounts()
     private var applicationMatchCount = 0
@@ -249,7 +234,6 @@ final class SearchCoordinator {
         selectedID = nil
         selectionWasUserDriven = false
         isSearching = false
-        quickLook.close()
     }
 
     func moveSelection(by delta: Int) {
@@ -330,26 +314,13 @@ final class SearchCoordinator {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    func togglePreview() {
-        guard let url = selectedItem?.fileURL, selectedItem?.isPreviewable == true else { return }
-        quickLook.toggle(url)
-    }
-
-    @discardableResult
-    func chooseRoot() -> URL? {
-        let panel = NSOpenPanel()
-        panel.title = "Choose a folder to search"
-        panel.message = "Floodlight will search this folder and keep results up to date."
-        panel.prompt = "Choose Folder"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = rootURL
-
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return nil }
-        changeRoot(to: selectedURL)
-        return selectedURL
+    /// The URL to preview for the current selection, or `nil` if nothing is
+    /// selected or the selection isn't previewable. This judgment stays in
+    /// the coordinator's vocabulary rather than being re-derived by the
+    /// shell, which should only learn "here is a URL to preview, or nothing".
+    var previewableSelectionURL: URL? {
+        guard let selectedItem, selectedItem.isPreviewable else { return nil }
+        return selectedItem.fileURL
     }
 
     func rebuildIndex() {
@@ -361,43 +332,6 @@ final class SearchCoordinator {
             }
         }
     }
-
-    var launchesAtLogin: Bool {
-        SMAppService.mainApp.status == .enabled
-    }
-
-    /// Registers the login item on the very first launch only.
-    ///
-    /// A launcher is only useful once it is already running, so Floodlight opts
-    /// in for you. The `launch-at-login-configured` flag makes this a one-time
-    /// decision: if you later turn it off — here or in System Settings — the
-    /// next launch leaves it off instead of switching it back on.
-    func enableLaunchAtLoginOnFirstRun() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.launchAtLoginConfiguredKey) else { return }
-        defaults.set(true, forKey: Self.launchAtLoginConfiguredKey)
-
-        guard SMAppService.mainApp.status != .enabled else { return }
-        do {
-            try SMAppService.mainApp.register()
-        } catch {
-            NSLog(
-                "Floodlight could not enable launch at login: %@",
-                error.localizedDescription
-            )
-        }
-    }
-
-    func setLaunchAtLogin(_ enabled: Bool) throws {
-        if enabled {
-            try SMAppService.mainApp.register()
-        } else {
-            try SMAppService.mainApp.unregister()
-        }
-        UserDefaults.standard.set(true, forKey: Self.launchAtLoginConfiguredKey)
-    }
-
-    private static let launchAtLoginConfiguredKey = "launch-at-login-configured"
 
     private var selectedItem: SearchItem? {
         guard let selectedID else { return results.first }
@@ -428,7 +362,7 @@ final class SearchCoordinator {
         }
     }
 
-    private func changeRoot(to url: URL) {
+    func changeRoot(to url: URL) {
         Task {
             do {
                 try await index.changeRoot(to: url)

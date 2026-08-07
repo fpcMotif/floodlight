@@ -12,6 +12,12 @@ PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 # Cross-target sharing goes through `package`, which is invisible to
 # anything outside this Swift package and keeps FloodlightEngine's surface
 # no wider than the shell actually forces it to be.
+#
+# The pattern is anchored at declaration position, not just "the word
+# public/open appears somewhere in the line" — a naive scan is red on a
+# clean tree, since `open` shows up repeatedly in Sources without ever being
+# an access modifier: `case open(URL)`, `private func open(_:asApplication:)`,
+# `NSWorkspace.shared.open`, a doc comment, an `.accessibilityHint` string.
 
 # Matches a `public`/`open` access modifier sitting directly on a
 # declaration, in any order Swift allows relative to attributes and other

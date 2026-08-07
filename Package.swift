@@ -19,7 +19,9 @@ let package = Package(
     targets: [
         .target(
             name: "FloodlightEngine",
-            dependencies: [],
+            dependencies: [
+                .product(name: "FFFKit", package: "fff-swift")
+            ],
             path: "Sources/FloodlightEngine"
         ),
         .executableTarget(
@@ -38,7 +40,10 @@ let package = Package(
         ),
         .testTarget(
             name: "FloodlightEngineTests",
-            dependencies: ["FloodlightEngine"],
+            dependencies: [
+                "FloodlightEngine",
+                .product(name: "FFFKit", package: "fff-swift")
+            ],
             path: "Tests/FloodlightEngineTests"
         ),
         .testTarget(

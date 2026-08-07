@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         installMenu()
         installStatusItem()
         installGlobalHotKey()
-        model.enableLaunchAtLoginOnFirstRun()
+        LaunchAtLogin.enableOnFirstRun()
         if OnboardingSession.shouldPresent() {
             showInitialSetup()
         } else {
@@ -118,22 +118,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let controller = OnboardingWindowController(
             presentation: presentation,
             activeShortcut: activeShortcut ?? FloodlightShortcut.preferred(),
-            launchesAtLogin: model.launchesAtLogin,
+            launchesAtLogin: LaunchAtLogin.isEnabled,
             rootURL: model.rootURL,
             selectShortcut: { [weak self] shortcut in
                 self?.selectShortcut(shortcut) ?? false
             },
-            setLaunchAtLogin: { [weak self] enabled in
-                guard let self else { return "Floodlight is no longer running." }
+            setLaunchAtLogin: { enabled in
                 do {
-                    try model.setLaunchAtLogin(enabled)
+                    try LaunchAtLogin.setEnabled(enabled)
                     return nil
                 } catch {
                     return error.localizedDescription
                 }
             },
             chooseScope: { [weak self] in
-                self?.model.chooseRoot()
+                guard let self, let url = RootPicker.choose(startingAt: model.rootURL) else {
+                    return nil
+                }
+                model.changeRoot(to: url)
+                return url
             },
             onFinished: { [weak self] in
                 self?.configurationClosed(showSearch: showSearchOnFinish)
@@ -148,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func chooseRoot() {
         panelController?.show()
-        model.chooseRoot()
+        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
+        model.changeRoot(to: url)
     }
 
     @objc private func rebuildIndex() {
@@ -156,9 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLaunchAtLogin() {
-        let wanted = !model.launchesAtLogin
+        let wanted = !LaunchAtLogin.isEnabled
         do {
-            try model.setLaunchAtLogin(wanted)
+            try LaunchAtLogin.setEnabled(wanted)
         } catch {
             let alert = NSAlert()
             alert.messageText = wanted
@@ -331,7 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusMenu else { return }
-        launchAtLoginItem?.state = model.launchesAtLogin ? .on : .off
+        launchAtLoginItem?.state = LaunchAtLogin.isEnabled ? .on : .off
     }
 
     /// This menu is never drawn — Floodlight is an agent app. It exists so the
