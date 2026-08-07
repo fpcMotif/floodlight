@@ -19,6 +19,7 @@ final class FloodlightPanel: NSPanel {
 final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
+    private let quickLook = QuickLookController()
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
 
@@ -180,6 +181,7 @@ final class FloodlightPanelController {
         let signpost = FloodlightPerformance.begin("HidePanel")
         panel.orderOut(nil)
         model.reset()
+        quickLook.close()
         FloodlightPerformance.end("HidePanel", id: signpost)
     }
 
@@ -198,6 +200,11 @@ final class FloodlightPanelController {
             y: visibleFrame.minY + visibleFrame.height * 0.68 - frame.height / 2
         )
         panel.setFrameOrigin(origin)
+    }
+
+    private func togglePreview() {
+        guard let url = model.previewableSelectionURL else { return }
+        quickLook.toggle(url)
     }
 
     private func resize(to height: CGFloat) {
@@ -266,7 +273,7 @@ final class FloodlightPanelController {
         case .revealSelection:
             model.revealSelection()
         case .togglePreview:
-            model.togglePreview()
+            togglePreview()
         case .unmatched:
             return false
         }

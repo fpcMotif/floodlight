@@ -55,7 +55,6 @@ final class SearchCoordinator {
     private let index: FFFIndex
     private let applicationCatalog: ApplicationCatalog
     private let recentStore: RecentStore
-    private let quickLook = QuickLookController()
     private var allResults: [SearchItem] = []
     private var filterCounts = SearchFilterCounts()
     private var applicationMatchCount = 0
@@ -222,7 +221,6 @@ final class SearchCoordinator {
         selectedID = nil
         selectionWasUserDriven = false
         isSearching = false
-        quickLook.close()
     }
 
     func moveSelection(by delta: Int) {
@@ -303,9 +301,12 @@ final class SearchCoordinator {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    func togglePreview() {
-        guard let url = selectedItem?.fileURL, selectedItem?.isPreviewable == true else { return }
-        quickLook.toggle(url)
+    /// The previewable file URL of the current selection, or `nil` if the
+    /// selection has no file URL or isn't previewable. The shell uses this to
+    /// drive QuickLook without re-deriving previewability itself.
+    var previewableSelectionURL: URL? {
+        guard let selectedItem, selectedItem.isPreviewable else { return nil }
+        return selectedItem.fileURL
     }
 
     @discardableResult
