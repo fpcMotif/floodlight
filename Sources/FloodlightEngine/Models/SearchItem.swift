@@ -162,13 +162,13 @@ package struct SearchFilterOption: Identifiable, Equatable, Sendable {
     package let count: Int
     package let isLoading: Bool
 
+    package var id: SearchResultFilter { filter }
+
     package init(filter: SearchResultFilter, count: Int, isLoading: Bool) {
         self.filter = filter
         self.count = count
         self.isLoading = isLoading
     }
-
-    package var id: SearchResultFilter { filter }
 }
 
 package struct SearchItemPage: Sendable {

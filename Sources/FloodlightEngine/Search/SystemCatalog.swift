@@ -1,9 +1,8 @@
-import FloodlightEngine
 import Foundation
 import os
 
-final class SystemCatalog: Catalog {
-    struct DiscoveredSetting: Equatable, Sendable {
+package final class SystemCatalog: Catalog {
+    package struct DiscoveredSetting: Equatable, Sendable {
         let name: String
         let keywords: String
         let pane: String
@@ -234,7 +233,7 @@ final class SystemCatalog: Catalog {
     private let hasStarted = OSAllocatedUnfairLock(initialState: false)
     private let discoveryProvider: @Sendable () -> [DiscoveredSetting]
 
-    init(
+    package init(
         discoveryProvider: @escaping @Sendable () -> [DiscoveredSetting] = {
             SystemCatalog.discoverInstalledSettings()
         }
@@ -242,7 +241,7 @@ final class SystemCatalog: Catalog {
         self.discoveryProvider = discoveryProvider
     }
 
-    func start() async throws {
+    package func start() async throws {
         let shouldDiscover = hasStarted.withLock { started in
             guard !started else { return false }
             started = true
@@ -252,7 +251,7 @@ final class SystemCatalog: Catalog {
         _ = await refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
     }
 
-    func refreshIfNeeded(
+    package func refreshIfNeeded(
         minimumInterval: TimeInterval,
         forceDiscovery: Bool
     ) async -> Bool {
@@ -326,7 +325,7 @@ final class SystemCatalog: Catalog {
         ]
     }
 
-    func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             return SearchItemPage(items: [], totalMatched: 0)

@@ -17,6 +17,7 @@ let package = Package(
         )
     ],
     targets: [
+        // The deep module: results, ranking, action execution. Zero `public`.
         .target(
             name: "FloodlightEngine",
             dependencies: [
@@ -24,6 +25,7 @@ let package = Package(
             ],
             path: "Sources/FloodlightEngine"
         ),
+        // The macOS shell: panel, hotkey, menu bar, onboarding, QuickLook, login item.
         .executableTarget(
             name: "Floodlight",
             dependencies: [

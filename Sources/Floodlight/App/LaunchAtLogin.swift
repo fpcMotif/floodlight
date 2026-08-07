@@ -7,7 +7,9 @@ import ServiceManagement
 /// do with search.
 @MainActor
 enum LaunchAtLogin {
-    static var isEnabled: Bool {
+    private static let configuredKey = "launch-at-login-configured"
+
+    static var launchesAtLogin: Bool {
         SMAppService.mainApp.status == .enabled
     }
 
@@ -33,7 +35,7 @@ enum LaunchAtLogin {
         }
     }
 
-    static func setEnabled(_ enabled: Bool) throws {
+    static func setLaunchAtLogin(_ enabled: Bool) throws {
         if enabled {
             try SMAppService.mainApp.register()
         } else {
@@ -41,6 +43,4 @@ enum LaunchAtLogin {
         }
         UserDefaults.standard.set(true, forKey: configuredKey)
     }
-
-    private static let configuredKey = "launch-at-login-configured"
 }

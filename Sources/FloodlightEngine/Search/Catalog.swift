@@ -10,7 +10,7 @@ import os
 /// Only `immediatePage(for:limit:)` is required to return matches. A catalog
 /// that has no second, slower pass leaves `indexedItems` alone, and one that
 /// cannot learn from a selection leaves `track` alone.
-protocol Catalog: Sendable {
+package protocol Catalog: Sendable {
     /// Brings the catalog up to a queryable state. Called once per launch.
     func start() async throws
 
@@ -30,7 +30,7 @@ protocol Catalog: Sendable {
     func track(query: String, selectedURL: URL)
 }
 
-extension Catalog {
+package extension Catalog {
     func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] { [] }
 
     func track(query: String, selectedURL: URL) {}
@@ -53,27 +53,27 @@ extension Catalog {
 ///
 /// Each band is far enough from its neighbours that no fuzzy score can cross
 /// it, so a strong file match never outranks a weak application match.
-enum SearchItemRanking {
-    static let command = 200_000
-    static let calculator = 100_000
-    static let application = 100_000
-    static let setting = 2_000
-    static let content = 1_000
+package enum SearchItemRanking {
+    package static let command = 200_000
+    package static let calculator = 100_000
+    package static let application = 100_000
+    package static let setting = 2_000
+    package static let content = 1_000
     /// The web fallback is always last, and always present.
-    static let webFallback = Int.min
+    package static let webFallback = Int.min
 
     /// The one order Floodlight publishes results in.
     ///
     /// Equal scores break on title so a query returns the same order whichever
     /// pass produced it — the immediate pass and the indexed pass have to agree
     /// or results visibly reshuffle as the slower pass lands.
-    static func ranksBefore(_ lhs: SearchItem, _ rhs: SearchItem) -> Bool {
+    package static func ranksBefore(_ lhs: SearchItem, _ rhs: SearchItem) -> Bool {
         lhs.score == rhs.score
             ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             : lhs.score > rhs.score
     }
 
-    static func ranked(_ items: [SearchItem]) -> [SearchItem] {
+    package static func ranked(_ items: [SearchItem]) -> [SearchItem] {
         items.sorted(by: ranksBefore)
     }
 
@@ -81,7 +81,7 @@ enum SearchItemRanking {
     ///
     /// The count is the total, not the page — the filter chips show how many
     /// results exist, not how many fit.
-    static func page(_ matches: [SearchItem], limit: Int) -> SearchItemPage {
+    package static func page(_ matches: [SearchItem], limit: Int) -> SearchItemPage {
         let ranked = ranked(matches)
         return SearchItemPage(
             items: Array(ranked.prefix(limit)),
@@ -94,8 +94,8 @@ enum SearchItemRanking {
 ///
 /// Comparing two of these is how both catalogs answer "is a full re-walk worth
 /// it?" without walking.
-enum CatalogDirectoryFingerprint {
-    static func modificationDate(
+package enum CatalogDirectoryFingerprint {
+    package static func modificationDate(
         ofDirectoryAtPath path: String,
         fileManager: FileManager
     ) -> Date {
@@ -103,7 +103,7 @@ enum CatalogDirectoryFingerprint {
         return attributes?[.modificationDate] as? Date ?? .distantPast
     }
 
-    static func make(forPaths paths: some Sequence<String>, fileManager: FileManager) -> [String: Date] {
+    package static func make(forPaths paths: some Sequence<String>, fileManager: FileManager) -> [String: Date] {
         Dictionary(
             uniqueKeysWithValues: Set(paths).map { path in
                 (path, modificationDate(ofDirectoryAtPath: path, fileManager: fileManager))
@@ -111,7 +111,7 @@ enum CatalogDirectoryFingerprint {
         )
     }
 
-    static func make(for urls: some Sequence<URL>, fileManager: FileManager) -> [String: Date] {
+    package static func make(for urls: some Sequence<URL>, fileManager: FileManager) -> [String: Date] {
         make(forPaths: urls.map(\.standardizedFileURL.path), fileManager: fileManager)
     }
 }
@@ -120,7 +120,7 @@ enum CatalogDirectoryFingerprint {
 ///
 /// A refresh is reserved before it starts and released when it finishes, so a
 /// walk already in flight absorbs the keystrokes that arrive during it.
-final class CatalogRefreshGuard: Sendable {
+package final class CatalogRefreshGuard: Sendable {
     private struct State {
         var isRefreshing = false
         var lastRefresh: TimeInterval = 0
@@ -128,7 +128,9 @@ final class CatalogRefreshGuard: Sendable {
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    func reserve(minimumInterval: TimeInterval) -> Bool {
+    package init() {}
+
+    package func reserve(minimumInterval: TimeInterval) -> Bool {
         state.withLock { state in
             guard !state.isRefreshing else { return false }
             let now = Date.timeIntervalSinceReferenceDate
@@ -139,7 +141,7 @@ final class CatalogRefreshGuard: Sendable {
         }
     }
 
-    func release() {
+    package func release() {
         state.withLock { $0.isRefreshing = false }
     }
 }

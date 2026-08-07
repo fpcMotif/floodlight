@@ -118,25 +118,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let controller = OnboardingWindowController(
             presentation: presentation,
             activeShortcut: activeShortcut ?? FloodlightShortcut.preferred(),
-            launchesAtLogin: LaunchAtLogin.isEnabled,
+            launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             selectShortcut: { [weak self] shortcut in
                 self?.selectShortcut(shortcut) ?? false
             },
             setLaunchAtLogin: { enabled in
                 do {
-                    try LaunchAtLogin.setEnabled(enabled)
+                    try LaunchAtLogin.setLaunchAtLogin(enabled)
                     return nil
                 } catch {
                     return error.localizedDescription
                 }
             },
             chooseScope: { [weak self] in
-                guard let self, let url = RootPicker.choose(startingAt: model.rootURL) else {
-                    return nil
-                }
-                model.changeRoot(to: url)
-                return url
+                guard let self else { return nil }
+                return RootPicker.chooseAndApply(to: model)
             },
             onFinished: { [weak self] in
                 self?.configurationClosed(showSearch: showSearchOnFinish)
@@ -151,8 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func chooseRoot() {
         panelController?.show()
-        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
-        model.changeRoot(to: url)
+        RootPicker.chooseAndApply(to: model)
     }
 
     @objc private func rebuildIndex() {
@@ -160,9 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLaunchAtLogin() {
-        let wanted = !LaunchAtLogin.isEnabled
+        let wanted = !LaunchAtLogin.launchesAtLogin
         do {
-            try LaunchAtLogin.setEnabled(wanted)
+            try LaunchAtLogin.setLaunchAtLogin(wanted)
         } catch {
             let alert = NSAlert()
             alert.messageText = wanted
@@ -335,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusMenu else { return }
-        launchAtLoginItem?.state = LaunchAtLogin.isEnabled ? .on : .off
+        launchAtLoginItem?.state = LaunchAtLogin.launchesAtLogin ? .on : .off
     }
 
     /// This menu is never drawn — Floodlight is an agent app. It exists so the

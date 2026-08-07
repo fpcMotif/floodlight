@@ -314,10 +314,9 @@ final class SearchCoordinator {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    /// The URL to preview for the current selection, or `nil` if nothing is
-    /// selected or the selection isn't previewable. This judgment stays in
-    /// the coordinator's vocabulary rather than being re-derived by the
-    /// shell, which should only learn "here is a URL to preview, or nothing".
+    /// The previewable file URL of the current selection, or `nil` if the
+    /// selection has no file URL or isn't previewable. The shell uses this to
+    /// drive QuickLook without re-deriving previewability itself.
     var previewableSelectionURL: URL? {
         guard let selectedItem, selectedItem.isPreviewable else { return nil }
         return selectedItem.fileURL

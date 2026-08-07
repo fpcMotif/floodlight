@@ -2,7 +2,7 @@ import Darwin
 import FloodlightEngine
 import Foundation
 import XCTest
-@testable import Floodlight
+@testable import FloodlightEngine
 
 final class SearchPerformanceTests: XCTestCase {
     func testFastApplicationSearchPerformanceBudget() {

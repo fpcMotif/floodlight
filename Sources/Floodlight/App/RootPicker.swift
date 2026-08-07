@@ -5,7 +5,7 @@ import AppKit
 /// concern, not search behavior.
 @MainActor
 enum RootPicker {
-    static func choose(startingAt rootURL: URL) -> URL? {
+    static func choose(currentRoot: URL) -> URL? {
         let panel = NSOpenPanel()
         panel.title = "Choose a folder to search"
         panel.message = "Floodlight will search this folder and keep results up to date."
@@ -14,9 +14,18 @@ enum RootPicker {
         panel.canChooseFiles = false
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.directoryURL = rootURL
+        panel.directoryURL = currentRoot
 
         guard panel.runModal() == .OK else { return nil }
         return panel.url
+    }
+
+    /// Presents the chooser and, if the user picks a folder, re-roots `model`
+    /// to it. The one call both of the shell's picker sites want.
+    @discardableResult
+    static func chooseAndApply(to model: SearchCoordinator) -> URL? {
+        guard let selectedURL = choose(currentRoot: model.rootURL) else { return nil }
+        model.changeRoot(to: selectedURL)
+        return selectedURL
     }
 }

@@ -65,7 +65,7 @@ final class FloodlightPanelController {
             panel.contentView?.layer?.masksToBounds = true
         }
 
-        observeQueryEmptyState()
+        observeQueryForPanelHeight()
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
@@ -202,6 +202,28 @@ final class FloodlightPanelController {
         panel.setFrameOrigin(origin)
     }
 
+    private func togglePreview() {
+        guard let url = model.previewableSelectionURL else { return }
+        quickLook.toggle(url)
+    }
+
+    /// Re-registers after every fire — `withObservationTracking`'s `onChange`
+    /// only fires once per registration — and resizes to the height for the
+    /// query's current empty/non-empty state. `resize(to:)` already no-ops
+    /// within half a point, so a burst of query changes settles at the
+    /// correct height without a visible double-resize.
+    private func observeQueryForPanelHeight() {
+        withObservationTracking {
+            _ = model.query
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.resize(to: FloodlightMetrics.panelHeight(hasQuery: !self.model.query.isEmpty))
+                self.observeQueryForPanelHeight()
+            }
+        }
+    }
+
     private func resize(to height: CGFloat) {
         guard abs(panel.frame.height - height) > 0.5 else { return }
         var frame = panel.frame
@@ -209,21 +231,6 @@ final class FloodlightPanelController {
         frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
         panel.setFrame(frame, display: false, animate: false)
-    }
-
-    /// Resizes to the height for the model's current query-empty state, then
-    /// re-registers so the next transition is observed too — a change fires
-    /// `onChange` exactly once. `resize(to:)`'s half-point no-op keeps a fast
-    /// type-then-clear from resizing twice, the same guarantee the coordinator's
-    /// old deferred height push made deliberately.
-    private func observeQueryEmptyState() {
-        withObservationTracking {
-            resize(to: FloodlightMetrics.panelHeight(hasQuery: !model.query.isEmpty))
-        } onChange: { [weak self] in
-            MainActor.assumeIsolated {
-                self?.observeQueryEmptyState()
-            }
-        }
     }
 
     private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
@@ -277,7 +284,7 @@ final class FloodlightPanelController {
         case .copySelection:
             model.copySelection()
         case .chooseRoot:
-            chooseRoot()
+            RootPicker.chooseAndApply(to: model)
         case .rebuildIndex:
             model.rebuildIndex()
         case .revealSelection:
@@ -288,16 +295,6 @@ final class FloodlightPanelController {
             return false
         }
         return true
-    }
-
-    private func togglePreview() {
-        guard let url = model.previewableSelectionURL else { return }
-        quickLook.toggle(url)
-    }
-
-    private func chooseRoot() {
-        guard let url = RootPicker.choose(startingAt: model.rootURL) else { return }
-        model.changeRoot(to: url)
     }
 
     enum PanelCommand: Hashable, Sendable {
