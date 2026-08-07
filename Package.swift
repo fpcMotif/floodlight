@@ -17,9 +17,16 @@ let package = Package(
         )
     ],
     targets: [
+        // The deep module: results, ranking, action execution. Zero `public`.
+        .target(
+            name: "FloodlightEngine",
+            path: "Sources/FloodlightEngine"
+        ),
+        // The macOS shell: panel, hotkey, menu bar, onboarding, QuickLook, login item.
         .executableTarget(
             name: "Floodlight",
             dependencies: [
+                "FloodlightEngine",
                 .product(name: "FFFKit", package: "fff-swift")
             ],
             path: "Sources/Floodlight",
@@ -31,8 +38,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "FloodlightEngineTests",
+            dependencies: ["FloodlightEngine"],
+            path: "Tests/FloodlightEngineTests"
+        ),
+        .testTarget(
             name: "FloodlightTests",
-            dependencies: ["Floodlight"],
+            dependencies: ["Floodlight", "FloodlightEngine"],
             path: "Tests/FloodlightTests"
         )
     ],

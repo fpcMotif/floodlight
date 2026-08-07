@@ -1,7 +1,10 @@
-.PHONY: build bundle clean debug dmg docs icons install run test
+.PHONY: build bundle check clean debug dmg docs icons install run test
 
 debug:
 	swift build
+
+check:
+	./scripts/check-architecture.sh
 
 build:
 	swift build -c release
