@@ -1,6 +1,6 @@
 import Foundation
 
-enum SearchItemKind: String, Hashable, Sendable {
+package enum SearchItemKind: String, Hashable, Sendable {
     case application
     case calculator
     case file
@@ -8,7 +8,7 @@ enum SearchItemKind: String, Hashable, Sendable {
     case systemSetting
     case web
 
-    var label: String {
+    package var label: String {
         switch self {
         case .application: "Application"
         case .calculator: "Calculator"
@@ -19,7 +19,7 @@ enum SearchItemKind: String, Hashable, Sendable {
         }
     }
 
-    var symbolName: String {
+    package var symbolName: String {
         switch self {
         case .application: "app.dashed"
         case .calculator: "plus.forwardslash.minus"
@@ -31,7 +31,7 @@ enum SearchItemKind: String, Hashable, Sendable {
     }
 }
 
-enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
+package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
     case all
     case applications
     case files
@@ -41,23 +41,23 @@ enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable 
     case images
     case documents
 
-    static let primary: [SearchResultFilter] = [
+    package static let primary: [SearchResultFilter] = [
         .all,
         .applications,
         .files,
         .folders,
     ]
 
-    static let dynamic: [SearchResultFilter] = [
+    package static let dynamic: [SearchResultFilter] = [
         .settings,
         .pdfs,
         .images,
         .documents,
     ]
 
-    var id: String { rawValue }
+    package var id: String { rawValue }
 
-    var title: String {
+    package var title: String {
         switch self {
         case .all: "All"
         case .applications: "Apps"
@@ -70,11 +70,11 @@ enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable 
         }
     }
 
-    var isDynamic: Bool {
+    package var isDynamic: Bool {
         Self.dynamic.contains(self)
     }
 
-    func includes(_ item: SearchItem) -> Bool {
+    package func includes(_ item: SearchItem) -> Bool {
         switch self {
         case .all:
             true
@@ -105,7 +105,7 @@ enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable 
     ]
 }
 
-struct SearchFilterCounts: Equatable, Sendable {
+package struct SearchFilterCounts: Equatable, Sendable {
     private var all = 0
     private var applications = 0
     private var files = 0
@@ -115,9 +115,9 @@ struct SearchFilterCounts: Equatable, Sendable {
     private var images = 0
     private var documents = 0
 
-    init() {}
+    package init() {}
 
-    init(items: [SearchItem]) {
+    package init(items: [SearchItem]) {
         for item in items {
             all += 1
             switch item.kind {
@@ -143,7 +143,7 @@ struct SearchFilterCounts: Equatable, Sendable {
         }
     }
 
-    subscript(filter: SearchResultFilter) -> Int {
+    package subscript(filter: SearchResultFilter) -> Int {
         switch filter {
         case .all: all
         case .applications: applications
@@ -157,44 +157,55 @@ struct SearchFilterCounts: Equatable, Sendable {
     }
 }
 
-struct SearchFilterOption: Identifiable, Equatable, Sendable {
-    let filter: SearchResultFilter
-    let count: Int
-    let isLoading: Bool
+package struct SearchFilterOption: Identifiable, Equatable, Sendable {
+    package let filter: SearchResultFilter
+    package let count: Int
+    package let isLoading: Bool
 
-    var id: SearchResultFilter { filter }
+    package init(filter: SearchResultFilter, count: Int, isLoading: Bool) {
+        self.filter = filter
+        self.count = count
+        self.isLoading = isLoading
+    }
+
+    package var id: SearchResultFilter { filter }
 }
 
-struct SearchItemPage: Sendable {
-    let items: [SearchItem]
-    let totalMatched: Int
+package struct SearchItemPage: Sendable {
+    package let items: [SearchItem]
+    package let totalMatched: Int
+
+    package init(items: [SearchItem], totalMatched: Int) {
+        self.items = items
+        self.totalMatched = totalMatched
+    }
 }
 
-enum SearchItemAction: Hashable, Sendable {
+package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
     case showFloodlightSettings
 }
 
-enum SearchItemIconSource: Hashable, Sendable {
+package enum SearchItemIconSource: Hashable, Sendable {
     case inferred
     case floodlightApplication
 }
 
-struct SearchItem: Identifiable, Hashable, Sendable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let kind: SearchItemKind
-    let action: SearchItemAction
-    let iconSource: SearchItemIconSource
-    let score: Int
-    let fileURL: URL?
-    let modifiedAt: Date?
-    let fileSize: UInt64?
+package struct SearchItem: Identifiable, Hashable, Sendable {
+    package let id: String
+    package let title: String
+    package let subtitle: String
+    package let kind: SearchItemKind
+    package let action: SearchItemAction
+    package let iconSource: SearchItemIconSource
+    package let score: Int
+    package let fileURL: URL?
+    package let modifiedAt: Date?
+    package let fileSize: UInt64?
     private let normalizedFileExtension: String
 
-    init(
+    package init(
         id: String? = nil,
         title: String,
         subtitle: String,
@@ -221,7 +232,7 @@ struct SearchItem: Identifiable, Hashable, Sendable {
             : ""
     }
 
-    var isPreviewable: Bool {
+    package var isPreviewable: Bool {
         kind == .file && fileURL != nil
     }
 
@@ -235,7 +246,7 @@ extension IndexedSearchItem {
         isDirectory && url.pathExtension.caseInsensitiveCompare("app") == .orderedSame
     }
 
-    func makeSearchItem() -> SearchItem {
+    package func makeSearchItem() -> SearchItem {
         let kind: SearchItemKind
         let title: String
         if isApplicationBundle {
