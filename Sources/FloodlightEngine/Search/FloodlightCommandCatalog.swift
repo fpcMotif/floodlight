@@ -1,13 +1,12 @@
-import FloodlightEngine
 import Foundation
 
-enum FloodlightCommandCatalog {
+package enum FloodlightCommandCatalog {
     private static let settingsCandidate = FuzzyMatcher.normalized(
         "Floodlight settings setup preferences permissions keyboard shortcut hotkey "
             + "search scope folders full disk access launch at login"
     )
 
-    static func search(_ query: String) -> [SearchItem] {
+    package static func search(_ query: String) -> [SearchItem] {
         let normalizedQuery = FuzzyMatcher.normalized(
             query.trimmingCharacters(in: .whitespacesAndNewlines)
         )

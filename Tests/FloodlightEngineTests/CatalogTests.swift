@@ -1,7 +1,6 @@
-import FloodlightEngine
 import Foundation
 import XCTest
-@testable import Floodlight
+@testable import FloodlightEngine
 
 private final class ApplicationDiscoveryFixture: @unchecked Sendable {
     private let lock = NSLock()

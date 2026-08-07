@@ -1,8 +1,6 @@
-import AppKit
-import FloodlightEngine
 import Foundation
 
-final class ApplicationCatalog: @unchecked Sendable {
+package final class ApplicationCatalog: @unchecked Sendable {
     private struct Application: Sendable {
         let name: String
         let url: URL
@@ -28,7 +26,7 @@ final class ApplicationCatalog: @unchecked Sendable {
     private let recentStore: RecentStore
     private let discoveryProvider: @Sendable () -> [(name: String, url: URL)]
 
-    init(
+    package init(
         recentStore: RecentStore,
         supportURL: URL? = nil,
         deferDiscovery: Bool = false,
@@ -72,7 +70,7 @@ final class ApplicationCatalog: @unchecked Sendable {
     /// (nothing was installed or removed) only checks application-directory
     /// modification dates; a full walk, marker synchronization, and the
     /// secondary FFF rescan happen only after a directory changes.
-    func refreshIfNeeded(
+    package func refreshIfNeeded(
         minimumInterval: TimeInterval = 2,
         forceDiscovery: Bool = false
     ) async throws -> Bool {
@@ -107,7 +105,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         return true
     }
 
-    func start() async throws {
+    package func start() async throws {
         if !prepared {
             let signpost = FloodlightPerformance.begin("ApplicationDiscovery")
             await withCheckedContinuation { continuation in
@@ -128,7 +126,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         }
     }
 
-    func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
+    package func search(_ query: String, limit: Int = 12) async throws -> [SearchItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         let normalizedQuery = FuzzyMatcher.normalized(query)
@@ -167,7 +165,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         fastSearchPage(query, limit: limit).items
     }
 
-    func fastSearchPage(_ query: String, limit: Int = 12) -> SearchItemPage {
+    package func fastSearchPage(_ query: String, limit: Int = 12) -> SearchItemPage {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             return SearchItemPage(items: [], totalMatched: 0)
@@ -199,7 +197,7 @@ final class ApplicationCatalog: @unchecked Sendable {
         )
     }
 
-    func track(query: String, selectedURL: URL) {
+    package func track(query: String, selectedURL: URL) {
         let markerByApplicationPath = snapshotMarkersByApplicationPath()
         guard let markerName = markerByApplicationPath[selectedURL.standardizedFileURL.path] else {
             return
