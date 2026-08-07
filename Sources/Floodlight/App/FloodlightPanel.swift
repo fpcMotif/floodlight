@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
@@ -63,9 +64,7 @@ final class FloodlightPanelController {
             panel.contentView?.layer?.masksToBounds = true
         }
 
-        model.onPanelHeightChange = { [weak self] height in
-            self?.resize(to: height)
-        }
+        observeQueryForPanelHeight()
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
@@ -205,6 +204,23 @@ final class FloodlightPanelController {
     private func togglePreview() {
         guard let url = model.previewableSelectionURL else { return }
         quickLook.toggle(url)
+    }
+
+    /// Re-registers after every fire — `withObservationTracking`'s `onChange`
+    /// only fires once per registration — and resizes to the height for the
+    /// query's current empty/non-empty state. `resize(to:)` already no-ops
+    /// within half a point, so a burst of query changes settles at the
+    /// correct height without a visible double-resize.
+    private func observeQueryForPanelHeight() {
+        withObservationTracking {
+            _ = model.query
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.resize(to: FloodlightMetrics.panelHeight(hasQuery: !self.model.query.isEmpty))
+                self.observeQueryForPanelHeight()
+            }
+        }
     }
 
     private func resize(to height: CGFloat) {
