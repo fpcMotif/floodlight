@@ -207,11 +207,6 @@ final class FloodlightPanelController {
         quickLook.toggle(url)
     }
 
-    private func chooseRoot() {
-        guard let selectedURL = RootPicker.choose(currentRoot: model.rootURL) else { return }
-        model.changeRoot(to: selectedURL)
-    }
-
     /// Re-registers after every fire — `withObservationTracking`'s `onChange`
     /// only fires once per registration — and resizes to the height for the
     /// query's current empty/non-empty state. `resize(to:)` already no-ops
@@ -289,7 +284,7 @@ final class FloodlightPanelController {
         case .copySelection:
             model.copySelection()
         case .chooseRoot:
-            chooseRoot()
+            RootPicker.chooseAndApply(to: model)
         case .rebuildIndex:
             model.rebuildIndex()
         case .revealSelection:

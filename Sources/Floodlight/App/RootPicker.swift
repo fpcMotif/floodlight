@@ -16,4 +16,14 @@ enum RootPicker {
         guard panel.runModal() == .OK else { return nil }
         return panel.url
     }
+
+    /// Presents the chooser and, if the user picks a folder, re-roots `model`
+    /// to it. The one call both of the shell's picker sites want.
+    @MainActor
+    @discardableResult
+    static func chooseAndApply(to model: SearchCoordinator) -> URL? {
+        guard let selectedURL = choose(currentRoot: model.rootURL) else { return nil }
+        model.changeRoot(to: selectedURL)
+        return selectedURL
+    }
 }
