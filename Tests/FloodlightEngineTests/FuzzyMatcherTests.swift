@@ -1,5 +1,5 @@
 import XCTest
-@testable import Floodlight
+@testable import FloodlightEngine
 
 final class FuzzyMatcherTests: XCTestCase {
     func testExactMatchRanksAbovePrefixAndSubsequence() throws {

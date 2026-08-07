@@ -1,4 +1,5 @@
 import AppKit
+import FloodlightEngine
 import Foundation
 
 final class ApplicationCatalog: Catalog, @unchecked Sendable {

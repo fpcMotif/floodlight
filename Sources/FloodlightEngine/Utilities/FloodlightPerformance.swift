@@ -1,19 +1,19 @@
 import Foundation
 import os
 
-enum FloodlightPerformance {
+package enum FloodlightPerformance {
     static let log = OSLog(
         subsystem: "com.floodlight.app",
         category: .pointsOfInterest
     )
 
-    static func begin(_ name: StaticString) -> OSSignpostID {
+    package static func begin(_ name: StaticString) -> OSSignpostID {
         let id = OSSignpostID(log: log)
         os_signpost(.begin, log: log, name: name, signpostID: id)
         return id
     }
 
-    static func end(_ name: StaticString, id: OSSignpostID) {
+    package static func end(_ name: StaticString, id: OSSignpostID) {
         os_signpost(.end, log: log, name: name, signpostID: id)
     }
 

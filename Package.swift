@@ -17,9 +17,15 @@ let package = Package(
         )
     ],
     targets: [
+        .target(
+            name: "FloodlightEngine",
+            dependencies: [],
+            path: "Sources/FloodlightEngine"
+        ),
         .executableTarget(
             name: "Floodlight",
             dependencies: [
+                "FloodlightEngine",
                 .product(name: "FFFKit", package: "fff-swift")
             ],
             path: "Sources/Floodlight",
@@ -31,8 +37,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "FloodlightEngineTests",
+            dependencies: ["FloodlightEngine"],
+            path: "Tests/FloodlightEngineTests"
+        ),
+        .testTarget(
             name: "FloodlightTests",
-            dependencies: ["Floodlight"],
+            dependencies: ["Floodlight", "FloodlightEngine"],
             path: "Tests/FloodlightTests"
         )
     ],
