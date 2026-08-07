@@ -55,7 +55,6 @@ final class SearchCoordinator {
     private let index: FFFIndex
     private let applicationCatalog: ApplicationCatalog
     private let recentStore: RecentStore
-    private let quickLook = QuickLookController()
     private var allResults: [SearchItem] = []
     private var filterCounts = SearchFilterCounts()
     private var applicationMatchCount = 0
@@ -222,7 +221,6 @@ final class SearchCoordinator {
         selectedID = nil
         selectionWasUserDriven = false
         isSearching = false
-        quickLook.close()
     }
 
     func moveSelection(by delta: Int) {
@@ -303,9 +301,13 @@ final class SearchCoordinator {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    func togglePreview() {
-        guard let url = selectedItem?.fileURL, selectedItem?.isPreviewable == true else { return }
-        quickLook.toggle(url)
+    /// The URL to preview for the current selection, or `nil` if nothing is
+    /// selected or the selection isn't previewable. This judgment stays in
+    /// the coordinator's vocabulary rather than being re-derived by the
+    /// shell, which should only learn "here is a URL to preview, or nothing".
+    var previewableSelectionURL: URL? {
+        guard let selectedItem, selectedItem.isPreviewable else { return nil }
+        return selectedItem.fileURL
     }
 
     @discardableResult
