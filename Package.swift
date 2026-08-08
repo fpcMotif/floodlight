@@ -40,17 +40,27 @@ let package = Package(
                 .linkedFramework("ServiceManagement")
             ]
         ),
+        // Shared test scaffolding: a deterministic property-based testing
+        // harness, adversarial input corpora, and the catalog/process test
+        // doubles both test targets drive. Depends on nothing but the
+        // engine, so it never pulls the shell into the engine's tests.
+        .target(
+            name: "FloodlightTestSupport",
+            dependencies: ["FloodlightEngine"],
+            path: "Tests/FloodlightTestSupport"
+        ),
         .testTarget(
             name: "FloodlightEngineTests",
             dependencies: [
                 "FloodlightEngine",
+                "FloodlightTestSupport",
                 .product(name: "FFFKit", package: "fff-swift")
             ],
             path: "Tests/FloodlightEngineTests"
         ),
         .testTarget(
             name: "FloodlightTests",
-            dependencies: ["Floodlight", "FloodlightEngine"],
+            dependencies: ["Floodlight", "FloodlightEngine", "FloodlightTestSupport"],
             path: "Tests/FloodlightTests"
         )
     ],
