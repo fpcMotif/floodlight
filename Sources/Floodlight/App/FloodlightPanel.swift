@@ -307,7 +307,7 @@ final class FloodlightPanelController {
         return true
     }
 
-    enum PanelCommand: Hashable {
+    enum PanelCommand: Hashable, Sendable {
         case copySelection
         case chooseRoot
         case rebuildIndex

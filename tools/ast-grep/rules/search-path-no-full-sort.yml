@@ -18,11 +18,23 @@ note: >-
   small-input and final-heap cases. If a second file ever needs to be exempt,
   that is a sign the ordering wants to move into `Catalog.swift`, not that the
   rule wants another exemption.
+
+  A sort that is genuinely not on the query path — discovery ordering its
+  results once per filesystem walk, say — takes a per-site
+  `// ast-grep-ignore: search-path-no-full-sort` with the reason next to it.
+  Per-site, because a whole-file exemption would also cover the query path that
+  usually lives in the same file.
 files:
   - "Sources/FloodlightEngine/Search/**/*.swift"
 ignores:
   - "Sources/FloodlightEngine/Search/Catalog.swift"
+
+# Matched as a member reference rather than as a call. `$CANDIDATES.sorted($$$)`
+# only matches a parenthesised argument list, so `candidates.sorted { $0 < $1 }`
+# — the shape anyone writes for a one-line comparator — slips straight through.
+# That gap was live: `ApplicationCatalog.discoverApplications` sorts with a
+# trailing closure and this rule did not see it.
 rule:
   any:
-    - pattern: $CANDIDATES.sorted($$$ARGS)
-    - pattern: $CANDIDATES.sort($$$ARGS)
+    - pattern: $CANDIDATES.sorted
+    - pattern: $CANDIDATES.sort

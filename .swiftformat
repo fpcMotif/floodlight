@@ -67,4 +67,13 @@
 # access-control edits to humans.
 --disable redundantFileprivate
 
+# `redundantSendable` strips explicit `Sendable` from non-public types on the
+# grounds that the compiler infers it anyway. It does — until someone adds one
+# non-Sendable stored property, at which point the conformance silently
+# disappears and the error surfaces at some distant use site instead of at the
+# declaration. Nothing under Sources is public, so this rule would delete every
+# `Sendable` in the package. Writing it down is the point: it is a promise the
+# type makes, and the compiler checks promises at the place they are made.
+--disable redundantSendable
+
 --exclude .build,.tools,docs,Sources/Floodlight/Resources

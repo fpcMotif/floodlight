@@ -88,7 +88,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             onOpenSpotlightSettings: { [weak self] in
                 self?.flow.beginSpotlightReplacement()
             },
-            onOpenFullDiskAccess: Self.openFullDiskAccess,
+            // Wrapped rather than passed as `Self.openFullDiskAccess`: an
+            // unapplied method reference carries no isolation, so it will not
+            // convert to the callback's `@MainActor @Sendable` type.
+            onOpenFullDiskAccess: { Self.openFullDiskAccess() },
             onFinish: { [weak self] in self?.finish() }
         )
         window.contentViewController = NSHostingController(rootView: view)

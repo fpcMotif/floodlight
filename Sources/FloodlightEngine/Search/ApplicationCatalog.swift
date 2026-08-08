@@ -1,7 +1,7 @@
 import Foundation
 
 package final class ApplicationCatalog: Catalog, @unchecked Sendable {
-    private struct Application {
+    private struct Application: Sendable {
         let name: String
         let url: URL
         let markerName: String
@@ -354,6 +354,10 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             }
         }
 
+        // Discovery, not the query path: this runs once per filesystem walk and
+        // orders the whole catalog alphabetically, which *is* the full order — a
+        // bounded top-K would be the wrong answer here, not a faster one.
+        // ast-grep-ignore: search-path-no-full-sort
         return applications.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }

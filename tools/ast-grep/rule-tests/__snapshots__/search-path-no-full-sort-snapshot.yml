@@ -1,32 +1,50 @@
 id: search-path-no-full-sort
 snapshots:
   ? |
+    func discovered() -> [Application] {
+        applications.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+  : labels:
+    - source: applications.sorted
+      style: primary
+      start: 41
+      end: 60
+  ? |
     func items(limit: Int) -> [SearchItem] {
         matches.sorted(by: ranksBefore).prefix(limit).map { $0 }
     }
   : labels:
-    - source: 'matches.sorted(by: ranksBefore)'
+    - source: matches.sorted
       style: primary
       start: 45
-      end: 76
+      end: 59
+  ? |
+    let ranked = matches.sorted { $0.score > $1.score }
+  : labels:
+    - source: matches.sorted
+      style: primary
+      start: 13
+      end: 27
   ? |
     let ranked = matches.sorted()
   : labels:
-    - source: matches.sorted()
+    - source: matches.sorted
       style: primary
       start: 13
-      end: 29
+      end: 27
   ? |
     let ranked = matches.sorted(by: SearchItemRanking.ranksBefore)
   : labels:
-    - source: 'matches.sorted(by: SearchItemRanking.ranksBefore)'
+    - source: matches.sorted
       style: primary
       start: 13
-      end: 62
+      end: 27
   ? |
     matches.sort(by: ranksBefore)
   : labels:
-    - source: 'matches.sort(by: ranksBefore)'
+    - source: matches.sort
       style: primary
       start: 0
-      end: 29
+      end: 12

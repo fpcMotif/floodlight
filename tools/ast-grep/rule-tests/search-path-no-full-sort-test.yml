@@ -13,6 +13,18 @@ invalid:
     let ranked = matches.sorted(by: SearchItemRanking.ranksBefore)
   - |
     let ranked = matches.sorted()
+  # Trailing-closure form. The rule used to match only a parenthesised argument
+  # list, so this slipped through — and a live instance was sitting in
+  # ApplicationCatalog at the time. Any narrowing of the rule has to keep
+  # failing this case.
+  - |
+    func discovered() -> [Application] {
+        applications.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+  - |
+    let ranked = matches.sorted { $0.score > $1.score }
   # The shape this rule was written to kill: sort everything, keep a page.
   - |
     func items(limit: Int) -> [SearchItem] {

@@ -1,7 +1,7 @@
 import Carbon
 import Foundation
 
-enum FloodlightShortcut: String, CaseIterable, Identifiable {
+enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
     case commandSpace
     case optionSpace
 

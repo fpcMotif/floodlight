@@ -108,6 +108,21 @@ build's search path is several times slower than what a user feels:
 make test-performance
 ```
 
+**A new hot path is not done until it has a budgeted test.** Anything that runs
+per keystroke — scoring, filtering, selection, a new catalog's
+`immediatePage` — gets a test in the engine's performance suite: warm up, take
+many samples, take the median, then assert against a hard bound with enough
+margin to survive a shared CI runner. Print a `FLOODLIGHT_BENCH` line so the
+measured number is in the log even on a green run. `SearchItemRankingPerformanceTests`
+is the shape to copy. Elegance is not a substitute for a measurement, and none
+of the rules above can tell you something is slow — only that it is shaped
+wrong.
+
+Some rules are worth breaking at a specific site. Suppress one with a
+`// ast-grep-ignore: <rule-id>` comment on the line directly above, with the
+reason beside it — ast-grep reports suppressions that have stopped matching, so
+a stale one cannot quietly outlive its justification.
+
 Tool versions are pinned in
 [`scripts/tool-versions.env`](scripts/tool-versions.env); the check scripts
 refuse to run against a different version rather than give you a verdict CI

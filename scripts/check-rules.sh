@@ -19,6 +19,11 @@ PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 
 . "$SCRIPT_DIR/tools.sh"
 
+# `ast-grep scan` defaults its search path to `.`, so without this the script
+# scans whatever directory it was invoked from — exits 0 having examined
+# nothing, then fails the self-test blaming the globs. Run it from anywhere.
+cd "$PROJECT_DIR"
+
 astgrep=$(resolve_tool ast-grep "$FLOODLIGHT_ASTGREP_VERSION" --version)
 
 engine_probe="$PROJECT_DIR/Sources/FloodlightEngine/GateSelfTest.swift"
@@ -32,14 +37,13 @@ else
     exit 1
 fi
 
-if "$astgrep" test --config "$PROJECT_DIR/sgconfig.yml" >/dev/null; then
-    echo "check-rules: rule tests pass"
-else
-    "$astgrep" test --config "$PROJECT_DIR/sgconfig.yml" >&2 || true
+rule_test_output=$("$astgrep" test --config "$PROJECT_DIR/sgconfig.yml" 2>&1) || {
+    printf '%s\n' "$rule_test_output" >&2
     echo "check-rules: rule tests failed. If a rule changed on purpose, regenerate" >&2
     echo "  its snapshots with: ast-grep test --update-all" >&2
     exit 1
-fi
+}
+echo "check-rules: rule tests pass"
 
 # The probe imports a UI framework and detaches a task — two engine-scoped
 # rules. In the engine it must be caught; in the shell, where both are

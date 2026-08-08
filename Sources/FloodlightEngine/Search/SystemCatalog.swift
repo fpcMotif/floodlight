@@ -2,13 +2,13 @@ import Foundation
 import os
 
 package final class SystemCatalog: Catalog {
-    package struct DiscoveredSetting: Equatable {
+    package struct DiscoveredSetting: Equatable, Sendable {
         let name: String
         let keywords: String
         let pane: String
     }
 
-    private struct Setting {
+    private struct Setting: Sendable {
         let name: String
         let keywords: String
         let pane: String

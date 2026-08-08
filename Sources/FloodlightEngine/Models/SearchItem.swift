@@ -1,6 +1,6 @@
 import Foundation
 
-package enum SearchItemKind: String, Hashable {
+package enum SearchItemKind: String, Hashable, Sendable {
     case application
     case calculator
     case file
@@ -31,7 +31,7 @@ package enum SearchItemKind: String, Hashable {
     }
 }
 
-package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable {
+package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
     case all
     case applications
     case files
@@ -107,7 +107,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable {
     ]
 }
 
-package struct SearchFilterCounts: Equatable {
+package struct SearchFilterCounts: Equatable, Sendable {
     private var all = 0
     private var applications = 0
     private var files = 0
@@ -159,7 +159,7 @@ package struct SearchFilterCounts: Equatable {
     }
 }
 
-package struct SearchFilterOption: Identifiable, Equatable {
+package struct SearchFilterOption: Identifiable, Equatable, Sendable {
     package let filter: SearchResultFilter
     package let count: Int
     package let isLoading: Bool
@@ -182,7 +182,7 @@ package struct SearchFilterOption: Identifiable, Equatable {
     }
 }
 
-package struct SearchItemPage {
+package struct SearchItemPage: Sendable {
     package let items: [SearchItem]
     package let totalMatched: Int
 
@@ -192,18 +192,18 @@ package struct SearchItemPage {
     }
 }
 
-package enum SearchItemAction: Hashable {
+package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
     case showFloodlightSettings
 }
 
-package enum SearchItemIconSource: Hashable {
+package enum SearchItemIconSource: Hashable, Sendable {
     case inferred
     case floodlightApplication
 }
 
-package struct SearchItem: Identifiable, Hashable {
+package struct SearchItem: Identifiable, Hashable, Sendable {
     package let id: String
     package let title: String
     package let subtitle: String

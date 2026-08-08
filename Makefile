@@ -70,6 +70,8 @@ docs:
 install: bundle
 	./scripts/install.sh
 
+# Build products only. `.tools` is deliberately left alone: it holds pinned
+# binaries verified by checksum, and re-downloading them is not what anyone
+# means by "clean". Remove it by hand to force a re-fetch.
 clean:
 	swift package clean
-	rm -rf .tools

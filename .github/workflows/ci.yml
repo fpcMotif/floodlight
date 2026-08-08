@@ -60,7 +60,8 @@ jobs:
           swift --version
 
       # Formatting, SwiftLint, ast-grep rules and their self-test, the
-      # architecture script, and a warnings-as-errors build of every target.
+      # architecture script, a warnings-as-errors build of every target, and
+      # the Periphery dead-code scan.
       - name: Run gates
         run: make check
 
