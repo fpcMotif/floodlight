@@ -51,6 +51,43 @@ tool_at_version() {
     return "$tool_at_version_found"
 }
 
+# find_ripgrep
+#
+# Echoes the path to an rg built with PCRE2 and returns 0, or returns 1 quietly.
+# The quiet form matters: install-tools.sh needs to ask "is one present?" and
+# carry on either way, which it could not do if this exited.
+#
+# Deliberately not version-pinned. The tools above are pinned exactly because
+# their rule sets change between releases and so change the verdict; ripgrep
+# contributes no rules, only the engine for a pattern check-architecture.sh
+# supplies. What actually matters is the one capability that pattern needs — so
+# that is what gets checked, by running it rather than by parsing a version.
+find_ripgrep() {
+    for candidate in $(tool_candidates rg); do
+        [ -x "$candidate" ] || continue
+        if echo 'public func' | "$candidate" --pcre2 -q '(?:public)\s+func' 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# resolve_ripgrep
+#
+# find_ripgrep, or explain what to install and exit 1.
+resolve_ripgrep() {
+    if found_rg=$(find_ripgrep); then
+        echo "$found_rg"
+        return 0
+    fi
+
+    echo "rg: no ripgrep with PCRE2 support found" >&2
+    echo "scripts/check-architecture.sh needs '--pcre2' for its declaration pattern." >&2
+    echo "Run 'make install-tools' to fetch the pinned binary into .tools/bin." >&2
+    exit 1
+}
+
 # resolve_tool <name> <expected-version> <version-argument>
 #
 # Echoes the path to a usable binary, or explains what to install and exits 1.

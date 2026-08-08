@@ -24,19 +24,27 @@ case $(uname -m) in
     arm64)
         astgrep_asset=app-aarch64-apple-darwin.zip
         astgrep_sha=$FLOODLIGHT_ASTGREP_SHA256_ARM64
+        ripgrep_asset=ripgrep-$FLOODLIGHT_RIPGREP_VERSION-aarch64-apple-darwin.tar.gz
+        ripgrep_sha=$FLOODLIGHT_RIPGREP_SHA256_ARM64
         ;;
     *)
         astgrep_asset=app-x86_64-apple-darwin.zip
         astgrep_sha=$FLOODLIGHT_ASTGREP_SHA256_X86_64
+        ripgrep_asset=ripgrep-$FLOODLIGHT_RIPGREP_VERSION-x86_64-apple-darwin.tar.gz
+        ripgrep_sha=$FLOODLIGHT_RIPGREP_SHA256_X86_64
         ;;
 esac
 
-# fetch_zip <url> <sha256> <binary-name-inside-zip> <destination-name>
-fetch_zip() {
+# fetch_archive <url> <sha256> <binary-name-inside> <destination-name>
+#
+# Verifies before unpacking, so nothing from an unexpected artifact is ever
+# written to disk, let alone made executable.
+fetch_archive() {
     echo "install-tools: fetching $4"
-    curl --fail --location --silent --show-error "$1" --output "$work_dir/download.zip"
+    archive="$work_dir/download"
+    curl --fail --location --silent --show-error "$1" --output "$archive"
 
-    actual=$(shasum -a 256 "$work_dir/download.zip" | cut -d' ' -f1)
+    actual=$(shasum -a 256 "$archive" | cut -d' ' -f1)
     if [ "$actual" != "$2" ]; then
         echo "install-tools: checksum mismatch for $1" >&2
         echo "  expected $2" >&2
@@ -48,7 +56,11 @@ fetch_zip() {
 
     rm -rf "$work_dir/unpacked"
     mkdir -p "$work_dir/unpacked"
-    unzip -q -o "$work_dir/download.zip" -d "$work_dir/unpacked"
+    case "$1" in
+        *.tar.gz) tar -xzf "$archive" -C "$work_dir/unpacked" ;;
+        *) unzip -q -o "$archive" -d "$work_dir/unpacked" ;;
+    esac
+
     extracted=$(find "$work_dir/unpacked" -type f -name "$3" -perm -u+x | head -1)
     if [ -z "$extracted" ]; then
         echo "install-tools: $3 not found inside $1" >&2
@@ -61,7 +73,7 @@ fetch_zip() {
 if tool_at_version swiftlint "$FLOODLIGHT_SWIFTLINT_VERSION" version; then
     echo "install-tools: swiftlint $FLOODLIGHT_SWIFTLINT_VERSION already present"
 else
-    fetch_zip \
+    fetch_archive \
         "https://github.com/realm/SwiftLint/releases/download/$FLOODLIGHT_SWIFTLINT_VERSION/portable_swiftlint.zip" \
         "$FLOODLIGHT_SWIFTLINT_SHA256" swiftlint swiftlint
 fi
@@ -69,7 +81,7 @@ fi
 if tool_at_version swiftformat "$FLOODLIGHT_SWIFTFORMAT_VERSION" --version; then
     echo "install-tools: swiftformat $FLOODLIGHT_SWIFTFORMAT_VERSION already present"
 else
-    fetch_zip \
+    fetch_archive \
         "https://github.com/nicklockwood/SwiftFormat/releases/download/$FLOODLIGHT_SWIFTFORMAT_VERSION/swiftformat.zip" \
         "$FLOODLIGHT_SWIFTFORMAT_SHA256" swiftformat swiftformat
 fi
@@ -77,7 +89,7 @@ fi
 if tool_at_version ast-grep "$FLOODLIGHT_ASTGREP_VERSION" --version; then
     echo "install-tools: ast-grep $FLOODLIGHT_ASTGREP_VERSION already present"
 else
-    fetch_zip \
+    fetch_archive \
         "https://github.com/ast-grep/ast-grep/releases/download/$FLOODLIGHT_ASTGREP_VERSION/$astgrep_asset" \
         "$astgrep_sha" ast-grep ast-grep
 fi
@@ -85,7 +97,7 @@ fi
 if tool_at_version periphery "$FLOODLIGHT_PERIPHERY_VERSION" version; then
     echo "install-tools: periphery $FLOODLIGHT_PERIPHERY_VERSION already present"
 else
-    fetch_zip \
+    fetch_archive \
         "https://github.com/peripheryapp/periphery/releases/download/$FLOODLIGHT_PERIPHERY_VERSION/periphery-$FLOODLIGHT_PERIPHERY_VERSION.zip" \
         "$FLOODLIGHT_PERIPHERY_SHA256" periphery periphery
     # The release binary links libIndexStore.dylib through an @rpath that
@@ -99,6 +111,16 @@ else
         exit 1
     fi
     ln -sf "$index_store" "$TOOLS_BIN/libIndexStore.dylib"
+fi
+
+# Capability, not version — see resolve_ripgrep in tools.sh for why this one is
+# pinned more loosely than the rest.
+if find_ripgrep >/dev/null; then
+    echo "install-tools: ripgrep with PCRE2 already present"
+else
+    fetch_archive \
+        "https://github.com/BurntSushi/ripgrep/releases/download/$FLOODLIGHT_RIPGREP_VERSION/$ripgrep_asset" \
+        "$ripgrep_sha" rg rg
 fi
 
 echo "install-tools: pinned tools available in $TOOLS_BIN"
