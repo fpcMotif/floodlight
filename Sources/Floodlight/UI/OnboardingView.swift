@@ -13,7 +13,10 @@ struct OnboardingView: View {
     let presentation: FloodlightConfigurationPresentation
     @Bindable var session: OnboardingSession
     let onSelectShortcut: (FloodlightShortcut) -> Void
-    let onSetLaunchAtLogin: (Bool) -> Void
+    // Main-actor isolated because it drives a `Binding`'s setter, and SwiftUI
+    // now requires that setter to carry its isolation with it. The callers are
+    // main-actor controllers already, so this only writes down what was true.
+    let onSetLaunchAtLogin: @MainActor @Sendable (Bool) -> Void
     let onChooseScope: () -> Void
     let onOpenSpotlightSettings: () -> Void
     let onOpenFullDiskAccess: () -> Void
@@ -210,8 +213,8 @@ struct OnboardingView: View {
                         in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                     )
             }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.defaultAction)
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 24)
         .frame(height: 58)

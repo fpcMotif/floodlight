@@ -1,0 +1,32 @@
+id: search-path-no-full-sort
+snapshots:
+  ? |
+    func items(limit: Int) -> [SearchItem] {
+        matches.sorted(by: ranksBefore).prefix(limit).map { $0 }
+    }
+  : labels:
+    - source: 'matches.sorted(by: ranksBefore)'
+      style: primary
+      start: 45
+      end: 76
+  ? |
+    let ranked = matches.sorted()
+  : labels:
+    - source: matches.sorted()
+      style: primary
+      start: 13
+      end: 29
+  ? |
+    let ranked = matches.sorted(by: SearchItemRanking.ranksBefore)
+  : labels:
+    - source: 'matches.sorted(by: SearchItemRanking.ranksBefore)'
+      style: primary
+      start: 13
+      end: 62
+  ? |
+    matches.sort(by: ranksBefore)
+  : labels:
+    - source: 'matches.sort(by: ranksBefore)'
+      style: primary
+      start: 0
+      end: 29

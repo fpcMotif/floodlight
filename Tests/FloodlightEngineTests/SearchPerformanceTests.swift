@@ -1,5 +1,4 @@
 import Darwin
-import FloodlightEngine
 import Foundation
 import XCTest
 @testable import FloodlightEngine
@@ -228,16 +227,15 @@ final class SearchPerformanceTests: XCTestCase {
     private func makeFilterFixture() -> [SearchItem] {
         let extensions = ["pdf", "png", "txt", "swift", "jpg", "docx"]
         return (0..<80).map { index in
-            let kind: SearchItemKind
-            switch index % 8 {
+            let kind: SearchItemKind = switch index % 8 {
             case 0:
-                kind = .application
+                .application
             case 1:
-                kind = .folder
+                .folder
             case 2:
-                kind = .systemSetting
+                .systemSetting
             default:
-                kind = .file
+                .file
             }
             let ext = extensions[index % extensions.count]
             let url = URL(fileURLWithPath: "/tmp/fixture-\(index).\(ext)")

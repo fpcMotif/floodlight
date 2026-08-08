@@ -31,7 +31,9 @@ package protocol Catalog: Sendable {
 }
 
 package extension Catalog {
-    func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] { [] }
+    func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        []
+    }
 
     func track(query: String, selectedURL: URL) {}
 
@@ -39,10 +41,15 @@ package extension Catalog {
         try await refreshIfNeeded(minimumInterval: 2, forceDiscovery: false)
     }
 
+    // periphery:ignore - The protocol's default-limit surface. The shell always
+    // passes an explicit limit because the panel's row count decides it, so
+    // outside the tests these have no call sites — that makes them unreferenced,
+    // not dead: deleting them would push the literal 12 into every caller.
     func immediatePage(for query: String) -> SearchItemPage {
         immediatePage(for: query, limit: 12)
     }
 
+    // periphery:ignore - See `immediatePage(for:)` above.
     func indexedItems(for query: String) async throws -> [SearchItem] {
         try await indexedItems(for: query, limit: 12)
     }
@@ -73,8 +80,46 @@ package enum SearchItemRanking {
             : lhs.score > rhs.score
     }
 
+    /// Orders every item, for the one caller that publishes a whole list.
+    ///
+    /// A catalog answering a query wants ``topRanked(_:limit:)`` instead: it
+    /// only ever shows a page, and sorting the discarded tail is work nobody
+    /// reads. This file is the only place under `Sources/FloodlightEngine/Search`
+    /// allowed to call `sorted` — see `tools/ast-grep/rules/search-path-no-full-sort.yml`.
     package static func ranked(_ items: [SearchItem]) -> [SearchItem] {
         items.sorted(by: ranksBefore)
+    }
+
+    /// The best `limit` items, in published order.
+    ///
+    /// Selection is bounded: a heap of at most `limit` candidates, so the cost
+    /// is O(n log limit) rather than the O(n log n) of ranking everything and
+    /// throwing the tail away. With ~1,500 applications and a 12-row panel
+    /// that is the difference between sorting 1,500 items and sifting a
+    /// 12-element heap — on every keystroke.
+    ///
+    /// The result is identical to `ranked(items).prefix(limit)`, which is what
+    /// `SearchItemRankingTests` asserts.
+    package static func topRanked(_ items: [SearchItem], limit: Int) -> [SearchItem] {
+        guard limit > 0 else { return [] }
+        guard items.count > limit else { return ranked(items) }
+
+        // A max-heap under `ranksBefore`: the root is the worst item kept so
+        // far, so deciding whether a candidate belongs is one comparison.
+        var heap: [SearchItem] = []
+        heap.reserveCapacity(limit)
+
+        for item in items {
+            if heap.count < limit {
+                heap.append(item)
+                siftUp(&heap, from: heap.count - 1)
+            } else if ranksBefore(item, heap[0]) {
+                heap[0] = item
+                siftDown(&heap, from: 0)
+            }
+        }
+
+        return ranked(heap)
     }
 
     /// Ranks `matches`, keeps the first `limit`, and reports how many matched.
@@ -82,11 +127,39 @@ package enum SearchItemRanking {
     /// The count is the total, not the page — the filter chips show how many
     /// results exist, not how many fit.
     package static func page(_ matches: [SearchItem], limit: Int) -> SearchItemPage {
-        let ranked = ranked(matches)
-        return SearchItemPage(
-            items: Array(ranked.prefix(limit)),
-            totalMatched: ranked.count
+        SearchItemPage(
+            items: topRanked(matches, limit: limit),
+            totalMatched: matches.count
         )
+    }
+
+    private static func siftUp(_ heap: inout [SearchItem], from index: Int) {
+        var child = index
+        while child > 0 {
+            let parent = (child - 1) / 2
+            // Parent already ranks after the child, so the worst is still on top.
+            guard ranksBefore(heap[parent], heap[child]) else { return }
+            heap.swapAt(parent, child)
+            child = parent
+        }
+    }
+
+    private static func siftDown(_ heap: inout [SearchItem], from index: Int) {
+        var parent = index
+        while true {
+            let left = parent * 2 + 1
+            let right = left + 1
+            var worst = parent
+            if left < heap.count, ranksBefore(heap[worst], heap[left]) {
+                worst = left
+            }
+            if right < heap.count, ranksBefore(heap[worst], heap[right]) {
+                worst = right
+            }
+            guard worst != parent else { return }
+            heap.swapAt(parent, worst)
+            parent = worst
+        }
     }
 }
 
@@ -103,7 +176,10 @@ package enum CatalogDirectoryFingerprint {
         return attributes?[.modificationDate] as? Date ?? .distantPast
     }
 
-    package static func make(forPaths paths: some Sequence<String>, fileManager: FileManager) -> [String: Date] {
+    package static func make(
+        forPaths paths: some Sequence<String>,
+        fileManager: FileManager
+    ) -> [String: Date] {
         Dictionary(
             uniqueKeysWithValues: Set(paths).map { path in
                 (path, modificationDate(ofDirectoryAtPath: path, fileManager: fileManager))
@@ -111,7 +187,10 @@ package enum CatalogDirectoryFingerprint {
         )
     }
 
-    package static func make(for urls: some Sequence<URL>, fileManager: FileManager) -> [String: Date] {
+    package static func make(
+        for urls: some Sequence<URL>,
+        fileManager: FileManager
+    ) -> [String: Date] {
         make(forPaths: urls.map(\.standardizedFileURL.path), fileManager: fileManager)
     }
 }

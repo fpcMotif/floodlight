@@ -1,0 +1,22 @@
+id: search-path-no-full-sort
+valid:
+  - |
+    return SearchItemRanking.topRanked(matches, limit: limit)
+  - |
+    return SearchItemRanking.page(matches, limit: limit)
+  - |
+    let best = matches.max(by: SearchItemRanking.ranksBefore)
+  - |
+    let hint = "call sorted() only in Catalog.swift"
+invalid:
+  - |
+    let ranked = matches.sorted(by: SearchItemRanking.ranksBefore)
+  - |
+    let ranked = matches.sorted()
+  # The shape this rule was written to kill: sort everything, keep a page.
+  - |
+    func items(limit: Int) -> [SearchItem] {
+        matches.sorted(by: ranksBefore).prefix(limit).map { $0 }
+    }
+  - |
+    matches.sort(by: ranksBefore)

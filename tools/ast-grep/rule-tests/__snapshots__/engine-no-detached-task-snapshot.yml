@@ -1,0 +1,16 @@
+id: engine-no-detached-task
+snapshots:
+  ? |
+    Task.detached { await self.refresh() }
+  : labels:
+    - source: Task.detached
+      style: primary
+      start: 0
+      end: 13
+  ? |
+    let discovery = await Task.detached(priority: .utility) { discover() }.value
+  : labels:
+    - source: Task.detached
+      style: primary
+      start: 22
+      end: 35

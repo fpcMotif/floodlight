@@ -63,7 +63,7 @@ final class FFFIndexTests: XCTestCase {
         )
         try Data("Floodlight integration test".utf8).write(to: file)
         try Data("%PDF-1.7".utf8).write(to: pdf)
-        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: image)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
         try Data("ordinary text remains indexed".utf8).write(to: document)
         try Data("application executable".utf8).write(to: applicationExecutable)
         try Data("nested folder coverage".utf8).write(to: deeplyNestedFile)
@@ -81,7 +81,8 @@ final class FFFIndexTests: XCTestCase {
         let fileResults = try await index.search("needle")
         XCTAssertTrue(fileResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
         let fileOnlyResults = try await index.searchFiles("needle")
-        XCTAssertTrue(fileOnlyResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
+        XCTAssertTrue(fileOnlyResults
+            .contains { $0.url.lastPathComponent == file.lastPathComponent })
         XCTAssertFalse(fileOnlyResults.contains(where: \.isDirectory))
 
         let downloadResults = try await index.searchFiles("download-guide")
@@ -105,7 +106,8 @@ final class FFFIndexTests: XCTestCase {
         XCTAssertTrue(ancestorResults.contains { sameFileURL($0.url, ancestorOnlyFolder) })
 
         let folderResults = try await index.search("Projects")
-        XCTAssertTrue(folderResults.contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
+        XCTAssertTrue(folderResults
+            .contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
         let directoryOnlyResults = try await index.searchDirectories("Projects")
         XCTAssertTrue(
             directoryOnlyResults.contains {
@@ -113,14 +115,21 @@ final class FFFIndexTests: XCTestCase {
             }
         )
 
-        let contentResults = try await index.searchContent("integration test", timeBudgetMilliseconds: 500)
-        XCTAssertTrue(contentResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
+        let contentResults = try await index.searchContent(
+            "integration test",
+            timeBudgetMilliseconds: 500
+        )
+        XCTAssertTrue(contentResults
+            .contains { $0.url.lastPathComponent == file.lastPathComponent })
     }
 
     func testExactAndTildePathsKeepDirectoriesVisibleInMixedResults() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
-            .appendingPathComponent("FloodlightPathQueryTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightPathQueryTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         let storage = root.appendingPathComponent(".storage", isDirectory: true)
         let code = root.appendingPathComponent("code", isDirectory: true)
         let minion = code.appendingPathComponent("minion", isDirectory: true)
@@ -156,7 +165,10 @@ final class FFFIndexTests: XCTestCase {
     func testLiveWatcherUpdatesFilesAndFolders() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
-            .appendingPathComponent("FloodlightWatcherTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightWatcherTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         let storage = root.appendingPathComponent(".storage", isDirectory: true)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: root) }
@@ -233,7 +245,10 @@ final class FFFIndexTests: XCTestCase {
     func testLiveWatcherUpdatesFileContent() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
-            .appendingPathComponent("FloodlightContentWatcherTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightContentWatcherTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         let storage = root.appendingPathComponent(".storage", isDirectory: true)
         let file = root.appendingPathComponent("content-notes.txt")
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
@@ -315,7 +330,10 @@ final class FFFIndexTests: XCTestCase {
     func testLiveWatcherUpdatesApplicationBundlesInsideTheSearchScope() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
-            .appendingPathComponent("FloodlightApplicationWatcherTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightApplicationWatcherTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         let storage = root.appendingPathComponent(".storage", isDirectory: true)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: root) }
@@ -372,7 +390,10 @@ final class FFFIndexTests: XCTestCase {
     func testLiveWatcherMovesInitiallyIndexedFolderWithoutCorruptingOtherEntries() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
-            .appendingPathComponent("FloodlightSeededWatcherTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightSeededWatcherTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         let storage = root.appendingPathComponent(".storage", isDirectory: true)
         let seededFolder = root.appendingPathComponent("A Seeded Folder", isDirectory: true)
         let seededFile = seededFolder.appendingPathComponent("seed-record.txt")

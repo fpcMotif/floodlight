@@ -1,0 +1,32 @@
+id: engine-no-ui-frameworks
+snapshots:
+  import AppKit:
+    labels:
+    - source: import AppKit
+      style: primary
+      start: 0
+      end: 13
+  import Cocoa:
+    labels:
+    - source: import Cocoa
+      style: primary
+      start: 0
+      end: 12
+  import QuickLookUI:
+    labels:
+    - source: import QuickLookUI
+      style: primary
+      start: 0
+      end: 18
+  import SwiftUI:
+    labels:
+    - source: import SwiftUI
+      style: primary
+      start: 0
+      end: 14
+  import UIKit:
+    labels:
+    - source: import UIKit
+      style: primary
+      start: 0
+      end: 12

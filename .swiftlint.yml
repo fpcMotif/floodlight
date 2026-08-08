@@ -1,0 +1,101 @@
+# SwiftLint owns generic Swift quality: performance antipatterns and the
+# complexity proxies. It does NOT own architecture — those rules are AST
+# matches over Floodlight's own invariants and live in tools/ast-grep/rules,
+# because SwiftLint's `custom_rules` are regex-only and regex cannot tell
+# `.sorted()` on a candidate array from `.sorted()` on a menu.
+#
+# Run via scripts/check-lint.sh, which passes --strict: every warning is a
+# failure, so there is no "warning debt" tier.
+#
+# Version is pinned in scripts/tool-versions.env.
+
+excluded:
+  - .build
+  - .tools
+  - docs
+  - Sources/Floodlight/Resources
+
+# Performance antipatterns. These are the reason SwiftLint is in the gate at
+# all: each one is a silent O(n) or allocation regression on a path that a
+# launcher runs on every keystroke.
+opt_in_rules:
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - empty_count
+  - empty_string
+  - first_where
+  - flatmap_over_map_reduce
+  - last_where
+  - reduce_into
+  - sorted_first_last
+
+disabled_rules:
+  # SwiftFormat owns line width (--max-width 100) and it is the only tool
+  # that can actually rewrap a line. Two tools disagreeing about columns is
+  # a formatting war; one tool that fixes it automatically is a gate.
+  - line_length
+  # Same reason: SwiftFormat's `braces` rule places the opening brace, and
+  # it deliberately breaks it onto its own line after a wrapped signature.
+  - opening_brace
+  # `todo` is a note to a human, not a mechanical defect.
+  - todo
+
+# `--trailing-commas always` in .swiftformat adds the comma; this makes
+# SwiftLint agree rather than fight it.
+trailing_comma:
+  mandatory_comma: true
+
+# Named 3-member tuples (`(url:pathExtension:requiresSettingsMarker:)`) read
+# fine as local tables. Four is where it should have been a struct.
+large_tuple:
+  warning: 3
+  error: 4
+
+# Only flag `something.count == 0`, not a bare `count == 0` — the latter is how
+# a type that vends `count` defines its own `isEmpty` (SearchFilterOption), and
+# flagging it makes the rule demand the property it is standing inside.
+empty_count:
+  only_after_dot: true
+
+identifier_name:
+  # `id`, `us`, `ms` are the domain's own words.
+  min_length:
+    warning: 2
+  excluded:
+    - id
+    - to
+    - up
+
+# Complexity proxies. Thresholds are a ratchet, not an aspiration: each is
+# set at the current tree's worst offender, so nothing may grow past today's
+# ceiling. When a file is split (SearchCoordinator.swift at 665 lines and
+# its 586-line type are the standing offenders), tighten the number in the
+# same commit — that is the only way these ever get smaller.
+#
+# --strict means the `warning` value IS the failure threshold; `error` is
+# just documentation of where the number should never reach.
+file_length:
+  warning: 700
+  error: 900
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 600
+  error: 800
+
+function_body_length:
+  warning: 120
+  error: 160
+
+cyclomatic_complexity:
+  warning: 13
+  error: 20
+  ignores_case_statements: true
+
+nesting:
+  type_level: 2
+  function_level: 3
+
+reporter: "xcode"

@@ -162,7 +162,7 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertEqual(fallback.score, .min)
         XCTAssertEqual(
             fallback.action,
-            .open(URL(string: "https://www.google.com/search?q=shortcut")!)
+            try .open(XCTUnwrap(URL(string: "https://www.google.com/search?q=shortcut")))
         )
     }
 

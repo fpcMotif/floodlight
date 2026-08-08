@@ -1,0 +1,32 @@
+# Periphery finds declarations nothing references, so dead code is deleted
+# rather than accumulating behind a `package` modifier where the compiler
+# cannot see that it is unused.
+#
+# There is no suppression baseline on purpose: the initial report was acted on
+# rather than recorded, so anything this reports is new. If a declaration is
+# genuinely retained for a reason the index cannot see, say so at the
+# declaration with a `// periphery:ignore` comment and the reason — that is a
+# review-visible decision, which a baseline file is not.
+#
+# SPM mode: Periphery reads Package.swift from the project root, so there is no
+# project or scheme to name.
+
+# Test targets exist to reference production code. Indexing them would let a
+# declaration stay alive purely because a test touches it, which is the one
+# form of "used" that does not count.
+exclude_tests: true
+
+# Nothing under Sources is public — scripts/check-architecture.sh enforces
+# that — so there is no library surface to retain.
+retain_public: false
+
+# Properties that are written and never read are dead weight in a launcher's
+# hot structs, so they get reported like anything else.
+retain_assign_only_properties: false
+
+index_exclude:
+  - "**/.build/**"
+  - "**/.tools/**"
+  - "**/SourcePackages/checkouts/**"
+
+strict: true

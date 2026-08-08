@@ -1,0 +1,21 @@
+id: engine-no-ui-frameworks
+language: Swift
+severity: error
+message: >-
+  FloodlightEngine must not import a UI framework — move the view code to
+  Sources/Floodlight and have it read the engine's results.
+note: >-
+  The engine is the deep module: results, ranking, action execution. It stays
+  testable without a window server and reusable by anything that is not this
+  particular panel, and both of those stop being true the moment a view type
+  leaks in. If the engine needs to describe something visual, it vends data the
+  shell renders — `SearchItemKind.symbolName` is the shape to copy.
+files:
+  - "Sources/FloodlightEngine/**/*.swift"
+rule:
+  any:
+    - pattern: import SwiftUI
+    - pattern: import AppKit
+    - pattern: import Cocoa
+    - pattern: import UIKit
+    - pattern: import QuickLookUI

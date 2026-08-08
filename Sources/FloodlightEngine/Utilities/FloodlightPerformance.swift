@@ -16,8 +16,4 @@ package enum FloodlightPerformance {
     package static func end(_ name: StaticString, id: OSSignpostID) {
         os_signpost(.end, log: log, name: name, signpostID: id)
     }
-
-    static func event(_ name: StaticString) {
-        os_signpost(.event, log: log, name: name)
-    }
 }

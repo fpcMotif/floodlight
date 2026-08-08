@@ -1,0 +1,17 @@
+id: sources-no-force-try
+language: Swift
+severity: error
+message: >-
+  `try!` crashes the launcher on a thrown error — use `try?` and handle the
+  nil, or propagate with `try` and let the caller decide.
+note: >-
+  Floodlight is a panel the user summons mid-task; a trap here loses whatever
+  they were doing. Nothing the engine reads is guaranteed to be present or
+  well-formed — bundles get deleted, plists get rewritten, the index gets
+  corrupted — so "this cannot fail" is a claim about the filesystem that the
+  filesystem never agreed to. `ApplicationCatalog.discoverApplications` is the
+  pattern: `(try? fileManager.contentsOfDirectory(...)) ?? []`.
+files:
+  - "Sources/**/*.swift"
+rule:
+  pattern: try! $EXPR

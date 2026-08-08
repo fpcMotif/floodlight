@@ -1,0 +1,22 @@
+# ast-grep owns Floodlight's architecture rules — the invariants that are about
+# this codebase rather than about Swift.
+#
+# The split with SwiftLint is deliberate: SwiftLint's `custom_rules` are regex,
+# and regex cannot tell `.sorted()` on a candidate array from `.sorted()` on a
+# settings menu, or `try!` in a string from `try!` in code. These rules match
+# the parse tree, so they can.
+#
+# Adding a rule is dropping one file in `tools/ast-grep/rules` and one test file
+# in `tools/ast-grep/rule-tests`. There is no linter framework to extend.
+#
+# The rule-evolution ladder, for whoever writes the next one:
+#   1. ast-grep YAML       — while the pattern is syntactic (all rules today)
+#   2. SwiftSyntax visitor — when it needs parent/scope context
+#   3. index-store analysis — when it needs real types
+# Do not skip rungs.
+
+ruleDirs:
+  - tools/ast-grep/rules
+
+testConfigs:
+  - testDir: tools/ast-grep/rule-tests

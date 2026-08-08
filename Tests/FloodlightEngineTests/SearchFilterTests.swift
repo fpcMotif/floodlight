@@ -17,15 +17,17 @@ final class SearchFilterTests: XCTestCase {
         XCTAssertTrue(SearchResultFilter.folders.includes(folder))
     }
 
-    func testDynamicFiltersUseFileTypeAndSettingsKind() {
+    func testDynamicFiltersUseFileTypeAndSettingsKind() throws {
         let pdf = item(kind: .file, path: "/Users/test/Report.PDF")
         let image = item(kind: .file, path: "/Users/test/Photo.heic")
         let document = item(kind: .file, path: "/Users/test/Notes.md")
-        let setting = SearchItem(
+        let setting = try SearchItem(
             title: "Bluetooth",
             subtitle: "System Settings",
             kind: .systemSetting,
-            action: .open(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!),
+            action: .open(
+                XCTUnwrap(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings"))
+            ),
             score: 10
         )
 

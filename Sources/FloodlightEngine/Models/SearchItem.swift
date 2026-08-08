@@ -1,6 +1,6 @@
 import Foundation
 
-package enum SearchItemKind: String, Hashable, Sendable {
+package enum SearchItemKind: String, Hashable {
     case application
     case calculator
     case file
@@ -31,7 +31,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
     }
 }
 
-package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
+package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable {
     case all
     case applications
     case files
@@ -55,7 +55,9 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         .documents,
     ]
 
-    package var id: String { rawValue }
+    package var id: String {
+        rawValue
+    }
 
     package var title: String {
         switch self {
@@ -105,7 +107,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
     ]
 }
 
-package struct SearchFilterCounts: Equatable, Sendable {
+package struct SearchFilterCounts: Equatable {
     private var all = 0
     private var applications = 0
     private var files = 0
@@ -157,12 +159,21 @@ package struct SearchFilterCounts: Equatable, Sendable {
     }
 }
 
-package struct SearchFilterOption: Identifiable, Equatable, Sendable {
+package struct SearchFilterOption: Identifiable, Equatable {
     package let filter: SearchResultFilter
     package let count: Int
     package let isLoading: Bool
 
-    package var id: SearchResultFilter { filter }
+    package var id: SearchResultFilter {
+        filter
+    }
+
+    /// Whether this filter matched nothing — the condition that hides a dynamic
+    /// chip, and that sends the selection back to `.all` when the chip the user
+    /// is standing on empties out.
+    package var isEmpty: Bool {
+        count == 0
+    }
 
     package init(filter: SearchResultFilter, count: Int, isLoading: Bool) {
         self.filter = filter
@@ -171,7 +182,7 @@ package struct SearchFilterOption: Identifiable, Equatable, Sendable {
     }
 }
 
-package struct SearchItemPage: Sendable {
+package struct SearchItemPage {
     package let items: [SearchItem]
     package let totalMatched: Int
 
@@ -181,18 +192,18 @@ package struct SearchItemPage: Sendable {
     }
 }
 
-package enum SearchItemAction: Hashable, Sendable {
+package enum SearchItemAction: Hashable {
     case copy(String)
     case open(URL)
     case showFloodlightSettings
 }
 
-package enum SearchItemIconSource: Hashable, Sendable {
+package enum SearchItemIconSource: Hashable {
     case inferred
     case floodlightApplication
 }
 
-package struct SearchItem: Identifiable, Hashable, Sendable {
+package struct SearchItem: Identifiable, Hashable {
     package let id: String
     package let title: String
     package let subtitle: String

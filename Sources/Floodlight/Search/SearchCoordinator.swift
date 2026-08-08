@@ -18,6 +18,7 @@ final class SearchCoordinator {
             scheduleSearch()
         }
     }
+
     private(set) var results: [SearchItem] = []
     private(set) var selectedFilter: SearchResultFilter = .all
     var selectedID: SearchItem.ID?
@@ -34,7 +35,7 @@ final class SearchCoordinator {
         let primary = SearchResultFilter.primary.map(makeFilterOption)
         let dynamic = SearchResultFilter.dynamic.compactMap { filter -> SearchFilterOption? in
             let option = makeFilterOption(filter)
-            guard option.count > 0 || selectedFilter == filter else { return nil }
+            guard !option.isEmpty || selectedFilter == filter else { return nil }
             return option
         }
         return primary + dynamic
@@ -238,7 +239,8 @@ final class SearchCoordinator {
 
     func moveSelection(by delta: Int) {
         guard !results.isEmpty else { return }
-        let currentIndex = selectedID.flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
+        let currentIndex = selectedID
+            .flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
         let nextIndex = min(max(currentIndex + delta, 0), results.count - 1)
         selectedID = results[nextIndex].id
         selectionWasUserDriven = true
@@ -275,10 +277,10 @@ final class SearchCoordinator {
         onDismiss?()
 
         switch item.action {
-        case .copy(let value):
+        case let .copy(value):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
-        case .open(let url):
+        case let .open(url):
             open(url, asApplication: item.kind == .application)
             if item.kind == .file || item.kind == .folder {
                 index.track(query: selectedQuery, selectedURL: url)
@@ -301,14 +303,13 @@ final class SearchCoordinator {
 
     func copySelection() {
         guard let item = selectedItem else { return }
-        let value: String
-        switch item.action {
-        case .copy(let text):
-            value = text
-        case .open(let url):
-            value = url.isFileURL ? url.path : url.absoluteString
+        let value: String = switch item.action {
+        case let .copy(text):
+            text
+        case let .open(url):
+            url.isFileURL ? url.path : url.absoluteString
         case .showFloodlightSettings:
-            value = item.title
+            item.title
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
@@ -553,7 +554,8 @@ final class SearchCoordinator {
 
         if !query.isEmpty,
            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+           let url = URL(string: "https://www.google.com/search?q=\(encoded)")
+        {
             output.append(
                 SearchItem(
                     id: Self.webSearchResultID,
@@ -608,11 +610,13 @@ final class SearchCoordinator {
         }
         if promoteWebFallback,
            previousSelection == webSearchResultID,
-           first.id != webSearchResultID {
+           first.id != webSearchResultID
+        {
             return first.id
         }
         if let previousSelection,
-           results.contains(where: { $0.id == previousSelection }) {
+           results.contains(where: { $0.id == previousSelection })
+        {
             return previousSelection
         }
         return first.id
@@ -621,35 +625,33 @@ final class SearchCoordinator {
     private func reconcileSelectedFilter() {
         guard selectedFilter.isDynamic else { return }
         let option = makeFilterOption(selectedFilter)
-        guard option.count == 0, !option.isLoading else { return }
+        guard option.isEmpty, !option.isLoading else { return }
         selectedFilter = .all
         applySelectedFilter(resetSelection: true)
     }
 
     private func makeFilterOption(_ filter: SearchResultFilter) -> SearchFilterOption {
         let visibleCount = filterCounts[filter]
-        let count: Int
-        switch filter {
+        let count: Int = switch filter {
         case .applications:
-            count = max(applicationMatchCount, visibleCount)
+            max(applicationMatchCount, visibleCount)
         case .settings:
-            count = max(settingsMatchCount, visibleCount)
+            max(settingsMatchCount, visibleCount)
         case .all, .files, .folders, .pdfs, .images, .documents:
-            count = visibleCount
+            visibleCount
         }
 
-        let isLoading: Bool
-        switch filter {
+        let isLoading: Bool = switch filter {
         case .all:
-            isLoading = isSearching
+            isSearching
                 || isApplicationCatalogLoading
                 || isSettingsCatalogLoading
         case .applications:
-            isLoading = isApplicationCatalogLoading
+            isApplicationCatalogLoading
         case .files, .folders, .pdfs, .images, .documents:
-            isLoading = isSearching
+            isSearching
         case .settings:
-            isLoading = isSettingsCatalogLoading
+            isSettingsCatalogLoading
         }
 
         return SearchFilterOption(

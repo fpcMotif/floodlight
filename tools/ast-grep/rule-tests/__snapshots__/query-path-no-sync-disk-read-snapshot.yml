@@ -1,0 +1,106 @@
+id: query-path-no-sync-disk-read
+snapshots:
+  ? |
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let children = (try? fileManager.contentsOfDirectory(at: root)) ?? []
+        return SearchItemRanking.page(children.map(item), limit: limit)
+    }
+  : labels:
+    - source: 'fileManager.contentsOfDirectory(at: root)'
+      style: primary
+      start: 103
+      end: 144
+    - source: immediatePage
+      style: secondary
+      start: 13
+      end: 26
+    - source: |-
+        package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+            let children = (try? fileManager.contentsOfDirectory(at: root)) ?? []
+            return SearchItemRanking.page(children.map(item), limit: limit)
+        }
+      style: secondary
+      start: 0
+      end: 221
+  ? |
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let raw = Data(contentsOf: cacheURL)
+        return decode(raw)
+    }
+  : labels:
+    - source: 'Data(contentsOf: cacheURL)'
+      style: primary
+      start: 92
+      end: 118
+    - source: Data
+      style: secondary
+      start: 92
+      end: 96
+    - source: contentsOf
+      style: secondary
+      start: 97
+      end: 107
+    - source: immediatePage
+      style: secondary
+      start: 13
+      end: 26
+    - source: |-
+        package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+            let raw = Data(contentsOf: cacheURL)
+            return decode(raw)
+        }
+      style: secondary
+      start: 0
+      end: 143
+  ? |
+    package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        guard fileManager.fileExists(atPath: markerRoot.path) else { return [] }
+        return try await index.searchFiles(query)
+    }
+  : labels:
+    - source: 'fileManager.fileExists(atPath: markerRoot.path)'
+      style: primary
+      start: 98
+      end: 145
+    - source: indexedItems
+      style: secondary
+      start: 13
+      end: 25
+    - source: |-
+        package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+            guard fileManager.fileExists(atPath: markerRoot.path) else { return [] }
+            return try await index.searchFiles(query)
+        }
+      style: secondary
+      start: 0
+      end: 212
+  ? |
+    package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        let text = String(contentsOf: manifestURL, encoding: .utf8)
+        return parse(text)
+    }
+  : labels:
+    - source: 'String(contentsOf: manifestURL, encoding: .utf8)'
+      style: primary
+      start: 103
+      end: 151
+    - source: String
+      style: secondary
+      start: 103
+      end: 109
+    - source: contentsOf
+      style: secondary
+      start: 110
+      end: 120
+    - source: indexedItems
+      style: secondary
+      start: 13
+      end: 25
+    - source: |-
+        package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+            let text = String(contentsOf: manifestURL, encoding: .utf8)
+            return parse(text)
+        }
+      style: secondary
+      start: 0
+      end: 176

@@ -1,7 +1,7 @@
 import Foundation
 
 package final class ApplicationCatalog: Catalog, @unchecked Sendable {
-    private struct Application: Sendable {
+    private struct Application {
         let name: String
         let url: URL
         let markerName: String
@@ -45,7 +45,10 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             appropriateFor: nil,
             create: true
         ).appendingPathComponent("Floodlight", isDirectory: true))
-            ?? fileManager.temporaryDirectory.appendingPathComponent("Floodlight", isDirectory: true)
+            ?? fileManager.temporaryDirectory.appendingPathComponent(
+                "Floodlight",
+                isDirectory: true
+            )
         let appIndexRoot = (supportURL ?? defaultSupport)
             .appendingPathComponent("ApplicationIndex", isDirectory: true)
         markerRoot = appIndexRoot.appendingPathComponent("Items", isDirectory: true)
@@ -137,7 +140,7 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             limit: UInt32(max(limit * 2, limit))
         )
 
-        return indexed.enumerated().compactMap { rank, result -> SearchItem? in
+        let matches = indexed.enumerated().compactMap { rank, result -> SearchItem? in
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
@@ -156,9 +159,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: SearchItemRanking.ranksBefore)
-        .prefix(limit)
-        .map { $0 }
+
+        return SearchItemRanking.topRanked(matches, limit: limit)
     }
 
     package func immediatePage(for query: String, limit: Int = 12) -> SearchItemPage {
@@ -185,12 +187,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
                 fileURL: application.url
             )
         }
-        .sorted(by: SearchItemRanking.ranksBefore)
 
-        return SearchItemPage(
-            items: Array(matches.prefix(limit)),
-            totalMatched: matches.count
-        )
+        return SearchItemRanking.page(matches, limit: limit)
     }
 
     package func track(query: String, selectedURL: URL) {
@@ -329,7 +327,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         var seenRoots = Set<String>()
         for root in roots
             where seenRoots.insert(root.standardizedFileURL.path).inserted
-                && fileManager.fileExists(atPath: root.path) {
+            && fileManager.fileExists(atPath: root.path)
+        {
             // Finder-hidden Cryptex links such as Safari still belong in the catalog.
             let directChildren = (try? fileManager.contentsOfDirectory(
                 at: root,
