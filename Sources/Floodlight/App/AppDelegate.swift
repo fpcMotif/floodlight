@@ -200,9 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             NSLog("Floodlight could not register its global keyboard shortcut.")
         }
+        model.activeShortcutDisplayName = activeShortcut?.displayName
     }
 
     private func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
+        defer { model.activeShortcutDisplayName = activeShortcut?.displayName }
+
         guard shortcut != activeShortcut else {
             shortcut.save()
             return true

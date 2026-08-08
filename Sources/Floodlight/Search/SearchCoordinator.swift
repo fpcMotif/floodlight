@@ -12,13 +12,18 @@ final class SearchCoordinator {
             cancelAssistantRun()
             selectionWasUserDriven = false
             guard !isResetting else { return }
-            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if case .local = mode,
+               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 refreshApplicationsIfNeeded()
                 refreshSettingsIfNeeded()
             }
             scheduleSearch()
         }
     }
+    /// Local fuzzy search, or web mode scoped to one engine (entered with
+    /// Tab, shown as the field's token). All transitions run through
+    /// `SearchMode.transition` — this only publishes what it decides.
+    private(set) var mode: SearchMode = .local
     private(set) var results: [SearchItem] = []
     private(set) var selectedFilter: SearchResultFilter = .all
     var selectedID: SearchItem.ID?
@@ -28,6 +33,13 @@ final class SearchCoordinator {
     /// The in-flight or completed state of the last "Ask Codex"/"Ask
     /// Claude" the user triggered, or `nil` if none is active.
     private(set) var assistantRun: AssistantRun?
+    /// The actually-registered summon shortcut ("⌘ Space"), set by
+    /// `AppDelegate` once it knows whether the preferred combo registered
+    /// or Carbon fell back to the alternate one — `nil` until then, or if
+    /// registration failed outright. The idle capsule's hotkey chip reads
+    /// this directly rather than re-deriving a preference that might not
+    /// match what's actually active.
+    var activeShortcutDisplayName: String?
 
     @ObservationIgnored
     var onDismiss: (() -> Void)?
@@ -35,6 +47,9 @@ final class SearchCoordinator {
     var onShowSettings: (() -> Void)?
 
     var filterOptions: [SearchFilterOption] {
+        // Local-only controls: suppressed while web mode is active, restored
+        // — selection included — as soon as the mode exits.
+        guard case .local = mode else { return [] }
         let primary = SearchResultFilter.primary.map(makeFilterOption)
         let dynamic = SearchResultFilter.dynamic.compactMap { filter -> SearchFilterOption? in
             let option = makeFilterOption(filter)
@@ -42,6 +57,13 @@ final class SearchCoordinator {
             return option
         }
         return primary + dynamic
+    }
+
+    /// The engine web mode is scoped to, or `nil` in local mode — what the
+    /// search field's token renders.
+    var activeWebEngine: KeywordEngine? {
+        guard case .web(let context) = mode else { return nil }
+        return KeywordEngineCatalog.webSearchEngines.first { $0.id == context.engineID }
     }
 
     private let index: FFFIndex
@@ -241,6 +263,7 @@ final class SearchCoordinator {
         generation += 1
         searchTask?.cancel()
         searchTask = nil
+        mode = .local
         isResetting = true
         query = ""
         isResetting = false
@@ -255,6 +278,59 @@ final class SearchCoordinator {
         isSearching = false
     }
 
+    // MARK: - Web mode (Tab ↔ Esc)
+
+    func handleTab() {
+        applyModeEvent(.tab)
+    }
+
+    func handleShiftTab() {
+        applyModeEvent(.shiftTab)
+    }
+
+    /// Esc's layering lives here, not in the field: in web mode the first
+    /// Esc only exits the mode; in local mode Esc dismisses the panel
+    /// exactly as it always has.
+    func handleEscape() {
+        guard case .web = mode else {
+            onDismiss?()
+            return
+        }
+        applyModeEvent(.escape)
+    }
+
+    func handleBackspaceOnEmptyQuery() {
+        applyModeEvent(.backspaceOnEmptyQuery)
+    }
+
+    /// The engine title for the "⇥ Search <Engine>" affordance on a ranked
+    /// keyword row — non-nil only for `item` itself, only in local mode,
+    /// and only when the matched engine is a URL engine Tab can complete
+    /// into (assistant keywords fall through to plain-query Tab instead).
+    func tabCompletionHint(for item: SearchItem) -> String? {
+        guard
+            case .local = mode,
+            let match = KeywordEngineCatalog.match(query, in: availableKeywordEngines),
+            case .webSearch = match.engine.destination,
+            item.id == "keyword-engine:\(match.engine.id)"
+        else {
+            return nil
+        }
+        return match.engine.title
+    }
+
+    private func applyModeEvent(_ event: SearchModeEvent) {
+        let next = SearchMode.transition(from: mode, query: query, event: event)
+        guard next.mode != mode || next.query != query else { return }
+        mode = next.mode
+        if query != next.query {
+            // The observer republishes for the new mode.
+            query = next.query
+        } else {
+            scheduleSearch(immediate: true)
+        }
+    }
+
     func moveSelection(by delta: Int) {
         guard !results.isEmpty else { return }
         let currentIndex = selectedID.flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
@@ -265,6 +341,7 @@ final class SearchCoordinator {
 
     func activate(_ item: SearchItem) {
         select(item)
+        guard webModeReturnIsArmed else { return }
         performAction(for: item)
     }
 
@@ -285,8 +362,16 @@ final class SearchCoordinator {
     }
 
     func openSelection() {
-        guard let item = selectedItem else { return }
+        guard webModeReturnIsArmed, let item = selectedItem else { return }
         performAction(for: item)
+    }
+
+    /// Web mode's Return has exactly one meaning — open the engine's results
+    /// page — so with nothing to search for it must do nothing at all, from
+    /// the keyboard and the mouse alike. Local mode is never gated.
+    private var webModeReturnIsArmed: Bool {
+        guard case .web = mode else { return true }
+        return !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func performAction(for item: SearchItem) {
@@ -455,6 +540,11 @@ final class SearchCoordinator {
     }
 
     private func scheduleSearch(immediate: Bool = false) {
+        if case .web(let context) = mode {
+            publishWebModeResults(context: context)
+            return
+        }
+
         let immediateSignpost = FloodlightPerformance.begin("ImmediateSearch")
         generation += 1
         let requestGeneration = generation
@@ -605,6 +695,55 @@ final class SearchCoordinator {
         return try await applicationCatalog.indexedItems(for: query, limit: 12)
     }
 
+    /// The whole list while web mode is active: one row per preset URL
+    /// engine, nothing else. The local passes stay paused — no catalog or
+    /// index is touched — and any in-flight pass is cancelled so it can't
+    /// land its results over the engine rows.
+    private func publishWebModeResults(context: SearchMode.WebContext) {
+        generation += 1
+        searchTask?.cancel()
+        searchTask = nil
+        isSearching = false
+
+        let rows = Self.webModeResults(
+            query: query.trimmingCharacters(in: .whitespacesAndNewlines),
+            activeEngineID: context.engineID
+        )
+        allResults = rows
+        filterCounts = SearchFilterCounts()
+        results = rows
+        // Row identity is the engine, so an engine the user arrowed to stays
+        // selected while they keep typing; on entry the active engine leads.
+        if !rows.contains(where: { $0.id == selectedID }) {
+            selectedID = rows.first?.id
+        }
+    }
+
+    /// One "Search <Engine> for “<query>”" row per preset URL engine —
+    /// active engine first, the rest in table order, positioned within the
+    /// keyword-engine score band. Titles and URLs track the live query;
+    /// nothing here performs I/O.
+    static func webModeResults(
+        query: String,
+        activeEngineID: String,
+        engines: [KeywordEngine] = KeywordEngineCatalog.webSearchEngines
+    ) -> [SearchItem] {
+        let ordered = engines.filter { $0.id == activeEngineID }
+            + engines.filter { $0.id != activeEngineID }
+
+        return ordered.enumerated().compactMap { position, engine in
+            guard let url = engine.searchURL(for: query) else { return nil }
+            return SearchItem(
+                id: "web-mode:\(engine.id)",
+                title: query.isEmpty ? engine.title : "\(engine.title) for “\(query)”",
+                subtitle: "Open in your default browser",
+                kind: .web,
+                action: .open(url),
+                score: SearchItemRanking.keywordEngine - position
+            )
+        }
+    }
+
     func buildResults(
         query: String,
         indexed: [SearchItem],
@@ -634,9 +773,11 @@ final class SearchCoordinator {
         output.append(contentsOf: system)
         output.append(contentsOf: indexed)
 
-        if !query.isEmpty,
-           let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+        // The fallback row is the table's default engine wearing its stable
+        // "web-search" identity — reached by promotion here, the same
+        // destination Tab's plain-query mode addresses deliberately.
+        let defaultEngine = KeywordEngineCatalog.defaultEngine
+        if !query.isEmpty, let url = defaultEngine.searchURL(for: query) {
             let localMatchCount = apps.count + system.count + indexed.count
             let promoted = WebSearchIntent.shouldPromote(
                 query: query,
@@ -645,7 +786,7 @@ final class SearchCoordinator {
             output.append(
                 SearchItem(
                     id: Self.webSearchResultID,
-                    title: "Search the Web for “\(query)”",
+                    title: "\(defaultEngine.title) for “\(query)”",
                     subtitle: "Open in your default browser",
                     kind: .web,
                     action: .open(url),

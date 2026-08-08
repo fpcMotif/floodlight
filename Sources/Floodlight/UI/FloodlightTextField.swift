@@ -9,6 +9,44 @@ struct FloodlightTextField: NSViewRepresentable {
     let onSubmit: () -> Void
     let onCommandSubmit: () -> Void
     let onCancel: () -> Void
+    var onTab: () -> Void = {}
+    var onShiftTab: () -> Void = {}
+    var onBackspaceOnEmpty: () -> Void = {}
+
+    /// What a command selector means inside the search field. Pure and
+    /// static — the delegate consumes a selector exactly when this maps it,
+    /// so Tab can never fall through to the field editor's focus traversal,
+    /// and backspace stays ordinary editing while there's text to delete.
+    enum FieldCommand: Hashable {
+        case submit
+        case commandSubmit
+        case cancel
+        case tab
+        case shiftTab
+        case backspaceOnEmptyText
+    }
+
+    static func fieldCommand(
+        for commandSelector: Selector,
+        commandKeyIsDown: Bool,
+        textIsEmpty: Bool
+    ) -> FieldCommand? {
+        switch commandSelector {
+        case #selector(NSResponder.insertNewline(_:)),
+             #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            return commandKeyIsDown ? .commandSubmit : .submit
+        case #selector(NSResponder.cancelOperation(_:)):
+            return .cancel
+        case #selector(NSResponder.insertTab(_:)):
+            return .tab
+        case #selector(NSResponder.insertBacktab(_:)):
+            return .shiftTab
+        case #selector(NSResponder.deleteBackward(_:)) where textIsEmpty:
+            return .backspaceOnEmptyText
+        default:
+            return nil
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -130,29 +168,34 @@ struct FloodlightTextField: NSViewRepresentable {
             textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
-            switch commandSelector {
-            case #selector(NSResponder.insertNewline(_:)),
-                 #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-                if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.parent.onCommandSubmit()
-                    }
-                } else {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.parent.onSubmit()
-                    }
-                }
-                return true
-
-            case #selector(NSResponder.cancelOperation(_:)):
-                DispatchQueue.main.async { [weak self] in
-                    self?.parent.onCancel()
-                }
-                return true
-
-            default:
+            guard
+                let command = FloodlightTextField.fieldCommand(
+                    for: commandSelector,
+                    commandKeyIsDown: NSApp.currentEvent?.modifierFlags.contains(.command) == true,
+                    textIsEmpty: textView.string.isEmpty
+                )
+            else {
                 return false
             }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch command {
+                case .submit:
+                    parent.onSubmit()
+                case .commandSubmit:
+                    parent.onCommandSubmit()
+                case .cancel:
+                    parent.onCancel()
+                case .tab:
+                    parent.onTab()
+                case .shiftTab:
+                    parent.onShiftTab()
+                case .backspaceOnEmptyText:
+                    parent.onBackspaceOnEmpty()
+                }
+            }
+            return true
         }
     }
 }

@@ -42,17 +42,28 @@ package struct KeywordEngine: Sendable, Identifiable {
         self.destination = destination
     }
 
+    /// The engine's results page for `query`, or `nil` for an assistant
+    /// engine or a query that can't be percent-encoded into the template.
+    /// Every surface that opens an engine in a browser — the keyword row,
+    /// the fallback row, web mode — derives its URL here, so they can
+    /// never drift apart.
+    package func searchURL(for query: String) -> URL? {
+        guard case .webSearch(let urlTemplate) = destination else { return nil }
+        guard
+            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+            let url = URL(string: urlTemplate.replacingOccurrences(of: "{query}", with: encoded))
+        else {
+            return nil
+        }
+        return url
+    }
+
     /// Builds the row for a matched `remainder`, or `nil` if the remainder
     /// can't become a valid URL (a `.webSearch` destination only).
     package func makeSearchItem(remainder: String) -> SearchItem? {
         switch destination {
-        case .webSearch(let urlTemplate):
-            guard
-                let encoded = remainder.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                let url = URL(string: urlTemplate.replacingOccurrences(of: "{query}", with: encoded))
-            else {
-                return nil
-            }
+        case .webSearch:
+            guard let url = searchURL(for: remainder) else { return nil }
             return SearchItem(
                 id: "keyword-engine:\(id)",
                 title: "\(title) for “\(remainder)”",
@@ -78,7 +89,49 @@ package struct KeywordEngine: Sendable, Identifiable {
 /// query's first word against them — the explicit-address counterpart to
 /// `WebSearchIntent`'s auto-detected promotion of the default web row.
 package enum KeywordEngineCatalog {
+    /// The engine a web destination falls back to when nothing addresses one
+    /// explicitly. Exactly three consumers read this: the local-mode web
+    /// fallback row, plain-query Tab, and nothing else.
+    package static let defaultEngine = KeywordEngine(
+        id: "google",
+        title: "Search Google",
+        keywords: ["g", "google", "!g"],
+        kind: .web,
+        destination: .webSearch(urlTemplate: "https://www.google.com/search?q={query}")
+    )
+
     package static let all: [KeywordEngine] = [
+        defaultEngine,
+        KeywordEngine(
+            id: "duckduckgo",
+            title: "Search DuckDuckGo",
+            keywords: ["ddg", "duckduckgo", "!ddg"],
+            kind: .web,
+            destination: .webSearch(urlTemplate: "https://duckduckgo.com/?q={query}")
+        ),
+        KeywordEngine(
+            id: "wikipedia",
+            title: "Search Wikipedia",
+            // Deliberately no single-letter "w": its accidental first-word
+            // hit rate in natural queries is too high.
+            keywords: ["wiki", "wikipedia", "!wiki"],
+            kind: .web,
+            destination: .webSearch(urlTemplate: "https://en.wikipedia.org/wiki/Special:Search?search={query}")
+        ),
+        KeywordEngine(
+            id: "github",
+            title: "Search GitHub",
+            keywords: ["gh", "github", "!gh"],
+            kind: .web,
+            destination: .webSearch(urlTemplate: "https://github.com/search?q={query}")
+        ),
+        KeywordEngine(
+            id: "stackoverflow",
+            title: "Search Stack Overflow",
+            keywords: ["so", "stackoverflow", "!so"],
+            kind: .web,
+            destination: .webSearch(urlTemplate: "https://stackoverflow.com/search?q={query}")
+        ),
         KeywordEngine(
             id: "twitter",
             title: "Search Twitter/X",
@@ -108,6 +161,16 @@ package enum KeywordEngineCatalog {
             destination: .assistant(command: "claude", baseArguments: ["-p"])
         ),
     ]
+
+    /// The URL-template preset engines in table order — the exact set web
+    /// mode shows one row per, and the order those rows keep after the
+    /// active engine is moved to the front.
+    package static var webSearchEngines: [KeywordEngine] {
+        all.filter { engine in
+            if case .webSearch = engine.destination { return true }
+            return false
+        }
+    }
 
     /// Matches `query`'s first whitespace-delimited token against `engines`'
     /// keywords, case-insensitively. A bare keyword with nothing after it —

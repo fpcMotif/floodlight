@@ -36,38 +36,80 @@ private struct SearchBar: View {
                 .font(.system(size: FloodlightMetrics.searchIconSize, weight: .regular))
                 .foregroundStyle(.secondary)
 
+            if let engine = model.activeWebEngine {
+                WebModeToken(title: engine.title)
+            }
+
             FloodlightTextField(
                 text: $model.query,
                 placeholder: "Floodlight search",
                 focusGeneration: model.focusGeneration,
                 onSubmit: model.openSelection,
                 onCommandSubmit: model.revealSelection,
-                onCancel: {
-                    model.onDismiss?()
-                }
+                // Esc is layered by the coordinator: exit web mode first,
+                // dismiss the panel second.
+                onCancel: model.handleEscape,
+                onTab: model.handleTab,
+                onShiftTab: model.handleShiftTab,
+                onBackspaceOnEmpty: model.handleBackspaceOnEmptyQuery
             )
 
-            ZStack {
-                if !model.query.isEmpty {
-                    Button {
-                        model.query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: FloodlightMetrics.clearButtonSize))
-                            .foregroundStyle(isClearButtonHovered ? .primary : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { isClearButtonHovered = $0 }
+            trailingAccessory
+                .transaction { transaction in
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
                 }
-            }
-            .frame(width: FloodlightMetrics.clearButtonSize, height: FloodlightMetrics.clearButtonSize)
-            .transaction { transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
         }
         .padding(.horizontal, 20)
         .frame(height: FloodlightMetrics.searchHeight)
+    }
+
+    /// A clear button once there's a query to clear, or — while idle, if
+    /// the registered shortcut is known — a trailing hint chip naming it.
+    /// The two are mutually exclusive by construction (the chip only shows
+    /// when the field is empty), so this is one slot, not an overlay.
+    @ViewBuilder
+    private var trailingAccessory: some View {
+        if !model.query.isEmpty {
+            Button {
+                model.query = ""
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: FloodlightMetrics.clearButtonSize))
+                    .foregroundStyle(isClearButtonHovered ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
+            .onHover { isClearButtonHovered = $0 }
+            .frame(width: FloodlightMetrics.clearButtonSize, height: FloodlightMetrics.clearButtonSize)
+        } else if let shortcut = model.activeShortcutDisplayName {
+            KeyChip(label: shortcut)
+                .accessibilityLabel("Summon shortcut \(shortcut)")
+        }
+    }
+}
+
+/// The web-mode token on the field's leading edge: the active engine's
+/// title beside the web kind's globe, in the same chip language as the
+/// filter bar. Purely indicative — exiting the mode is Esc/Shift-Tab/
+/// backspace-on-empty, so the token needs no interaction of its own.
+private struct WebModeToken: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: SearchItemKind.web.symbolName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(title)
+        }
+        .font(FloodlightMetrics.Typography.chip)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .fixedSize()
+        .modifier(FloodlightChipSurface(isSelected: true))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Web search mode: \(title)")
     }
 }
 
@@ -125,21 +167,39 @@ private struct SearchFilterBar: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                ForEach(model.filterOptions) { option in
-                    SearchFilterChip(
-                        option: option,
-                        isSelected: model.selectedFilter == option.filter
-                    ) {
-                        model.selectFilter(option.filter)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
+            chips
+                .padding(.horizontal, 14)
         }
         .scrollClipDisabled()
         .frame(height: FloodlightMetrics.filterBarHeight)
         .accessibilityLabel("Search filters")
+    }
+
+    /// Chips share one `GlassEffectContainer` on macOS 26 so adjacent
+    /// glass capsules can merge/morph as they scroll — a fallback `HStack`
+    /// with no container below 26, where nothing needs to merge.
+    @ViewBuilder
+    private var chips: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: 7) {
+                chipRow
+            }
+        } else {
+            chipRow
+        }
+    }
+
+    private var chipRow: some View {
+        HStack(spacing: 7) {
+            ForEach(model.filterOptions) { option in
+                SearchFilterChip(
+                    option: option,
+                    isSelected: model.selectedFilter == option.filter
+                ) {
+                    model.selectFilter(option.filter)
+                }
+            }
+        }
     }
 }
 
@@ -172,10 +232,7 @@ private struct SearchFilterChip: View {
             .padding(.leading, 10)
             .padding(.trailing, 7)
             .frame(height: 26)
-            .background(
-                isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.055),
-                in: Capsule()
-            )
+            .modifier(FloodlightChipSurface(isSelected: isSelected))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -197,6 +254,7 @@ private struct ResultList: View {
                 resultStack
                     .padding(FloodlightMetrics.resultPadding)
             }
+            .modifier(FloodlightScrollEdge())
             .onChange(of: model.selectedID) {
                 guard let selectedID = model.selectedID else { return }
                 guard let index = model.results.firstIndex(where: { $0.id == selectedID }) else {
@@ -253,7 +311,8 @@ private struct ResultList: View {
                     resultCount: model.results.count,
                     filter: model.selectedFilter
                 ),
-                assistantState: model.assistantAnswerState(for: item)
+                assistantState: model.assistantAnswerState(for: item),
+                tabCompletionHint: model.tabCompletionHint(for: item)
             )
             .equatable()
         }

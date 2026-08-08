@@ -123,6 +123,81 @@ final class KeywordEngineTests: XCTestCase {
 
         XCTAssertFalse(available.contains { $0.kind == .assistant })
     }
+
+    // MARK: - Preset web engines (#29)
+
+    func testEveryPresetEngineBuildsItsExpectedSearchURL() throws {
+        let expectations: [(query: String, url: String)] = [
+            ("g swift concurrency", "https://www.google.com/search?q=swift%20concurrency"),
+            ("ddg swift concurrency", "https://duckduckgo.com/?q=swift%20concurrency"),
+            ("wiki alan turing", "https://en.wikipedia.org/wiki/Special:Search?search=alan%20turing"),
+            ("gh swift-testing", "https://github.com/search?q=swift-testing"),
+            ("so nsurlsession retry", "https://stackoverflow.com/search?q=nsurlsession%20retry"),
+        ]
+
+        for (query, expected) in expectations {
+            let item = try XCTUnwrap(KeywordEngineCatalog.search(query).first, query)
+            XCTAssertEqual(item.kind, .web, query)
+            guard case .open(let url) = item.action else {
+                return XCTFail("expected an .open action for \(query)")
+            }
+            XCTAssertEqual(url.absoluteString, expected, query)
+        }
+    }
+
+    func testEveryPresetKeywordSpellingAddressesItsEngine() {
+        let spellings: [(keyword: String, engineID: String)] = [
+            ("g", "google"), ("google", "google"), ("!g", "google"),
+            ("ddg", "duckduckgo"), ("duckduckgo", "duckduckgo"), ("!ddg", "duckduckgo"),
+            ("wiki", "wikipedia"), ("wikipedia", "wikipedia"), ("!wiki", "wikipedia"),
+            ("gh", "github"), ("github", "github"), ("!gh", "github"),
+            ("so", "stackoverflow"), ("stackoverflow", "stackoverflow"), ("!so", "stackoverflow"),
+        ]
+
+        for (keyword, engineID) in spellings {
+            XCTAssertEqual(
+                KeywordEngineCatalog.match("\(keyword) anything")?.engine.id,
+                engineID,
+                keyword
+            )
+        }
+    }
+
+    func testThereIsDeliberatelyNoSingleLetterWikipediaKeyword() {
+        // Rejected during grilling for its accidental first-word hit rate.
+        XCTAssertNil(KeywordEngineCatalog.match("w hidden files"))
+    }
+
+    func testTheDefaultEngineIsGoogleAndComesFromTheTable() {
+        XCTAssertEqual(KeywordEngineCatalog.defaultEngine.id, "google")
+        XCTAssertTrue(KeywordEngineCatalog.all.contains { $0.id == KeywordEngineCatalog.defaultEngine.id })
+    }
+
+    func testWebSearchEnginesListsOnlyURLEnginesInTableOrder() {
+        let engines = KeywordEngineCatalog.webSearchEngines
+        XCTAssertEqual(
+            engines.map(\.id),
+            ["google", "duckduckgo", "wikipedia", "github", "stackoverflow", "twitter", "youtube"]
+        )
+        XCTAssertTrue(engines.allSatisfy { engine in
+            if case .webSearch = engine.destination { return true }
+            return false
+        })
+    }
+
+    func testSearchURLPercentEncodesSpacesAndReservedCharacters() throws {
+        let url = try XCTUnwrap(
+            KeywordEngineCatalog.defaultEngine.searchURL(for: "café & crème #1")
+        )
+        XCTAssertEqual(url.host, "www.google.com")
+        XCTAssertFalse(url.absoluteString.contains(" "))
+        XCTAssertNil(url.fragment, "a '#' in the query must never become a fragment")
+    }
+
+    func testSearchURLForAnAssistantEngineIsNil() throws {
+        let claude = try XCTUnwrap(KeywordEngineCatalog.all.first { $0.id == "claude" })
+        XCTAssertNil(claude.searchURL(for: "anything"))
+    }
 }
 
 private struct StubAssistantProcessRunner: AssistantProcessRunning {

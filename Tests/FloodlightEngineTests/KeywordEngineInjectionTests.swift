@@ -445,14 +445,18 @@ final class KeywordEngineInjectionTests: XCTestCase {
     // MARK: - Availability
 
     func testWebEnginesAreAlwaysAvailableAndAssistantsAreGated() async {
+        let webEngineIDs: Set<String> = [
+            "google", "duckduckgo", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
+        ]
+
         let none = ScriptedAssistantRunner(availableCommands: [])
         let available = await KeywordEngineCatalog.availableEngines(runner: none)
-        XCTAssertEqual(Set(available.map(\.id)), ["twitter", "youtube"])
+        XCTAssertEqual(Set(available.map(\.id)), webEngineIDs)
         XCTAssertTrue(available.allSatisfy { $0.kind == .web })
 
         let both = ScriptedAssistantRunner(availableCommands: ["claude", "codex"])
         let all = await KeywordEngineCatalog.availableEngines(runner: both)
-        XCTAssertEqual(Set(all.map(\.id)), ["twitter", "youtube", "claude", "codex"])
+        XCTAssertEqual(Set(all.map(\.id)), webEngineIDs.union(["claude", "codex"]))
     }
 
     func testOnlyInstalledAssistantsSurvive() async {

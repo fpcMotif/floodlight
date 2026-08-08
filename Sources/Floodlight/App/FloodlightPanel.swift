@@ -24,6 +24,7 @@ final class FloodlightPanelController {
     private let quickLook = QuickLookController()
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
+    private var accessibilityDisplayObservation: NSObjectProtocol?
 
     init(model: SearchCoordinator) {
         self.model = model
@@ -51,19 +52,13 @@ final class FloodlightPanelController {
         panel.keyEquivalentHandler = { [weak self] event in
             self?.handleCommandKeyEquivalent(event) ?? false
         }
-        panel.contentViewController = Self.makeContentController(model: model)
         panel.setContentSize(
             NSSize(
                 width: FloodlightMetrics.panelWidth,
                 height: FloodlightMetrics.searchHeight
             )
         )
-        if #unavailable(macOS 26.0) {
-            panel.contentView?.wantsLayer = true
-            panel.contentView?.layer?.cornerRadius = FloodlightMetrics.cornerRadius
-            panel.contentView?.layer?.cornerCurve = .continuous
-            panel.contentView?.layer?.masksToBounds = true
-        }
+        applyGlassSlabState()
 
         observeQueryForPanelHeight()
 
@@ -80,6 +75,19 @@ final class FloodlightPanelController {
                 self?.hide()
             }
         }
+        // Reduce Transparency (and other accessibility display settings) can
+        // change while Floodlight keeps running — re-derive the slab instead
+        // of only deciding once at launch, so toggling it in System Settings
+        // takes effect without a relaunch.
+        accessibilityDisplayObservation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGlassSlabState()
+            }
+        }
     }
 
     deinit {
@@ -89,11 +97,50 @@ final class FloodlightPanelController {
         if let resignActiveObservation {
             NotificationCenter.default.removeObserver(resignActiveObservation)
         }
+        if let accessibilityDisplayObservation {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityDisplayObservation)
+        }
     }
 
-    private static func makeContentController(model: SearchCoordinator) -> NSViewController {
+    /// Rebuilds the content controller for the current glass-slab decision.
+    /// Safe to call repeatedly — `makeContentController` always builds a
+    /// fresh `SearchView(model:)` over the same `model` instance, so
+    /// `SearchCoordinator`'s state (query, results, selection) survives the
+    /// swap untouched; only the surrounding material changes.
+    private func applyGlassSlabState() {
+        let usesGlassSlab = Self.shouldUseGlassSlab()
+        panel.contentViewController = Self.makeContentController(model: model, usesGlassSlab: usesGlassSlab)
+        // The glass slab (`NSGlassEffectView`) rounds its own corners; every
+        // other path — macOS 14/15, or macOS 26 with Reduce Transparency —
+        // needs the layer-based corner mask instead, or the panel renders
+        // as a plain square. `contentViewController` always hands back a
+        // fresh `contentView`, so there's nothing stale to unset here.
+        if !usesGlassSlab {
+            panel.contentView?.wantsLayer = true
+            panel.contentView?.layer?.cornerRadius = FloodlightMetrics.cornerRadius
+            panel.contentView?.layer?.cornerCurve = .continuous
+            panel.contentView?.layer?.masksToBounds = true
+        }
+    }
+
+    /// Whether the panel gets the real `NSGlassEffectView` slab — macOS 26
+    /// and Reduce Transparency off. Computed once per panel and reused for
+    /// both the content-controller choice and the corner-mask fallback, so
+    /// the two decisions can never disagree about which path is active.
+    private static func shouldUseGlassSlab() -> Bool {
+        guard #available(macOS 26.0, *) else { return false }
+        return GlassAvailability.rendersGlass(
+            isSupported: true,
+            reduceTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        )
+    }
+
+    private static func makeContentController(
+        model: SearchCoordinator,
+        usesGlassSlab: Bool
+    ) -> NSViewController {
         let hostingController = NSHostingController(rootView: SearchView(model: model))
-        guard #available(macOS 26.0, *) else {
+        guard #available(macOS 26.0, *), usesGlassSlab else {
             return hostingController
         }
 

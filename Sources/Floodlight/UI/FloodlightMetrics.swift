@@ -82,4 +82,13 @@ enum FloodlightMetrics {
         case .application, .file, .folder: .accentColor
         }
     }
+
+    // MARK: - Liquid Glass shell (#1)
+
+    /// The fallback-path stroke opacity Increase Contrast raises chips and
+    /// the selection lozenge to — the one accessibility number #1 needs
+    /// that #28 didn't. Glass chips/selection reuse #28's existing
+    /// `resultRowCornerRadius`/`Capsule()` shapes directly; nothing about
+    /// this spec's geometry is new, only the material is.
+    static let increasedContrastStrokeOpacity: Double = 0.45
 }

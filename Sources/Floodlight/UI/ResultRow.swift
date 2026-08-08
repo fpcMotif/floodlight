@@ -13,6 +13,11 @@ struct ResultRow: View, Equatable {
     /// — set by `SearchCoordinator.assistantRun`, cleared as soon as the
     /// query changes. Every other row ignores this entirely.
     let assistantState: AssistantAnswerState?
+    /// The engine title for the "⇥ Search <Engine>" trailing affordance —
+    /// non-nil only on a keyword row whose engine Tab can complete into,
+    /// so the gesture is advertised at exactly the moment it applies. See
+    /// `SearchCoordinator.tabCompletionHint(for:)`.
+    var tabCompletionHint: String?
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
 
@@ -21,6 +26,7 @@ struct ResultRow: View, Equatable {
             && lhs.isSelected == rhs.isSelected
             && lhs.isTopHit == rhs.isTopHit
             && lhs.assistantState == rhs.assistantState
+            && lhs.tabCompletionHint == rhs.tabCompletionHint
     }
 
     var body: some View {
@@ -76,6 +82,17 @@ struct ResultRow: View, Equatable {
 
             Spacer(minLength: 8)
 
+            if let tabCompletionHint {
+                HStack(spacing: 5) {
+                    KeyChip(symbolName: "arrow.right.to.line")
+                    Text(tabCompletionHint)
+                        .font(FloodlightMetrics.Typography.rowSubtitle)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Press Tab to enter \(tabCompletionHint) mode")
+            }
+
             if isSelected {
                 KeyChip(symbolName: "return")
             }
@@ -83,10 +100,13 @@ struct ResultRow: View, Equatable {
         .padding(.horizontal, 12)
         .padding(.vertical, assistantState == nil ? 0 : 10)
         .frame(minHeight: FloodlightMetrics.resultRowHeight)
-        .background {
-            RoundedRectangle(cornerRadius: FloodlightMetrics.resultRowCornerRadius, style: .continuous)
-                .fill(backgroundColor)
-        }
+        .modifier(
+            FloodlightSelectionSurface(
+                isSelected: isSelected,
+                isHovered: isHovered,
+                fallbackColor: backgroundColor
+            )
+        )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
