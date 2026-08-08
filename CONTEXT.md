@@ -32,6 +32,10 @@ _Avoid_: Result builder, result pipeline
 One coherent, atomically visible statement of all projected rows, visible rows, filter state, semantic selection, and search progress for a Search Session.
 _Avoid_: Published fields, result state
 
+**Global Hot-Key Registration**:
+The main-actor-owned lifetime of Floodlight’s one system-wide summon shortcut, including its native handler, active registration identity, callback routing, and actually active shortcut.
+_Avoid_: Hot-key manager, keyboard-shortcut framework
+
 **Degraded Search**:
 A search execution whose available sources still produce usable candidates while one or more expected sources are unavailable. Degradation never discards candidates from healthy sources.
 _Avoid_: Failed search, partial failure

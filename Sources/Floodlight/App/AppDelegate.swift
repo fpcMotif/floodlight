@@ -1,27 +1,14 @@
 import AppKit
-import Carbon
-
-private func floodlightHotKeyHandler(
-    _: EventHandlerCallRef?,
-    _: EventRef?,
-    userData: UnsafeMutableRawPointer?
-) -> OSStatus {
-    guard let userData else { return OSStatus(eventNotHandledErr) }
-    let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
-    DispatchQueue.main.async {
-        delegate.togglePanel()
-    }
-    return noErr
-}
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = SearchCoordinator()
     private var panelController: FloodlightPanelController?
     private var onboardingController: OnboardingWindowController?
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
-    private var activeShortcut: FloodlightShortcut?
+    private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] in
+        self?.togglePanel()
+    }
+
     // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
     // back an unowned item, so dropping this reference removes the menu bar
     // icon. The assignment *is* the use.
@@ -47,12 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-        }
-        if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
-        }
+        globalHotKeyRegistration.stop()
     }
 
     func applicationShouldHandleReopen(
@@ -120,7 +102,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panelController?.hide()
         let controller = OnboardingWindowController(
             presentation: presentation,
-            activeShortcut: activeShortcut ?? FloodlightShortcut.preferred(),
+            activeShortcut: globalHotKeyRegistration.activeShortcut
+                ?? FloodlightShortcut.preferred(),
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             selectShortcut: { [weak self] shortcut in
@@ -179,74 +162,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func installGlobalHotKey() {
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-        let userData = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            floodlightHotKeyHandler,
-            1,
-            &eventType,
-            userData,
-            &eventHandlerRef
-        )
-
         let preferred = FloodlightShortcut.preferred()
-        if let registered = registerHotKey(preferred) {
-            hotKeyRef = registered
-            activeShortcut = preferred
-        } else if let registered = registerHotKey(preferred.fallback) {
-            hotKeyRef = registered
-            activeShortcut = preferred.fallback
-        } else {
+        if globalHotKeyRegistration.start(preferred: preferred) == nil {
             NSLog("Floodlight could not register its global keyboard shortcut.")
         }
-        model.activeShortcutDisplayName = activeShortcut?.displayName
+        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
     }
 
     private func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
-        defer { model.activeShortcutDisplayName = activeShortcut?.displayName }
-
-        guard shortcut != activeShortcut else {
-            shortcut.save()
-            return true
-        }
-
-        let previous = activeShortcut
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-            activeShortcut = nil
-        }
-
-        if let registered = registerHotKey(shortcut) {
-            hotKeyRef = registered
-            activeShortcut = shortcut
-            shortcut.save()
-            return true
-        }
-
-        if let previous, let restored = registerHotKey(previous) {
-            hotKeyRef = restored
-            activeShortcut = previous
-        }
-        return false
-    }
-
-    private func registerHotKey(_ shortcut: FloodlightShortcut) -> EventHotKeyRef? {
-        let identifier = EventHotKeyID(signature: fourCharacterCode("FLIT"), id: 1)
-        var reference: EventHotKeyRef?
-        let status = RegisterEventHotKey(
-            UInt32(kVK_Space),
-            shortcut.carbonModifiers,
-            identifier,
-            GetApplicationEventTarget(),
-            0,
-            &reference
-        )
-        return status == noErr ? reference : nil
+        let selected = globalHotKeyRegistration.replace(with: shortcut)
+        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
+        return selected
     }
 
     private func configurationClosed(showSearch: Bool) {
@@ -435,9 +361,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(editItem)
 
         return mainMenu
-    }
-
-    private func fourCharacterCode(_ value: String) -> OSType {
-        value.utf8.reduce(0) { ($0 << 8) + OSType($1) }
     }
 }
