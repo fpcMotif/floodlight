@@ -12,6 +12,8 @@ import XCTest
 /// byte*, no matter what it contains. The URL side is softer, and this file
 /// documents precisely how soft.
 final class KeywordEngineInjectionTests: XCTestCase {
+    private let catalogLookup = KeywordEngineCatalog.makeLookup(for: KeywordEngineCatalog.all)
+
     private let assistantEngine = KeywordEngine(
         id: "claude",
         title: "Ask Claude",
@@ -36,6 +38,28 @@ final class KeywordEngineInjectionTests: XCTestCase {
     private func openedURL(of item: SearchItem) -> URL? {
         guard case let .open(url) = item.action else { return nil }
         return url
+    }
+
+    private func matchCatalog(
+        _ query: String
+    ) -> (engine: KeywordEngine, remainder: String)? {
+        KeywordEngineCatalog.match(query, lookup: catalogLookup)
+    }
+
+    private func searchCatalog(_ query: String) -> [SearchItem] {
+        makeSearchItems(for: query, lookup: catalogLookup)
+    }
+
+    private func makeSearchItems(
+        for query: String,
+        lookup: [String: KeywordEngine]
+    ) -> [SearchItem] {
+        guard let match = KeywordEngineCatalog.match(query, lookup: lookup),
+              let item = match.engine.makeSearchItem(remainder: match.remainder)
+        else {
+            return []
+        }
+        return [item]
     }
 
     // MARK: - The subprocess boundary
@@ -294,7 +318,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
             Gen<String>.lowercaseASCII.filter { !$0.isEmpty && !claimed.contains($0) },
             runs: 500
         ) { keyword, other in
-            KeywordEngineCatalog.match("\(other) \(keyword) something") == nil
+            self.matchCatalog("\(other) \(keyword) something") == nil
         }
     }
 
@@ -302,7 +326,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
         // The other side of the same coin: only the *first* word addresses
         // an engine, so "x yt lofi" is a Twitter search for "yt lofi", not
         // a YouTube search.
-        let match = KeywordEngineCatalog.match("x yt lofi")
+        let match = matchCatalog("x yt lofi")
         XCTAssertEqual(match?.engine.id, "twitter")
         XCTAssertEqual(match?.remainder, "yt lofi")
     }
@@ -313,7 +337,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
             Gen<String>.element(of: ["yt", "YT", "Yt", "yT", "YouTube", "YOUTUBE"]),
             runs: 200
         ) { keyword in
-            KeywordEngineCatalog.match("\(keyword) lofi")?.engine.id == "youtube"
+            self.matchCatalog("\(keyword) lofi")?.engine.id == "youtube"
         }
     }
 
@@ -321,7 +345,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
         // `firstIndex(where: \.isWhitespace)` accepts more than a space, so
         // a pasted query with a tab or newline still addresses the engine.
         for separator in [" ", "\t", "\n", "\r\n", "  ", " \t "] {
-            let match = KeywordEngineCatalog.match("yt\(separator)lofi hip hop")
+            let match = matchCatalog("yt\(separator)lofi hip hop")
             XCTAssertEqual(match?.engine.id, "youtube", String(reflecting: separator))
             XCTAssertEqual(match?.remainder, "lofi hip hop", String(reflecting: separator))
         }
@@ -335,16 +359,16 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { raw in
             let expected = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !expected.isEmpty else {
-                return KeywordEngineCatalog.match("yt \(raw)") == nil
+                return self.matchCatalog("yt \(raw)") == nil
             }
-            return KeywordEngineCatalog.match("yt \(raw)")?.remainder == expected
+            return self.matchCatalog("yt \(raw)")?.remainder == expected
         }
     }
 
     func testABareKeywordNeverMatchesSoTypingDoesNotFireEarly() {
         for query in ["yt", "yt ", " yt ", "yt\t", "claude", "  claude  ", "!yt"] {
             XCTAssertNil(
-                KeywordEngineCatalog.match(query),
+                matchCatalog(query),
                 "\(String(reflecting: query)) must not match while the user is still typing"
             )
         }
@@ -352,13 +376,13 @@ final class KeywordEngineInjectionTests: XCTestCase {
 
     func testAPrefixOfAKeywordIsNotAKeyword() {
         for query in ["y lofi", "yout lofi", "clau explain", "cod fix", "ytx lofi"] {
-            XCTAssertNil(KeywordEngineCatalog.match(query), query)
+            XCTAssertNil(matchCatalog(query), query)
         }
     }
 
     func testTheFirstEngineListedWinsAKeywordCollision() {
-        // `match` uses `first(where:)`, so ordering is the tie-break. Pinned
-        // because it is the only thing preventing a later engine from
+        // `makeLookup` keeps the first engine for each keyword, so ordering is
+        // the tie-break. Pinned because it prevents a later engine from
         // shadowing an earlier one.
         let first = KeywordEngine(
             id: "first",
@@ -374,23 +398,26 @@ final class KeywordEngineInjectionTests: XCTestCase {
             kind: .web,
             destination: .webSearch(urlTemplate: "https://second.example/{query}")
         )
+        let firstLookup = KeywordEngineCatalog.makeLookup(for: [first, second])
+        let secondLookup = KeywordEngineCatalog.makeLookup(for: [second, first])
         XCTAssertEqual(
-            KeywordEngineCatalog.match("dup query", in: [first, second])?.engine.id,
+            KeywordEngineCatalog.match("dup query", lookup: firstLookup)?.engine.id,
             "first"
         )
         XCTAssertEqual(
-            KeywordEngineCatalog.match("dup query", in: [second, first])?.engine.id,
+            KeywordEngineCatalog.match("dup query", lookup: secondLookup)?.engine.id,
             "second"
         )
     }
 
     func testSearchingWithNoEnginesReturnsNothing() throws {
+        let lookup = KeywordEngineCatalog.makeLookup(for: [])
         try checkProperty(
             "an empty engine list produces no rows",
             Gen<String>.element(of: AdversarialCorpus.searchQueries),
             runs: 200
         ) { query in
-            KeywordEngineCatalog.search(query, in: []).isEmpty
+            self.makeSearchItems(for: query, lookup: lookup).isEmpty
         }
     }
 
@@ -402,7 +429,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
             ]),
             runs: 400
         ) { query in
-            KeywordEngineCatalog.search(query).count <= 1
+            self.searchCatalog(query).count <= 1
         }
     }
 

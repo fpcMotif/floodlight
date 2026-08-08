@@ -27,10 +27,10 @@ package struct SeededGenerator: RandomNumberGenerator {
 
     package mutating func next() -> UInt64 {
         state &+= 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        return z ^ (z >> 31)
+        var mixed = state
+        mixed = (mixed ^ (mixed >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        mixed = (mixed ^ (mixed >> 27)) &* 0x94D0_49BB_1331_11EB
+        return mixed ^ (mixed >> 31)
     }
 }
 
@@ -41,26 +41,26 @@ package struct SeededGenerator: RandomNumberGenerator {
 /// `shrink` returns strictly "simpler" candidates — smaller magnitudes,
 /// shorter collections — and must never cycle, or the shrink loop wouldn't
 /// terminate. The harness enforces a budget anyway.
-package struct Gen<Value> {
-    package let generate: (inout SeededGenerator) -> Value
-    package let shrink: (Value) -> [Value]
+package struct Gen<Value: Sendable>: Sendable {
+    package let generate: @Sendable (inout SeededGenerator) -> Value
+    package let shrink: @Sendable (Value) -> [Value]
 
     package init(
-        generate: @escaping (inout SeededGenerator) -> Value,
-        shrink: @escaping (Value) -> [Value] = { _ in [] }
+        generate: @escaping @Sendable (inout SeededGenerator) -> Value,
+        shrink: @escaping @Sendable (Value) -> [Value] = { _ in [] }
     ) {
         self.generate = generate
         self.shrink = shrink
     }
 
-    package func map<Mapped>(_ transform: @escaping (Value) -> Mapped) -> Gen<Mapped> {
+    package func map<Mapped>(_ transform: @escaping @Sendable (Value) -> Mapped) -> Gen<Mapped> {
         Gen<Mapped>(generate: { rng in transform(generate(&rng)) })
     }
 
     /// Maps while preserving shrinking by keeping the *source* value around,
     /// so shrunk sources map to shrunk outputs.
     package func mapShrinking<Mapped>(
-        _ transform: @escaping (Value) -> Mapped
+        _ transform: @escaping @Sendable (Value) -> Mapped
     ) -> Gen<(source: Value, value: Mapped)> {
         Gen<(source: Value, value: Mapped)>(
             generate: { rng in
@@ -74,7 +74,7 @@ package struct Gen<Value> {
     }
 
     package func filter(
-        _ isIncluded: @escaping (Value) -> Bool,
+        _ isIncluded: @escaping @Sendable (Value) -> Bool,
         attempts: Int = 200
     ) -> Gen<Value> {
         Gen(

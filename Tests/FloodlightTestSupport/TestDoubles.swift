@@ -1,6 +1,78 @@
 import FloodlightEngine
 import Foundation
 
+package final class ScriptedFileSource: FileSource, @unchecked Sendable {
+    private let lock = NSLock()
+    package let indexed: [SearchItem]
+    package let content: [SearchItem]
+    package let indexedDelay: Duration
+    package let indexedError: (any Error)?
+    private let startDelay: Duration
+    private let startError: (any Error)?
+    private var changeScopeError: (any Error)?
+    private let changeScopeDelay: Duration
+    private var recordedTracks: [(String, URL)] = []
+    private var recordedLifecycle: [String] = []
+
+    package init(
+        indexed: [SearchItem] = [],
+        content: [SearchItem] = [],
+        indexedDelay: Duration = .zero,
+        indexedError: (any Error)? = nil,
+        startDelay: Duration = .zero,
+        startError: (any Error)? = nil,
+        changeScopeError: (any Error)? = nil,
+        changeScopeDelay: Duration = .zero
+    ) {
+        self.indexed = indexed
+        self.content = content
+        self.indexedDelay = indexedDelay
+        self.indexedError = indexedError
+        self.startDelay = startDelay
+        self.startError = startError
+        self.changeScopeError = changeScopeError
+        self.changeScopeDelay = changeScopeDelay
+    }
+
+    package var tracked: [(query: String, url: URL)] {
+        lock.withLock { recordedTracks }
+    }
+
+    package var lifecycle: [String] {
+        lock.withLock { recordedLifecycle }
+    }
+
+    package func start() async throws {
+        lock.withLock { recordedLifecycle.append("start") }
+        if startDelay > .zero { try await Task.sleep(for: startDelay) }
+        if let startError { throw startError }
+    }
+
+    package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        if indexedDelay > .zero { try await Task.sleep(for: indexedDelay) }
+        if let indexedError { throw indexedError }
+        return Array(indexed.prefix(limit))
+    }
+
+    package func contentItems(for query: String) async throws -> [SearchItem] {
+        content
+    }
+
+    package func changeScope(to url: URL) async throws {
+        lock.withLock { recordedLifecycle.append("scope") }
+        if changeScopeDelay > .zero { try await Task.sleep(for: changeScopeDelay) }
+        if let error = lock.withLock({ changeScopeError }) { throw error }
+    }
+
+    package func rebuild() async throws {
+        lock.withLock { recordedLifecycle.append("rebuild") }
+    }
+
+    package func track(query: String, selectedURL: URL) {
+        lock.withLock { recordedTracks.append((query, selectedURL)) }
+    }
+}
+
 /// A fully programmable `Catalog`.
 ///
 /// The real catalogs walk the filesystem, so a coordinator test driven by
@@ -15,29 +87,41 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
         package var totalMatched: Int?
         package var indexed: [SearchItem]
         package var indexedDelay: Duration
+        package var startDelay: Duration
         package var startError: (any Error)?
         package var indexedError: (any Error)?
         package var refreshReportsChange: Bool
         package var refreshError: (any Error)?
+        package var immediateAfterStart: [SearchItem]?
+        package var immediateAfterRefresh: [SearchItem]?
+        package var startFailures: Int
 
         package init(
             immediate: [SearchItem] = [],
             totalMatched: Int? = nil,
             indexed: [SearchItem] = [],
             indexedDelay: Duration = .zero,
+            startDelay: Duration = .zero,
             startError: (any Error)? = nil,
             indexedError: (any Error)? = nil,
             refreshReportsChange: Bool = false,
-            refreshError: (any Error)? = nil
+            refreshError: (any Error)? = nil,
+            immediateAfterStart: [SearchItem]? = nil,
+            immediateAfterRefresh: [SearchItem]? = nil,
+            startFailures: Int = .max
         ) {
             self.immediate = immediate
             self.totalMatched = totalMatched
             self.indexed = indexed
             self.indexedDelay = indexedDelay
+            self.startDelay = startDelay
             self.startError = startError
             self.indexedError = indexedError
             self.refreshReportsChange = refreshReportsChange
             self.refreshError = refreshError
+            self.immediateAfterStart = immediateAfterStart
+            self.immediateAfterRefresh = immediateAfterRefresh
+            self.startFailures = startFailures
         }
     }
 
@@ -47,6 +131,8 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
     private var recordedQueries: [String] = []
     private var recordedTracks: [(query: String, url: URL)] = []
     private var startCount = 0
+    private var activeStartCount = 0
+    private var maximumStartCount = 0
     private var refreshCount = 0
     private var indexedCount = 0
 
@@ -98,6 +184,10 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
         return startCount
     }
 
+    package var maximumConcurrentStarts: Int {
+        lock.withLock { maximumStartCount }
+    }
+
     package var refreshes: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -113,14 +203,27 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
     // MARK: Catalog
 
     package func start() async throws {
-        if let error = recordStart() { throw error }
+        let start = beginStart()
+        defer { endStart() }
+        if start.delay > .zero { try await Task.sleep(for: start.delay) }
+        if let error = start.error { throw error }
     }
 
-    private func recordStart() -> (any Error)? {
+    private func beginStart() -> (delay: Duration, error: (any Error)?) {
         lock.lock()
         defer { lock.unlock() }
         startCount += 1
-        return behavior.startError
+        activeStartCount += 1
+        maximumStartCount = max(maximumStartCount, activeStartCount)
+        let error = startCount <= behavior.startFailures ? behavior.startError : nil
+        if error == nil, let immediate = behavior.immediateAfterStart {
+            behavior.immediate = immediate
+        }
+        return (behavior.startDelay, error)
+    }
+
+    private func endStart() {
+        lock.withLock { activeStartCount -= 1 }
     }
 
     package func refreshIfNeeded(
@@ -136,7 +239,11 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         refreshCount += 1
-        return behavior
+        let current = behavior
+        if current.refreshReportsChange, let immediate = current.immediateAfterRefresh {
+            behavior.immediate = immediate
+        }
+        return current
     }
 
     package func immediatePage(for query: String, limit: Int) -> SearchItemPage {

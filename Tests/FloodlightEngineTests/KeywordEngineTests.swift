@@ -2,48 +2,72 @@ import XCTest
 @testable import FloodlightEngine
 
 final class KeywordEngineTests: XCTestCase {
+    private let catalogLookup = KeywordEngineCatalog.makeLookup(for: KeywordEngineCatalog.all)
+
+    private func matchCatalog(
+        _ query: String
+    ) -> (engine: KeywordEngine, remainder: String)? {
+        KeywordEngineCatalog.match(query, lookup: catalogLookup)
+    }
+
+    private func searchCatalog(_ query: String) -> [SearchItem] {
+        makeSearchItems(for: query, lookup: catalogLookup)
+    }
+
+    private func makeSearchItems(
+        for query: String,
+        lookup: [String: KeywordEngine]
+    ) -> [SearchItem] {
+        guard let match = KeywordEngineCatalog.match(query, lookup: lookup),
+              let item = match.engine.makeSearchItem(remainder: match.remainder)
+        else {
+            return []
+        }
+        return [item]
+    }
+
     func testKeywordMustBeTheFirstWord() {
-        XCTAssertNotNil(KeywordEngineCatalog.match("yt lofi"))
-        XCTAssertNil(KeywordEngineCatalog.match("lofi yt"))
+        XCTAssertNotNil(matchCatalog("yt lofi"))
+        XCTAssertNil(matchCatalog("lofi yt"))
     }
 
     func testKeywordMatchingIsCaseInsensitive() {
-        XCTAssertNotNil(KeywordEngineCatalog.match("YT lofi"))
-        XCTAssertNotNil(KeywordEngineCatalog.match("Yt Lofi"))
+        XCTAssertNotNil(matchCatalog("YT lofi"))
+        XCTAssertNotNil(matchCatalog("Yt Lofi"))
     }
 
     func testBangAliasesMatchTheSameEngineAsTheWordKeyword() throws {
-        let word = try XCTUnwrap(KeywordEngineCatalog.match("yt lofi"))
-        let bang = try XCTUnwrap(KeywordEngineCatalog.match("!yt lofi"))
+        let word = try XCTUnwrap(matchCatalog("yt lofi"))
+        let bang = try XCTUnwrap(matchCatalog("!yt lofi"))
         XCTAssertEqual(word.engine.id, bang.engine.id)
     }
 
     func testFullWordAliasMatchesTheSameEngineAsTheShortKeyword() throws {
-        let short = try XCTUnwrap(KeywordEngineCatalog.match("x election"))
-        let long = try XCTUnwrap(KeywordEngineCatalog.match("twitter election"))
+        let short = try XCTUnwrap(matchCatalog("x election"))
+        let long = try XCTUnwrap(matchCatalog("twitter election"))
         XCTAssertEqual(short.engine.id, long.engine.id)
     }
 
     func testKeywordIsAWholeWordNotAPrefix() {
-        XCTAssertNil(KeywordEngineCatalog.match("ytlofi lofi"))
+        XCTAssertNil(matchCatalog("ytlofi lofi"))
     }
 
     func testBareKeywordWithNoRemainderDoesNotMatch() {
-        XCTAssertNil(KeywordEngineCatalog.match("yt"))
-        XCTAssertNil(KeywordEngineCatalog.match("yt   "))
+        XCTAssertNil(matchCatalog("yt"))
+        XCTAssertNil(matchCatalog("yt   "))
     }
 
     func testUnknownKeywordDoesNotMatch() {
-        XCTAssertNil(KeywordEngineCatalog.match("zz lofi"))
+        XCTAssertNil(matchCatalog("zz lofi"))
     }
 
     func testRemainderIsTrimmedAndPreservesInternalSpacing() throws {
-        let match = try XCTUnwrap(KeywordEngineCatalog.match("yt   lofi hip hop  "))
+        let match = try XCTUnwrap(matchCatalog("yt   lofi hip hop  "))
         XCTAssertEqual(match.remainder, "lofi hip hop")
     }
 
     func testSearchBuildsAWebSearchItemForTwitter() throws {
-        let items = KeywordEngineCatalog.search("x floodlight app")
+        let items = searchCatalog("x floodlight app")
         let item = try XCTUnwrap(items.first)
 
         XCTAssertEqual(item.kind, .web)
@@ -55,7 +79,7 @@ final class KeywordEngineTests: XCTestCase {
     }
 
     func testSearchBuildsAWebSearchItemForYouTube() throws {
-        let items = KeywordEngineCatalog.search("yt lofi hip hop")
+        let items = searchCatalog("yt lofi hip hop")
         let item = try XCTUnwrap(items.first)
 
         guard case let .open(url) = item.action else {
@@ -68,7 +92,7 @@ final class KeywordEngineTests: XCTestCase {
     }
 
     func testSearchBuildsAnAssistantSearchItemForClaude() throws {
-        let items = KeywordEngineCatalog.search("claude explain this function")
+        let items = searchCatalog("claude explain this function")
         let item = try XCTUnwrap(items.first)
 
         XCTAssertEqual(item.kind, .assistant)
@@ -80,7 +104,7 @@ final class KeywordEngineTests: XCTestCase {
     }
 
     func testSearchBuildsAnAssistantSearchItemForCodex() throws {
-        let items = KeywordEngineCatalog.search("codex fix the flaky test")
+        let items = searchCatalog("codex fix the flaky test")
         let item = try XCTUnwrap(items.first)
 
         XCTAssertEqual(
@@ -90,23 +114,27 @@ final class KeywordEngineTests: XCTestCase {
     }
 
     func testSearchReturnsNothingForAnUnmatchedQuery() {
-        XCTAssertTrue(KeywordEngineCatalog.search("budget report").isEmpty)
+        XCTAssertTrue(searchCatalog("budget report").isEmpty)
     }
 
     /// The query text always travels to the CLI as a single, discrete
     /// argument — never folded into a shell string — so quotes and shell
     /// metacharacters in the query can't do anything unexpected.
     func testQueryTextTravelsAsAPlainArgumentRegardlessOfShellMetacharacters() throws {
-        let items = KeywordEngineCatalog.search("claude `rm -rf ~` && echo pwned")
+        let items = searchCatalog("claude `rm -rf ~` && echo pwned")
         let item = try XCTUnwrap(items.first)
         XCTAssertEqual(
             item.action,
-            .askAssistant(command: "claude", arguments: ["-p", "`rm -rf ~` && echo pwned"])
+            .askAssistant(
+                command: "claude",
+                arguments: ["-p", "`rm -rf ~` && echo pwned"]
+            )
         )
     }
 
     func testSearchRespectsTheSuppliedEngineList() {
-        let items = KeywordEngineCatalog.search("yt lofi", in: [])
+        let lookup = KeywordEngineCatalog.makeLookup(for: [])
+        let items = makeSearchItems(for: "yt lofi", lookup: lookup)
         XCTAssertTrue(items.isEmpty)
     }
 
@@ -147,7 +175,7 @@ final class KeywordEngineTests: XCTestCase {
         ]
 
         for (query, expected) in expectations {
-            let item = try XCTUnwrap(KeywordEngineCatalog.search(query).first, query)
+            let item = try XCTUnwrap(searchCatalog(query).first, query)
             XCTAssertEqual(item.kind, .web, query)
             guard case let .open(url) = item.action else {
                 return XCTFail("expected an .open action for \(query)")
@@ -166,7 +194,7 @@ final class KeywordEngineTests: XCTestCase {
 
         for (keyword, engineID) in spellings {
             XCTAssertEqual(
-                KeywordEngineCatalog.match("\(keyword) anything")?.engine.id,
+                matchCatalog("\(keyword) anything")?.engine.id,
                 engineID,
                 keyword
             )
@@ -175,7 +203,7 @@ final class KeywordEngineTests: XCTestCase {
 
     func testThereIsDeliberatelyNoSingleLetterWikipediaKeyword() {
         // Rejected during grilling for its accidental first-word hit rate.
-        XCTAssertNil(KeywordEngineCatalog.match("w hidden files"))
+        XCTAssertNil(matchCatalog("w hidden files"))
     }
 
     func testTheDefaultEngineIsGoogleAndComesFromTheTable() {

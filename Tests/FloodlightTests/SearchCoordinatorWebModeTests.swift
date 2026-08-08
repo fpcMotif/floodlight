@@ -10,7 +10,7 @@ import XCTest
 /// and `filterOptions` out. Never on internal call order.
 @MainActor
 final class SearchCoordinatorWebModeTests: XCTestCase {
-    private var tree: TemporaryTree!
+    private nonisolated(unsafe) var tree: TemporaryTree!
 
     private static let presetOrder = [
         "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
@@ -28,18 +28,12 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         applications: ScriptedCatalog = ScriptedCatalog(),
         settings: ScriptedCatalog = ScriptedCatalog()
     ) async throws -> SearchCoordinator {
-        let index = FFFIndex(
-            rootURL: tree.root,
-            storageURL: tree.root.appendingPathComponent(".index", isDirectory: true),
-            enableContentIndexing: false,
-            includeBinaryFiles: false,
-            watch: false
-        )
-        try await index.start()
-        return try SearchCoordinator(
-            index: index,
-            applicationCatalog: applications,
-            settingsCatalog: settings,
+        try SearchCoordinator(
+            sourceSearch: SourceSearchEngine(
+                files: ScriptedFileSource(),
+                applications: applications,
+                settings: settings
+            ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner()
@@ -49,6 +43,21 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     private func openedURL(of item: SearchItem?) -> URL? {
         guard case let .open(url) = item?.action else { return nil }
         return url
+    }
+
+    private func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 5,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("never became true: \(description)", file: file, line: line)
     }
 
     // MARK: - Entering web mode
@@ -163,6 +172,56 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         XCTAssertFalse(coordinator.isSearching)
     }
 
+    func testAnInFlightLocalSnapshotCannotOverwriteWebModeRows() async throws {
+        let applications = ScriptedCatalog(.init(
+            immediate: [SearchFixtures.application(id: "app:immediate", name: "Immediate")],
+            indexed: [SearchFixtures.application(id: "app:late", name: "Late")],
+            indexedDelay: .milliseconds(150)
+        ))
+        let coordinator = try await makeCoordinator(applications: applications)
+        coordinator.query = "late"
+        try await waitUntil("the local execution starts") {
+            coordinator.results.contains { $0.id == "app:immediate" }
+        }
+
+        coordinator.handleTab()
+        try await Task.sleep(for: .milliseconds(250))
+
+        XCTAssertTrue(coordinator.results.allSatisfy { $0.id.hasPrefix("web-mode:") })
+        XCTAssertFalse(coordinator.results.contains { $0.id == "app:late" })
+    }
+
+    func testOldLocalStreamTerminationCannotCancelTheRestoredLocalExecution() async throws {
+        let applications = ScriptedCatalog()
+        applications.setBehavior(
+            .init(
+                immediate: [SearchFixtures.application(id: "app:old", name: "Old")],
+                indexedDelay: .milliseconds(200)
+            ),
+            forQuery: "old"
+        )
+        applications.setBehavior(
+            .init(immediate: [SearchFixtures.application(id: "app:new", name: "New")]),
+            forQuery: "new"
+        )
+        let coordinator = try await makeCoordinator(applications: applications)
+        coordinator.query = "old"
+        try await waitUntil("the old local execution starts") {
+            coordinator.results.contains { $0.id == "app:old" }
+        }
+
+        coordinator.handleTab()
+        coordinator.query = "new"
+        coordinator.handleEscape()
+        try await waitUntil("the restored local execution settles") {
+            !coordinator.isSearching && coordinator.results.contains { $0.id == "app:new" }
+        }
+        try await Task.sleep(for: .milliseconds(250))
+
+        XCTAssertTrue(coordinator.results.contains { $0.id == "app:new" })
+        XCTAssertFalse(coordinator.results.contains { $0.id == "app:old" })
+    }
+
     // MARK: - Return semantics
 
     func testReturnOnAnEmptyWebModeQueryDoesNothing() async throws {
@@ -206,6 +265,9 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
 
         XCTAssertEqual(coordinator.mode, .local)
         XCTAssertEqual(coordinator.query, "yt lofi")
+        try await waitUntil("the reconstructed local results arrive") {
+            coordinator.results.contains { $0.id == "keyword-engine:youtube" }
+        }
         XCTAssertTrue(
             coordinator.results.contains { $0.id == "keyword-engine:youtube" },
             "the reconstructed query addresses the same engine's ranked row"
@@ -247,24 +309,31 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
 
     // MARK: - Filter chips
 
-    func testFilterOptionsAreSuppressedInWebModeAndRestoredOnExit() async throws {
+    func testNonDefaultFilterIsSuppressedInWebModeAndRestoredOnExit() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.query = "xcode"
-        XCTAssertFalse(coordinator.filterOptions.isEmpty)
-        let selectedBefore = coordinator.selectedFilter
+        try await waitUntil("the application result arrives") {
+            coordinator.results.contains { $0.kind == .application }
+        }
+        coordinator.selectFilter(.applications)
+        XCTAssertEqual(coordinator.selectedFilter, .applications)
 
         coordinator.handleTab()
+        coordinator.query = "xcode editor"
         XCTAssertTrue(
             coordinator.filterOptions.isEmpty,
             "local-only controls must not suggest they filter web engines"
         )
 
         coordinator.handleEscape()
-        XCTAssertFalse(coordinator.filterOptions.isEmpty)
-        XCTAssertEqual(coordinator.selectedFilter, selectedBefore)
+        try await waitUntil("filtered local results return") {
+            !coordinator.results.isEmpty && !coordinator.isSearching
+        }
+        XCTAssertEqual(coordinator.selectedFilter, .applications)
+        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .application })
     }
 
     // MARK: - Reset
@@ -287,6 +356,9 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         let coordinator = try await makeCoordinator()
         coordinator.query = "yt lofi"
 
+        try await waitUntil("the addressed-search row arrives") {
+            coordinator.results.contains { $0.id == "keyword-engine:youtube" }
+        }
         let row = try XCTUnwrap(coordinator.results.first { $0.id == "keyword-engine:youtube" })
         XCTAssertEqual(coordinator.tabCompletionHint(for: row), "Search YouTube")
 
@@ -309,6 +381,9 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         let coordinator = try await makeCoordinator()
         coordinator.query = "quaternion slerp"
 
+        try await waitUntil("the web fallback arrives") {
+            coordinator.results.contains { $0.id == "web-search" }
+        }
         let fallback = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
         XCTAssertEqual(fallback.title, "Search Google for “quaternion slerp”")
         XCTAssertEqual(

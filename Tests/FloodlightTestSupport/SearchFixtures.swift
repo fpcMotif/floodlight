@@ -256,7 +256,7 @@ package final class TemporaryTree {
 /// An isolated `UserDefaults` suite that removes its persistent domain on
 /// teardown, so a store test can never leak into `.standard` or into the
 /// next test's expectations.
-package final class IsolatedDefaults {
+package final class IsolatedDefaults: @unchecked Sendable {
     package let suiteName: String
     package let defaults: UserDefaults
 

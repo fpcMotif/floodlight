@@ -10,14 +10,7 @@ final class SearchCoordinator {
         didSet {
             guard query != oldValue else { return }
             cancelAssistantRun()
-            selectionWasUserDriven = false
             guard !isResetting else { return }
-            if case .local = mode,
-               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                refreshApplicationsIfNeeded()
-                refreshSettingsIfNeeded()
-            }
             scheduleSearch()
         }
     }
@@ -26,10 +19,23 @@ final class SearchCoordinator {
     /// Tab, shown as the field's token). All transitions run through
     /// `SearchMode.transition` — this only publishes what it decides.
     private(set) var mode: SearchMode = .local
-    private(set) var results: [SearchItem] = []
-    private(set) var selectedFilter: SearchResultFilter = .all
-    var selectedID: SearchItem.ID?
-    private(set) var isSearching = false
+    var results: [SearchItem] {
+        publication.visibleRows
+    }
+
+    var selectedFilter: SearchResultFilter {
+        publication.selectedFilter
+    }
+
+    var selectedID: SearchItem.ID? {
+        publication.selection?.id
+    }
+
+    // periphery:ignore - Test-visible Search Execution progress.
+    var isSearching: Bool {
+        publication.progress.isSearching
+    }
+
     private(set) var rootURL: URL
     var focusGeneration = 0
     /// The in-flight or completed state of the last "Ask Codex"/"Ask
@@ -49,16 +55,7 @@ final class SearchCoordinator {
     var onShowSettings: (() -> Void)?
 
     var filterOptions: [SearchFilterOption] {
-        // Local-only controls: suppressed while web mode is active, restored
-        // — selection included — as soon as the mode exits.
-        guard case .local = mode else { return [] }
-        let primary = SearchResultFilter.primary.map(makeFilterOption)
-        let dynamic = SearchResultFilter.dynamic.compactMap { filter -> SearchFilterOption? in
-            let option = makeFilterOption(filter)
-            guard !option.isEmpty || selectedFilter == filter else { return nil }
-            return option
-        }
-        return primary + dynamic
+        publication.filterOptions
     }
 
     /// The engine web mode is scoped to, or `nil` in local mode — what the
@@ -68,58 +65,50 @@ final class SearchCoordinator {
         return KeywordEngineCatalog.webSearchEngines.first { $0.id == context.engineID }
     }
 
-    private let index: FFFIndex
-    private let applicationCatalog: any Catalog
-    private let settingsCatalog: any Catalog
+    private let sourceSearch: any SourceSearching
     private let recentStore: RecentStore
     private let assistantRunner: any AssistantProcessRunning
-    private var allResults: [SearchItem] = []
-    private var filterCounts = SearchFilterCounts()
-    private var applicationMatchCount = 0
-    private var settingsMatchCount = 0
-    private var isApplicationCatalogLoading = true
-    private var isSettingsCatalogLoading = true
-    /// Assistant engines ("Ask Codex", "Ask Claude") only ever appear once
-    /// their binary is confirmed runnable at startup; web-search engines
-    /// (Twitter/X, YouTube) don't need that check and are always included.
-    private var availableKeywordEngines: [KeywordEngine] = KeywordEngineCatalog.all
-        .filter { $0.kind != .assistant }
+    private var publication: SearchResultPublication
+    private var sourceWarmUpComplete = false
+    private var availableKeywordLookup: [String: KeywordEngine]
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
     private var startupTask: Task<Void, Never>?
     @ObservationIgnored
-    private var applicationRefreshTask: Task<Void, Never>?
-    @ObservationIgnored
-    private var settingsRefreshTask: Task<Void, Never>?
-    @ObservationIgnored
     private var assistantTask: Task<Void, Never>?
     @ObservationIgnored
-    private var generation = 0
-    @ObservationIgnored
     private var isResetting = false
-    @ObservationIgnored
-    private var selectionWasUserDriven = false
 
-    /// Builds a coordinator over already-constructed sources.
-    ///
-    /// Every dependency arrives here, so a test can hand in in-memory catalogs
-    /// and assert on `results` through the same interface the panel uses,
-    /// instead of reaching past it for a pure helper.
+    /// Builds a coordinator over an already-constructed Source Search seam.
     init(
-        index: FFFIndex,
-        applicationCatalog: any Catalog,
-        settingsCatalog: any Catalog,
+        sourceSearch: any SourceSearching,
         recentStore: RecentStore,
         rootURL: URL,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()
     ) {
-        self.index = index
-        self.applicationCatalog = applicationCatalog
-        self.settingsCatalog = settingsCatalog
+        self.sourceSearch = sourceSearch
         self.recentStore = recentStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
+        let keywordLookup = KeywordEngineCatalog.makeLookup(
+            for: KeywordEngineCatalog.all.filter { $0.kind != .assistant }
+        )
+        availableKeywordLookup = keywordLookup
+        publication = SearchResultProjection.project(
+            .local(.init(
+                query: "",
+                candidates: [],
+                keywordLookup: keywordLookup,
+                selectedFilter: .all,
+                selection: nil,
+                progress: SearchResultProgress(
+                    isSearching: false,
+                    totalMatches: [:],
+                    pendingKinds: [.application, .systemSetting]
+                )
+            ))
+        )
     }
 
     /// The live wiring: search scope from preferences, index and catalogs over
@@ -147,17 +136,17 @@ final class SearchCoordinator {
         let recentStore = RecentStore()
 
         self.init(
-            index: FFFIndex(
+            sourceSearch: SourceSearchEngine(
                 rootURL: initialRoot,
                 storageURL: indexStorage,
+                applications: ApplicationCatalog(
+                    recentStore: recentStore,
+                    deferDiscovery: true
+                ),
+                settings: SystemCatalog(),
                 logFilePath: environment["FLOODLIGHT_FFF_LOG"],
                 logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
             ),
-            applicationCatalog: ApplicationCatalog(
-                recentStore: recentStore,
-                deferDiscovery: true
-            ),
-            settingsCatalog: SystemCatalog(),
             recentStore: recentStore,
             rootURL: initialRoot,
             assistantRunner: assistantRunner
@@ -167,8 +156,6 @@ final class SearchCoordinator {
     deinit {
         searchTask?.cancel()
         startupTask?.cancel()
-        applicationRefreshTask?.cancel()
-        settingsRefreshTask?.cancel()
         assistantTask?.cancel()
     }
 
@@ -180,106 +167,42 @@ final class SearchCoordinator {
             defer {
                 FloodlightPerformance.end("IndexStartup", id: signpost)
             }
-            do {
-                async let startFiles: Void = index.start()
-                async let startApplications: Void = applicationCatalog.start()
-                async let startSettings: Void = settingsCatalog.start()
-                async let resolvedKeywordEngines = KeywordEngineCatalog
-                    .availableEngines(runner: assistantRunner)
-
-                try await startApplications
-                isApplicationCatalogLoading = false
-                try await startSettings
-                isSettingsCatalogLoading = false
-                try await startFiles
-                availableKeywordEngines = await resolvedKeywordEngines
-                if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    scheduleSearch(immediate: true)
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                isApplicationCatalogLoading = false
-                isSettingsCatalogLoading = false
-                NSLog("Floodlight index startup failed: %@", error.localizedDescription)
+            async let sourceWarmUp: Void = sourceSearch.warmUp()
+            async let resolvedKeywordEngines = KeywordEngineCatalog
+                .availableEngines(runner: assistantRunner)
+            await sourceWarmUp
+            guard !Task.isCancelled else { return }
+            sourceWarmUpComplete = true
+            if case .local = mode,
+               query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                publication = idleLocalPublication()
+            }
+            let resolvedEngines = await resolvedKeywordEngines
+            availableKeywordLookup = KeywordEngineCatalog.makeLookup(
+                for: resolvedEngines
+            )
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scheduleSearch(immediate: true)
             }
         }
     }
 
     func prepareForPresentation() {
         focusGeneration += 1
-        refreshApplicationsIfNeeded()
-        refreshSettingsIfNeeded()
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             scheduleSearch(immediate: true)
         }
     }
 
-    private func refreshApplicationsIfNeeded() {
-        refreshCatalogIfNeeded(
-            isLoading: isApplicationCatalogLoading,
-            task: \.applicationRefreshTask,
-            label: "application-catalog"
-        ) { coordinator in
-            try await coordinator.applicationCatalog.refreshIfNeeded()
-        }
-    }
-
-    private func refreshSettingsIfNeeded() {
-        refreshCatalogIfNeeded(
-            isLoading: isSettingsCatalogLoading,
-            task: \.settingsRefreshTask,
-            label: "settings-catalog"
-        ) { coordinator in
-            try await coordinator.settingsCatalog.refreshIfNeeded()
-        }
-    }
-
-    /// Runs `refresh` at most once at a time per catalog, re-searching whenever
-    /// the catalog reports a change. A catalog still loading its initial
-    /// contents, or one whose refresh is already in flight, is left alone.
-    private func refreshCatalogIfNeeded(
-        isLoading: Bool,
-        task: ReferenceWritableKeyPath<SearchCoordinator, Task<Void, Never>?>,
-        label: String,
-        refresh: @escaping (SearchCoordinator) async throws -> Bool
-    ) {
-        guard !isLoading, self[keyPath: task] == nil else { return }
-        self[keyPath: task] = Task { [weak self] in
-            guard let self else { return }
-            defer { self[keyPath: task] = nil }
-
-            do {
-                let changed = try await refresh(self)
-                guard changed else { return }
-                if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    scheduleSearch(immediate: true)
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                NSLog("Floodlight %@ refresh failed: %@", label, error.localizedDescription)
-            }
-        }
-    }
-
     func reset() {
-        generation += 1
         searchTask?.cancel()
         searchTask = nil
         mode = .local
         isResetting = true
         query = ""
         isResetting = false
-        allResults = []
-        filterCounts = SearchFilterCounts()
-        results = []
-        selectedFilter = .all
-        applicationMatchCount = 0
-        settingsMatchCount = 0
-        selectedID = nil
-        selectionWasUserDriven = false
-        isSearching = false
+        publication = idleLocalPublication()
     }
 
     // MARK: - Web mode (Tab ↔ Esc)
@@ -314,7 +237,7 @@ final class SearchCoordinator {
     func tabCompletionHint(for item: SearchItem) -> String? {
         guard
             case .local = mode,
-            let match = KeywordEngineCatalog.match(query, in: availableKeywordEngines),
+            let match = KeywordEngineCatalog.match(query, lookup: availableKeywordLookup),
             case .webSearch = match.engine.destination,
             item.id == match.engine.rowID
         else {
@@ -340,8 +263,9 @@ final class SearchCoordinator {
         let currentIndex = selectedID
             .flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
         let nextIndex = min(max(currentIndex + delta, 0), results.count - 1)
-        selectedID = results[nextIndex].id
-        selectionWasUserDriven = true
+        publication = publication.selecting(
+            SearchResultSelection(id: results[nextIndex].id, origin: .user)
+        )
     }
 
     func activate(_ item: SearchItem) {
@@ -351,18 +275,23 @@ final class SearchCoordinator {
     }
 
     func select(_ item: SearchItem) {
-        selectedID = item.id
-        selectionWasUserDriven = true
+        publication = publication.selecting(
+            SearchResultSelection(id: item.id, origin: .user)
+        )
     }
 
     func selectFilter(_ filter: SearchResultFilter) {
-        selectionWasUserDriven = true
         guard filter != selectedFilter else {
             focusGeneration += 1
             return
         }
-        selectedFilter = filter
-        applySelectedFilter(resetSelection: true)
+        publication = projectLocal(
+            candidates: publication.sourceCandidates,
+            selectedFilter: filter,
+            selection: nil,
+            progress: publication.progress,
+            filterContinuity: .preserve
+        )
         focusGeneration += 1
     }
 
@@ -390,10 +319,12 @@ final class SearchCoordinator {
         case let .open(url):
             onDismiss?()
             open(url, asApplication: item.kind == .application)
-            if item.kind == .file || item.kind == .folder {
-                index.track(query: selectedQuery, selectedURL: url)
-            } else if item.kind == .application {
-                applicationCatalog.track(query: selectedQuery, selectedURL: url)
+            Task {
+                await sourceSearch.trackSelection(
+                    of: item.id,
+                    selectedURL: url,
+                    for: selectedQuery
+                )
             }
         case .showFloodlightSettings:
             onDismiss?()
@@ -502,7 +433,7 @@ final class SearchCoordinator {
     func rebuildIndex() {
         Task {
             do {
-                try await index.rescan()
+                try await sourceSearch.rebuild()
             } catch {
                 NSLog("Floodlight index rebuild failed: %@", error.localizedDescription)
             }
@@ -541,10 +472,9 @@ final class SearchCoordinator {
     func changeRoot(to url: URL) {
         Task {
             do {
-                try await index.changeRoot(to: url)
+                try await sourceSearch.changeScope(to: url)
                 rootURL = url.standardizedFileURL
                 UserDefaults.standard.set(rootURL.path, forKey: "index-root")
-                scheduleSearch(immediate: true)
             } catch {
                 NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)
             }
@@ -553,158 +483,62 @@ final class SearchCoordinator {
 
     private func scheduleSearch(immediate: Bool = false) {
         if case let .web(context) = mode {
+            searchTask?.cancel()
+            searchTask = nil
             publishWebModeResults(context: context)
             return
         }
 
-        let immediateSignpost = FloodlightPerformance.begin("ImmediateSearch")
-        generation += 1
-        let requestGeneration = generation
         let requestQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         searchTask?.cancel()
 
         guard !requestQuery.isEmpty else {
-            allResults = []
-            filterCounts = SearchFilterCounts()
-            results = []
-            selectedFilter = .all
-            applicationMatchCount = 0
-            settingsMatchCount = 0
-            selectedID = nil
-            isSearching = false
-            FloodlightPerformance.end("ImmediateSearch", id: immediateSignpost)
+            searchTask = nil
+            publication = idleLocalPublication()
             return
         }
 
-        let immediateAppPage = applicationCatalog.immediatePage(for: requestQuery, limit: 12)
-        let settingsPage = settingsCatalog.immediatePage(for: requestQuery, limit: 24)
-        let immediateApps = immediateAppPage.items
-        applicationMatchCount = immediateAppPage.totalMatched
-        settingsMatchCount = settingsPage.totalMatched
-        isSearching = true
-        publishResults(
-            buildResults(
-                query: requestQuery,
-                indexed: [],
-                apps: immediateApps,
-                system: settingsPage.items,
-                keywordEngines: availableKeywordEngines
+        publication = projectLocal(
+            candidates: [],
+            selectedFilter: selectedFilter,
+            selection: nil,
+            progress: SearchResultProgress(
+                isSearching: true,
+                totalMatches: [:],
+                pendingKinds: sourceWarmUpComplete
+                    ? [.application]
+                    : [.application, .systemSetting]
             ),
-            resetSelection: true
+            filterContinuity: .preserve
         )
-        FloodlightPerformance.end("ImmediateSearch", id: immediateSignpost)
-
         searchTask = Task { [weak self] in
             guard let self else { return }
-
-            if !immediate {
-                let debounce = immediateApps.isEmpty ? 15 : 20
-                try? await Task.sleep(for: .milliseconds(debounce))
-            }
             guard !Task.isCancelled else { return }
-
-            let asyncSignpost = FloodlightPerformance.begin("IndexedSearch")
-            var indexedSearchEnded = false
-            defer {
-                if !indexedSearchEnded {
-                    FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
-                }
-                if requestGeneration == generation {
-                    isSearching = false
-                    reconcileSelectedFilter()
-                }
-            }
-
-            do {
-                async let indexed = searchIndexedFiles(requestQuery)
-                async let applications = searchIndexedApplications(requestQuery)
-                let fffItems = try await indexed
-                let apps = try await applications
-                guard !Task.isCancelled, requestGeneration == generation else { return }
-
-                let mapped = fffItems.map { $0.makeSearchItem() }
-
-                publishResults(
-                    buildResults(
-                        query: requestQuery,
-                        indexed: mapped,
-                        apps: immediateApps + apps,
-                        system: settingsPage.items,
-                        keywordEngines: availableKeywordEngines
-                    ),
-                    promoteWebFallback: true
-                )
-                FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
-                indexedSearchEnded = true
-
-                try await Task.sleep(for: .milliseconds(30))
-                guard !Task.isCancelled, requestGeneration == generation else { return }
-                guard requestQuery.count >= 3, fffItems.count < 12 else { return }
-                let contentSignpost = FloodlightPerformance.begin("ContentSearch")
-                defer {
-                    FloodlightPerformance.end("ContentSearch", id: contentSignpost)
-                }
-                let contentItems = try await index.searchContent(requestQuery)
-                guard
-                    !Task.isCancelled,
-                    requestGeneration == generation,
-                    !contentItems.isEmpty
-                else {
-                    return
-                }
-                let content = contentItems.map { item in
-                    SearchItem(
-                        id: "content:\(item.url.path):\(item.line)",
-                        title: item.name,
-                        subtitle: "\(item.relativePath):\(item.line) · \(item.snippet)",
-                        kind: .file,
-                        action: .open(item.url),
-                        score: SearchItemRanking.content,
-                        fileURL: item.url
-                    )
-                }
-                publishResults(
-                    buildResults(
-                        query: requestQuery,
-                        indexed: mapped + content,
-                        apps: immediateApps + apps,
-                        system: settingsPage.items,
-                        keywordEngines: availableKeywordEngines
-                    ),
-                    promoteWebFallback: true
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                guard requestGeneration == generation else { return }
-                NSLog("Floodlight indexed search failed: %@", error.localizedDescription)
-                publishResults(
-                    buildResults(
-                        query: requestQuery,
-                        indexed: [],
-                        apps: immediateApps,
-                        system: settingsPage.items,
-                        keywordEngines: availableKeywordEngines
-                    )
-                )
+            let snapshots = await sourceSearch.search(requestQuery, immediate: immediate)
+            guard !Task.isCancelled else { return }
+            for await snapshot in snapshots {
+                guard !Task.isCancelled else { return }
+                publish(snapshot, query: requestQuery)
             }
         }
     }
 
-    private func searchIndexedFiles(_ query: String) async throws -> [IndexedSearchItem] {
-        let signpost = FloodlightPerformance.begin("FileIndexSearch")
-        defer {
-            FloodlightPerformance.end("FileIndexSearch", id: signpost)
-        }
-        return try await index.search(query)
-    }
-
-    private func searchIndexedApplications(_ query: String) async throws -> [SearchItem] {
-        let signpost = FloodlightPerformance.begin("ApplicationIndexSearch")
-        defer {
-            FloodlightPerformance.end("ApplicationIndexSearch", id: signpost)
-        }
-        return try await applicationCatalog.indexedItems(for: query, limit: 12)
+    private func publish(
+        _ snapshot: SearchSnapshot,
+        query: String
+    ) {
+        publication = projectLocal(
+            query: query,
+            candidates: snapshot.candidates,
+            selectedFilter: selectedFilter,
+            selection: publication.selection,
+            progress: SearchResultProgress(
+                isSearching: !snapshot.isSettled,
+                totalMatches: snapshot.totalMatches,
+                pendingKinds: snapshot.pendingKinds
+            ),
+            filterContinuity: snapshot.isSettled ? .reconcileWhenSettled : .preserve
+        )
     }
 
     /// The whole list while web mode is active: one row per preset URL
@@ -712,203 +546,52 @@ final class SearchCoordinator {
     /// index is touched — and any in-flight pass is cancelled so it can't
     /// land its results over the engine rows.
     private func publishWebModeResults(context: SearchMode.WebContext) {
-        generation += 1
         searchTask?.cancel()
         searchTask = nil
-        isSearching = false
-
-        let rows = Self.webModeResults(
-            query: query.trimmingCharacters(in: .whitespacesAndNewlines),
-            activeEngineID: context.engineID
-        )
-        allResults = rows
-        filterCounts = SearchFilterCounts()
-        results = rows
-        // Row identity is the engine, so an engine the user arrowed to stays
-        // selected while they keep typing; on entry the active engine leads.
-        if !rows.contains(where: { $0.id == selectedID }) {
-            selectedID = rows.first?.id
-        }
-    }
-
-    /// One "Search <Engine> for “<query>”" row per preset URL engine —
-    /// active engine first, the rest in table order, positioned within the
-    /// keyword-engine score band. Titles and URLs track the live query;
-    /// nothing here performs I/O.
-    static func webModeResults(
-        query: String,
-        activeEngineID: String,
-        engines: [KeywordEngine] = KeywordEngineCatalog.webSearchEngines
-    ) -> [SearchItem] {
-        let ordered = engines.filter { $0.id == activeEngineID }
-            + engines.filter { $0.id != activeEngineID }
-
-        return ordered.enumerated().compactMap { position, engine in
-            guard let url = engine.searchURL(for: query),
-                  let title = engine.searchTitle(for: query)
-            else {
-                return nil
-            }
-            return SearchItem(
-                id: "web-mode:\(engine.id)",
-                title: title,
-                subtitle: "Open in your default browser",
-                kind: .web,
-                action: .open(url),
-                score: SearchItemRanking.keywordEngine - position
-            )
-        }
-    }
-
-    func buildResults(
-        query: String,
-        indexed: [SearchItem],
-        apps: [SearchItem],
-        system: [SearchItem],
-        keywordEngines: [KeywordEngine] = KeywordEngineCatalog.all
-    ) -> [SearchItem] {
-        var output: [SearchItem] = []
-
-        if let value = Calculator.evaluate(query) {
-            let answer = Calculator.format(value)
-            output.append(
-                SearchItem(
-                    id: "calculator",
-                    title: answer,
-                    subtitle: "\(query) = \(answer) · Press Return to copy",
-                    kind: .calculator,
-                    action: .copy(answer),
-                    score: SearchItemRanking.calculator
-                )
-            )
-        }
-
-        output.append(contentsOf: FloodlightCommandCatalog.search(query))
-        output.append(contentsOf: KeywordEngineCatalog.search(query, in: keywordEngines))
-        output.append(contentsOf: apps)
-        output.append(contentsOf: system)
-        output.append(contentsOf: indexed)
-
-        // The fallback row is the table's default engine wearing its stable
-        // "web-search" identity — reached by promotion here, the same
-        // destination Tab's plain-query mode addresses deliberately.
-        let defaultEngine = KeywordEngineCatalog.defaultEngine
-        if !query.isEmpty,
-           let url = defaultEngine.searchURL(for: query),
-           let title = defaultEngine.searchTitle(for: query)
-        {
-            let localMatchCount = apps.count + system.count + indexed.count
-            let promoted = WebSearchIntent.shouldPromote(
-                query: query,
-                localMatchCount: localMatchCount
-            )
-            output.append(
-                SearchItem(
-                    id: Self.webSearchResultID,
-                    title: title,
-                    subtitle: "Open in your default browser",
-                    kind: .web,
-                    action: .open(url),
-                    score: promoted ? SearchItemRanking.webPromoted : SearchItemRanking.webFallback
-                )
-            )
-        }
-
-        var seen = Set<String>()
-        output = SearchItemRanking.ranked(output.filter { seen.insert($0.id).inserted })
-
-        return Array(output.prefix(80))
-    }
-
-    private func publishResults(
-        _ newResults: [SearchItem],
-        resetSelection: Bool = false,
-        promoteWebFallback: Bool = false
-    ) {
-        allResults = newResults
-        filterCounts = SearchFilterCounts(items: newResults)
-        applySelectedFilter(
-            resetSelection: resetSelection,
-            promoteWebFallback: promoteWebFallback
+        publication = SearchResultProjection.project(
+            .web(.init(
+                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
+                activeEngineID: context.engineID,
+                engines: KeywordEngineCatalog.webSearchEngines,
+                selectedFilter: selectedFilter,
+                selection: publication.selection
+            ))
         )
     }
 
-    func applySelectedFilter(
-        resetSelection: Bool,
-        promoteWebFallback: Bool = false
-    ) {
-        let previousSelection = selectedID
-        results = allResults.filter(selectedFilter.includes)
-        selectedID = Self.reconciledSelectionID(
-            previousSelection: previousSelection,
-            results: results,
-            resetSelection: resetSelection,
-            promoteWebFallback: promoteWebFallback && !selectionWasUserDriven
+    private func projectLocal(
+        query: String? = nil,
+        candidates: [SearchItem],
+        selectedFilter: SearchResultFilter,
+        selection: SearchResultSelection?,
+        progress: SearchResultProgress,
+        filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
+    ) -> SearchResultPublication {
+        SearchResultProjection.project(
+            .local(.init(
+                query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
+                candidates: candidates,
+                keywordLookup: availableKeywordLookup,
+                selectedFilter: selectedFilter,
+                selection: selection,
+                progress: progress,
+                filterContinuity: filterContinuity
+            ))
         )
     }
 
-    static func reconciledSelectionID(
-        previousSelection: SearchItem.ID?,
-        results: [SearchItem],
-        resetSelection: Bool,
-        promoteWebFallback: Bool
-    ) -> SearchItem.ID? {
-        guard let first = results.first else { return nil }
-        if resetSelection {
-            return first.id
-        }
-        if promoteWebFallback,
-           previousSelection == webSearchResultID,
-           first.id != webSearchResultID
-        {
-            return first.id
-        }
-        if let previousSelection,
-           results.contains(where: { $0.id == previousSelection })
-        {
-            return previousSelection
-        }
-        return first.id
-    }
-
-    private func reconcileSelectedFilter() {
-        guard selectedFilter.isDynamic else { return }
-        let option = makeFilterOption(selectedFilter)
-        guard option.isEmpty, !option.isLoading else { return }
-        selectedFilter = .all
-        applySelectedFilter(resetSelection: true)
-    }
-
-    private func makeFilterOption(_ filter: SearchResultFilter) -> SearchFilterOption {
-        let visibleCount = filterCounts[filter]
-        let count: Int = switch filter {
-        case .applications:
-            max(applicationMatchCount, visibleCount)
-        case .settings:
-            max(settingsMatchCount, visibleCount)
-        case .all, .files, .folders, .pdfs, .images, .documents:
-            visibleCount
-        }
-
-        let isLoading: Bool = switch filter {
-        case .all:
-            isSearching
-                || isApplicationCatalogLoading
-                || isSettingsCatalogLoading
-        case .applications:
-            isApplicationCatalogLoading
-        case .files, .folders, .pdfs, .images, .documents:
-            isSearching
-        case .settings:
-            isSettingsCatalogLoading
-        }
-
-        return SearchFilterOption(
-            filter: filter,
-            count: count,
-            isLoading: isLoading
+    private func idleLocalPublication() -> SearchResultPublication {
+        projectLocal(
+            query: "",
+            candidates: [],
+            selectedFilter: .all,
+            selection: nil,
+            progress: SearchResultProgress(
+                isSearching: false,
+                totalMatches: [:],
+                pendingKinds: sourceWarmUpComplete ? [] : [.application, .systemSetting]
+            ),
+            filterContinuity: .preserve
         )
     }
-
-    private static let webSearchResultID = "web-search"
 }

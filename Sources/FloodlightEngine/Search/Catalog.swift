@@ -90,16 +90,6 @@ package enum SearchItemRanking {
             : titleOrder == .orderedAscending
     }
 
-    /// Orders every item, for the one caller that publishes a whole list.
-    ///
-    /// A catalog answering a query wants ``topRanked(_:limit:)`` instead: it
-    /// only ever shows a page, and sorting the discarded tail is work nobody
-    /// reads. This file is the only place under `Sources/FloodlightEngine/Search`
-    /// allowed to call `sorted` — see `tools/ast-grep/rules/search-path-no-full-sort.yml`.
-    package static func ranked(_ items: [SearchItem]) -> [SearchItem] {
-        items.sorted(by: ranksBefore)
-    }
-
     /// The best `limit` items, in published order.
     ///
     /// Selection is bounded: a heap of at most `limit` candidates, so the cost
@@ -108,11 +98,28 @@ package enum SearchItemRanking {
     /// that is the difference between sorting 1,500 items and sifting a
     /// 12-element heap — on every keystroke.
     ///
-    /// The result is identical to `ranked(items).prefix(limit)`, which is what
-    /// `SearchItemRankingTests` asserts.
+    /// The result is identical to a full sort followed by `prefix(limit)`,
+    /// which `SearchModelInvariantTests` asserts with a test-only oracle.
     package static func topRanked(_ items: [SearchItem], limit: Int) -> [SearchItem] {
-        guard limit > 0 else { return [] }
-        guard items.count > limit else { return ranked(items) }
+        var candidates = items
+        return topRankedInPlace(&candidates, limit: limit)
+    }
+
+    /// The in-place form for callers that own a temporary candidate buffer.
+    /// It keeps the small-input fast path from copying an array solely to
+    /// return it in ranked order.
+    package static func topRankedInPlace(
+        _ items: inout [SearchItem],
+        limit: Int
+    ) -> [SearchItem] {
+        guard limit > 0 else {
+            items.removeAll(keepingCapacity: true)
+            return []
+        }
+        guard items.count > limit else {
+            items.sort(by: ranksBefore)
+            return items
+        }
 
         // A max-heap under `ranksBefore`: the root is the worst item kept so
         // far, so deciding whether a candidate belongs is one comparison.
@@ -129,7 +136,8 @@ package enum SearchItemRanking {
             }
         }
 
-        return ranked(heap)
+        heap.sort(by: ranksBefore)
+        return heap
     }
 
     /// Ranks `matches`, keeps the first `limit`, and reports how many matched.
@@ -220,9 +228,9 @@ package final class CatalogRefreshGuard: Sendable {
     package init() {}
 
     package func reserve(minimumInterval: TimeInterval) -> Bool {
-        state.withLock { state in
+        let now = Date.timeIntervalSinceReferenceDate
+        return state.withLock { state in
             guard !state.isRefreshing else { return false }
-            let now = Date.timeIntervalSinceReferenceDate
             guard now - state.lastRefresh >= minimumInterval else { return false }
             state.isRefreshing = true
             state.lastRefresh = now

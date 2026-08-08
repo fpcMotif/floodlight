@@ -1,4 +1,5 @@
 import Darwin
+import FloodlightTestSupport
 import Foundation
 import XCTest
 @testable import FloodlightEngine
@@ -121,6 +122,39 @@ final class SearchPerformanceTests: XCTestCase {
         XCTAssertLessThan(filterMicroseconds, 1_000)
         XCTAssertLessThan(filterSwitchMicroseconds, 1_000)
         XCTAssertLessThan(settingsMicroseconds, 1_000)
+    }
+
+    func testSourceSearchImmediateSnapshotBudget() async throws {
+        let application = SearchFixtures.application(name: "Xcode")
+        let engine = SourceSearchEngine(
+            files: ScriptedFileSource(),
+            applications: ScriptedCatalog(immediate: [application]),
+            settings: ScriptedCatalog()
+        )
+        await engine.warmUp()
+
+        let sampleCount = _isDebugAssertConfiguration() ? 20 : 200
+        var samples: [Double] = []
+        samples.reserveCapacity(sampleCount)
+        for index in 0..<(sampleCount + 5) {
+            let start = ContinuousClock.now
+            var iterator = await engine.search("xcode", immediate: true).makeAsyncIterator()
+            let next = await iterator.next()
+            let snapshot = try XCTUnwrap(next)
+            let elapsed = milliseconds(start.duration(to: .now))
+            XCTAssertEqual(snapshot.candidates, [application])
+            await engine.cancel()
+            if index >= 5 {
+                samples.append(elapsed)
+            }
+        }
+
+        let snapshotMilliseconds = median(samples)
+        print(
+            "FLOODLIGHT_BENCH source_immediate_snapshot_ms="
+                + String(format: "%.3f", snapshotMilliseconds)
+        )
+        XCTAssertLessThan(snapshotMilliseconds, 5)
     }
 
     func testExpandedFFFIndexScanBenchmark() async throws {

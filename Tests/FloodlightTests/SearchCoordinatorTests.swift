@@ -1,44 +1,137 @@
 import FloodlightEngine
 import Foundation
+import Observation
 import XCTest
 @testable import Floodlight
 
 @MainActor
 final class SearchCoordinatorTests: XCTestCase {
-    func testRealResultReplacesAutomaticWebFallbackSelection() {
-        let folder = makeFolder()
-        let web = makeWebResult()
+    func testPublicationReplacementInvalidatesAllResultFacingObservationsTogether() async {
+        let coordinator = SearchCoordinator()
+        let resultsChanged = expectation(description: "results changed")
+        withObservationTracking {
+            _ = coordinator.results
+        } onChange: {
+            resultsChanged.fulfill()
+        }
+        let filtersChanged = expectation(description: "filter options changed")
+        withObservationTracking {
+            _ = coordinator.filterOptions
+        } onChange: {
+            filtersChanged.fulfill()
+        }
+        let selectedFilterChanged = expectation(description: "selected filter changed")
+        withObservationTracking {
+            _ = coordinator.selectedFilter
+        } onChange: {
+            selectedFilterChanged.fulfill()
+        }
+        let selectionChanged = expectation(description: "selection changed")
+        withObservationTracking {
+            _ = coordinator.selectedID
+        } onChange: {
+            selectionChanged.fulfill()
+        }
+        let progressChanged = expectation(description: "progress changed")
+        withObservationTracking {
+            _ = coordinator.isSearching
+        } onChange: {
+            progressChanged.fulfill()
+        }
 
-        XCTAssertEqual(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: web.id,
-                results: [folder, web],
-                resetSelection: false,
-                promoteWebFallback: true
-            ),
-            folder.id
+        coordinator.query = "shortcut"
+        await fulfillment(
+            of: [
+                resultsChanged,
+                filtersChanged,
+                selectedFilterChanged,
+                selectionChanged,
+                progressChanged,
+            ],
+            timeout: 1
         )
+
+        XCTAssertFalse(coordinator.results.isEmpty)
+        XCTAssertEqual(coordinator.selectedFilter, .all)
+        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
+        XCTAssertTrue(coordinator.isSearching)
     }
 
-    func testUserSelectedWebFallbackRemainsSelected() {
+    func testProjectionPromotesARealResultOverAnAutomaticWebFallbackSelection() {
+        let folder = makeFolder()
+
+        let publication = SearchResultProjection.project(
+            .local(
+                .init(
+                    query: "shortcut",
+                    candidates: [folder],
+                    keywordLookup: [:],
+                    selectedFilter: .all,
+                    selection: .init(id: "web-search", origin: .automatic),
+                    progress: .settled
+                )
+            )
+        )
+
+        XCTAssertEqual(publication.selection?.id, folder.id)
+        XCTAssertEqual(publication.selection?.origin, .automatic)
+    }
+
+    func testProjectionPreservesAUserSelectedWebFallback() {
         let folder = makeFolder()
         let web = makeWebResult()
 
-        XCTAssertEqual(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: web.id,
-                results: [folder, web],
-                resetSelection: false,
-                promoteWebFallback: false
-            ),
-            web.id
+        let publication = SearchResultProjection.project(
+            .local(.init(
+                query: "shortcut",
+                candidates: [folder],
+                keywordLookup: [:],
+                selectedFilter: .all,
+                selection: .init(id: web.id, origin: .user),
+                progress: .settled
+            ))
         )
+
+        XCTAssertEqual(publication.selection, .init(id: web.id, origin: .user))
+    }
+
+    func testProjectionPreservesAnEmptyDynamicFilterUntilSettlementReconciliation() {
+        let publication = SearchResultProjection.project(
+            .local(.init(
+                query: "notes",
+                candidates: [],
+                keywordLookup: [:],
+                selectedFilter: .pdfs,
+                selection: nil,
+                progress: .settled,
+                filterContinuity: .preserve
+            ))
+        )
+
+        XCTAssertEqual(publication.selectedFilter, .pdfs)
+        XCTAssertTrue(publication.visibleRows.isEmpty)
+        XCTAssertTrue(publication.filterOptions.contains { $0.filter == .pdfs })
+    }
+
+    func testProjectionReconcilesAnEmptyDynamicFilterWhenSearchSettles() {
+        let publication = SearchResultProjection.project(
+            .local(.init(
+                query: "notes",
+                candidates: [],
+                keywordLookup: [:],
+                selectedFilter: .pdfs,
+                selection: nil,
+                progress: .settled,
+                filterContinuity: .reconcileWhenSettled
+            ))
+        )
+
+        XCTAssertEqual(publication.selectedFilter, .all)
+        XCTAssertFalse(publication.filterOptions.contains { $0.filter == .pdfs })
     }
 
     func testCalculatorAnswerLeadsResultsForAnExpression() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "12 * 12",
             indexed: [makeIndexedFile(name: "budget.numbers", score: 5_000)],
             apps: [makeApplication(name: "Calculator", score: 99_000)],
@@ -53,9 +146,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testQueriesThatAreNotExpressionsSkipTheCalculator() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
             apps: [],
@@ -66,12 +157,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEverySourceContributesToTheMergedResults() {
-        let coordinator = SearchCoordinator()
         let app = makeApplication(name: "Shortcuts", score: 100_000)
         let setting = makeSetting(title: "Keyboard Shortcuts", score: 11_000)
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
 
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "shortcut",
             indexed: [file],
             apps: [app],
@@ -87,12 +177,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEarlierSourcesWinWhenIdentifiersCollide() throws {
-        let coordinator = SearchCoordinator()
         let commandID = "floodlight-command:settings"
         let appsVersusSystemID = "collision:apps-versus-system"
         let systemVersusIndexedID = "collision:system-versus-indexed"
 
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "shortcut",
             indexed: [
                 makeIndexedFile(
@@ -126,9 +215,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testResultsSortByScoreThenNaturalTitleOrder() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [
                 makeIndexedFile(name: "Result 10", score: 5),
@@ -147,9 +234,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testWebFallbackTrailsResultsWithTheLowestScoreWhenLocalMatchesAreHealthy() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "shortcut",
             indexed: [
                 makeIndexedFile(name: "shortcut-notes.txt", score: 500),
@@ -171,10 +256,9 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testWebFallbackIsPromotedWhenLocalMatchesAreWeak() throws {
-        let coordinator = SearchCoordinator()
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
 
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "shortcut",
             indexed: [file],
             apps: [],
@@ -192,9 +276,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testWebFallbackIsPromotedForAQuestionShapedQueryEvenWithManyLocalMatches() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "how do I reset my password",
             indexed: [
                 makeIndexedFile(name: "password-notes.txt", score: 500),
@@ -210,9 +292,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testWebFallbackIsPromotedForAURLShapedQuery() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "github.com",
             indexed: [
                 makeIndexedFile(name: "github-notes.txt", score: 500),
@@ -228,9 +308,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEmptyQueryOmitsTheWebFallback() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "",
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
             apps: [],
@@ -241,12 +319,11 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testMergedResultsTruncateToEightyRows() {
-        let coordinator = SearchCoordinator()
         let indexed = (0..<100).map { index in
             makeIndexedFile(name: "file-\(index).txt", score: 1_000 - index)
         }
 
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: indexed,
             apps: [],
@@ -281,40 +358,26 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.selectedID)
     }
 
-    func testApplySelectedFilterReconcilesSelectionWithVisibleResults() {
+    func testSelectingAFilterReconcilesSelectionWithVisibleResults() throws {
         let coordinator = SearchCoordinator()
         coordinator.query = "shortcut"
         let unfiltered = coordinator.results
         XCTAssertGreaterThan(unfiltered.count, 1)
 
-        coordinator.selectedID = unfiltered.last?.id
-        coordinator.applySelectedFilter(resetSelection: false)
-
-        XCTAssertEqual(coordinator.selectedID, unfiltered.last?.id)
-
-        coordinator.applySelectedFilter(resetSelection: true)
-
-        XCTAssertEqual(coordinator.selectedID, unfiltered.first?.id)
-
+        try coordinator.select(XCTUnwrap(unfiltered.last))
         coordinator.selectFilter(.settings)
         let visible = coordinator.results
         XCTAssertFalse(visible.isEmpty)
         XCTAssertFalse(visible.contains { $0.id == "web-search" })
-
-        coordinator.selectedID = "web-search"
-        coordinator.applySelectedFilter(resetSelection: false)
-
-        XCTAssertEqual(coordinator.results.map(\.id), visible.map(\.id))
         XCTAssertEqual(coordinator.selectedID, visible.first?.id)
     }
 
     // MARK: - Keyword engines
 
     func testKeywordEngineRowOutranksApplicationAndCalculatorMatches() throws {
-        let coordinator = SearchCoordinator()
         let app = makeApplication(name: "Xcode", score: 100_000)
 
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "yt lofi hip hop",
             indexed: [],
             apps: [app],
@@ -327,9 +390,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testKeywordEngineRowDefersToFloodlightCommands() throws {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "yt lofi hip hop",
             indexed: [],
             apps: [],
@@ -343,9 +404,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testUnmatchedQueryProducesNoKeywordEngineRow() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [],
             apps: [],
@@ -356,9 +415,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testKeywordEnginesRespectTheSuppliedAvailabilityList() {
-        let coordinator = SearchCoordinator()
-
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "claude explain this",
             indexed: [],
             apps: [],
@@ -436,27 +493,12 @@ final class SearchCoordinatorTests: XCTestCase {
         try await waitUntil { await runner.cancelledCount == 1 }
     }
 
-    func testAssistantEngineWithNoInstalledBinaryProducesNoRow() {
-        let runner = FakeAssistantProcessRunner(availableCommands: [])
-        let coordinator = SearchCoordinator(assistantRunner: runner)
-
-        let results = coordinator.buildResults(
-            query: "claude explain this function",
-            indexed: [],
-            apps: [],
-            system: [],
-            keywordEngines: []
-        )
-
-        XCTAssertFalse(results.contains { $0.id == "keyword-engine:claude" })
-    }
-
-    /// Builds the "Ask Claude" row directly through `buildResults` — the
+    /// Builds the "Ask Claude" row directly through Result Projection — the
     /// coordinator's live pipeline only includes it once `start()` resolves
     /// availability, which these tests don't drive (that's covered by
     /// `KeywordEngineCatalog.availableEngines` tests in FloodlightEngine).
     private func makeClaudeAskItem(_ coordinator: SearchCoordinator) throws -> SearchItem {
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "claude explain this function",
             indexed: [],
             apps: [],

@@ -14,17 +14,15 @@ import XCTest
 /// which is the question the whole application exists to answer.
 @MainActor
 final class EndToEndSearchTests: XCTestCase {
-    private var tree: TemporaryTree!
-    private var defaults: IsolatedDefaults!
-    private var supportURL: URL!
+    private nonisolated(unsafe) var tree: TemporaryTree!
+    private nonisolated(unsafe) var defaults: IsolatedDefaults!
+    private nonisolated(unsafe) var supportURL: URL!
 
     override func setUpWithError() throws {
         tree = try TemporaryTree(label: "FloodlightE2E")
         defaults = try IsolatedDefaults(label: "FloodlightE2E")
         supportURL = tree.root.appendingPathComponent(".support", isDirectory: true)
 
-        // A small but realistic corpus: nested folders, several extensions
-        // the dynamic filters classify, and names that need normalizing.
         try tree.makeFile("Documents/quarterly-report.pdf", contents: "%PDF-1.4 quarterly")
         try tree.makeFile("Documents/meeting-notes.txt", contents: "notes about the roadmap")
         try tree.makeFile("Documents/budget.numbers", contents: "budget")
@@ -34,9 +32,6 @@ final class EndToEndSearchTests: XCTestCase {
         try tree.makeFile("Code/floodlight/main.swift", contents: "print(\"hello\")")
         try tree.makeDirectory("Code/floodlight/Sources")
         try tree.makeDirectory("Archive")
-        // A folder with one child whose name shares nothing with it: FFF
-        // records directories it has walked into, so a truly empty one is
-        // not a reliable fixture.
         try tree.makeFile("Archive/solitary-vault/placeholder.dat", contents: "x")
     }
 
@@ -50,23 +45,19 @@ final class EndToEndSearchTests: XCTestCase {
         applications: [(name: String, url: URL)] = []
     ) async throws -> SearchCoordinator {
         let recentStore = RecentStore(defaults: defaults.defaults)
-        // Constructed exactly the way the shipping app does — defaults for
-        // content indexing, binary handling, and watching. Overriding them
-        // here would test a configuration Floodlight never ships.
-        let index = FFFIndex(
+        let sourceSearch = SourceSearchEngine(
             rootURL: tree.root,
-            storageURL: tree.root.appendingPathComponent(".index", isDirectory: true)
-        )
-        let applicationCatalog = ApplicationCatalog(
-            recentStore: recentStore,
-            supportURL: supportURL,
-            deferDiscovery: true,
-            discoveryProvider: { applications }
+            storageURL: tree.root.appendingPathComponent(".index", isDirectory: true),
+            applications: ApplicationCatalog(
+                recentStore: recentStore,
+                supportURL: supportURL,
+                deferDiscovery: true,
+                discoveryProvider: { applications }
+            ),
+            settings: SystemCatalog(discoveryProvider: { [] })
         )
         let coordinator = SearchCoordinator(
-            index: index,
-            applicationCatalog: applicationCatalog,
-            settingsCatalog: SystemCatalog(discoveryProvider: { [] }),
+            sourceSearch: sourceSearch,
             recentStore: recentStore,
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner()
@@ -76,49 +67,19 @@ final class EndToEndSearchTests: XCTestCase {
         try await waitUntil("the catalogs finish loading", timeout: 30) {
             coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false
         }
-        // `coordinator.start()` owns `index.start()`, so the scan is only
-        // guaranteed to have happened after an explicit rescan — polling
-        // `progress()` before the scan begins observes the idle state that
-        // precedes it, not the one that follows.
-        try await index.rescan()
-        try await waitForScan(index)
-        try await waitUntil("the index has content", timeout: 30) {
-            self.indexIsPopulated(index)
-        }
         return coordinator
-    }
-
-    private nonisolated func indexIsPopulated(_ index: FFFIndex) -> Bool {
-        let semaphore = DispatchSemaphore(value: 0)
-        let box = NSMutableArray()
-        Task {
-            let found = await (try? index.search("quarterly")) ?? []
-            box.add(found.count)
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return (box.firstObject as? Int ?? 0) > 0
-    }
-
-    private func waitForScan(_ index: FFFIndex, timeout: TimeInterval = 30) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if try await !index.progress().isScanning { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("the index never finished scanning")
     }
 
     private func waitUntil(
         _ description: String,
-        timeout: TimeInterval = 15,
+        timeout: TimeInterval = 5,
         file: StaticString = #filePath,
         line: UInt = #line,
-        _ condition: () -> Bool
+        _ condition: () async throws -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if condition() { return }
+            if try await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("never became true: \(description)", file: file, line: line)

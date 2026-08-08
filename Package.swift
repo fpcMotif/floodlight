@@ -1,8 +1,8 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.3
 
 import PackageDescription
 
-/// Complete strict concurrency checking, on every target.
+/// Complete strict concurrency checking for the Swift 5 shell and tests.
 ///
 /// The indexing and discovery paths hand snapshots between a serial queue, the
 /// cooperative pool, and the main actor; a data race there shows up as a
@@ -12,10 +12,15 @@ import PackageDescription
 /// warnings-as-errors, which is a flag `make check` passes so that exploratory
 /// local builds stay lenient.
 ///
-/// This is checking, not Swift 6 language mode: violations are warnings that
-/// `make check` turns into errors, and the migration is separate work.
 let strictConcurrency: [SwiftSetting] = [
     .enableExperimentalFeature("StrictConcurrency"),
+]
+
+/// The platform-neutral engine is compiled in Swift 6 mode. The AppKit shell
+/// stays in Swift 5 mode until the current compiler IRGen failure in
+/// `OnboardingView` is fixed upstream.
+let swiftSix: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
 ]
 
 let package = Package(
@@ -29,7 +34,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/vmg-dev/fff-swift",
-            from: "0.1.0"
+            from: "0.2.0"
         ),
     ],
     targets: [
@@ -40,14 +45,13 @@ let package = Package(
                 .product(name: "FFFKit", package: "fff-swift"),
             ],
             path: "Sources/FloodlightEngine",
-            swiftSettings: strictConcurrency
+            swiftSettings: swiftSix
         ),
         // The macOS shell: panel, hotkey, menu bar, onboarding, QuickLook, login item.
         .executableTarget(
             name: "Floodlight",
             dependencies: [
                 "FloodlightEngine",
-                .product(name: "FFFKit", package: "fff-swift"),
             ],
             path: "Sources/Floodlight",
             exclude: ["Resources"],
@@ -85,5 +89,5 @@ let package = Package(
             swiftSettings: strictConcurrency
         ),
     ],
-    swiftLanguageVersions: [.v5]
+    swiftLanguageModes: [.v5]
 )

@@ -197,6 +197,23 @@ package enum KeywordEngineCatalog {
             destination: .assistant(command: "claude", baseArguments: ["-p"])
         ),
     ]
+    /// Builds a first-match-wins lookup for a stable engine list. The
+    /// coordinator keeps one of these for the available engines so query-time
+    /// matching does not rescan every keyword on every keystroke.
+    package static func makeLookup(
+        for engines: [KeywordEngine]
+    ) -> [String: KeywordEngine] {
+        var lookup: [String: KeywordEngine] = [:]
+        lookup.reserveCapacity(engines.reduce(into: 0) { count, engine in
+            count += engine.keywords.count
+        })
+        for engine in engines {
+            for keyword in engine.keywords where lookup[keyword] == nil {
+                lookup[keyword] = engine
+            }
+        }
+        return lookup
+    }
 
     /// The URL-template preset engines in table order — the exact set web
     /// mode shows one row per, and the order those rows keep after the
@@ -208,35 +225,53 @@ package enum KeywordEngineCatalog {
         }
     }
 
-    /// Matches `query`'s first whitespace-delimited token against `engines`'
-    /// keywords, case-insensitively. A bare keyword with nothing after it —
-    /// or a keyword that isn't in first position — is not a match, so a
-    /// query still being typed doesn't fire early and a keyword that shows
-    /// up mid-sentence doesn't hijack the row.
+    /// Matches `query`'s first whitespace-delimited token against a prebuilt
+    /// lookup, case-insensitively. A bare keyword with nothing after it — or a
+    /// keyword that isn't in first position — is not a match, so a query still
+    /// being typed doesn't fire early and a keyword mid-sentence doesn't
+    /// hijack the row.
     package static func match(
         _ query: String,
-        in engines: [KeywordEngine] = KeywordEngineCatalog.all
+        lookup: [String: KeywordEngine]
     ) -> (engine: KeywordEngine, remainder: String)? {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let spaceIndex = trimmed.firstIndex(where: \.isWhitespace) else { return nil }
-
-        let keyword = trimmed[trimmed.startIndex..<spaceIndex].lowercased()
-        let remainder = trimmed[trimmed.index(after: spaceIndex)...]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !remainder.isEmpty else { return nil }
-        guard let engine = engines.first(where: { $0.keywords.contains(keyword) })
-        else { return nil }
-
-        return (engine, remainder)
+        guard let parts = splitQuery(query) else { return nil }
+        let keyword = parts.keyword.lowercased()
+        guard let engine = lookup[keyword] else { return nil }
+        return (engine, String(parts.remainder))
     }
 
-    package static func search(
-        _ query: String,
-        in engines: [KeywordEngine] = KeywordEngineCatalog.all
-    ) -> [SearchItem] {
-        guard let match = match(query, in: engines) else { return [] }
-        guard let item = match.engine.makeSearchItem(remainder: match.remainder) else { return [] }
-        return [item]
+    private static func splitQuery(
+        _ query: String
+    ) -> (keyword: Substring, remainder: Substring)? {
+        let end = query.endIndex
+        var keywordStart = query.startIndex
+        while keywordStart < end, query[keywordStart].isWhitespace {
+            query.formIndex(after: &keywordStart)
+        }
+        guard keywordStart < end else { return nil }
+        guard let separator = query[keywordStart...].firstIndex(where: \.isWhitespace)
+        else {
+            return nil
+        }
+
+        var remainderStart = separator
+        while remainderStart < end, query[remainderStart].isWhitespace {
+            query.formIndex(after: &remainderStart)
+        }
+        guard remainderStart < end else { return nil }
+
+        var remainderEnd = end
+        while remainderEnd > remainderStart {
+            let previous = query.index(before: remainderEnd)
+            guard query[previous].isWhitespace else { break }
+            remainderEnd = previous
+        }
+        guard remainderStart < remainderEnd else { return nil }
+
+        return (
+            keyword: query[keywordStart..<separator],
+            remainder: query[remainderStart..<remainderEnd]
+        )
     }
 
     /// Filters `all` down to what this Mac can actually run: web-search

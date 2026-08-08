@@ -13,7 +13,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
 
-        coordinator.selectedID = firstID
+        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: 1)
 
         XCTAssertEqual(coordinator.selectedID, secondID)
@@ -25,7 +25,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
 
-        coordinator.selectedID = secondID
+        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == secondID }))
         coordinator.moveSelection(by: -1)
 
         XCTAssertEqual(coordinator.selectedID, firstID)
@@ -36,7 +36,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
 
-        coordinator.selectedID = firstID
+        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: -5)
 
         XCTAssertEqual(coordinator.selectedID, firstID)
@@ -47,7 +47,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
         coordinator.query = "shortcut"
         let lastID = try XCTUnwrap(coordinator.results.last?.id)
 
-        coordinator.selectedID = lastID
+        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == lastID }))
         coordinator.moveSelection(by: 100)
 
         XCTAssertEqual(coordinator.selectedID, lastID)
@@ -69,7 +69,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
 
-        coordinator.selectedID = firstID
+        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: 0)
 
         XCTAssertEqual(coordinator.selectedID, firstID)
@@ -88,6 +88,10 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertTrue(coordinator.results.isEmpty)
         XCTAssertNil(coordinator.selectedID)
         XCTAssertEqual(coordinator.selectedFilter, .all)
+        XCTAssertEqual(
+            Array(coordinator.filterOptions.prefix(SearchResultFilter.primary.count)).map(\.filter),
+            SearchResultFilter.primary
+        )
         XCTAssertFalse(coordinator.isSearching)
     }
 
@@ -242,11 +246,10 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertNil(coordinator.assistantAnswerState(for: item))
     }
 
-    // MARK: - buildResults edge cases
+    // MARK: - Result Projection edge cases
 
     func testBuildResultsWithAllEmptySourcesAndEmptyQueryProducesNoWebFallback() {
-        let coordinator = SearchCoordinator()
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "",
             indexed: [],
             apps: [],
@@ -256,9 +259,8 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testBuildResultsWithEmptyQueryAndLocalMatchesOmitsWebFallback() {
-        let coordinator = SearchCoordinator()
         let file = makeFile(name: "notes.txt", score: 100)
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "",
             indexed: [file],
             apps: [],
@@ -269,9 +271,8 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testBuildResultsDeduplicatesByID() {
-        let coordinator = SearchCoordinator()
         let file = makeFile(name: "notes.txt", score: 100)
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "zzzzz",
             indexed: [file, file],
             apps: [],
@@ -281,9 +282,8 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testBuildResultsTruncatesAtEightyRows() {
-        let coordinator = SearchCoordinator()
         let indexed = (0..<100).map { makeFile(name: "file-\($0).txt", score: 1_000 - $0) }
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "zzzzz",
             indexed: indexed,
             apps: [],
@@ -293,8 +293,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testBuildResultsProducesCalculatorActionForExpression() throws {
-        let coordinator = SearchCoordinator()
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "12 * 12",
             indexed: [],
             apps: [],
@@ -306,8 +305,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testBuildResultsWebFallbackURLIsGoogleSearch() throws {
-        let coordinator = SearchCoordinator()
-        let results = coordinator.buildResults(
+        let results = projectResults(
             query: "floodlight",
             indexed: [],
             apps: [],
@@ -321,74 +319,19 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertTrue(url.absoluteString.hasPrefix("https://www.google.com/search?q="))
     }
 
-    // MARK: - reconciledSelectionID
-
-    // MARK: - reconciledSelectionID
-
-    func testReconciledSelectionIDReturnsNilForEmptyResults() {
-        XCTAssertNil(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: nil,
-                results: [],
-                resetSelection: true,
-                promoteWebFallback: false
-            )
-        )
-    }
-
-    func testReconciledSelectionIDResetsToFirstOnReset() {
-        let items = [makeFile(name: "a.txt", score: 1), makeFile(name: "b.txt", score: 2)]
-        XCTAssertEqual(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: items.last?.id,
-                results: items,
-                resetSelection: true,
-                promoteWebFallback: false
-            ),
-            items.first?.id
-        )
-    }
-
-    func testReconciledSelectionIDPreservesPreviousWhenStillPresent() {
-        let items = [makeFile(name: "a.txt", score: 1), makeFile(name: "b.txt", score: 2)]
-        XCTAssertEqual(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: items.last?.id,
-                results: items,
-                resetSelection: false,
-                promoteWebFallback: false
-            ),
-            items.last?.id
-        )
-    }
-
-    func testReconciledSelectionIDFallsBackToFirstWhenPreviousMissing() {
-        let items = [makeFile(name: "a.txt", score: 1), makeFile(name: "b.txt", score: 2)]
-        XCTAssertEqual(
-            SearchCoordinator.reconciledSelectionID(
-                previousSelection: "nonexistent-id",
-                results: items,
-                resetSelection: false,
-                promoteWebFallback: false
-            ),
-            items.first?.id
-        )
-    }
-
     // MARK: - query changes
 
     func testChangingQueryTriggersNewSearch() {
         let coordinator = SearchCoordinator()
         coordinator.query = "shortcut"
-        let firstCount = coordinator.results.count
+        let firstResults = coordinator.results
 
         coordinator.query = "settings"
-        let secondCount = coordinator.results.count
 
         // The new query should produce results; we just assert the pipeline
         // ran (results is non-empty for a real query).
         XCTAssertFalse(coordinator.results.isEmpty)
-        XCTAssertNotEqual(firstCount, secondCount)
+        XCTAssertNotEqual(firstResults, coordinator.results)
     }
 
     func testSettingSameQueryValueDoesNotTriggerSearch() {

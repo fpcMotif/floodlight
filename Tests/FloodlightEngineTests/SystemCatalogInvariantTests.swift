@@ -3,6 +3,45 @@ import Foundation
 import XCTest
 @testable import FloodlightEngine
 
+private actor SystemCatalogCallingActor {
+    func refresh(_ catalog: any Catalog) async -> Bool {
+        await (try? catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)) ?? false
+    }
+
+    func ping() {}
+}
+
+private final class BlockingSystemCatalogDiscovery: @unchecked Sendable {
+    private let started = DispatchSemaphore(value: 0)
+    private let release = DispatchSemaphore(value: 0)
+
+    func snapshot() -> [SystemCatalog.DiscoveredSetting] {
+        started.signal()
+        release.wait()
+        return []
+    }
+
+    func waitUntilStarted(timeout: TimeInterval) -> Bool {
+        started.wait(timeout: .now() + timeout) == .success
+    }
+
+    func resume() {
+        release.signal()
+    }
+}
+
+private final class SystemCatalogTestSignal: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+
+    func send() {
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> Bool {
+        semaphore.wait(timeout: .now() + timeout) == .success
+    }
+}
+
 /// `SystemCatalog` runs on every keystroke over ~40 settings, so it carries
 /// two optimizations in front of the fuzzy scorer: a 64-bit character mask
 /// that rejects candidates missing one of the query's letters, and a
@@ -483,6 +522,40 @@ final class SystemCatalogInvariantTests: XCTestCase {
     }
 
     // MARK: - Scale and concurrency
+
+    func testRefreshDiscoveryDoesNotOccupyTheCallingActor() async {
+        let discovery = BlockingSystemCatalogDiscovery()
+        let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
+        let caller = SystemCatalogCallingActor()
+        let refresh = Task { await caller.refresh(catalog) }
+
+        let didStart = await Task.detached {
+            discovery.waitUntilStarted(timeout: 1)
+        }.value
+        guard didStart else {
+            discovery.resume()
+            _ = await refresh.value
+            return XCTFail("discovery did not start")
+        }
+
+        let pinged = SystemCatalogTestSignal()
+        let ping = Task {
+            await caller.ping()
+            pinged.send()
+        }
+        let actorStayedResponsive = await Task.detached {
+            pinged.wait(timeout: 0.5)
+        }.value
+
+        discovery.resume()
+        _ = await refresh.value
+        _ = await ping.value
+
+        XCTAssertTrue(
+            actorStayedResponsive,
+            "filesystem discovery must leave its caller actor free to accept newer work"
+        )
+    }
 
     func testAHugeDiscoveredCatalogStaysSearchableAndFast() async {
         // Nothing bounds how many panes a Mac has installed. Ten thousand

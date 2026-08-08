@@ -251,6 +251,7 @@ package final class SystemCatalog: Catalog {
         _ = await refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
     }
 
+    @concurrent
     package func refreshIfNeeded(
         minimumInterval: TimeInterval,
         forceDiscovery: Bool
@@ -260,11 +261,11 @@ package final class SystemCatalog: Catalog {
 
         let previousFingerprint = directoryFingerprint.withLock { $0 }
 
-        // Fingerprinting and discovery both walk the filesystem, but this
-        // function is `nonisolated async`: it already runs on the cooperative
-        // pool and never on the main actor, so a detached task would buy
-        // nothing here — it would only cut the work loose from the caller's
-        // cancellation and priority.
+        // `@concurrent` is deliberate. Under approachable concurrency, a plain
+        // nonisolated async method inherits its caller's actor. These synchronous
+        // filesystem walks must leave SourceSearchEngine free to accept a newer
+        // query or cancellation, while remaining in the caller's task so its
+        // cancellation and priority still apply.
         let fingerprint = Self.makeDirectoryFingerprint(fileManager: .default)
         guard forceDiscovery || fingerprint != previousFingerprint else {
             directoryFingerprint.withLock { $0 = fingerprint }

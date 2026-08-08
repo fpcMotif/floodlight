@@ -19,7 +19,7 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
     private var applicationsByMarker: [String: Application] = [:]
     private var markerByApplicationPath: [String: String] = [:]
     private var isPrepared = false
-    private var lastDiscoveryTime: TimeInterval = 0
+    private let refreshGuard = CatalogRefreshGuard()
     private var applicationDirectoryFingerprint: [String: Date] = [:]
     private let markerRoot: URL
     private let index: FFFIndex
@@ -77,7 +77,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         minimumInterval: TimeInterval = 2,
         forceDiscovery: Bool = false
     ) async throws -> Bool {
-        guard reserveRefresh(minimumInterval: minimumInterval) else { return false }
+        guard refreshGuard.reserve(minimumInterval: minimumInterval) else { return false }
+        defer { refreshGuard.release() }
 
         let signpost = FloodlightPerformance.begin("ApplicationRefresh")
         let changed: Bool = await withCheckedContinuation { continuation in
@@ -94,17 +95,6 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         guard changed else { return false }
         try await index.start()
         try await index.rescan()
-        return true
-    }
-
-    private func reserveRefresh(minimumInterval: TimeInterval) -> Bool {
-        let now = Date.timeIntervalSinceReferenceDate
-        lock.lock()
-        defer { lock.unlock() }
-        guard now - lastDiscoveryTime >= minimumInterval else { return false }
-        // Reserve this refresh window so repeated keystrokes cannot enqueue
-        // duplicate filesystem walks while discovery is in flight.
-        lastDiscoveryTime = now
         return true
     }
 
@@ -235,12 +225,7 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         let changed = !isPrepared || Self.signature(of: applications) != Self.signature(of: marked)
         lock.unlock()
 
-        guard changed else {
-            lock.lock()
-            lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
-            lock.unlock()
-            return false
-        }
+        guard changed else { return false }
 
         Self.synchronizeMarkers(
             applications: marked,
@@ -257,7 +242,6 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
         )
         isPrepared = true
-        lastDiscoveryTime = Date.timeIntervalSinceReferenceDate
         lock.unlock()
         return true
     }

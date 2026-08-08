@@ -334,23 +334,23 @@ final class SearchModelInvariantTests: XCTestCase {
 
     func testRankingIsStableAcrossRepeatedSorts() throws {
         try checkProperty(
-            "ranked() is idempotent",
+            "ranking is idempotent",
             SearchGenerators.items(count: 0...50),
             runs: 300
         ) { items in
-            let once = SearchItemRanking.ranked(items)
-            let twice = SearchItemRanking.ranked(once)
+            let once = fullyRanked(items)
+            let twice = fullyRanked(once)
             return once.map(\.id) == twice.map(\.id)
         }
     }
 
     func testRankingPreservesEveryItem() throws {
         try checkProperty(
-            "ranked() is a permutation",
+            "ranking is a permutation",
             SearchGenerators.items(count: 0...50),
             runs: 300
         ) { items in
-            let ranked = SearchItemRanking.ranked(items)
+            let ranked = fullyRanked(items)
             return ranked.count == items.count
                 && Set(ranked.map(\.id)) == Set(items.map(\.id))
         }
@@ -362,7 +362,7 @@ final class SearchModelInvariantTests: XCTestCase {
             SearchGenerators.items(count: 2...50),
             runs: 300
         ) { items in
-            let ranked = SearchItemRanking.ranked(items)
+            let ranked = fullyRanked(items)
             return zip(ranked, ranked.dropFirst()).allSatisfy { $0.score >= $1.score }
         }
     }
@@ -383,15 +383,19 @@ final class SearchModelInvariantTests: XCTestCase {
 
     func testPageReturnsTheHighestRankedPrefix() throws {
         try checkProperty(
-            "page(limit:) is ranked().prefix(limit)",
+            "page(limit:) matches a full-sort prefix",
             SearchGenerators.items(count: 0...40),
             Gen<Int>.int(in: 0...20),
             runs: 300
         ) { items, limit in
             let page = SearchItemRanking.page(items, limit: limit)
-            let expected = SearchItemRanking.ranked(items).prefix(limit)
+            let expected = fullyRanked(items).prefix(limit)
             return page.items.map(\.id) == expected.map(\.id)
         }
+    }
+
+    private func fullyRanked(_ items: [SearchItem]) -> [SearchItem] {
+        items.sorted(by: SearchItemRanking.ranksBefore)
     }
 
     func testRankingBandsAreSeparatedByMoreThanAnyFuzzyScore() {

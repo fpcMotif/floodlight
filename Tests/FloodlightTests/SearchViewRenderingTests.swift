@@ -17,7 +17,7 @@ import XCTest
 /// least once.
 @MainActor
 final class SearchViewRenderingTests: XCTestCase {
-    private var tree: TemporaryTree!
+    private nonisolated(unsafe) var tree: TemporaryTree!
 
     override func setUpWithError() throws {
         tree = try TemporaryTree(label: "SearchViewRendering")
@@ -32,19 +32,30 @@ final class SearchViewRenderingTests: XCTestCase {
         settings: ScriptedCatalog = ScriptedCatalog()
     ) throws -> SearchCoordinator {
         try SearchCoordinator(
-            index: FFFIndex(
-                rootURL: tree.root,
-                storageURL: tree.root.appendingPathComponent(".index", isDirectory: true),
-                enableContentIndexing: false,
-                includeBinaryFiles: false,
-                watch: false
+            sourceSearch: SourceSearchEngine(
+                files: ScriptedFileSource(),
+                applications: applications,
+                settings: settings
             ),
-            applicationCatalog: applications,
-            settingsCatalog: settings,
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner()
         )
+    }
+
+    private func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 5,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("never became true: \(description)", file: file, line: line)
     }
 
     /// Rasterizes `view` at an explicit size and returns the image, failing
@@ -97,7 +108,7 @@ final class SearchViewRenderingTests: XCTestCase {
         XCTAssertEqual(image.height, Int(FloodlightMetrics.searchHeight))
     }
 
-    func testThePopulatedPanelRendersAtTheExpandedHeight() throws {
+    func testThePopulatedPanelRendersAtTheExpandedHeight() async throws {
         let applications = ScriptedCatalog(
             immediate: (0..<12).map {
                 SearchFixtures.application(
@@ -109,6 +120,9 @@ final class SearchViewRenderingTests: XCTestCase {
         )
         let coordinator = try makeCoordinator(applications: applications)
         coordinator.query = "application"
+        try await waitUntil("application candidates arrive") {
+            !coordinator.results.isEmpty
+        }
 
         XCTAssertFalse(coordinator.results.isEmpty)
         let image = try render(
@@ -157,7 +171,7 @@ final class SearchViewRenderingTests: XCTestCase {
         }
     }
 
-    func testTheLargestReachableResultSetRendersWithinBudget() throws {
+    func testTheLargestReachableResultSetRendersWithinBudget() async throws {
         // The list virtualizes past seven rows, so rendering the widest set
         // the pipeline can actually publish is how a layout that is
         // accidentally O(n²) shows up as a timeout rather than as a slow
@@ -186,6 +200,9 @@ final class SearchViewRenderingTests: XCTestCase {
         )
         let coordinator = try makeCoordinator(applications: applications, settings: settings)
         coordinator.query = "a"
+        try await waitUntil("the large result set arrives") {
+            coordinator.results.count > FloodlightMetrics.maximumVisibleResults
+        }
         XCTAssertGreaterThan(coordinator.results.count, FloodlightMetrics.maximumVisibleResults)
         XCTAssertTrue(
             FloodlightMetrics.shouldVirtualizeResults(count: coordinator.results.count)
@@ -400,7 +417,7 @@ final class SearchViewRenderingTests: XCTestCase {
         }
     }
 
-    func testTheFilterChipsExposeCountsAndLoadingState() throws {
+    func testTheFilterChipsExposeSettledCounts() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode")],
@@ -409,6 +426,10 @@ final class SearchViewRenderingTests: XCTestCase {
         )
         let coordinator = try makeCoordinator(applications: applications)
         coordinator.query = "xcode"
+        try await waitUntil("the application count settles") {
+            coordinator.filterOptions.first { $0.filter == .applications }?.count == 7
+                && !coordinator.isSearching
+        }
 
         let option = try XCTUnwrap(
             coordinator.filterOptions.first { $0.filter == .applications }
@@ -416,7 +437,7 @@ final class SearchViewRenderingTests: XCTestCase {
         // These are the exact values `SearchFilterChip` renders as its
         // accessibility value.
         XCTAssertEqual(option.count, 7)
-        XCTAssertTrue(option.isLoading, "the catalog has not started yet")
+        XCTAssertFalse(option.isLoading)
         XCTAssertEqual(option.filter.title, "Apps")
     }
 

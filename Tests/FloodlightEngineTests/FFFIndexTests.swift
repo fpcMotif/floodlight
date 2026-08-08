@@ -4,6 +4,95 @@ import XCTest
 @testable import FloodlightEngine
 
 final class FFFIndexTests: XCTestCase {
+    func testFileSourceStartReturnsWithASearchableInitialSnapshot() async throws {
+        let fileManager = FileManager.default
+        let root = canonicalFileURL(fileManager.temporaryDirectory)
+            .appendingPathComponent("FloodlightReadySourceTests-\(UUID().uuidString)")
+        let storage = root.appendingPathComponent(".storage", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        createFixtureFiles(count: 4_000, in: root, fileManager: fileManager)
+        let sentinel = root.appendingPathComponent("ready-source-sentinel.txt")
+        try Data("ready".utf8).write(to: sentinel)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let source = FFFFileSource(
+            index: FFFIndex(
+                rootURL: root,
+                storageURL: storage,
+                enableContentIndexing: false,
+                includeBinaryFiles: false,
+                watch: false
+            ),
+            rootURL: root
+        )
+
+        try await source.start()
+
+        let results = try await source.indexedItems(for: "ready-source-sentinel", limit: 12)
+        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+    }
+
+    func testFileSourceScopeChangeReturnsWithTheNewSnapshotSearchable() async throws {
+        let fileManager = FileManager.default
+        let parent = canonicalFileURL(fileManager.temporaryDirectory)
+            .appendingPathComponent("FloodlightReadyScopeTests-\(UUID().uuidString)")
+        let originalRoot = parent.appendingPathComponent("Original", isDirectory: true)
+        let selectedRoot = parent.appendingPathComponent("Selected", isDirectory: true)
+        let storage = parent.appendingPathComponent("Storage", isDirectory: true)
+        try fileManager.createDirectory(at: originalRoot, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: selectedRoot, withIntermediateDirectories: true)
+        createFixtureFiles(count: 4_000, in: selectedRoot, fileManager: fileManager)
+        let sentinel = selectedRoot.appendingPathComponent("ready-scope-sentinel.txt")
+        try Data("ready".utf8).write(to: sentinel)
+        defer { try? fileManager.removeItem(at: parent) }
+
+        let source = FFFFileSource(
+            index: FFFIndex(
+                rootURL: originalRoot,
+                storageURL: storage,
+                enableContentIndexing: false,
+                includeBinaryFiles: false,
+                watch: false
+            ),
+            rootURL: originalRoot
+        )
+        try await source.start()
+
+        try await source.changeScope(to: selectedRoot)
+
+        let results = try await source.indexedItems(for: "ready-scope-sentinel", limit: 12)
+        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+    }
+
+    func testFileSourceRebuildReturnsWithTheUpdatedSnapshotSearchable() async throws {
+        let fileManager = FileManager.default
+        let root = canonicalFileURL(fileManager.temporaryDirectory)
+            .appendingPathComponent("FloodlightReadyRebuildTests-\(UUID().uuidString)")
+        let storage = root.appendingPathComponent(".storage", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let source = FFFFileSource(
+            index: FFFIndex(
+                rootURL: root,
+                storageURL: storage,
+                enableContentIndexing: false,
+                includeBinaryFiles: false,
+                watch: false
+            ),
+            rootURL: root
+        )
+        try await source.start()
+
+        createFixtureFiles(count: 4_000, in: root, fileManager: fileManager)
+        let sentinel = root.appendingPathComponent("ready-rebuild-sentinel.txt")
+        try Data("ready".utf8).write(to: sentinel)
+        try await source.rebuild()
+
+        let results = try await source.indexedItems(for: "ready-rebuild-sentinel", limit: 12)
+        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+    }
+
     func testCanChooseScopeBeforeInitialIndexStarts() async throws {
         let fileManager = FileManager.default
         let parent = canonicalFileURL(fileManager.temporaryDirectory)
@@ -455,6 +544,19 @@ final class FFFIndexTests: XCTestCase {
     ) async throws {
         let succeeded = try await eventually(timeout: timeout, condition)
         XCTAssertTrue(succeeded, message, file: file, line: line)
+    }
+
+    private func createFixtureFiles(
+        count: Int,
+        in directory: URL,
+        fileManager: FileManager
+    ) {
+        for index in 0..<count {
+            fileManager.createFile(
+                atPath: directory.appendingPathComponent("fixture-\(index).txt").path,
+                contents: Data()
+            )
+        }
     }
 
     private func canonicalFileURL(_ url: URL) -> URL {

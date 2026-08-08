@@ -23,6 +23,50 @@ private final class ApplicationDiscoveryFixture: @unchecked Sendable {
     }
 }
 
+private final class BlockingApplicationDiscovery: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started = DispatchSemaphore(value: 0)
+    private let release = DispatchSemaphore(value: 0)
+    private var calls = 0
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func snapshot() -> [(name: String, url: URL)] {
+        lock.lock()
+        calls += 1
+        lock.unlock()
+        started.signal()
+        release.wait()
+        return []
+    }
+
+    func waitUntilStarted(timeout: TimeInterval) -> Bool {
+        started.wait(timeout: .now() + timeout) == .success
+    }
+
+    func resume(count: Int = 1) {
+        for _ in 0..<count {
+            release.signal()
+        }
+    }
+}
+
+private final class CatalogTestSignal: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+
+    func send() {
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> Bool {
+        semaphore.wait(timeout: .now() + timeout) == .success
+    }
+}
+
 private final class SystemSettingsDiscoveryFixture: @unchecked Sendable {
     private let lock = NSLock()
     private var settings: [SystemCatalog.DiscoveredSetting]
@@ -273,6 +317,65 @@ final class CatalogTests: XCTestCase {
             forceDiscovery: true
         )
         XCTAssertFalse(didChangeAgain)
+    }
+
+    func testApplicationRefreshIsSingleFlight() async throws {
+        let suiteName = "FloodlightSingleFlightTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "FloodlightSingleFlightTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let discovery = BlockingApplicationDiscovery()
+        defer { discovery.resume(count: 2) }
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { discovery.snapshot() }
+        )
+        let firstRefresh = Task {
+            try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+        }
+
+        let firstStarted = await Task.detached {
+            discovery.waitUntilStarted(timeout: 2)
+        }.value
+        guard firstStarted else {
+            firstRefresh.cancel()
+            return XCTFail("the first forced discovery did not start")
+        }
+
+        let secondFinished = CatalogTestSignal()
+        let secondRefresh = Task {
+            let result = try? await catalog.refreshIfNeeded(
+                minimumInterval: 0,
+                forceDiscovery: true
+            )
+            secondFinished.send()
+            return result
+        }
+        let secondReturned = await Task.detached {
+            secondFinished.wait(timeout: 2)
+        }.value
+        guard secondReturned else {
+            discovery.resume(count: 2)
+            _ = try? await firstRefresh.value
+            _ = await secondRefresh.value
+            return XCTFail("a concurrent refresh queued behind the active discovery")
+        }
+
+        let secondResult = await secondRefresh.value
+        XCTAssertEqual(secondResult, false)
+        XCTAssertEqual(discovery.callCount, 1)
+
+        discovery.resume()
+        _ = try await firstRefresh.value
+        XCTAssertEqual(discovery.callCount, 1)
     }
 
     func testIndexesInstalledSystemSettings() async throws {
