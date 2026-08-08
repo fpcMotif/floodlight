@@ -12,12 +12,18 @@ private extension Color {
 struct OnboardingView: View {
     let presentation: FloodlightConfigurationPresentation
     @Bindable var session: OnboardingSession
-    let onSelectShortcut: (FloodlightShortcut) -> Void
-    let onSetLaunchAtLogin: (Bool) -> Void
-    let onChooseScope: () -> Void
-    let onOpenSpotlightSettings: () -> Void
-    let onOpenFullDiskAccess: () -> Void
-    let onFinish: () -> Void
+    // Every callback carries its isolation. `onSetLaunchAtLogin` has to,
+    // because it drives a `Binding`'s setter and SwiftUI now requires that
+    // setter to be `@isolated(any) @Sendable`; the rest are annotated to match
+    // rather than leaving one of six spelled differently for a reason that is
+    // invisible at the declaration. Every caller is a main-actor controller
+    // already, so this only writes down what was true.
+    let onSelectShortcut: @MainActor @Sendable (FloodlightShortcut) -> Void
+    let onSetLaunchAtLogin: @MainActor @Sendable (Bool) -> Void
+    let onChooseScope: @MainActor @Sendable () -> Void
+    let onOpenSpotlightSettings: @MainActor @Sendable () -> Void
+    let onOpenFullDiskAccess: @MainActor @Sendable () -> Void
+    let onFinish: @MainActor @Sendable () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -210,8 +216,8 @@ struct OnboardingView: View {
                         in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                     )
             }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.defaultAction)
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 24)
         .frame(height: 58)

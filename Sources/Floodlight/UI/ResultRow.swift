@@ -8,7 +8,10 @@ struct ResultRow: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
 
-    static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
+    /// `View` is main-actor isolated but `Equatable.==` is not, so the
+    /// conformance has to opt out explicitly. Safe: both compared properties are
+    /// Sendable value types, and neither reads view state.
+    nonisolated static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
         lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
     }
 

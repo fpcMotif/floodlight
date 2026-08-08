@@ -18,7 +18,8 @@ package final class RecentStore: @unchecked Sendable {
     package init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: key),
-           let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
+           let decoded = try? JSONDecoder().decode([String: Entry].self, from: data)
+        {
             entries = OSAllocatedUnfairLock(initialState: decoded)
         } else {
             entries = OSAllocatedUnfairLock(initialState: [:])

@@ -1,0 +1,15 @@
+id: sources-no-force-try
+valid:
+  - |
+    let data = try? Data(contentsOf: url)
+  - |
+    let data = try loader.load()
+  # `try!` inside a string literal is text, not code — the reason this rule is
+  # an AST match and not a grep.
+  - |
+    let hint = "never write try! here"
+invalid:
+  - |
+    let data = try! Data(contentsOf: url)
+  - |
+    try! store.save()

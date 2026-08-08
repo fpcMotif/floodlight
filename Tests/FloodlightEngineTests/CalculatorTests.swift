@@ -21,6 +21,6 @@ final class CalculatorTests: XCTestCase {
     }
 
     func testFormatting() {
-        XCTAssertEqual(Calculator.format(1234.5), "1,234.5")
+        XCTAssertEqual(Calculator.format(1_234.5), "1,234.5")
     }
 }

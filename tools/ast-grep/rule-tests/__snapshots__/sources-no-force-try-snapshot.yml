@@ -1,0 +1,16 @@
+id: sources-no-force-try
+snapshots:
+  ? |
+    let data = try! Data(contentsOf: url)
+  : labels:
+    - source: 'try! Data(contentsOf: url)'
+      style: primary
+      start: 11
+      end: 37
+  ? |
+    try! store.save()
+  : labels:
+    - source: try! store.save()
+      style: primary
+      start: 0
+      end: 17

@@ -4,6 +4,13 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 
+# This script has always run on ripgrep, but the dependency was implicit: fine
+# on a laptop that has it, `rg: command not found` on a fresh CI runner. Going
+# through the shared resolver means the gate carries its own tools.
+. "$SCRIPT_DIR/tools.sh"
+
+rg=$(resolve_ripgrep)
+
 # Modularization is being carved in slices (see issue #12). Once every
 # target's directory exists, this script also grows import-direction
 # assertions (e.g. FloodlightEngine must never import the shell, and only
@@ -33,7 +40,7 @@ KEYWORD='(?:func|var|let|class|struct|enum|protocol|typealias|init|subscript|ext
 PATTERN="^\\s*${ATTR}${MODIFIERS}\\b(public|open)\\b\\s+${MODIFIERS}\\b${KEYWORD}\\b"
 
 set +e
-rg --pcre2 --line-number --glob '*.swift' "$PATTERN" "$PROJECT_DIR/Sources"
+"$rg" --pcre2 --line-number --glob '*.swift' "$PATTERN" "$PROJECT_DIR/Sources"
 status=$?
 set -e
 

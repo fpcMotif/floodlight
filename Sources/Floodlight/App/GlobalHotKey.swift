@@ -7,19 +7,14 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
 
     static let preferenceKey = "global-shortcut"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var modifierSymbol: String {
         switch self {
         case .commandSpace: "⌘"
         case .optionSpace: "⌥"
-        }
-    }
-
-    var modifierName: String {
-        switch self {
-        case .commandSpace: "Command"
-        case .optionSpace: "Option"
         }
     }
 

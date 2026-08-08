@@ -164,7 +164,7 @@ private struct ResultList: View {
                 }
                 guard
                     index == 0
-                        || index >= FloodlightMetrics.maximumVisibleResults
+                    || index >= FloodlightMetrics.maximumVisibleResults
                 else {
                     return
                 }

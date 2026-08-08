@@ -1,0 +1,20 @@
+id: sources-no-force-unwrap
+language: Swift
+severity: error
+message: >-
+  Force unwrap crashes the launcher on nil — use `guard let`, `if let`, or `??`
+  with a defined fallback.
+note: >-
+  This one matches the postfix `!` operator only: an implicitly-unwrapped
+  property type (`var window: NSWindow!`), a negation (`!flag`), and a `!= nil`
+  comparison are all different nodes and none of them trip the rule.
+  `ApplicationCatalog.immediatePage` shows the intended shape — `compactMap`
+  with a `guard let score = ... else { return nil }` — which drops the
+  unmatchable candidate instead of trapping on it.
+files:
+  - "Sources/**/*.swift"
+rule:
+  kind: postfix_expression
+  has:
+    field: operation
+    kind: bang
