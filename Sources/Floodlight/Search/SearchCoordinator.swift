@@ -3,12 +3,30 @@ import FloodlightEngine
 import Foundation
 import Observation
 
+/// What's happened since a user selected an "Ask Codex"/"Ask Claude" row.
+/// Scoped to a single ask — there's no conversation history, and a fresh
+/// selection (or a query edit) replaces whatever state came before.
+enum AssistantAnswerState: Equatable {
+    case running
+    case answered(String)
+    case failed(String)
+}
+
+/// Ties an `AssistantAnswerState` back to the row that triggered it, so a
+/// stale answer never renders under a different result after the query
+/// changes and the results list is rebuilt.
+struct AssistantRun: Equatable {
+    let itemID: SearchItem.ID
+    let state: AssistantAnswerState
+}
+
 @MainActor
 @Observable
 final class SearchCoordinator {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
+            cancelAssistantRun()
             selectionWasUserDriven = false
             guard !isResetting else { return }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -24,6 +42,9 @@ final class SearchCoordinator {
     private(set) var isSearching = false
     private(set) var rootURL: URL
     var focusGeneration = 0
+    /// The in-flight or completed state of the last "Ask Codex"/"Ask
+    /// Claude" the user triggered, or `nil` if none is active.
+    private(set) var assistantRun: AssistantRun?
 
     @ObservationIgnored
     var onDismiss: (() -> Void)?
@@ -44,12 +65,17 @@ final class SearchCoordinator {
     private let applicationCatalog: any Catalog
     private let settingsCatalog: any Catalog
     private let recentStore: RecentStore
+    private let assistantRunner: any AssistantProcessRunning
     private var allResults: [SearchItem] = []
     private var filterCounts = SearchFilterCounts()
     private var applicationMatchCount = 0
     private var settingsMatchCount = 0
     private var isApplicationCatalogLoading = true
     private var isSettingsCatalogLoading = true
+    /// Assistant engines ("Ask Codex", "Ask Claude") only ever appear once
+    /// their binary is confirmed runnable at startup; web-search engines
+    /// (Twitter/X, YouTube) don't need that check and are always included.
+    private var availableKeywordEngines: [KeywordEngine] = KeywordEngineCatalog.all.filter { $0.kind != .assistant }
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
@@ -58,6 +84,8 @@ final class SearchCoordinator {
     private var applicationRefreshTask: Task<Void, Never>?
     @ObservationIgnored
     private var settingsRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var assistantTask: Task<Void, Never>?
     @ObservationIgnored
     private var generation = 0
     @ObservationIgnored
@@ -75,18 +103,22 @@ final class SearchCoordinator {
         applicationCatalog: any Catalog,
         settingsCatalog: any Catalog,
         recentStore: RecentStore,
-        rootURL: URL
+        rootURL: URL,
+        assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()
     ) {
         self.index = index
         self.applicationCatalog = applicationCatalog
         self.settingsCatalog = settingsCatalog
         self.recentStore = recentStore
         self.rootURL = rootURL
+        self.assistantRunner = assistantRunner
     }
 
     /// The live wiring: search scope from preferences, index and catalogs over
-    /// the real filesystem.
-    convenience init() {
+    /// the real filesystem. `assistantRunner` is overridable so tests can
+    /// exercise the "Ask Codex"/"Ask Claude" seam without spawning a real
+    /// process or depending on what's installed on the test machine.
+    convenience init(assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()) {
         let fileManager = FileManager.default
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
         let initialRoot = savedRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -119,7 +151,8 @@ final class SearchCoordinator {
             ),
             settingsCatalog: SystemCatalog(),
             recentStore: recentStore,
-            rootURL: initialRoot
+            rootURL: initialRoot,
+            assistantRunner: assistantRunner
         )
     }
 
@@ -128,6 +161,7 @@ final class SearchCoordinator {
         startupTask?.cancel()
         applicationRefreshTask?.cancel()
         settingsRefreshTask?.cancel()
+        assistantTask?.cancel()
     }
 
     func start() {
@@ -142,12 +176,14 @@ final class SearchCoordinator {
                 async let startFiles: Void = index.start()
                 async let startApplications: Void = applicationCatalog.start()
                 async let startSettings: Void = settingsCatalog.start()
+                async let resolvedKeywordEngines = KeywordEngineCatalog.availableEngines(runner: assistantRunner)
 
                 try await startApplications
                 isApplicationCatalogLoading = false
                 try await startSettings
                 isSettingsCatalogLoading = false
                 try await startFiles
+                availableKeywordEngines = await resolvedKeywordEngines
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     scheduleSearch(immediate: true)
                 }
@@ -271,6 +307,15 @@ final class SearchCoordinator {
     }
 
     private func performAction(for item: SearchItem) {
+        // An assistant ask keeps the panel open through a running/answered/
+        // failed cycle instead of the eager dismiss-then-act every other
+        // action uses below.
+        if case .askAssistant(let command, let arguments) = item.action {
+            runAssistant(command: command, arguments: arguments, for: item)
+            recentStore.record(item.id)
+            return
+        }
+
         let selectedQuery = query
         onDismiss?()
 
@@ -287,8 +332,48 @@ final class SearchCoordinator {
             }
         case .showFloodlightSettings:
             onShowSettings?()
+        case .askAssistant:
+            break // handled above; the panel stays open for an in-flight ask
         }
         recentStore.record(item.id)
+    }
+
+    /// Runs an assistant engine's CLI and publishes its lifecycle to
+    /// `assistantRun`. Never fires on a keystroke — only an explicit
+    /// selection (Return or double-click) reaches this.
+    private func runAssistant(command: String, arguments: [String], for item: SearchItem) {
+        cancelAssistantRun()
+        assistantRun = AssistantRun(itemID: item.id, state: .running)
+
+        let runner = assistantRunner
+        assistantTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let output = try await runner.run(command: command, arguments: arguments)
+                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
+                assistantRun = AssistantRun(itemID: item.id, state: .answered(output))
+            } catch is CancellationError {
+                return
+            } catch AssistantProcessError.executableNotFound(let missingCommand) {
+                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
+                assistantRun = AssistantRun(itemID: item.id, state: .failed("\(missingCommand) isn't installed."))
+            } catch AssistantProcessError.nonZeroExit(_, let message) where !message.isEmpty {
+                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
+                assistantRun = AssistantRun(itemID: item.id, state: .failed(message))
+            } catch {
+                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
+                assistantRun = AssistantRun(itemID: item.id, state: .failed("That ask failed."))
+            }
+        }
+    }
+
+    /// Cancels any in-flight ask (which terminates its subprocess) and
+    /// clears whatever answer is currently displayed. Called whenever the
+    /// query changes, so a stale answer never lingers under a new query.
+    private func cancelAssistantRun() {
+        assistantTask?.cancel()
+        assistantTask = nil
+        assistantRun = nil
     }
 
     func revealSelection() {
@@ -309,6 +394,12 @@ final class SearchCoordinator {
             value = url.isFileURL ? url.path : url.absoluteString
         case .showFloodlightSettings:
             value = item.title
+        case .askAssistant:
+            if let assistantRun, assistantRun.itemID == item.id, case .answered(let text) = assistantRun.state {
+                value = text
+            } else {
+                value = item.title
+            }
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
@@ -405,7 +496,8 @@ final class SearchCoordinator {
                 query: requestQuery,
                 indexed: [],
                 apps: immediateApps,
-                system: settingsPage.items
+                system: settingsPage.items,
+                keywordEngines: availableKeywordEngines
             ),
             resetSelection: true
         )
@@ -446,7 +538,8 @@ final class SearchCoordinator {
                         query: requestQuery,
                         indexed: mapped,
                         apps: immediateApps + apps,
-                        system: settingsPage.items
+                        system: settingsPage.items,
+                        keywordEngines: availableKeywordEngines
                     ),
                     promoteWebFallback: true
                 )
@@ -484,7 +577,8 @@ final class SearchCoordinator {
                         query: requestQuery,
                         indexed: mapped + content,
                         apps: immediateApps + apps,
-                        system: settingsPage.items
+                        system: settingsPage.items,
+                        keywordEngines: availableKeywordEngines
                     ),
                     promoteWebFallback: true
                 )
@@ -498,7 +592,8 @@ final class SearchCoordinator {
                         query: requestQuery,
                         indexed: [],
                         apps: immediateApps,
-                        system: settingsPage.items
+                        system: settingsPage.items,
+                        keywordEngines: availableKeywordEngines
                     )
                 )
             }
@@ -525,7 +620,8 @@ final class SearchCoordinator {
         query: String,
         indexed: [SearchItem],
         apps: [SearchItem],
-        system: [SearchItem]
+        system: [SearchItem],
+        keywordEngines: [KeywordEngine] = KeywordEngineCatalog.all
     ) -> [SearchItem] {
         var output: [SearchItem] = []
 
@@ -544,6 +640,7 @@ final class SearchCoordinator {
         }
 
         output.append(contentsOf: FloodlightCommandCatalog.search(query))
+        output.append(contentsOf: KeywordEngineCatalog.search(query, in: keywordEngines))
         output.append(contentsOf: apps)
         output.append(contentsOf: system)
         output.append(contentsOf: indexed)

@@ -5,11 +5,17 @@ import SwiftUI
 struct ResultRow: View, Equatable {
     let item: SearchItem
     let isSelected: Bool
+    /// Non-nil only for the row that triggered an "Ask Codex"/"Ask Claude"
+    /// — set by `SearchCoordinator.assistantRun`, cleared as soon as the
+    /// query changes. Every other row ignores this entirely.
+    let assistantState: AssistantAnswerState?
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
 
     static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
-        lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
+        lhs.item == rhs.item
+            && lhs.isSelected == rhs.isSelected
+            && lhs.assistantState == rhs.assistantState
     }
 
     var body: some View {
@@ -50,6 +56,10 @@ struct ResultRow: View, Equatable {
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+
+                if let assistantState {
+                    AssistantAnswerView(state: assistantState)
+                }
             }
 
             Spacer(minLength: 8)
@@ -63,7 +73,8 @@ struct ResultRow: View, Equatable {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: FloodlightMetrics.resultRowHeight)
+        .padding(.vertical, assistantState == nil ? 0 : 10)
+        .frame(minHeight: FloodlightMetrics.resultRowHeight)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(backgroundColor)
@@ -82,6 +93,39 @@ struct ResultRow: View, Equatable {
         return colorScheme == .dark
             ? .white.opacity(0.075)
             : .black.opacity(0.055)
+    }
+}
+
+/// The loading / answer / error content beneath an assistant row's
+/// subtitle. Unlike every other row, its height is content-driven — an
+/// answer can run longer than one line — so the row it's embedded in uses
+/// `minHeight` rather than a fixed height.
+private struct AssistantAnswerView: View {
+    let state: AssistantAnswerState
+
+    var body: some View {
+        switch state {
+        case .running:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Asking…")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+        case .answered(let text):
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        case .failed(let message):
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.red)
+                .padding(.top, 2)
+        }
     }
 }
 
@@ -124,6 +168,7 @@ private struct ResultIcon: View {
 
     private var iconColor: Color {
         switch item.kind {
+        case .assistant: .purple
         case .calculator: .orange
         case .systemSetting: .gray
         case .web: .blue

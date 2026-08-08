@@ -195,8 +195,12 @@ private struct ResultList: View {
             Button {
                 model.select(item)
             } label: {
-                ResultRow(item: item, isSelected: model.selectedID == item.id)
-                    .equatable()
+                ResultRow(
+                    item: item,
+                    isSelected: model.selectedID == item.id,
+                    assistantState: model.assistantRun?.itemID == item.id ? model.assistantRun?.state : nil
+                )
+                .equatable()
             }
             .buttonStyle(.plain)
             .focusable(false)

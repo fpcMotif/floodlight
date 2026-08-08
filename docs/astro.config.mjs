@@ -99,6 +99,7 @@ export default defineConfig({
               label: "Keyboard shortcuts",
               slug: "guides/keyboard-shortcuts",
             },
+            { label: "PopClip", slug: "guides/popclip" },
           ],
         },
         {

@@ -61,7 +61,30 @@ Press <kbd>Return</kbd> to copy the result.
 ## Web fallback
 
 Every non-empty query includes a final web-search action. It stays below local
-results and opens in the default browser.
+results unless the query itself looks like it wants the web — a question, a
+URL, or a query with few local matches — in which case it's promoted higher
+in the list. It always opens in the default browser.
+
+## Keyword search engines
+
+Start a query with one of these keywords to address a specific engine
+directly, instead of waiting on the general web fallback:
+
+| Keyword | Aliases | Goes to |
+| --- | --- | --- |
+| `x` | `twitter`, `!x` | Twitter/X search, opened in your default browser |
+| `yt` | `youtube`, `!yt` | YouTube search, opened in your default browser |
+| `codex` | `!codex` | Asks the installed `codex` CLI and shows the answer in the panel |
+| `claude` | `!claude` | Asks the installed `claude -p` CLI and shows the answer in the panel |
+
+For example, `yt lofi hip hop` opens a YouTube search for "lofi hip hop", and
+`claude explain this regex` runs `claude -p` locally and streams its answer
+into the result row — no browser or terminal opens for an assistant ask.
+
+The keyword must be the first word of the query. `codex` and `claude` rows
+only appear if that CLI is actually installed; each ask is independent, with
+no memory of earlier asks. See [PopClip](../popclip/) for using these same
+destinations from anywhere on your Mac, not just from inside Floodlight.
 
 ## Ranking
 

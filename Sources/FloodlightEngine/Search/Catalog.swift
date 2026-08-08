@@ -55,6 +55,10 @@ package extension Catalog {
 /// it, so a strong file match never outranks a weak application match.
 package enum SearchItemRanking {
     package static let command = 200_000
+    /// A matched keyword engine (`yt query`, `claude query`) — a deliberate
+    /// address, so it outranks fuzzy app/file matches but still defers to
+    /// Floodlight's own commands.
+    package static let keywordEngine = 150_000
     package static let calculator = 100_000
     package static let application = 100_000
     package static let setting = 2_000

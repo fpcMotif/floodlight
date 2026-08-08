@@ -1,0 +1,92 @@
+---
+title: PopClip
+description: Reach Floodlight's keyword search engines from any selected text, without Floodlight running.
+---
+
+Floodlight's [keyword search engines](../search/#keyword-search-engines) —
+Twitter/X, YouTube, Ask Codex, Ask Claude — are deliberately built from the
+same shape [PopClip](https://pilotmoon.com/popclip/) extensions already use:
+a title, a keyword-free destination, and either a URL or a local command.
+That means PopClip doesn't need to talk to Floodlight at all. Selecting text
+anywhere on your Mac and choosing one of these actions from the PopClip bar
+runs independently — Floodlight isn't launched, and nothing is shared
+between the two apps at runtime beyond both reading the same destinations.
+
+## Why no Floodlight-PopClip integration exists
+
+An earlier design considered a custom `floodlight://` URL scheme so a
+PopClip action could open Floodlight itself with the selection pre-filled.
+That was rejected: it adds a permanent seam (URL scheme registration,
+deep-link parsing, activating a background app) to keep two independently
+updated apps in sync, for no benefit over PopClip just running the same
+destination on its own. Mirroring the schema, not the runtime, means
+Floodlight ships zero PopClip-specific code.
+
+## Setting up the matching PopClip extension
+
+Create a folder named `Floodlight Engines.popclipext` containing a
+`Config.plist` with one action per engine. PopClip's URL actions substitute
+`***` for the selected text; shell script actions expose it as
+`$POPCLIP_TEXT`. Adjust field names against your installed PopClip's own
+[extension documentation](https://www.popclip.app/dev/) if your version's
+schema has moved on from what's shown here:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Actions</key>
+    <array>
+        <dict>
+            <key>Title</key>
+            <string>Search Twitter/X</string>
+            <key>Url</key>
+            <string>https://x.com/search?q=***</string>
+        </dict>
+        <dict>
+            <key>Title</key>
+            <string>Search YouTube</string>
+            <key>Url</key>
+            <string>https://www.youtube.com/results?search_query=***</string>
+        </dict>
+        <dict>
+            <key>Title</key>
+            <string>Ask Codex</string>
+            <key>Shell Script File</key>
+            <string>ask-codex.sh</string>
+        </dict>
+        <dict>
+            <key>Title</key>
+            <string>Ask Claude</string>
+            <key>Shell Script File</key>
+            <string>ask-claude.sh</string>
+        </dict>
+    </array>
+</dict>
+</plist>
+```
+
+The two shell scripts sit alongside `Config.plist` in the same
+`.popclipext` folder:
+
+```sh title="ask-claude.sh"
+#!/bin/sh
+claude -p "$POPCLIP_TEXT"
+```
+
+```sh title="ask-codex.sh"
+#!/bin/sh
+codex exec "$POPCLIP_TEXT"
+```
+
+Make both scripts executable (`chmod +x ask-claude.sh ask-codex.sh`), then
+double-click the `.popclipext` folder to install it into PopClip.
+
+## Keeping the two in sync
+
+If Floodlight's keyword table changes — a new engine, a renamed title, a
+different CLI flag — update this `Config.plist` to match by hand. There's no
+automatic sync between the two; the guarantee Floodlight makes is only that
+its own destinations (documented in [Search](../search/#keyword-search-engines))
+stay stable enough to copy from.

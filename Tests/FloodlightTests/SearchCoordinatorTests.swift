@@ -308,6 +308,169 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedID, visible.first?.id)
     }
 
+    // MARK: - Keyword engines
+
+    func testKeywordEngineRowOutranksApplicationAndCalculatorMatches() throws {
+        let coordinator = SearchCoordinator()
+        let app = makeApplication(name: "Xcode", score: 100_000)
+
+        let results = coordinator.buildResults(
+            query: "yt lofi hip hop",
+            indexed: [],
+            apps: [app],
+            system: []
+        )
+
+        let engineIndex = try XCTUnwrap(results.firstIndex { $0.id == "keyword-engine:youtube" })
+        let appIndex = try XCTUnwrap(results.firstIndex { $0.id == app.id })
+        XCTAssertLessThan(engineIndex, appIndex)
+    }
+
+    func testKeywordEngineRowDefersToFloodlightCommands() throws {
+        let coordinator = SearchCoordinator()
+
+        let results = coordinator.buildResults(
+            query: "yt lofi hip hop",
+            indexed: [],
+            apps: [],
+            system: []
+        )
+
+        // "yt lofi hip hop" doesn't fuzzy-match the settings command, so
+        // assert the ranking relationship directly instead.
+        let engine = try XCTUnwrap(results.first { $0.id == "keyword-engine:youtube" })
+        XCTAssertLessThan(engine.score, SearchItemRanking.command)
+    }
+
+    func testUnmatchedQueryProducesNoKeywordEngineRow() {
+        let coordinator = SearchCoordinator()
+
+        let results = coordinator.buildResults(
+            query: Self.unmatchedQuery,
+            indexed: [],
+            apps: [],
+            system: []
+        )
+
+        XCTAssertFalse(results.contains { $0.id.hasPrefix("keyword-engine:") })
+    }
+
+    func testKeywordEnginesRespectTheSuppliedAvailabilityList() {
+        let coordinator = SearchCoordinator()
+
+        let results = coordinator.buildResults(
+            query: "claude explain this",
+            indexed: [],
+            apps: [],
+            system: [],
+            keywordEngines: KeywordEngineCatalog.all.filter { $0.id != "claude" }
+        )
+
+        XCTAssertFalse(results.contains { $0.id == "keyword-engine:claude" })
+    }
+
+    // MARK: - Ask Codex / Ask Claude lifecycle
+
+    func testActivatingAnAssistantRowDoesNotDismissThePanel() throws {
+        let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
+        let coordinator = SearchCoordinator(assistantRunner: runner)
+        var dismissed = false
+        coordinator.onDismiss = { dismissed = true }
+
+        let item = try makeClaudeAskItem(coordinator)
+        coordinator.activate(item)
+
+        XCTAssertFalse(dismissed)
+        XCTAssertEqual(coordinator.assistantRun, AssistantRun(itemID: item.id, state: .running))
+    }
+
+    func testAssistantRunTransitionsToAnsweredOnSuccess() async throws {
+        let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
+        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let item = try makeClaudeAskItem(coordinator)
+
+        coordinator.activate(item)
+        await runner.complete(with: .success("It returns the sum."))
+
+        try await waitUntil {
+            coordinator.assistantRun == AssistantRun(itemID: item.id, state: .answered("It returns the sum."))
+        }
+    }
+
+    func testAssistantRunTransitionsToFailedOnError() async throws {
+        let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
+        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let item = try makeClaudeAskItem(coordinator)
+
+        coordinator.activate(item)
+        await runner.complete(with: .failure(AssistantProcessError.nonZeroExit(status: 1, message: "network error")))
+
+        try await waitUntil {
+            coordinator.assistantRun == AssistantRun(itemID: item.id, state: .failed("network error"))
+        }
+    }
+
+    func testEditingTheQueryCancelsAndClearsAnInFlightAssistantRun() async throws {
+        let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
+        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let item = try makeClaudeAskItem(coordinator)
+
+        coordinator.query = "claude explain this function"
+        coordinator.activate(item)
+        XCTAssertNotNil(coordinator.assistantRun)
+
+        coordinator.query = "claude explain this function differently"
+
+        // Cancellation clears the published state synchronously — no
+        // stale answer should ever render under the new query.
+        XCTAssertNil(coordinator.assistantRun)
+        try await waitUntil { await runner.cancelledCount == 1 }
+    }
+
+    func testAssistantEngineWithNoInstalledBinaryProducesNoRow() {
+        let runner = FakeAssistantProcessRunner(availableCommands: [])
+        let coordinator = SearchCoordinator(assistantRunner: runner)
+
+        let results = coordinator.buildResults(
+            query: "claude explain this function",
+            indexed: [],
+            apps: [],
+            system: [],
+            keywordEngines: []
+        )
+
+        XCTAssertFalse(results.contains { $0.id == "keyword-engine:claude" })
+    }
+
+    /// Builds the "Ask Claude" row directly through `buildResults` — the
+    /// coordinator's live pipeline only includes it once `start()` resolves
+    /// availability, which these tests don't drive (that's covered by
+    /// `KeywordEngineCatalog.availableEngines` tests in FloodlightEngine).
+    private func makeClaudeAskItem(_ coordinator: SearchCoordinator) throws -> SearchItem {
+        let results = coordinator.buildResults(
+            query: "claude explain this function",
+            indexed: [],
+            apps: [],
+            system: [],
+            keywordEngines: KeywordEngineCatalog.all
+        )
+        return try XCTUnwrap(results.first { $0.id == "keyword-engine:claude" })
+    }
+
+    /// Polls `condition` on a short interval, matching the polling style
+    /// already used for FFF scan completion in `SearchPerformanceTests`.
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        _ condition: () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("condition was never satisfied within \(timeout)s")
+    }
+
     /// A query the calculator cannot evaluate and whose characters never appear
     /// in the Floodlight command catalog, so only the supplied fixtures merge.
     private static let unmatchedQuery = "zzzzz"
@@ -371,5 +534,56 @@ final class SearchCoordinatorTests: XCTestCase {
             action: .open(URL(string: "x-apple.systempreferences:com.apple.\(title)")!),
             score: score
         )
+    }
+}
+
+/// A controllable `AssistantProcessRunning` — `run` suspends until the test
+/// calls `complete(with:)`, so tests can observe the coordinator's
+/// `.running` state before deciding how (and whether) the ask finishes.
+private actor FakeAssistantProcessRunner: AssistantProcessRunning {
+    private let availableCommands: Set<String>
+    private var pendingContinuations: [CheckedContinuation<String, Error>] = []
+    private(set) var cancelledCount = 0
+
+    init(availableCommands: Set<String>) {
+        self.availableCommands = availableCommands
+    }
+
+    func isAvailable(command: String) async -> Bool {
+        availableCommands.contains(command)
+    }
+
+    func run(command: String, arguments: [String]) async throws -> String {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingContinuations.append(continuation)
+            }
+        } onCancel: {
+            Task { await self.cancelPendingRuns() }
+        }
+    }
+
+    /// Mirrors what the real runner does on cancellation — terminating the
+    /// process, which resumes its continuation — so a cancelled `run` call
+    /// actually completes instead of leaking a permanently-suspended task.
+    private func cancelPendingRuns() {
+        cancelledCount += 1
+        let continuations = pendingContinuations
+        pendingContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Resolves the oldest still-pending `run` call.
+    /// Resolves the oldest still-pending `run` call — waiting, if needed,
+    /// for the coordinator's task to actually reach `run()` and register
+    /// its continuation, since creating a `Task` only schedules it and a
+    /// caller can otherwise race ahead of it.
+    func complete(with result: Result<String, Error>) async {
+        while pendingContinuations.isEmpty {
+            await Task.yield()
+        }
+        pendingContinuations.removeFirst().resume(with: result)
     }
 }

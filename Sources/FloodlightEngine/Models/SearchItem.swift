@@ -2,6 +2,7 @@ import Foundation
 
 package enum SearchItemKind: String, Hashable, Sendable {
     case application
+    case assistant
     case calculator
     case file
     case folder
@@ -11,6 +12,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
     package var label: String {
         switch self {
         case .application: "Application"
+        case .assistant: "AI Assistant"
         case .calculator: "Calculator"
         case .file: "File"
         case .folder: "Folder"
@@ -22,6 +24,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
     package var symbolName: String {
         switch self {
         case .application: "app.dashed"
+        case .assistant: "sparkles"
         case .calculator: "plus.forwardslash.minus"
         case .file: "doc"
         case .folder: "folder"
@@ -137,7 +140,7 @@ package struct SearchFilterCounts: Equatable, Sendable {
                 folders += 1
             case .systemSetting:
                 settings += 1
-            case .calculator, .web:
+            case .assistant, .calculator, .web:
                 break
             }
         }
@@ -185,6 +188,11 @@ package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
     case showFloodlightSettings
+    /// Runs an installed CLI locally and reports its stdout back into the
+    /// panel — `command` is a bare executable name and `arguments` are
+    /// passed straight to it, never through a shell, so nothing in the
+    /// query can be interpreted as shell syntax.
+    case askAssistant(command: String, arguments: [String])
 }
 
 package enum SearchItemIconSource: Hashable, Sendable {
