@@ -146,12 +146,16 @@ final class SearchCoordinatorTests: XCTestCase {
         )
     }
 
-    func testWebFallbackTrailsResultsWithTheLowestScore() throws {
+    func testWebFallbackTrailsResultsWithTheLowestScoreWhenLocalMatchesAreHealthy() throws {
         let coordinator = SearchCoordinator()
 
         let results = coordinator.buildResults(
             query: "shortcut",
-            indexed: [makeIndexedFile(name: "shortcut-notes.txt", score: 500)],
+            indexed: [
+                makeIndexedFile(name: "shortcut-notes.txt", score: 500),
+                makeIndexedFile(name: "shortcut-plan.txt", score: 400),
+                makeIndexedFile(name: "shortcut-log.txt", score: 300),
+            ],
             apps: [],
             system: []
         )
@@ -164,6 +168,63 @@ final class SearchCoordinatorTests: XCTestCase {
             fallback.action,
             .open(URL(string: "https://www.google.com/search?q=shortcut")!)
         )
+    }
+
+    func testWebFallbackIsPromotedWhenLocalMatchesAreWeak() throws {
+        let coordinator = SearchCoordinator()
+        let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
+
+        let results = coordinator.buildResults(
+            query: "shortcut",
+            indexed: [file],
+            apps: [],
+            system: []
+        )
+
+        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
+        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
+        // A promoted web row outranks the one weak file match it's competing
+        // with, even though it still trails higher-priority bands like
+        // Floodlight's own commands.
+        let fallbackIndex = try XCTUnwrap(results.firstIndex { $0.id == "web-search" })
+        let fileIndex = try XCTUnwrap(results.firstIndex { $0.id == file.id })
+        XCTAssertLessThan(fallbackIndex, fileIndex)
+    }
+
+    func testWebFallbackIsPromotedForAQuestionShapedQueryEvenWithManyLocalMatches() throws {
+        let coordinator = SearchCoordinator()
+
+        let results = coordinator.buildResults(
+            query: "how do I reset my password",
+            indexed: [
+                makeIndexedFile(name: "password-notes.txt", score: 500),
+                makeIndexedFile(name: "password-plan.txt", score: 400),
+                makeIndexedFile(name: "password-log.txt", score: 300),
+            ],
+            apps: [],
+            system: []
+        )
+
+        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
+        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
+    }
+
+    func testWebFallbackIsPromotedForAURLShapedQuery() throws {
+        let coordinator = SearchCoordinator()
+
+        let results = coordinator.buildResults(
+            query: "github.com",
+            indexed: [
+                makeIndexedFile(name: "github-notes.txt", score: 500),
+                makeIndexedFile(name: "github-plan.txt", score: 400),
+                makeIndexedFile(name: "github-log.txt", score: 300),
+            ],
+            apps: [],
+            system: []
+        )
+
+        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
+        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
     }
 
     func testEmptyQueryOmitsTheWebFallback() {

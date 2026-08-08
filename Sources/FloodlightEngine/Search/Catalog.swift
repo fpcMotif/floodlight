@@ -59,7 +59,11 @@ package enum SearchItemRanking {
     package static let application = 100_000
     package static let setting = 2_000
     package static let content = 1_000
-    /// The web fallback is always last, and always present.
+    /// Where the web row lands when `WebSearchIntent` promotes it — above
+    /// plain content grep hits, below anything with real match quality.
+    package static let webPromoted = 1_500
+    /// The web fallback's default band: present for every non-empty query,
+    /// but last unless promoted.
     package static let webFallback = Int.min
 
     /// The one order Floodlight publishes results in.

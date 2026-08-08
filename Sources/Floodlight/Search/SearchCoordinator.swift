@@ -548,12 +548,14 @@ final class SearchCoordinator {
         output.append(contentsOf: system)
         output.append(contentsOf: indexed)
 
-        var seen = Set<String>()
-        output = SearchItemRanking.ranked(output.filter { seen.insert($0.id).inserted })
-
         if !query.isEmpty,
            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
            let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+            let localMatchCount = apps.count + system.count + indexed.count
+            let promoted = WebSearchIntent.shouldPromote(
+                query: query,
+                localMatchCount: localMatchCount
+            )
             output.append(
                 SearchItem(
                     id: Self.webSearchResultID,
@@ -561,10 +563,13 @@ final class SearchCoordinator {
                     subtitle: "Open in your default browser",
                     kind: .web,
                     action: .open(url),
-                    score: SearchItemRanking.webFallback
+                    score: promoted ? SearchItemRanking.webPromoted : SearchItemRanking.webFallback
                 )
             )
         }
+
+        var seen = Set<String>()
+        output = SearchItemRanking.ranked(output.filter { seen.insert($0.id).inserted })
 
         return Array(output.prefix(80))
     }
