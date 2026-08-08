@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import os
 
 /// Runs an already-installed CLI and reports back whether it's runnable at
 /// all, and what it printed. The seam `SearchCoordinator` calls through so
@@ -18,6 +20,7 @@ package protocol AssistantProcessRunning: Sendable {
 package enum AssistantProcessError: Error, Equatable, Sendable {
     case executableNotFound(String)
     case nonZeroExit(status: Int32, message: String)
+    case timedOut
 }
 
 /// The real `AssistantProcessRunning`, backed by `Foundation.Process`.
@@ -33,9 +36,16 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         "/usr/bin",
         "/bin",
     ]
-    private static let timeout: Duration = .seconds(45)
+    /// How long an escalated SIGTERM gets to land before this resorts to
+    /// SIGKILL — a CLI that traps SIGTERM would otherwise hang forever past
+    /// `timeout`.
+    private static let terminationGracePeriod: Duration = .seconds(2)
 
-    package init() {}
+    private let timeout: Duration
+
+    package init(timeout: Duration = .seconds(45)) {
+        self.timeout = timeout
+    }
 
     package func isAvailable(command: String) async -> Bool {
         await Self.resolveExecutable(named: command) != nil
@@ -45,7 +55,7 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         guard let executableURL = await Self.resolveExecutable(named: command) else {
             throw AssistantProcessError.executableNotFound(command)
         }
-        return try await Self.run(executableURL: executableURL, arguments: arguments)
+        return try await Self.run(executableURL: executableURL, arguments: arguments, timeout: timeout)
     }
 
     package static func resolveExecutable(named command: String) async -> URL? {
@@ -61,7 +71,8 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         // $PATH, so there's nothing here for a query to inject into.
         guard let loginPath = try? await run(
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
-            arguments: ["-l", "-c", "echo -n \"$PATH\""]
+            arguments: ["-l", "-c", "echo -n \"$PATH\""],
+            timeout: .seconds(5)
         ) else {
             return nil
         }
@@ -75,7 +86,7 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         return nil
     }
 
-    private static func run(executableURL: URL, arguments: [String]) async throws -> String {
+    private static func run(executableURL: URL, arguments: [String], timeout: Duration) async throws -> String {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
@@ -84,11 +95,38 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         process.standardOutput = stdout
         process.standardError = stderr
 
+        // `Process.terminate()` raises on a process that was never
+        // launched, and both the watchdog and cancellation can reach for it
+        // concurrently — every call site checks `isRunning` first, and only
+        // the first resolution actually resumes the continuation.
+        let resolved = OSAllocatedUnfairLock(initialState: false)
+        @Sendable func resumeOnce(
+            _ continuation: CheckedContinuation<String, Error>,
+            with result: Result<String, Error>
+        ) {
+            let shouldResume = resolved.withLock { alreadyResolved in
+                guard !alreadyResolved else { return false }
+                alreadyResolved = true
+                return true
+            }
+            guard shouldResume else { return }
+            continuation.resume(with: result)
+        }
+
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
                 let watchdog = Task {
                     try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled, process.isRunning else { return }
                     process.terminate()
+                    resumeOnce(continuation, with: .failure(AssistantProcessError.timedOut))
+
+                    // Best-effort escalation for a CLI that traps SIGTERM —
+                    // doesn't block the caller, who already has their answer.
+                    try? await Task.sleep(for: terminationGracePeriod)
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                    }
                 }
 
                 process.terminationHandler = { finished in
@@ -102,25 +140,29 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
                             data: stderr.fileHandleForReading.readDataToEndOfFile(),
                             encoding: .utf8
                         ) ?? ""
-                        continuation.resume(
-                            throwing: AssistantProcessError.nonZeroExit(
-                                status: finished.terminationStatus,
-                                message: message.trimmingCharacters(in: .whitespacesAndNewlines)
+                        resumeOnce(
+                            continuation,
+                            with: .failure(
+                                AssistantProcessError.nonZeroExit(
+                                    status: finished.terminationStatus,
+                                    message: message.trimmingCharacters(in: .whitespacesAndNewlines)
+                                )
                             )
                         )
                         return
                     }
-                    continuation.resume(returning: output.trimmingCharacters(in: .whitespacesAndNewlines))
+                    resumeOnce(continuation, with: .success(output.trimmingCharacters(in: .whitespacesAndNewlines)))
                 }
 
                 do {
                     try process.run()
                 } catch {
                     watchdog.cancel()
-                    continuation.resume(throwing: error)
+                    resumeOnce(continuation, with: .failure(error))
                 }
             }
         } onCancel: {
+            guard process.isRunning else { return }
             process.terminate()
         }
     }

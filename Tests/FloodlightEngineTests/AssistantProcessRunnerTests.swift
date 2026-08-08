@@ -53,6 +53,22 @@ final class AssistantProcessRunnerTests: XCTestCase {
         }
     }
 
+    func testRunThrowsTimedOutAndTerminatesAProcessThatOutlivesTheTimeout() async throws {
+        let runner = AssistantProcessRunner(timeout: .milliseconds(100))
+        let start = ContinuousClock.now
+
+        do {
+            _ = try await runner.run(command: "sleep", arguments: ["30"])
+            XCTFail("expected timedOut")
+        } catch AssistantProcessError.timedOut {
+            // expected — and well under the process's own 30s sleep, so the
+            // watchdog (not the process exiting on its own) caused this.
+            XCTAssertLessThan(start.duration(to: .now), .seconds(5))
+        } catch {
+            XCTFail("expected timedOut, got \(error)")
+        }
+    }
+
     func testRunCancellationTerminatesTheUnderlyingProcess() async throws {
         let runner = AssistantProcessRunner()
         let task = Task {

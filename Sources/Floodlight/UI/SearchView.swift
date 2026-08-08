@@ -198,7 +198,7 @@ private struct ResultList: View {
                 ResultRow(
                     item: item,
                     isSelected: model.selectedID == item.id,
-                    assistantState: model.assistantRun?.itemID == item.id ? model.assistantRun?.state : nil
+                    assistantState: model.assistantAnswerState(for: item)
                 )
                 .equatable()
             }

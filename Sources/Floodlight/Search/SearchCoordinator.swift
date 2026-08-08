@@ -3,23 +3,6 @@ import FloodlightEngine
 import Foundation
 import Observation
 
-/// What's happened since a user selected an "Ask Codex"/"Ask Claude" row.
-/// Scoped to a single ask — there's no conversation history, and a fresh
-/// selection (or a query edit) replaces whatever state came before.
-enum AssistantAnswerState: Equatable {
-    case running
-    case answered(String)
-    case failed(String)
-}
-
-/// Ties an `AssistantAnswerState` back to the row that triggered it, so a
-/// stale answer never renders under a different result after the query
-/// changes and the results list is rebuilt.
-struct AssistantRun: Equatable {
-    let itemID: SearchItem.ID
-    let state: AssistantAnswerState
-}
-
 @MainActor
 @Observable
 final class SearchCoordinator {
@@ -307,23 +290,15 @@ final class SearchCoordinator {
     }
 
     private func performAction(for item: SearchItem) {
-        // An assistant ask keeps the panel open through a running/answered/
-        // failed cycle instead of the eager dismiss-then-act every other
-        // action uses below.
-        if case .askAssistant(let command, let arguments) = item.action {
-            runAssistant(command: command, arguments: arguments, for: item)
-            recentStore.record(item.id)
-            return
-        }
-
         let selectedQuery = query
-        onDismiss?()
 
         switch item.action {
         case .copy(let value):
+            onDismiss?()
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
         case .open(let url):
+            onDismiss?()
             open(url, asApplication: item.kind == .application)
             if item.kind == .file || item.kind == .folder {
                 index.track(query: selectedQuery, selectedURL: url)
@@ -331,9 +306,12 @@ final class SearchCoordinator {
                 applicationCatalog.track(query: selectedQuery, selectedURL: url)
             }
         case .showFloodlightSettings:
+            onDismiss?()
             onShowSettings?()
-        case .askAssistant:
-            break // handled above; the panel stays open for an in-flight ask
+        case .askAssistant(let command, let arguments):
+            // Keeps the panel open through a running/answered/failed cycle
+            // instead of the eager dismiss-then-act every other action uses.
+            runAssistant(command: command, arguments: arguments, for: item)
         }
         recentStore.record(item.id)
     }
@@ -357,6 +335,9 @@ final class SearchCoordinator {
             } catch AssistantProcessError.executableNotFound(let missingCommand) {
                 guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
                 assistantRun = AssistantRun(itemID: item.id, state: .failed("\(missingCommand) isn't installed."))
+            } catch AssistantProcessError.timedOut {
+                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
+                assistantRun = AssistantRun(itemID: item.id, state: .failed("That ask took too long and was stopped."))
             } catch AssistantProcessError.nonZeroExit(_, let message) where !message.isEmpty {
                 guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
                 assistantRun = AssistantRun(itemID: item.id, state: .failed(message))
@@ -411,6 +392,14 @@ final class SearchCoordinator {
     var previewableSelectionURL: URL? {
         guard let selectedItem, selectedItem.isPreviewable else { return nil }
         return selectedItem.fileURL
+    }
+
+    /// `assistantRun`'s state, but only if it belongs to `item` — every
+    /// other row gets `nil`. The view asks for this instead of comparing
+    /// `assistantRun?.itemID` against its own item at the call site.
+    func assistantAnswerState(for item: SearchItem) -> AssistantAnswerState? {
+        guard assistantRun?.itemID == item.id else { return nil }
+        return assistantRun?.state
     }
 
     func rebuildIndex() {
