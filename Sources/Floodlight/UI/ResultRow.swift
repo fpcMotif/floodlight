@@ -5,6 +5,10 @@ import SwiftUI
 struct ResultRow: View, Equatable {
     let item: SearchItem
     let isSelected: Bool
+    /// True only for the first result of a non-empty, unfiltered list — see
+    /// `ResultShowcase.isTopHit`. Drives a taller icon, a heavier title, no
+    /// kind badge, and a quiet background wash instead of the standard row.
+    let isTopHit: Bool
     /// Non-nil only for the row that triggered an "Ask Codex"/"Ask Claude"
     /// — set by `SearchCoordinator.assistantRun`, cleared as soon as the
     /// query changes. Every other row ignores this entirely.
@@ -15,29 +19,32 @@ struct ResultRow: View, Equatable {
     static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
         lhs.item == rhs.item
             && lhs.isSelected == rhs.isSelected
+            && lhs.isTopHit == rhs.isTopHit
             && lhs.assistantState == rhs.assistantState
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            ResultIcon(item: item)
+            ResultIcon(item: item, size: isTopHit ? FloodlightMetrics.topHitIconSize : FloodlightMetrics.standardIconSize)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(item.title)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(isTopHit ? FloodlightMetrics.Typography.topHitTitle : FloodlightMetrics.Typography.rowTitle)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    Text(item.kind.label)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(
-                            .secondary.opacity(0.12),
-                            in: Capsule()
-                        )
+                    if !isTopHit {
+                        Text(item.kind.label)
+                            .font(FloodlightMetrics.Typography.badge)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                .secondary.opacity(FloodlightMetrics.badgeFillOpacity),
+                                in: Capsule()
+                            )
+                    }
                 }
 
                 HStack(spacing: 6) {
@@ -51,10 +58,15 @@ struct ResultRow: View, Equatable {
 
                     if let modifiedAt = item.modifiedAt {
                         Text("·")
-                        Text(modifiedAt, style: .relative)
+                        Text(ResultShowcase.formattedModifiedDate(modifiedAt))
+                    }
+
+                    if isTopHit {
+                        Text("·")
+                        Text("Top Hit")
                     }
                 }
-                .font(.system(size: 11))
+                .font(FloodlightMetrics.Typography.rowSubtitle)
                 .foregroundStyle(.secondary)
 
                 if let assistantState {
@@ -65,18 +77,14 @@ struct ResultRow: View, Equatable {
             Spacer(minLength: 8)
 
             if isSelected {
-                Image(systemName: "return")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(7)
-                    .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
+                KeyChip(symbolName: "return")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, assistantState == nil ? 0 : 10)
         .frame(minHeight: FloodlightMetrics.resultRowHeight)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: FloodlightMetrics.resultRowCornerRadius, style: .continuous)
                 .fill(backgroundColor)
         }
         .contentShape(Rectangle())
@@ -89,10 +97,15 @@ struct ResultRow: View, Equatable {
                 ? .white.opacity(isHovered ? 0.16 : 0.12)
                 : .black.opacity(isHovered ? 0.11 : 0.08)
         }
-        guard isHovered else { return .clear }
-        return colorScheme == .dark
-            ? .white.opacity(0.075)
-            : .black.opacity(0.055)
+        if isHovered {
+            return colorScheme == .dark
+                ? .white.opacity(0.075)
+                : .black.opacity(0.055)
+        }
+        if isTopHit {
+            return .primary.opacity(FloodlightMetrics.topHitWashOpacity)
+        }
+        return .clear
     }
 }
 
@@ -111,18 +124,18 @@ private struct AssistantAnswerView: View {
                     .controlSize(.mini)
                 Text("Asking…")
             }
-            .font(.system(size: 11))
+            .font(FloodlightMetrics.Typography.rowSubtitle)
             .foregroundStyle(.secondary)
         case .answered(let text):
             Text(text)
-                .font(.system(size: 12))
+                .font(FloodlightMetrics.Typography.assistantAnswer)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
         case .failed(let message):
             Text(message)
-                .font(.system(size: 11))
+                .font(FloodlightMetrics.Typography.rowSubtitle)
                 .foregroundStyle(.red)
                 .padding(.top, 2)
         }
@@ -131,6 +144,7 @@ private struct AssistantAnswerView: View {
 
 private struct ResultIcon: View {
     let item: SearchItem
+    var size: CGFloat = FloodlightMetrics.standardIconSize
     @State private var fileIcon: NSImage?
 
     var body: some View {
@@ -147,12 +161,15 @@ private struct ResultIcon: View {
                 Image(systemName: item.kind.symbolName)
                     .resizable()
                     .scaledToFit()
-                    .padding(8)
-                    .foregroundStyle(iconColor)
-                    .background(iconColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(size * 0.21)
+                    .foregroundStyle(FloodlightMetrics.iconTint(for: item.kind))
+                    .background(
+                        FloodlightMetrics.iconTint(for: item.kind).opacity(FloodlightMetrics.iconTileTintOpacity),
+                        in: RoundedRectangle(cornerRadius: FloodlightMetrics.iconTileCornerRadius, style: .continuous)
+                    )
             }
         }
-        .frame(width: 38, height: 38)
+        .frame(width: size, height: size)
         .task(id: item.fileURL?.path) {
             guard let url = item.fileURL else {
                 fileIcon = nil
@@ -163,16 +180,6 @@ private struct ResultIcon: View {
             } else {
                 fileIcon = await FileIconCache.shared.icon(for: url)
             }
-        }
-    }
-
-    private var iconColor: Color {
-        switch item.kind {
-        case .assistant: .purple
-        case .calculator: .orange
-        case .systemSetting: .gray
-        case .web: .blue
-        case .application, .file, .folder: .accentColor
         }
     }
 }

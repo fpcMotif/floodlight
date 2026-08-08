@@ -224,13 +224,28 @@ final class FloodlightPanelController {
         }
     }
 
+    /// Grows or shrinks the panel instead of snapping between heights. Under
+    /// Reduce Motion the resize itself is instant — no sliding or growing —
+    /// because that spatial movement is exactly what Reduce Motion asks to
+    /// remove; `SearchView`'s content crossfade is the substitute motion,
+    /// not a faster version of this one.
     private func resize(to height: CGFloat) {
         guard abs(panel.frame.height - height) > 0.5 else { return }
         var frame = panel.frame
         let top = frame.maxY
         frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
-        panel.setFrame(frame, display: false, animate: false)
+
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            panel.setFrame(frame, display: false, animate: false)
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 
     private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {

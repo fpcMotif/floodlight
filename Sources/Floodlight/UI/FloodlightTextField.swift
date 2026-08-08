@@ -18,9 +18,15 @@ struct FloodlightTextField: NSViewRepresentable {
         let textField = NSTextField()
         textField.delegate = context.coordinator
         textField.stringValue = text
-        textField.placeholderString = placeholder
-        textField.font = .systemFont(ofSize: 24, weight: .regular)
+        textField.font = .systemFont(ofSize: FloodlightMetrics.Typography.inputSize, weight: .light)
         textField.textColor = .labelColor
+        textField.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .font: textField.font as Any,
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+        )
         textField.isBordered = false
         textField.isBezeled = false
         textField.drawsBackground = false
@@ -57,20 +63,20 @@ struct FloodlightTextField: NSViewRepresentable {
                 let editor = window.fieldEditor(false, for: textField) as? NSTextView,
                 window.firstResponder === editor
             {
-                editor.insertionPointColor = .labelColor
+                editor.insertionPointColor = .controlAccentColor
                 Self.placeInsertionPointAtEnd(in: editor)
                 return
             }
             window.makeFirstResponder(textField)
-            Self.useNeutralInsertionPoint(in: window, for: textField)
+            Self.applyAccentInsertionPoint(in: window, for: textField)
         }
     }
 
-    private static func useNeutralInsertionPoint(in window: NSWindow, for textField: NSTextField) {
+    private static func applyAccentInsertionPoint(in window: NSWindow, for textField: NSTextField) {
         guard let editor = window.fieldEditor(false, for: textField) as? NSTextView else {
             return
         }
-        editor.insertionPointColor = .labelColor
+        editor.insertionPointColor = .controlAccentColor
         placeInsertionPointAtEnd(in: editor)
     }
 
@@ -97,7 +103,7 @@ struct FloodlightTextField: NSViewRepresentable {
             else {
                 return
             }
-            FloodlightTextField.useNeutralInsertionPoint(in: window, for: textField)
+            FloodlightTextField.applyAccentInsertionPoint(in: window, for: textField)
         }
 
         func controlTextDidChange(_ notification: Notification) {
