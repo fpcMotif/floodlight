@@ -32,10 +32,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         presentation: FloodlightConfigurationPresentation = .onboarding,
-        activeShortcut: FloodlightShortcut,
+        activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
-        selectShortcut: @escaping (FloodlightShortcut) -> Bool,
+        selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
         setLaunchAtLogin: @escaping (Bool) -> String?,
         chooseScope: @escaping () -> URL?,
         onFinished: @escaping () -> Void,

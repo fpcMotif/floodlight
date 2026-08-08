@@ -25,7 +25,7 @@ final class OnboardingSession {
     static let currentVersion = 2
     static let completedVersionKey = "onboarding-completed-version"
 
-    var activeShortcut: FloodlightShortcut
+    var activeShortcut: FloodlightShortcut?
     var shortcutMessage: String?
     var launchesAtLogin: Bool
     var launchAtLoginMessage: String?
@@ -42,7 +42,7 @@ final class OnboardingSession {
     private let fullDiskAccessProvider: () -> Bool
 
     init(
-        activeShortcut: FloodlightShortcut,
+        activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
         defaults: UserDefaults = .standard,

@@ -102,12 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panelController?.hide()
         let controller = OnboardingWindowController(
             presentation: presentation,
-            activeShortcut: globalHotKeyRegistration.activeShortcut
-                ?? FloodlightShortcut.preferred(),
+            activeShortcut: globalHotKeyRegistration.activeShortcut,
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             selectShortcut: { [weak self] shortcut in
-                self?.selectShortcut(shortcut) ?? false
+                self?.selectShortcut(shortcut) ?? .noShortcutActive
             },
             setLaunchAtLogin: { enabled in
                 do {
@@ -169,10 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
     }
 
-    private func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
-        let selected = globalHotKeyRegistration.replace(with: shortcut)
+    private func selectShortcut(
+        _ shortcut: FloodlightShortcut
+    ) -> GlobalHotKeyReplacementOutcome {
+        let outcome = globalHotKeyRegistration.replace(with: shortcut)
         model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
-        return selected
+        return outcome
     }
 
     private func configurationClosed(showSearch: Bool) {

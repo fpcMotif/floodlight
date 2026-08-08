@@ -24,6 +24,12 @@ enum GlobalHotKeyError: Error, Equatable, Sendable {
     case identifierExhausted
 }
 
+enum GlobalHotKeyReplacementOutcome: Equatable, Sendable {
+    case requestedShortcutActive(FloodlightShortcut)
+    case previousShortcutActive(FloodlightShortcut)
+    case noShortcutActive
+}
+
 @MainActor
 protocol GlobalHotKeyHandlerToken: AnyObject {
     @discardableResult
@@ -38,6 +44,8 @@ protocol GlobalHotKeyRegistrationToken: AnyObject {
 
 @MainActor
 protocol GlobalHotKeySystem: AnyObject {
+    var supportsConcurrentRegistrations: Bool { get }
+
     func installHandler(
         _ onEvent: @escaping @MainActor (GlobalHotKeyEvent) -> OSStatus
     ) -> Result<any GlobalHotKeyHandlerToken, GlobalHotKeyError>
@@ -51,6 +59,7 @@ protocol GlobalHotKeySystem: AnyObject {
 @MainActor
 final class GlobalHotKeyRegistration {
     private struct ActiveRegistration {
+        let shortcut: FloodlightShortcut
         let identifier: GlobalHotKeyIdentifier
         let token: any GlobalHotKeyRegistrationToken
     }
@@ -60,6 +69,7 @@ final class GlobalHotKeyRegistration {
     private let onPressed: @MainActor () -> Void
     private var handlerToken: (any GlobalHotKeyHandlerToken)?
     private var activeRegistration: ActiveRegistration?
+    private var pendingCleanupTokens: [any GlobalHotKeyRegistrationToken] = []
     private var nextIdentifier: UInt32?
 
     private(set) var activeShortcut: FloodlightShortcut?
@@ -94,6 +104,11 @@ final class GlobalHotKeyRegistration {
         if let error = activeRegistration?.token.invalidate() {
             Self.log(error)
         }
+        for token in pendingCleanupTokens {
+            if let error = token.invalidate() {
+                Self.log(error)
+            }
+        }
         if let error = handlerToken?.invalidate() {
             Self.log(error)
         }
@@ -101,45 +116,106 @@ final class GlobalHotKeyRegistration {
 
     @discardableResult
     func start(preferred: FloodlightShortcut) -> FloodlightShortcut? {
+        retryPendingCleanup()
         if let activeShortcut { return activeShortcut }
+        guard pendingCleanupTokens.isEmpty else { return nil }
         lastFailure = nil
         guard installHandlerIfNeeded() else { return nil }
 
-        if register(preferred) {
+        if registerAndActivate(preferred) {
             return activeShortcut
         }
-        _ = register(preferred.fallback)
+        _ = registerAndActivate(preferred.fallback)
         return activeShortcut
     }
 
-    /// Preserves the existing replacement behavior. Transactional outcomes
-    /// and truthful restoration failure UI are introduced by issue #36.
-    func replace(with shortcut: FloodlightShortcut) -> Bool {
+    func replace(with shortcut: FloodlightShortcut) -> GlobalHotKeyReplacementOutcome {
         lastFailure = nil
+        retryPendingCleanup()
         guard shortcut != activeShortcut else {
             shortcut.save(in: defaults)
-            return true
+            return .requestedShortcutActive(shortcut)
         }
-        guard installHandlerIfNeeded() else { return false }
+        guard pendingCleanupTokens.isEmpty else {
+            if let activeShortcut {
+                return .previousShortcutActive(activeShortcut)
+            }
+            return .noShortcutActive
+        }
+        guard installHandlerIfNeeded() else { return .noShortcutActive }
 
-        let previous = activeShortcut
-        invalidateActiveRegistration()
-        if register(shortcut) {
-            shortcut.save(in: defaults)
-            return true
+        if system.supportsConcurrentRegistrations || activeRegistration == nil {
+            return replaceWhilePreservingCurrent(with: shortcut)
         }
-        if let previous {
-            _ = register(previous)
-        }
-        return false
+        return replaceWithRestoration(with: shortcut)
     }
 
     func stop() {
-        invalidateActiveRegistration()
-        if let error = handlerToken?.invalidate() {
-            record(error)
+        retryPendingCleanup()
+        if let activeRegistration {
+            if let error = activeRegistration.token.invalidate() {
+                record(error)
+                pendingCleanupTokens.append(activeRegistration.token)
+            }
+            self.activeRegistration = nil
+            activeShortcut = nil
         }
-        handlerToken = nil
+        guard pendingCleanupTokens.isEmpty else { return }
+        if let handlerToken {
+            if let error = handlerToken.invalidate() {
+                record(error)
+                return
+            }
+            self.handlerToken = nil
+        }
+    }
+
+    private func replaceWhilePreservingCurrent(
+        with shortcut: FloodlightShortcut
+    ) -> GlobalHotKeyReplacementOutcome {
+        let previous = activeRegistration
+        guard let requested = makeRegistration(shortcut) else {
+            if let previous {
+                return .previousShortcutActive(previous.shortcut)
+            }
+            return .noShortcutActive
+        }
+
+        if let previous, let error = previous.token.invalidate() {
+            record(error)
+            if let rollbackError = requested.token.invalidate() {
+                record(rollbackError)
+                pendingCleanupTokens.append(requested.token)
+            }
+            return .previousShortcutActive(previous.shortcut)
+        }
+        activate(requested)
+        shortcut.save(in: defaults)
+        return .requestedShortcutActive(shortcut)
+    }
+
+    private func replaceWithRestoration(
+        with shortcut: FloodlightShortcut
+    ) -> GlobalHotKeyReplacementOutcome {
+        let previous = activeRegistration
+        if let previous, let error = previous.token.invalidate() {
+            record(error)
+            return .previousShortcutActive(previous.shortcut)
+        }
+        activeRegistration = nil
+        activeShortcut = nil
+        if let requested = makeRegistration(shortcut) {
+            activate(requested)
+            shortcut.save(in: defaults)
+            return .requestedShortcutActive(shortcut)
+        }
+        guard let previousShortcut = previous?.shortcut,
+              let restored = makeRegistration(previousShortcut)
+        else {
+            return .noShortcutActive
+        }
+        activate(restored)
+        return .previousShortcutActive(previousShortcut)
     }
 
     private func installHandlerIfNeeded() -> Bool {
@@ -156,22 +232,32 @@ final class GlobalHotKeyRegistration {
         }
     }
 
-    private func register(_ shortcut: FloodlightShortcut) -> Bool {
+    private func registerAndActivate(_ shortcut: FloodlightShortcut) -> Bool {
+        guard let registration = makeRegistration(shortcut) else { return false }
+        activate(registration)
+        return true
+    }
+
+    private func activate(_ registration: ActiveRegistration) {
+        activeRegistration = registration
+        activeShortcut = registration.shortcut
+    }
+
+    private func makeRegistration(_ shortcut: FloodlightShortcut) -> ActiveRegistration? {
         guard let identifier = allocateIdentifier() else {
             record(.identifierExhausted)
-            return false
+            return nil
         }
         switch system.register(shortcut, identifier: identifier) {
         case let .success(token):
-            activeRegistration = ActiveRegistration(
+            return ActiveRegistration(
+                shortcut: shortcut,
                 identifier: identifier,
                 token: token
             )
-            activeShortcut = shortcut
-            return true
         case let .failure(error):
             record(error)
-            return false
+            return nil
         }
     }
 
@@ -196,12 +282,12 @@ final class GlobalHotKeyRegistration {
         return noErr
     }
 
-    private func invalidateActiveRegistration() {
-        if let error = activeRegistration?.token.invalidate() {
+    private func retryPendingCleanup() {
+        pendingCleanupTokens = pendingCleanupTokens.filter { token in
+            guard let error = token.invalidate() else { return false }
             record(error)
+            return true
         }
-        activeRegistration = nil
-        activeShortcut = nil
     }
 
     private func record(_ error: GlobalHotKeyError) {
@@ -216,6 +302,9 @@ final class GlobalHotKeyRegistration {
 
 @MainActor
 private final class CarbonGlobalHotKeySystem: GlobalHotKeySystem {
+    /// Distinct key combinations and EventHotKeyID values coexist in Carbon.
+    let supportsConcurrentRegistrations = true
+
     func installHandler(
         _ onEvent: @escaping @MainActor (GlobalHotKeyEvent) -> OSStatus
     ) -> Result<any GlobalHotKeyHandlerToken, GlobalHotKeyError> {
@@ -318,10 +407,10 @@ private final class CarbonHandlerToken: GlobalHotKeyHandlerToken {
     func invalidate() -> GlobalHotKeyError? {
         guard let reference else { return nil }
         let status = RemoveEventHandler(reference)
-        self.reference = nil
         guard status == noErr else {
             return .handlerRemovalFailed(status: status)
         }
+        self.reference = nil
         if let callbackContext {
             Unmanaged<CarbonHotKeyCallbackBox>.fromOpaque(callbackContext).release()
             self.callbackContext = nil
@@ -347,8 +436,11 @@ private final class CarbonRegistrationToken: GlobalHotKeyRegistrationToken {
     func invalidate() -> GlobalHotKeyError? {
         guard let reference else { return nil }
         let status = UnregisterEventHotKey(reference)
+        guard status == noErr else {
+            return .unregistrationFailed(status: status)
+        }
         self.reference = nil
-        return status == noErr ? nil : .unregistrationFailed(status: status)
+        return nil
     }
 }
 

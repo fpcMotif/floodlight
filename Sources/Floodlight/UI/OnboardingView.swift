@@ -85,7 +85,13 @@ struct OnboardingView: View {
                     }
 
                     Spacer()
-                    ShortcutPreview(shortcut: session.activeShortcut)
+                    if let activeShortcut = session.activeShortcut {
+                        ShortcutPreview(shortcut: activeShortcut)
+                    } else {
+                        Text("Not active")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.vertical, 12)
 

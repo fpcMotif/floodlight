@@ -166,17 +166,18 @@ final class OnboardingTests: XCTestCase {
     func testSelectingTheActiveShortcutClearsTheMessageWithoutReregistering() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         session.shortcutMessage = "stale"
+        spy.selectOutcome = .requestedShortcutActive(.optionSpace)
 
         flow.handleShortcutSelection(.optionSpace)
 
         XCTAssertNil(session.shortcutMessage)
         XCTAssertEqual(session.activeShortcut, .optionSpace)
-        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+        XCTAssertEqual(spy.selectedShortcuts, [.optionSpace])
     }
 
     func testSelectingAnAvailableShortcutAdoptsIt() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
-        spy.selectResult = true
+        spy.selectOutcome = .requestedShortcutActive(.commandSpace)
 
         flow.handleShortcutSelection(.commandSpace)
 
@@ -209,6 +210,31 @@ final class OnboardingTests: XCTestCase {
         )
     }
 
+    func testSelectionReportsWhenNoShortcutRemainsActive() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let session = OnboardingSession(
+            activeShortcut: .optionSpace,
+            launchesAtLogin: true,
+            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            defaults: defaults,
+            fullDiskAccessProvider: { false }
+        )
+        let flow = OnboardingFlowState(
+            session: session,
+            selectShortcut: { _ in .noShortcutActive },
+            openSpotlightSettings: {}
+        )
+
+        flow.handleShortcutSelection(.commandSpace)
+
+        XCTAssertNil(session.activeShortcut)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it."
+        )
+    }
+
     func testBeginningSpotlightReplacementQueuesCommandSpaceAndOpensSettings() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
 
@@ -235,7 +261,7 @@ final class OnboardingTests: XCTestCase {
     func testRetryingAdoptsCommandSpaceOnceSpotlightReleasesIt() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
-        spy.selectResult = true
+        spy.selectOutcome = .requestedShortcutActive(.commandSpace)
 
         flow.retryPendingShortcut()
 
@@ -255,6 +281,21 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(
             session.shortcutMessage,
             "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here."
+        )
+        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
+    }
+
+    func testRetryingReportsWhenNoShortcutRemainsActive() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        flow.beginSpotlightReplacement()
+        spy.selectOutcome = .noShortcutActive
+
+        flow.retryPendingShortcut()
+
+        XCTAssertNil(session.activeShortcut)
+        XCTAssertEqual(
+            session.shortcutMessage,
+            "Spotlight still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space or update Spotlight and try again."
         )
         XCTAssertEqual(flow.pendingShortcut, .commandSpace)
     }
@@ -302,6 +343,7 @@ final class OnboardingTests: XCTestCase {
             fullDiskAccessProvider: { false }
         )
         let spy = OnboardingFlowSpy()
+        spy.selectOutcome = .previousShortcutActive(activeShortcut)
         let flow = OnboardingFlowState(
             session: session,
             selectShortcut: spy.selectShortcut,
@@ -349,13 +391,13 @@ final class OnboardingTests: XCTestCase {
 
 @MainActor
 private final class OnboardingFlowSpy {
-    var selectResult = false
+    var selectOutcome = GlobalHotKeyReplacementOutcome.noShortcutActive
     private(set) var selectedShortcuts: [FloodlightShortcut] = []
     private(set) var spotlightSettingsOpenCount = 0
 
-    func selectShortcut(_ shortcut: FloodlightShortcut) -> Bool {
+    func selectShortcut(_ shortcut: FloodlightShortcut) -> GlobalHotKeyReplacementOutcome {
         selectedShortcuts.append(shortcut)
-        return selectResult
+        return selectOutcome
     }
 
     func openSpotlightSettings() {

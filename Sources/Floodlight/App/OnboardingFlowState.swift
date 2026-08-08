@@ -3,14 +3,14 @@ import Foundation
 @MainActor
 final class OnboardingFlowState {
     private let session: OnboardingSession
-    private let selectShortcut: (FloodlightShortcut) -> Bool
+    private let selectShortcut: (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome
     private let openSpotlightSettings: () -> Void
     private(set) var pendingShortcut: FloodlightShortcut?
     private(set) var didFinish = false
 
     init(
         session: OnboardingSession,
-        selectShortcut: @escaping (FloodlightShortcut) -> Bool,
+        selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
         openSpotlightSettings: @escaping () -> Void
     ) {
         self.session = session
@@ -21,20 +21,19 @@ final class OnboardingFlowState {
     func handleShortcutSelection(_ shortcut: FloodlightShortcut) {
         pendingShortcut = nil
 
-        guard shortcut != session.activeShortcut else {
+        switch selectShortcut(shortcut) {
+        case let .requestedShortcutActive(activeShortcut):
+            session.activeShortcut = activeShortcut
             session.shortcutMessage = nil
-            return
-        }
-
-        if selectShortcut(shortcut) {
-            session.activeShortcut = shortcut
-            session.shortcutMessage = nil
-        } else if shortcut == .commandSpace {
-            session.shortcutMessage =
-                "Spotlight or another app still owns ⌘ Space. Floodlight kept \(session.activeShortcut.displayName) active."
-        } else {
-            session.shortcutMessage =
-                "macOS could not register ⌥ Space. Floodlight kept \(session.activeShortcut.displayName) active."
+        case let .previousShortcutActive(activeShortcut):
+            session.activeShortcut = activeShortcut
+            session.shortcutMessage = refusalMessage(
+                for: shortcut,
+                activeShortcut: activeShortcut
+            )
+        case .noShortcutActive:
+            session.activeShortcut = nil
+            session.shortcutMessage = inactiveMessage(for: shortcut)
         }
     }
 
@@ -52,17 +51,40 @@ final class OnboardingFlowState {
             return
         }
 
-        if selectShortcut(pendingShortcut) {
-            session.activeShortcut = pendingShortcut
+        switch selectShortcut(pendingShortcut) {
+        case let .requestedShortcutActive(activeShortcut):
+            session.activeShortcut = activeShortcut
             session.shortcutMessage = "⌘ Space is ready."
             self.pendingShortcut = nil
-        } else {
+        case let .previousShortcutActive(activeShortcut):
+            session.activeShortcut = activeShortcut
             session.shortcutMessage =
                 "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here."
+        case .noShortcutActive:
+            session.activeShortcut = nil
+            session.shortcutMessage =
+                "Spotlight still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space or update Spotlight and try again."
         }
     }
 
     func markFinished() {
         didFinish = true
+    }
+
+    private func refusalMessage(
+        for shortcut: FloodlightShortcut,
+        activeShortcut: FloodlightShortcut
+    ) -> String {
+        if shortcut == .commandSpace {
+            return "Spotlight or another app still owns ⌘ Space. Floodlight kept \(activeShortcut.displayName) active."
+        }
+        return "macOS could not register ⌥ Space. Floodlight kept \(activeShortcut.displayName) active."
+    }
+
+    private func inactiveMessage(for shortcut: FloodlightShortcut) -> String {
+        if shortcut == .commandSpace {
+            return "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it."
+        }
+        return "macOS could not register ⌥ Space. Floodlight has no active shortcut; try again."
     }
 }
