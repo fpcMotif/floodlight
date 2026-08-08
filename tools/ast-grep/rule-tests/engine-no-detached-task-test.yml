@@ -1,0 +1,15 @@
+id: engine-no-detached-task
+valid:
+  - |
+    Task { await self.refresh() }
+  - |
+    await withTaskGroup(of: Void.self) { group in
+        group.addTask { await refresh() }
+    }
+  - |
+    let hint = "Task.detached is banned in the engine"
+invalid:
+  - |
+    Task.detached { await self.refresh() }
+  - |
+    let discovery = await Task.detached(priority: .utility) { discover() }.value

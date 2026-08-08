@@ -1,5 +1,5 @@
-import Foundation
 import FloodlightTestSupport
+import Foundation
 import XCTest
 @testable import FloodlightEngine
 
@@ -8,7 +8,6 @@ import XCTest
 /// strings, pathological nesting, and exact documentation of the parser's
 /// surprising-but-deliberate behaviors.
 final class CalculatorAdversarialTests: XCTestCase {
-
     // MARK: - Algebraic laws (seeded properties)
 
     func testAdditionIsCommutative() throws {
@@ -249,14 +248,18 @@ final class CalculatorAdversarialTests: XCTestCase {
     func testDeeplyNestedParentheses() {
         let depth = 200
         var expr = String(repeating: "(", count: depth) + "1"
-        for _ in 0..<depth { expr += ")" }
+        for _ in 0..<depth {
+            expr += ")"
+        }
         XCTAssertEqual(Calculator.evaluate(expr), 1)
     }
 
     func testDeeplyNestedAddition() {
         let depth = 100
         var expr = String(repeating: "(", count: depth) + "1"
-        for _ in 0..<depth { expr += " + 1)" }
+        for _ in 0..<depth {
+            expr += " + 1)"
+        }
         XCTAssertEqual(Calculator.evaluate(expr), Double(depth + 1))
     }
 
@@ -285,7 +288,10 @@ final class CalculatorAdversarialTests: XCTestCase {
         XCTAssertEqual(Calculator.evaluate("2 ^ 3 ^ 2"), 512) // right-associative
         XCTAssertEqual(Calculator.evaluate("10 % 3 + 2 ^ 3"), 1 + 8)
         XCTAssertEqual(Calculator.evaluate("-(2 + 3) * -(4 - 1)"), -5 * -3)
-        XCTAssertEqual(Calculator.evaluate("((1 + 2) * (3 + 4)) - ((5 + 6) * (7 + 8))"), 3 * 7 - 11 * 15)
+        XCTAssertEqual(
+            Calculator.evaluate("((1 + 2) * (3 + 4)) - ((5 + 6) * (7 + 8))"),
+            3 * 7 - 11 * 15
+        )
         XCTAssertEqual(Calculator.evaluate("2 ^ -1"), 0.5)
     }
 
@@ -347,11 +353,13 @@ final class CalculatorAdversarialTests: XCTestCase {
     /// `String(Double)` switches to scientific notation below 1e-4, which
     /// the parser rejects — pin generated operands to plain decimal.
     private func num(_ value: Double) -> String {
-        if value == value.rounded() && abs(value) < 1e15 {
+        if value == value.rounded(), abs(value) < 1e15 {
             return String(Int64(value))
         }
         var s = String(format: "%.10f", value)
-        while s.hasSuffix("0") { s.removeLast() }
+        while s.hasSuffix("0") {
+            s.removeLast()
+        }
         if s.hasSuffix(".") { s.removeLast() }
         return s
     }
@@ -365,7 +373,8 @@ final class CalculatorAdversarialTests: XCTestCase {
         accuracy: Double
     ) -> Bool {
         guard let lhs = Calculator.evaluate(expression),
-              let rhs = Calculator.evaluate(other) else {
+              let rhs = Calculator.evaluate(other)
+        else {
             return false
         }
         return abs(lhs - rhs) <= accuracy

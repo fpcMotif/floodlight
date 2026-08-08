@@ -14,7 +14,7 @@ package enum WebSearchIntent {
 
     private static let questionWords: Set<String> = [
         "how", "what", "why", "who", "when", "where",
-        "is", "are", "can", "does", "do", "should", "will", "which"
+        "is", "are", "can", "does", "do", "should", "will", "which",
     ]
 
     package static func shouldPromote(query: String, localMatchCount: Int) -> Bool {

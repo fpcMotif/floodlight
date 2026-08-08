@@ -1,0 +1,19 @@
+id: engine-no-detached-task
+language: Swift
+severity: error
+message: >-
+  `Task.detached` cuts the work loose from cancellation and priority — call the
+  work directly from the enclosing `nonisolated async` function, or use a task
+  group if it genuinely needs to run concurrently.
+note: >-
+  A detached task is not a background thread: it runs on the same cooperative
+  pool as everything else, so it buys no protection from blocking I/O. What it
+  does buy is an unstructured task the caller cannot cancel and whose failures
+  nobody awaits — so when the panel closes mid-refresh, the walk keeps going.
+  `SystemCatalog.refreshIfNeeded` used to be detached and is not any more: the
+  function is already `nonisolated async`, so its body never ran on the main
+  actor to begin with.
+files:
+  - "Sources/FloodlightEngine/**/*.swift"
+rule:
+  pattern: Task.detached

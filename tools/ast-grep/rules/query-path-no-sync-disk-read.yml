@@ -1,0 +1,52 @@
+id: query-path-no-sync-disk-read
+language: Swift
+severity: error
+message: >-
+  Synchronous disk read inside a query-path entry point — do the I/O in
+  `start()` or `refreshIfNeeded(minimumInterval:forceDiscovery:)` and have the
+  query read the in-memory snapshot.
+note: >-
+  `immediatePage(for:limit:)` and `indexedItems(for:limit:)` are the two
+  functions the `Catalog` protocol declares, and both run on every keystroke.
+  A stat, a directory listing, or a file read on that path turns typing into
+  synchronous I/O — the exact stall a Spotlight replacement exists to avoid.
+  Discovery is allowed to be slow, which is why it lives behind `start` and
+  `refreshIfNeeded` and publishes a snapshot the query path only reads:
+  `ApplicationCatalog.snapshotApplications()` is that seam.
+
+  Scope note: this matches the entry points by name, because ast-grep cannot
+  follow a call into a helper. A helper called from the query path can still
+  smuggle I/O in — that is rung 2 of the ladder in sgconfig.yml, not a reason
+  to widen this rule into false positives over discovery code.
+files:
+  - "Sources/FloodlightEngine/**/*.swift"
+rule:
+  all:
+    - any:
+        # `Data(contentsOf:)` / `String(contentsOf:encoding:)` and friends.
+        # Matched on the callee plus the argument label rather than as a
+        # pattern, because `$$$ARGS` inside a labelled slot fills that one
+        # argument's value and so silently misses every multi-argument
+        # overload — which is most of them.
+        - all:
+            - kind: call_expression
+            - has:
+                kind: simple_identifier
+                regex: "^(Data|String|NSString|NSData|NSDictionary|NSArray)$"
+            - has:
+                stopBy: end
+                kind: value_argument_label
+                regex: "^(contentsOf|contentsOfFile|contentsOfURL)$"
+        # FileManager's synchronous surface. `$$$ARGS` spans arguments here
+        # because it sits in the argument-list slot, not inside a label.
+        - pattern: "$FM.contentsOfDirectory($$$ARGS)"
+        - pattern: "$FM.subpathsOfDirectory($$$ARGS)"
+        - pattern: "$FM.attributesOfItem($$$ARGS)"
+        - pattern: "$FM.enumerator($$$ARGS)"
+        - pattern: "$FM.fileExists($$$ARGS)"
+    - inside:
+        kind: function_declaration
+        stopBy: end
+        has:
+          field: name
+          regex: "^(immediatePage|indexedItems)$"

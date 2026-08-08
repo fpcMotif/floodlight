@@ -12,7 +12,6 @@ import XCTest
 /// byte*, no matter what it contains. The URL side is softer, and this file
 /// documents precisely how soft.
 final class KeywordEngineInjectionTests: XCTestCase {
-
     private let assistantEngine = KeywordEngine(
         id: "claude",
         title: "Ask Claude",
@@ -30,12 +29,12 @@ final class KeywordEngineInjectionTests: XCTestCase {
     )
 
     private func assistantArguments(of item: SearchItem) -> [String]? {
-        guard case .askAssistant(_, let arguments) = item.action else { return nil }
+        guard case let .askAssistant(_, arguments) = item.action else { return nil }
         return arguments
     }
 
     private func openedURL(of item: SearchItem) -> URL? {
-        guard case .open(let url) = item.action else { return nil }
+        guard case let .open(url) = item.action else { return nil }
         return url
     }
 
@@ -52,7 +51,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { remainder in
             guard !remainder.isEmpty else { return true }
             guard let item = self.assistantEngine.makeSearchItem(remainder: remainder),
-                  let arguments = self.assistantArguments(of: item) else {
+                  let arguments = self.assistantArguments(of: item)
+            else {
                 return false
             }
             return arguments == ["-p", remainder]
@@ -114,7 +114,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { remainder in
             guard !remainder.isEmpty,
                   let item = self.assistantEngine.makeSearchItem(remainder: remainder),
-                  case .askAssistant(let command, _) = item.action else {
+                  case let .askAssistant(command, _) = item.action
+            else {
                 return remainder.isEmpty
             }
             return command == "claude"
@@ -128,7 +129,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
             runs: 500
         ) { remainder in
             guard !remainder.isEmpty,
-                  let item = self.assistantEngine.makeSearchItem(remainder: remainder) else {
+                  let item = self.assistantEngine.makeSearchItem(remainder: remainder)
+            else {
                 return true
             }
             if case .askAssistant = item.action { return true }
@@ -148,7 +150,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { remainder in
             guard !remainder.isEmpty,
                   let item = self.webEngine.makeSearchItem(remainder: remainder),
-                  let url = self.openedURL(of: item) else {
+                  let url = self.openedURL(of: item)
+            else {
                 // A remainder that cannot be encoded yields no row at all,
                 // which is also safe.
                 return true
@@ -167,7 +170,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { remainder in
             guard !remainder.isEmpty,
                   let item = self.webEngine.makeSearchItem(remainder: remainder),
-                  let url = self.openedURL(of: item) else {
+                  let url = self.openedURL(of: item)
+            else {
                 return true
             }
             return url.fragment == nil && url.path == "/results"
@@ -187,7 +191,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
             // are precisely the ones that do not round-trip, and they get
             // their own test below.
             guard !remainder.isEmpty,
-                  !remainder.contains(where: { "&=+?/".contains($0) }) else {
+                  !remainder.contains(where: { "&=+?/".contains($0) })
+            else {
                 return true
             }
             guard let item = self.webEngine.makeSearchItem(remainder: remainder),
@@ -445,7 +450,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
     // MARK: - Availability
 
     func testWebEnginesAreAlwaysAvailableAndAssistantsAreGated() async {
-        let webEngineIDs: Set<String> = [
+        let webEngineIDs: Set = [
             "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
         ]
 

@@ -19,7 +19,9 @@ final class FuzzyMatcherPropertyTests: XCTestCase {
         // which pins that case deliberately.
         let realisticText = Gen<String>.frequency([
             (5, .string(
-                alphabet: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_/."),
+                alphabet: Array(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_/."
+                ),
                 length: 0...20
             )),
             (3, .string(alphabet: Array("éüñçåøßÆΩàèìòùÄÖÜ"), length: 0...10)),
@@ -177,7 +179,7 @@ final class FuzzyMatcherPropertyTests: XCTestCase {
 
     // MARK: - ASCII / string equivalence
 
-    func testASCIIFastPathMatchesStringScorer() throws {
+    func testASCIIFastPathMatchesStringScorer() {
         let queries = ["", "a", "app", "wifi", "privacy", "sftwre", "x y", "zzz", "abc", "test"]
         let candidates = [
             "appearance light dark",
@@ -229,16 +231,16 @@ final class FuzzyMatcherPropertyTests: XCTestCase {
         XCTAssertLessThan(FuzzyMatcher.confidentMatchThreshold, 15_000)
     }
 
-    func testExactMatchExceedsConfidenceThreshold() {
+    func testExactMatchExceedsConfidenceThreshold() throws {
         XCTAssertGreaterThan(
-            FuzzyMatcher.score(query: "test", candidate: "test")!,
+            try XCTUnwrap(FuzzyMatcher.score(query: "test", candidate: "test")),
             FuzzyMatcher.confidentMatchThreshold
         )
     }
 
-    func testPrefixMatchExceedsConfidenceThreshold() {
+    func testPrefixMatchExceedsConfidenceThreshold() throws {
         XCTAssertGreaterThan(
-            FuzzyMatcher.score(query: "tes", candidate: "test")!,
+            try XCTUnwrap(FuzzyMatcher.score(query: "tes", candidate: "test")),
             FuzzyMatcher.confidentMatchThreshold
         )
     }

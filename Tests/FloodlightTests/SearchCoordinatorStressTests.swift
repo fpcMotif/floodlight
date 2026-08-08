@@ -165,7 +165,8 @@ final class SearchCoordinatorStressTests: XCTestCase {
         }
         coordinator.select(item)
 
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("CopySelectionStress-\(UUID().uuidString)"))
+        let pasteboard = NSPasteboard(name: NSPasteboard
+            .Name("CopySelectionStress-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
         // copySelection writes to .general; emulate by capturing the value
         // via the same logic the production code uses.
@@ -313,7 +314,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
             system: []
         )
         let web = try XCTUnwrap(results.first { $0.kind == .web })
-        guard case .open(let url) = web.action else {
+        guard case let .open(url) = web.action else {
             XCTFail("expected open action")
             return
         }

@@ -278,7 +278,7 @@ package enum IsolatedDefaultsError: LocalizedError {
 
     package var errorDescription: String? {
         switch self {
-        case .couldNotCreateSuite(let name):
+        case let .couldNotCreateSuite(name):
             "Could not create an isolated UserDefaults suite named \(name)"
         }
     }

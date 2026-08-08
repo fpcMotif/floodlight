@@ -1,6 +1,12 @@
 .DS_Store
 .build/
 .swiftpm/
+# Pinned gate binaries, fetched by `make install-tools`.
+.tools/
+# Written by scripts/check-rules.sh to prove the rules are armed, and removed
+# again on the way out. Ignored so an interrupted run cannot leave a file that
+# looks like source.
+Sources/*/GateSelfTest.swift
 DerivedData/
 docs/.astro/
 docs/dist/

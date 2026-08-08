@@ -68,6 +68,66 @@ Run the test suite:
 make test
 ```
 
+## Quality gates
+
+`make check` is the single entry point for every mechanical gate, and CI runs
+exactly the same command — so a green run locally is a green run on the pull
+request.
+
+```sh
+make install-tools   # pinned binaries into .tools/, once
+make check           # format, lint, architecture rules, build, dead code
+make format          # fix everything the format gate would complain about
+```
+
+The gate is deliberately made of small pieces you can run one at a time while
+iterating: `make check-format`, `check-lint`, `check-rules`,
+`check-architecture`, `check-build`, `check-dead-code`.
+
+| Gate | Tool | What it owns |
+| --- | --- | --- |
+| `check-format` | SwiftFormat | One deterministic style. Never hand-edit its feedback — run `make format`. |
+| `check-lint` | SwiftLint `--strict` | Performance antipatterns (`first_where`, `contains_over_filter_count`, …) and complexity proxies. |
+| `check-rules` | ast-grep | Floodlight's own invariants — see below. |
+| `check-architecture` | `rg` | Nothing under `Sources` declares `public` or `open`. |
+| `check-build` | `swift build` | Warnings as errors, with strict concurrency checking on. |
+| `check-dead-code` | Periphery | Unused declarations, with no suppression baseline. |
+
+The architecture rules live one-per-file in
+[`tools/ast-grep/rules`](tools/ast-grep/rules) and encode this codebase rather
+than Swift style: the engine may not import a UI framework, the query path may
+not touch the filesystem, the search path may not fully sort a candidate set,
+and `try!`/`as!`/force unwrap may not ship. Every message names the alternative
+to use. Adding a rule is one YAML file plus one test file in
+[`tools/ast-grep/rule-tests`](tools/ast-grep/rule-tests).
+
+Latency budgets run separately, in release configuration, because a debug
+build's search path is several times slower than what a user feels:
+
+```sh
+make test-performance
+```
+
+**A new hot path is not done until it has a budgeted test.** Anything that runs
+per keystroke — scoring, filtering, selection, a new catalog's
+`immediatePage` — gets a test in the engine's performance suite: warm up, take
+many samples, take the median, then assert against a hard bound with enough
+margin to survive a shared CI runner. Print a `FLOODLIGHT_BENCH` line so the
+measured number is in the log even on a green run. `SearchItemRankingPerformanceTests`
+is the shape to copy. Elegance is not a substitute for a measurement, and none
+of the rules above can tell you something is slow — only that it is shaped
+wrong.
+
+Some rules are worth breaking at a specific site. Suppress one with a
+`// ast-grep-ignore: <rule-id>` comment on the line directly above, with the
+reason beside it — ast-grep reports suppressions that have stopped matching, so
+a stale one cannot quietly outlive its justification.
+
+Tool versions are pinned in
+[`scripts/tool-versions.env`](scripts/tool-versions.env); the check scripts
+refuse to run against a different version rather than give you a verdict CI
+will not reproduce.
+
 Build the Astro documentation site:
 
 ```sh

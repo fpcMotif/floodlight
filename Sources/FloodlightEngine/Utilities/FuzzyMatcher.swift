@@ -9,6 +9,8 @@ package enum FuzzyMatcher {
     /// runs and word boundaries carry a candidate past this cutoff.
     package static let confidentMatchThreshold = 9_000
 
+    // periphery:ignore - Test-only boundary that normalizes raw query text.
+    // Production callers normalize once before scoring many candidates.
     static func score(query: String, candidate: String) -> Int? {
         score(
             normalizedQuery: normalized(query),
@@ -69,7 +71,8 @@ package enum FuzzyMatcher {
 
         if query.count <= candidate.count {
             for start in 0...(candidate.count - query.count)
-                where candidate[start..<(start + query.count)].elementsEqual(query) {
+                where candidate[start..<(start + query.count)].elementsEqual(query)
+            {
                 return 12_000 - start
             }
         }
@@ -111,7 +114,9 @@ package enum FuzzyMatcher {
     private static func isBoundary(_ value: String, at index: String.Index) -> Bool {
         guard index > value.startIndex else { return true }
         let previous = value[value.index(before: index)]
-        return previous == " " || previous == "-" || previous == "_" || previous == "/" || previous == "."
+        return previous == " " || previous == "-" || previous == "_" || previous == "/" ||
+            previous ==
+            "."
     }
 
     private static func isASCIIBoundary(_ byte: UInt8) -> Bool {

@@ -1,0 +1,19 @@
+id: engine-no-main-queue-sync
+language: Swift
+severity: error
+message: >-
+  `DispatchQueue.main.sync` blocks the caller on the main thread — mark the
+  work `@MainActor` and `await` it, or hand the result back through the
+  snapshot the shell already reads.
+note: >-
+  The engine never owns the main thread; the shell does. Blocking on it from a
+  scoring or indexing path is both a stall the user sees as a frozen panel and
+  a deadlock whenever the main thread is already waiting on this work. It is
+  also a data race the compiler cannot see through, which is the whole reason
+  strict concurrency checking is on.
+files:
+  - "Sources/FloodlightEngine/**/*.swift"
+rule:
+  any:
+    - pattern: DispatchQueue.main.sync
+    - pattern: DispatchQueue.main.asyncAndWait

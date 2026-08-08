@@ -55,7 +55,11 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         guard let executableURL = await Self.resolveExecutable(named: command) else {
             throw AssistantProcessError.executableNotFound(command)
         }
-        return try await Self.run(executableURL: executableURL, arguments: arguments, timeout: timeout)
+        return try await Self.run(
+            executableURL: executableURL,
+            arguments: arguments,
+            timeout: timeout
+        )
     }
 
     package static func resolveExecutable(named command: String) async -> URL? {
@@ -86,7 +90,11 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         return nil
     }
 
-    private static func run(executableURL: URL, arguments: [String], timeout: Duration) async throws -> String {
+    private static func run(
+        executableURL: URL,
+        arguments: [String],
+        timeout: Duration
+    ) async throws -> String {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
@@ -114,7 +122,10 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         }
 
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<
+                String,
+                Error
+            >) in
                 let watchdog = Task {
                     try? await Task.sleep(for: timeout)
                     guard !Task.isCancelled, process.isRunning else { return }
@@ -151,7 +162,10 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
                         )
                         return
                     }
-                    resumeOnce(continuation, with: .success(output.trimmingCharacters(in: .whitespacesAndNewlines)))
+                    resumeOnce(
+                        continuation,
+                        with: .success(output.trimmingCharacters(in: .whitespacesAndNewlines))
+                    )
                 }
 
                 do {

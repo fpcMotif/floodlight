@@ -71,7 +71,10 @@ final class FloodlightMetricsStressTests: XCTestCase {
             FloodlightMetrics.iconTileCornerRadius,
             FloodlightMetrics.resultRowCornerRadius - FloodlightMetrics.iconTileInset
         )
-        XCTAssertLessThan(FloodlightMetrics.iconTileCornerRadius, FloodlightMetrics.resultRowCornerRadius)
+        XCTAssertLessThan(
+            FloodlightMetrics.iconTileCornerRadius,
+            FloodlightMetrics.resultRowCornerRadius
+        )
         XCTAssertGreaterThan(FloodlightMetrics.iconTileCornerRadius, 0)
     }
 
@@ -150,7 +153,7 @@ final class FloodlightMetricsStressTests: XCTestCase {
                 + FloodlightMetrics.filterBarHeight
                 + FloodlightMetrics.resultPadding * 2
                 + CGFloat(FloodlightMetrics.maximumVisibleResults)
-                    * FloodlightMetrics.resultRowHeight
+                * FloodlightMetrics.resultRowHeight
         )
     }
 

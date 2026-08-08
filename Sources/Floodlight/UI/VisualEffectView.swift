@@ -4,7 +4,6 @@ import SwiftUI
 struct FloodlightSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         // The real glass slab (NSGlassEffectView, in FloodlightPanel) already
         // sits behind this content on macOS 26 with transparency allowed —
@@ -13,7 +12,11 @@ struct FloodlightSurface: ViewModifier {
         // Transparency forced the same solid-material fallback FloodlightPanel
         // uses. Both reasons resolve through the one shared decision.
         if #available(macOS 26.0, *),
-           GlassAvailability.rendersGlass(isSupported: true, reduceTransparency: reduceTransparency) {
+           GlassAvailability.rendersGlass(
+               isSupported: true,
+               reduceTransparency: reduceTransparency
+           )
+        {
             content
         } else {
             content.background {

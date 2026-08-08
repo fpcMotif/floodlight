@@ -13,7 +13,6 @@ import XCTest
 /// means a regression in the shared machinery would surface as a confusing
 /// failure two layers away.
 final class CatalogContractTests: XCTestCase {
-
     /// A catalog that implements only what the protocol *requires*, so the
     /// defaults supplied by the protocol extension are what get tested.
     private final class MinimalCatalog: Catalog, @unchecked Sendable {
@@ -51,12 +50,12 @@ final class CatalogContractTests: XCTestCase {
         XCTAssertTrue(items.isEmpty)
     }
 
-    func testTrackingIsANoOpForACatalogThatCannotLearn() {
+    func testTrackingIsANoOpForACatalogThatCannotLearn() throws {
         // The default `track` exists so the coordinator can call it
         // unconditionally. It must not trap for a catalog that ignores it.
         let catalog = MinimalCatalog()
         catalog.track(query: "q", selectedURL: URL(fileURLWithPath: "/tmp/x"))
-        catalog.track(query: "", selectedURL: URL(string: "https://example.com")!)
+        try catalog.track(query: "", selectedURL: XCTUnwrap(URL(string: "https://example.com")))
     }
 
     func testConvenienceRefreshUsesATwoSecondFloorAndNoForcedDiscovery() async throws {
@@ -289,7 +288,7 @@ final class CatalogContractTests: XCTestCase {
         let tree = try TemporaryTree(label: "FingerprintConcurrentTests")
         var paths: [String] = []
         for index in 0..<20 {
-            paths.append(try tree.makeDirectory("dir-\(index)").path)
+            try paths.append(tree.makeDirectory("dir-\(index)").path)
         }
         let counts = ConcurrentBag<Int>()
 
@@ -309,9 +308,15 @@ final class CatalogContractTests: XCTestCase {
         // users give their folders.
         let tree = try TemporaryTree(label: "FingerprintHostileTests")
         var paths: [String] = []
-        for (index, name) in ["spaces in name", "emoji 🧑‍🚀", "dots...", "ünïcodé",
-                              "trailing ", "  leading"].enumerated() {
-            paths.append(try tree.makeDirectory("\(index)-\(name)").path)
+        for (index, name) in [
+            "spaces in name",
+            "emoji 🧑‍🚀",
+            "dots...",
+            "ünïcodé",
+            "trailing ",
+            "  leading",
+        ].enumerated() {
+            try paths.append(tree.makeDirectory("\(index)-\(name)").path)
         }
         paths.append("/nonexistent-\(UUID().uuidString)")
 

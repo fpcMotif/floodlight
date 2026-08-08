@@ -27,14 +27,23 @@ final class WebSearchIntentTests: XCTestCase {
     }
 
     func testQuestionShapedQueriesArePromotedRegardlessOfLocalMatches() {
-        XCTAssertTrue(WebSearchIntent.shouldPromote(query: "how do I reset my password", localMatchCount: 50))
-        XCTAssertTrue(WebSearchIntent.shouldPromote(query: "what is the weather", localMatchCount: 50))
+        XCTAssertTrue(WebSearchIntent.shouldPromote(
+            query: "how do I reset my password",
+            localMatchCount: 50
+        ))
+        XCTAssertTrue(WebSearchIntent.shouldPromote(
+            query: "what is the weather",
+            localMatchCount: 50
+        ))
         XCTAssertTrue(WebSearchIntent.shouldPromote(query: "is docker free?", localMatchCount: 50))
     }
 
     func testURLShapedQueriesArePromotedRegardlessOfLocalMatches() {
         XCTAssertTrue(WebSearchIntent.shouldPromote(query: "github.com", localMatchCount: 50))
-        XCTAssertTrue(WebSearchIntent.shouldPromote(query: "https://apple.com/mac", localMatchCount: 50))
+        XCTAssertTrue(WebSearchIntent.shouldPromote(
+            query: "https://apple.com/mac",
+            localMatchCount: 50
+        ))
     }
 
     func testPlainQueryWithHealthyMatchesIsNotPromoted() {

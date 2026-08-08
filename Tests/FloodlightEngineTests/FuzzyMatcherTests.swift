@@ -3,20 +3,20 @@ import XCTest
 
 final class FuzzyMatcherTests: XCTestCase {
     func testExactMatchRanksAbovePrefixAndSubsequence() throws {
-        let exact = try XCTUnwrap(FuzzyMatcher.score(query: "safari", candidate: "Safari"))
-        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "saf", candidate: "Safari"))
-        let subsequence = try XCTUnwrap(FuzzyMatcher.score(query: "sfr", candidate: "Safari"))
+        let exact = try XCTUnwrap(score(query: "safari", candidate: "Safari"))
+        let prefix = try XCTUnwrap(score(query: "saf", candidate: "Safari"))
+        let subsequence = try XCTUnwrap(score(query: "sfr", candidate: "Safari"))
 
         XCTAssertGreaterThan(exact, prefix)
         XCTAssertGreaterThan(prefix, subsequence)
     }
 
     func testMissingCharactersDoNotMatch() {
-        XCTAssertNil(FuzzyMatcher.score(query: "xyz", candidate: "Safari"))
+        XCTAssertNil(score(query: "xyz", candidate: "Safari"))
     }
 
     func testEmptyQueryMatchesForRecentItems() {
-        XCTAssertEqual(FuzzyMatcher.score(query: "", candidate: "Safari"), 1)
+        XCTAssertEqual(score(query: "", candidate: "Safari"), 1)
     }
 
     func testASCIIFastPathMatchesStringScorer() {
@@ -45,5 +45,18 @@ final class FuzzyMatcherTests: XCTestCase {
                 )
             }
         }
+    }
+
+    /// Scores a raw query against a raw candidate, the way a catalog does.
+    ///
+    /// The engine has no unnormalized entry point — every caller normalizes
+    /// once at the catalog boundary and scores many candidates against the
+    /// result — so the tests normalize here rather than keeping a production
+    /// wrapper alive that only tests call.
+    private func score(query: String, candidate: String) -> Int? {
+        FuzzyMatcher.score(
+            normalizedQuery: FuzzyMatcher.normalized(query),
+            normalizedCandidate: FuzzyMatcher.normalized(candidate)
+        )
     }
 }

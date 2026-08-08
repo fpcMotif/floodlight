@@ -7,7 +7,9 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
 
     static let preferenceKey = "global-shortcut"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var modifierSymbol: String {
         switch self {
@@ -16,6 +18,7 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    // periphery:ignore - Test-only readable name for the registered modifier.
     var modifierName: String {
         switch self {
         case .commandSpace: "Command"

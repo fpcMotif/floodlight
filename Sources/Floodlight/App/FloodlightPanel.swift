@@ -6,8 +6,13 @@ import SwiftUI
 final class FloodlightPanel: NSPanel {
     var keyEquivalentHandler: ((NSEvent) -> Bool)?
 
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override var canBecomeMain: Bool {
+        false
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if keyEquivalentHandler?(event) == true {
@@ -22,9 +27,13 @@ final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
     private let quickLook = QuickLookController()
-    private var localKeyMonitor: Any?
-    private var resignActiveObservation: NSObjectProtocol?
-    private var accessibilityDisplayObservation: NSObjectProtocol?
+    // Opaque observer tokens, handed back by AppKit as `Any` and
+    // `NSObjectProtocol` — neither of which is Sendable. They are written and
+    // read only on the main actor, plus once from `deinit`, which runs after
+    // the last reference is gone and so cannot race with anything.
+    private nonisolated(unsafe) var localKeyMonitor: Any?
+    private nonisolated(unsafe) var resignActiveObservation: NSObjectProtocol?
+    private nonisolated(unsafe) var accessibilityDisplayObservation: NSObjectProtocol?
 
     init(model: SearchCoordinator) {
         self.model = model
@@ -62,9 +71,10 @@ final class FloodlightPanelController {
 
         observeQueryForPanelHeight()
 
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event) ?? event
-        }
+        localKeyMonitor = NSEvent
+            .addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleKeyEvent(event) ?? event
+            }
         resignActiveObservation = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: NSApp,
@@ -109,7 +119,10 @@ final class FloodlightPanelController {
     /// swap untouched; only the surrounding material changes.
     private func applyGlassSlabState() {
         let usesGlassSlab = Self.shouldUseGlassSlab()
-        panel.contentViewController = Self.makeContentController(model: model, usesGlassSlab: usesGlassSlab)
+        panel.contentViewController = Self.makeContentController(
+            model: model,
+            usesGlassSlab: usesGlassSlab
+        )
         // The glass slab (`NSGlassEffectView`) rounds its own corners; every
         // other path — macOS 14/15, or macOS 26 with Reduce Transparency —
         // needs the layer-based corner mask instead, or the panel renders
@@ -357,15 +370,15 @@ final class FloodlightPanelController {
     static func panelCommand(for characters: String?, shiftHeld: Bool) -> PanelCommand {
         switch characters {
         case "c":
-            return .copySelection
+            .copySelection
         case "l":
-            return .chooseRoot
+            .chooseRoot
         case "r":
-            return shiftHeld ? .rebuildIndex : .revealSelection
+            shiftHeld ? .rebuildIndex : .revealSelection
         case "y":
-            return .togglePreview
+            .togglePreview
         default:
-            return .unmatched
+            .unmatched
         }
     }
 

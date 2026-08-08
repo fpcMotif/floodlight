@@ -17,7 +17,6 @@ import XCTest
 /// least once.
 @MainActor
 final class SearchViewRenderingTests: XCTestCase {
-
     private var tree: TemporaryTree!
 
     override func setUpWithError() throws {
@@ -32,7 +31,7 @@ final class SearchViewRenderingTests: XCTestCase {
         applications: ScriptedCatalog = ScriptedCatalog(),
         settings: ScriptedCatalog = ScriptedCatalog()
     ) throws -> SearchCoordinator {
-        SearchCoordinator(
+        try SearchCoordinator(
             index: FFFIndex(
                 rootURL: tree.root,
                 storageURL: tree.root.appendingPathComponent(".index", isDirectory: true),
@@ -42,7 +41,7 @@ final class SearchViewRenderingTests: XCTestCase {
             ),
             applicationCatalog: applications,
             settingsCatalog: settings,
-            recentStore: RecentStore(defaults: try IsolatedDefaults().defaults),
+            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner()
         )
@@ -72,7 +71,11 @@ final class SearchViewRenderingTests: XCTestCase {
     /// stricter check than `ImageRenderer`, since it exercises the AppKit
     /// bridge that `NSViewRepresentable` rows depend on.
     @discardableResult
-    private func layout(_ view: some View, width: CGFloat, height: CGFloat) -> NSHostingView<some View> {
+    private func layout(
+        _ view: some View,
+        width: CGFloat,
+        height: CGFloat
+    ) -> NSHostingView<some View> {
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
         hosting.layoutSubtreeIfNeeded()
@@ -97,7 +100,11 @@ final class SearchViewRenderingTests: XCTestCase {
     func testThePopulatedPanelRendersAtTheExpandedHeight() throws {
         let applications = ScriptedCatalog(
             immediate: (0..<12).map {
-                SearchFixtures.application(id: "app:\($0)", name: "Application \($0)", score: 120_000 - $0)
+                SearchFixtures.application(
+                    id: "app:\($0)",
+                    name: "Application \($0)",
+                    score: 120_000 - $0
+                )
             }
         )
         let coordinator = try makeCoordinator(applications: applications)
@@ -161,12 +168,20 @@ final class SearchViewRenderingTests: XCTestCase {
         // 80-row merge cap no matter how much a catalog returns.
         let applications = ScriptedCatalog(
             immediate: (0..<80).map {
-                SearchFixtures.application(id: "app:\($0)", name: "Application \($0)", score: 120_000 - $0)
+                SearchFixtures.application(
+                    id: "app:\($0)",
+                    name: "Application \($0)",
+                    score: 120_000 - $0
+                )
             }
         )
         let settings = ScriptedCatalog(
             immediate: (0..<40).map {
-                SearchFixtures.setting(id: "setting:\($0)", title: "Setting \($0)", score: 11_000 - $0)
+                SearchFixtures.setting(
+                    id: "setting:\($0)",
+                    title: "Setting \($0)",
+                    score: 11_000 - $0
+                )
             }
         )
         let coordinator = try makeCoordinator(applications: applications, settings: settings)
@@ -369,8 +384,15 @@ final class SearchViewRenderingTests: XCTestCase {
         // The row's accessibility label is its title and the hint names the
         // kind, so an empty label would make a row unreachable by
         // VoiceOver. Checked on the model the view reads from.
-        for kind in [SearchItemKind.application, .assistant, .calculator, .file,
-                     .folder, .systemSetting, .web] {
+        for kind in [
+            SearchItemKind.application,
+            .assistant,
+            .calculator,
+            .file,
+            .folder,
+            .systemSetting,
+            .web,
+        ] {
             XCTAssertFalse(kind.label.isEmpty, kind.rawValue)
             XCTAssertFalse(
                 "Select \(kind.label). Double-click or press Return to open.".isEmpty
@@ -411,7 +433,8 @@ final class SearchViewRenderingTests: XCTestCase {
         XCTAssertEqual(
             resultsHeight,
             FloodlightMetrics.resultPadding * 2
-                + CGFloat(FloodlightMetrics.maximumVisibleResults) * FloodlightMetrics.resultRowHeight
+                + CGFloat(FloodlightMetrics.maximumVisibleResults) * FloodlightMetrics
+                .resultRowHeight
         )
         XCTAssertGreaterThan(resultsHeight, 0)
     }

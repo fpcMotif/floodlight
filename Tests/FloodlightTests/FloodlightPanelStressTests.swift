@@ -53,12 +53,24 @@ final class FloodlightPanelStressTests: XCTestCase {
     func testPanelCommandForEverySingleCharacter() {
         // Every lowercase letter: c, l, r (no shift), y map to known commands;
         // everything else is unmatched.
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "c", shiftHeld: false), .copySelection)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "l", shiftHeld: false), .chooseRoot)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "r", shiftHeld: false), .revealSelection)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "y", shiftHeld: false), .togglePreview)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "c", shiftHeld: false),
+            .copySelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "l", shiftHeld: false),
+            .chooseRoot
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
+            .revealSelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "y", shiftHeld: false),
+            .togglePreview
+        )
 
-        let knownCommands: Set<String> = ["c", "l", "r", "y"]
+        let knownCommands: Set = ["c", "l", "r", "y"]
         for character in "abcdefghijklmnopqrstuvwxyz" {
             let ch = String(character)
             if knownCommands.contains(ch) {
@@ -73,25 +85,52 @@ final class FloodlightPanelStressTests: XCTestCase {
     }
 
     func testPanelCommandForNil() {
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: nil, shiftHeld: false), .unmatched)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: nil, shiftHeld: false),
+            .unmatched
+        )
     }
 
     func testPanelCommandForMultiCharString() {
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false), .unmatched)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "cc", shiftHeld: false), .unmatched)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false),
+            .unmatched
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "cc", shiftHeld: false),
+            .unmatched
+        )
     }
 
     func testPanelCommandForEmptyString() {
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "", shiftHeld: false), .unmatched)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "", shiftHeld: false),
+            .unmatched
+        )
     }
 
     func testPanelCommandShiftOnlyAffectsR() {
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "r", shiftHeld: true), .rebuildIndex)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "r", shiftHeld: false), .revealSelection)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "r", shiftHeld: true),
+            .rebuildIndex
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
+            .revealSelection
+        )
         // Shift is ignored for other commands.
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "c", shiftHeld: true), .copySelection)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "l", shiftHeld: true), .chooseRoot)
-        XCTAssertEqual(FloodlightPanelController.panelCommand(for: "y", shiftHeld: true), .togglePreview)
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "c", shiftHeld: true),
+            .copySelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "l", shiftHeld: true),
+            .chooseRoot
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "y", shiftHeld: true),
+            .togglePreview
+        )
     }
 
     // MARK: - commandDigit
@@ -114,7 +153,10 @@ final class FloodlightPanelStressTests: XCTestCase {
 
     func testFilterShortcutIndexForAllDigits() {
         for digit in 1...5 {
-            XCTAssertEqual(FloodlightPanelController.filterShortcutIndex(for: String(digit)), digit - 1)
+            XCTAssertEqual(
+                FloodlightPanelController.filterShortcutIndex(for: String(digit)),
+                digit - 1
+            )
         }
         for digit in [0, 6, 7, 8, 9] {
             XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: String(digit)))

@@ -1,4 +1,3 @@
-import FloodlightEngine
 import Foundation
 import XCTest
 @testable import FloodlightEngine
@@ -79,7 +78,8 @@ final class CatalogTests: XCTestCase {
         }
 
         let dockAgentURL = URL(fileURLWithPath: "/System/Library/CoreServices/Dock.app")
-        XCTAssertFalse(catalog.immediatePage(for: "dock").items.contains { $0.fileURL == dockAgentURL })
+        XCTAssertFalse(catalog.immediatePage(for: "dock").items
+            .contains { $0.fileURL == dockAgentURL })
     }
 
     func testDiscoversSymlinkedSystemApplications() async throws {
@@ -92,7 +92,10 @@ final class CatalogTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloodlightCatalogTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightCatalogTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let catalog = ApplicationCatalog(
@@ -130,7 +133,10 @@ final class CatalogTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloodlightFastCatalogTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightFastCatalogTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let catalog = ApplicationCatalog(
@@ -177,7 +183,8 @@ final class CatalogTests: XCTestCase {
                 catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
                 query
             )
-            let indexed = try await catalog.indexedItems(for: query).first { $0.fileURL == orbital.url }
+            let indexed = try await catalog.indexedItems(for: query)
+                .first { $0.fileURL == orbital.url }
             XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
         }
     }
@@ -187,7 +194,10 @@ final class CatalogTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloodlightRefreshTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightRefreshTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let notes = (
@@ -230,7 +240,8 @@ final class CatalogTests: XCTestCase {
             forceDiscovery: true
         )
         XCTAssertTrue(didRenameRaycast)
-        XCTAssertFalse(catalog.immediatePage(for: "raycast").items.contains { $0.fileURL == raycast.url })
+        XCTAssertFalse(catalog.immediatePage(for: "raycast").items
+            .contains { $0.fileURL == raycast.url })
         XCTAssertEqual(
             catalog.immediatePage(for: "orbital launcher").items.first?.fileURL,
             orbital.url
@@ -249,10 +260,12 @@ final class CatalogTests: XCTestCase {
         )
         XCTAssertTrue(didRemoveOrbital)
         XCTAssertFalse(
-            catalog.immediatePage(for: "orbital launcher").items.contains { $0.fileURL == orbital.url }
+            catalog.immediatePage(for: "orbital launcher").items
+                .contains { $0.fileURL == orbital.url }
         )
         try await assertEventually("The application marker index did not remove Orbital") {
-            try await catalog.indexedItems(for: "orbital launcher").allSatisfy { $0.fileURL != orbital.url }
+            try await catalog.indexedItems(for: "orbital launcher")
+                .allSatisfy { $0.fileURL != orbital.url }
         }
 
         let didChangeAgain = try await catalog.refreshIfNeeded(
@@ -300,7 +313,8 @@ final class CatalogTests: XCTestCase {
         let didRename = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
         XCTAssertTrue(didRename)
         XCTAssertFalse(
-            catalog.immediatePage(for: "Aurora Controls").items.contains { $0.id == "setting:\(pane)" }
+            catalog.immediatePage(for: "Aurora Controls").items
+                .contains { $0.id == "setting:\(pane)" }
         )
         XCTAssertEqual(
             catalog.immediatePage(for: "Nebula Controls").items.first?.id,
@@ -311,7 +325,8 @@ final class CatalogTests: XCTestCase {
         let didRemove = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
         XCTAssertTrue(didRemove)
         XCTAssertFalse(
-            catalog.immediatePage(for: "Nebula Controls").items.contains { $0.id == "setting:\(pane)" }
+            catalog.immediatePage(for: "Nebula Controls").items
+                .contains { $0.id == "setting:\(pane)" }
         )
     }
 

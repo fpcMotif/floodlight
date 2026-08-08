@@ -10,7 +10,6 @@ import XCTest
 /// and `filterOptions` out. Never on internal call order.
 @MainActor
 final class SearchCoordinatorWebModeTests: XCTestCase {
-
     private var tree: TemporaryTree!
 
     private static let presetOrder = [
@@ -37,18 +36,18 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             watch: false
         )
         try await index.start()
-        return SearchCoordinator(
+        return try SearchCoordinator(
             index: index,
             applicationCatalog: applications,
             settingsCatalog: settings,
-            recentStore: RecentStore(defaults: try IsolatedDefaults().defaults),
+            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner()
         )
     }
 
     private func openedURL(of item: SearchItem?) -> URL? {
-        guard case .open(let url) = item?.action else { return nil }
+        guard case let .open(url) = item?.action else { return nil }
         return url
     }
 

@@ -1,0 +1,23 @@
+id: engine-no-main-queue-sync
+snapshots:
+  ? |
+    DispatchQueue.main.asyncAndWait { self.publish(results) }
+  : labels:
+    - source: DispatchQueue.main.asyncAndWait
+      style: primary
+      start: 0
+      end: 31
+  ? |
+    DispatchQueue.main.sync { self.publish(results) }
+  : labels:
+    - source: DispatchQueue.main.sync
+      style: primary
+      start: 0
+      end: 23
+  ? |
+    let value = DispatchQueue.main.sync { self.results }
+  : labels:
+    - source: DispatchQueue.main.sync
+      style: primary
+      start: 12
+      end: 35

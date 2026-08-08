@@ -42,7 +42,10 @@ enum FloodlightMetrics {
     /// how far the icon insets from the tile edge, so corners stay
     /// concentric — never a literal at the call site.
     static let iconTileInset: CGFloat = 3
-    static var iconTileCornerRadius: CGFloat { resultRowCornerRadius - iconTileInset }
+    static var iconTileCornerRadius: CGFloat {
+        resultRowCornerRadius - iconTileInset
+    }
+
     static let iconTileTintOpacity: Double = 0.14
 
     /// Quiet, decorative fills that aren't text. Text hierarchy stays on
@@ -93,7 +96,9 @@ enum FloodlightMetrics {
         if item.id.contains("github") || item.title.localizedCaseInsensitiveContains("github") {
             return .primary
         }
-        if item.id.contains("wikipedia") || item.title.localizedCaseInsensitiveContains("wikipedia") {
+        if item.id.contains("wikipedia") || item.title
+            .localizedCaseInsensitiveContains("wikipedia")
+        {
             return .secondary
         }
         return iconTint(for: item.kind)
@@ -112,7 +117,9 @@ enum FloodlightMetrics {
         if item.id.contains("twitter") || item.title.localizedCaseInsensitiveContains("twitter") {
             return "at"
         }
-        if item.id.contains("wikipedia") || item.title.localizedCaseInsensitiveContains("wikipedia") {
+        if item.id.contains("wikipedia") || item.title
+            .localizedCaseInsensitiveContains("wikipedia")
+        {
             return "book.closed.fill"
         }
         return item.kind.symbolName

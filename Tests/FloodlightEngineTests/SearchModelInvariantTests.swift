@@ -14,7 +14,6 @@ import XCTest
 /// properties below assert it for every combination the generators can
 /// reach.
 final class SearchModelInvariantTests: XCTestCase {
-
     // MARK: - Identity
 
     func testGeneratedIdentifiersEncodeKindTitleAndSubtitle() throws {
@@ -240,22 +239,39 @@ final class SearchModelInvariantTests: XCTestCase {
         XCTAssertEqual(listed.count, Set(listed).count, "a filter is listed twice")
         XCTAssertTrue(SearchResultFilter.dynamic.allSatisfy(\.isDynamic))
         XCTAssertTrue(SearchResultFilter.primary.allSatisfy { !$0.isDynamic })
-        XCTAssertEqual(SearchResultFilter.allCases.map(\.id), SearchResultFilter.allCases.map(\.rawValue))
+        XCTAssertEqual(
+            SearchResultFilter.allCases.map(\.id),
+            SearchResultFilter.allCases.map(\.rawValue)
+        )
     }
 
     func testEveryFilterAndKindHasANonEmptyLabel() {
         for filter in SearchResultFilter.allCases {
             XCTAssertFalse(filter.title.isEmpty, filter.rawValue)
         }
-        for kind in [SearchItemKind.application, .assistant, .calculator, .file,
-                     .folder, .systemSetting, .web] {
+        for kind in [
+            SearchItemKind.application,
+            .assistant,
+            .calculator,
+            .file,
+            .folder,
+            .systemSetting,
+            .web,
+        ] {
             XCTAssertFalse(kind.label.isEmpty, kind.rawValue)
             XCTAssertFalse(kind.symbolName.isEmpty, kind.rawValue)
         }
         // Labels and symbols are what distinguishes rows at a glance, so
         // two kinds sharing either would be a UI bug.
-        let kinds: [SearchItemKind] = [.application, .assistant, .calculator, .file,
-                                       .folder, .systemSetting, .web]
+        let kinds: [SearchItemKind] = [
+            .application,
+            .assistant,
+            .calculator,
+            .file,
+            .folder,
+            .systemSetting,
+            .web,
+        ]
         XCTAssertEqual(Set(kinds.map(\.label)).count, kinds.count)
         XCTAssertEqual(Set(kinds.map(\.symbolName)).count, kinds.count)
     }
@@ -294,7 +310,8 @@ final class SearchModelInvariantTests: XCTestCase {
             runs: 800
         ) { first, second, third in
             guard SearchItemRanking.ranksBefore(first, second),
-                  SearchItemRanking.ranksBefore(second, third) else {
+                  SearchItemRanking.ranksBefore(second, third)
+            else {
                 return true
             }
             return SearchItemRanking.ranksBefore(first, third)

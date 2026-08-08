@@ -145,7 +145,7 @@ final class FloodlightShortcutStressTests: XCTestCase {
 
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suiteName = "FloodlightShortcutStressTests-\(UUID().uuidString)"
-        return (try XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
+        return try (XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
     }
 }
 

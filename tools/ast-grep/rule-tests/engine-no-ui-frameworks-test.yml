@@ -1,0 +1,14 @@
+id: engine-no-ui-frameworks
+valid:
+  - import Foundation
+  - import os
+  - import FFFKit
+  # `SwiftUI` as an identifier is not an import of it.
+  - let note = "SwiftUI renders this"
+  - func appKitBridge() {}
+invalid:
+  - import SwiftUI
+  - import AppKit
+  - import Cocoa
+  - import UIKit
+  - import QuickLookUI

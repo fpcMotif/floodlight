@@ -4,7 +4,6 @@ import XCTest
 /// The Tab↔Esc state machine, exercised the same way `WebSearchIntentTests`
 /// exercises promotion: pure inputs in, (mode, query) out, no coordinator.
 final class SearchModeTests: XCTestCase {
-
     private func transition(
         from mode: SearchMode,
         query: String,

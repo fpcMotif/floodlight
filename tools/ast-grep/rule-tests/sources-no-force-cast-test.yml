@@ -1,0 +1,13 @@
+id: sources-no-force-cast
+valid:
+  - |
+    let date = attributes[.modificationDate] as? Date ?? .distantPast
+  - |
+    let widget = thing as AnyObject
+  - |
+    let hint = "do not write as! here"
+invalid:
+  - |
+    let date = attributes[.modificationDate] as! Date
+  - |
+    let widget = thing as! Widget

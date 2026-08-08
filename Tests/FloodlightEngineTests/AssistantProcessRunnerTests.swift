@@ -25,7 +25,10 @@ final class AssistantProcessRunnerTests: XCTestCase {
     /// it are inert.
     func testRunPassesArgumentsDirectlyRatherThanThroughAShell() async throws {
         let runner = AssistantProcessRunner()
-        let output = try await runner.run(command: "echo", arguments: ["`echo pwned`", "&&", "rm -rf /tmp/nothing"])
+        let output = try await runner.run(
+            command: "echo",
+            arguments: ["`echo pwned`", "&&", "rm -rf /tmp/nothing"]
+        )
         XCTAssertEqual(output, "`echo pwned` && rm -rf /tmp/nothing")
     }
 
@@ -34,7 +37,7 @@ final class AssistantProcessRunnerTests: XCTestCase {
         do {
             _ = try await runner.run(command: "floodlight-does-not-ship-this-binary", arguments: [])
             XCTFail("expected executableNotFound")
-        } catch AssistantProcessError.executableNotFound(let command) {
+        } catch let AssistantProcessError.executableNotFound(command) {
             XCTAssertEqual(command, "floodlight-does-not-ship-this-binary")
         } catch {
             XCTFail("expected executableNotFound, got \(error)")
@@ -46,7 +49,7 @@ final class AssistantProcessRunnerTests: XCTestCase {
         do {
             _ = try await runner.run(command: "false", arguments: [])
             XCTFail("expected nonZeroExit")
-        } catch AssistantProcessError.nonZeroExit(let status, _) {
+        } catch let AssistantProcessError.nonZeroExit(status, _) {
             XCTAssertNotEqual(status, 0)
         } catch {
             XCTFail("expected nonZeroExit, got \(error)")

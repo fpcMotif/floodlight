@@ -60,7 +60,7 @@ extension SearchMode {
             return entered(query: query, engines: engines, defaultEngine: defaultEngine)
 
         case .shiftTab, .escape, .backspaceOnEmptyQuery:
-            guard case .web(let context) = mode else { return (mode, query) }
+            guard case let .web(context) = mode else { return (mode, query) }
             return (.local, exitFieldText(for: context, query: query, engines: engines))
         }
     }

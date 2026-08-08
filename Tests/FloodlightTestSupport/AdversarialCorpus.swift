@@ -18,20 +18,20 @@ package enum AdversarialCorpus {
         "\n",
         "\r\n",
         "   \t \n  ",
-        "\u{00A0}",                       // non-breaking space
-        "\u{200B}",                       // zero-width space
-        "\u{200D}",                       // zero-width joiner
-        "\u{FEFF}",                       // BOM
-        "\u{202E}drawkcab",               // right-to-left override
-        "a\u{0301}",                      // "á" as base + combining acute
-        "\u{0301}",                       // lone combining mark
+        "\u{00A0}", // non-breaking space
+        "\u{200B}", // zero-width space
+        "\u{200D}", // zero-width joiner
+        "\u{FEFF}", // BOM
+        "\u{202E}drawkcab", // right-to-left override
+        "a\u{0301}", // "á" as base + combining acute
+        "\u{0301}", // lone combining mark
         "é",
-        "ﬁle",                            // ligature
-        "ＡＰＰ",                          // fullwidth latin
-        "İstanbul",                       // dotted capital I, folds oddly
+        "ﬁle", // ligature
+        "ＡＰＰ", // fullwidth latin
+        "İstanbul", // dotted capital I, folds oddly
         "ß",
         "ẞ",
-        "👨‍👩‍👧‍👦",                          // multi-scalar grapheme cluster
+        "👨‍👩‍👧‍👦", // multi-scalar grapheme cluster
         "🏳️‍🌈",
         "👋🏽",
         "🇦🇶",
@@ -139,7 +139,8 @@ package enum AdversarialCorpus {
     package static let fileExtensions: [String] = [
         "pdf", "PDF", "Pdf",
         "png", "jpg", "jpeg", "heic", "gif", "svg", "webp", "tiff", "tif", "bmp", "avif", "heif",
-        "txt", "md", "csv", "doc", "docx", "pages", "numbers", "key", "rtf", "xls", "xlsx", "ppt", "pptx",
+        "txt", "md", "csv", "doc", "docx", "pages", "numbers", "key", "rtf", "xls", "xlsx", "ppt",
+        "pptx",
         "swift", "rs", "ts", "json", "yaml", "zip", "dmg", "app", "",
         "pdf.zip", "notpdf", "pdfx",
     ]

@@ -10,7 +10,6 @@ import XCTest
 /// the persistence round-trip, corrupt-store recovery, and — the reason
 /// this file exists — hammering it from many threads at once.
 final class RecentStoreConcurrencyTests: XCTestCase {
-
     /// The store persists asynchronously, so a read taken immediately after
     /// a write legitimately sees the old value. Everything that waits on a
     /// write goes through here.

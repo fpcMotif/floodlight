@@ -21,27 +21,27 @@ final class FuzzyMatcherStressTests: XCTestCase {
         XCTAssertNil(FuzzyMatcher.score(query: "q", candidate: "bcdef"))
     }
 
-    func testSingleCharacterAtStartGetsBoundaryBonus() {
-        let atStart = FuzzyMatcher.score(query: "a", candidate: "abc")!
-        let inMiddle = FuzzyMatcher.score(query: "a", candidate: "bac")!
+    func testSingleCharacterAtStartGetsBoundaryBonus() throws {
+        let atStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "abc"))
+        let inMiddle = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "bac"))
         XCTAssertGreaterThan(atStart, inMiddle)
     }
 
-    func testACharacterAfterASeparatorGetsBoundaryBonus() {
+    func testACharacterAfterASeparatorGetsBoundaryBonus() throws {
         // Two characters, so this lands in the subsequence branch where the
         // bonus exists — see the note above the separator tests.
-        let afterSep = FuzzyMatcher.score(query: "ab", candidate: "a-b")!
-        let noSep = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+        let afterSep = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a-b"))
+        let noSep = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterSep, noSep)
     }
 
-    func testASingleCharacterQueryTakesTheSubstringBranchNotTheBonus() {
+    func testASingleCharacterQueryTakesTheSubstringBranchNotTheBonus() throws {
         // The flip side, pinned so the rule above is not mistaken for a
         // general one: with a one-character query both candidates match as
         // substrings, and the separator simply moves the hit one place
         // right, which scores *lower*.
-        let afterSep = FuzzyMatcher.score(query: "a", candidate: "x-a")!
-        let noSep = FuzzyMatcher.score(query: "a", candidate: "xa")!
+        let afterSep = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "x-a"))
+        let noSep = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "xa"))
         XCTAssertEqual(afterSep, 12_000 - 2)
         XCTAssertEqual(noSep, 12_000 - 1)
         XCTAssertLessThan(afterSep, noSep)
@@ -66,10 +66,10 @@ final class FuzzyMatcherStressTests: XCTestCase {
         XCTAssertEqual(FuzzyMatcher.score(query: value, candidate: value), 20_000)
     }
 
-    func testVeryLongPrefixMatch() {
+    func testVeryLongPrefixMatch() throws {
         let value = String(repeating: "ab", count: 5_000)
         let prefix = String(repeating: "ab", count: 100)
-        let score = FuzzyMatcher.score(query: prefix, candidate: value)!
+        let score = try XCTUnwrap(FuzzyMatcher.score(query: prefix, candidate: value))
         XCTAssertEqual(score, 15_000 - value.count)
     }
 
@@ -91,92 +91,92 @@ final class FuzzyMatcherStressTests: XCTestCase {
         XCTAssertNil(FuzzyMatcher.score(query: "b", candidate: candidate))
     }
 
-    func testConsecutiveRunScoresHigherThanScattered() {
+    func testConsecutiveRunScoresHigherThanScattered() throws {
         let candidate = "a x a x a x a x a"
-        let consecutive = FuzzyMatcher.score(query: "aaaaa", candidate: "aaaaax")!
-        let scattered = FuzzyMatcher.score(query: "aaaaa", candidate: candidate)!
+        let consecutive = try XCTUnwrap(FuzzyMatcher.score(query: "aaaaa", candidate: "aaaaax"))
+        let scattered = try XCTUnwrap(FuzzyMatcher.score(query: "aaaaa", candidate: candidate))
         XCTAssertGreaterThan(consecutive, scattered)
     }
 
     // MARK: - Boundary detection
 
-    // The boundary bonus lives only in the *subsequence* branch. A
-    // single-character query against "x-a" takes the substring branch
-    // instead (12_000 minus the offset), where a separator only pushes the
-    // match further right and therefore scores it *lower*. These use
-    // two-character queries so the candidates are genuinely non-contiguous
-    // and the bonus is actually reachable.
-    func testHyphenIsABoundary() {
-        let afterHyphen = FuzzyMatcher.score(query: "ab", candidate: "a-b")!
-        let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+    /// The boundary bonus lives only in the *subsequence* branch. A
+    /// single-character query against "x-a" takes the substring branch
+    /// instead (12_000 minus the offset), where a separator only pushes the
+    /// match further right and therefore scores it *lower*. These use
+    /// two-character queries so the candidates are genuinely non-contiguous
+    /// and the bonus is actually reachable.
+    func testHyphenIsABoundary() throws {
+        let afterHyphen = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a-b"))
+        let noBoundary = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterHyphen, noBoundary)
     }
 
-    // The boundary bonus lives only in the *subsequence* branch. A
-    // single-character query against "x-a" takes the substring branch
-    // instead (12_000 minus the offset), where a separator only pushes the
-    // match further right and therefore scores it *lower*. These use
-    // two-character queries so the candidates are genuinely non-contiguous
-    // and the bonus is actually reachable.
-    func testUnderscoreIsABoundary() {
-        let afterUnderscore = FuzzyMatcher.score(query: "ab", candidate: "a_b")!
-        let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+    /// The boundary bonus lives only in the *subsequence* branch. A
+    /// single-character query against "x-a" takes the substring branch
+    /// instead (12_000 minus the offset), where a separator only pushes the
+    /// match further right and therefore scores it *lower*. These use
+    /// two-character queries so the candidates are genuinely non-contiguous
+    /// and the bonus is actually reachable.
+    func testUnderscoreIsABoundary() throws {
+        let afterUnderscore = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a_b"))
+        let noBoundary = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterUnderscore, noBoundary)
     }
 
-    // The boundary bonus lives only in the *subsequence* branch. A
-    // single-character query against "x-a" takes the substring branch
-    // instead (12_000 minus the offset), where a separator only pushes the
-    // match further right and therefore scores it *lower*. These use
-    // two-character queries so the candidates are genuinely non-contiguous
-    // and the bonus is actually reachable.
-    func testSlashIsABoundary() {
-        let afterSlash = FuzzyMatcher.score(query: "ab", candidate: "a/b")!
-        let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+    /// The boundary bonus lives only in the *subsequence* branch. A
+    /// single-character query against "x-a" takes the substring branch
+    /// instead (12_000 minus the offset), where a separator only pushes the
+    /// match further right and therefore scores it *lower*. These use
+    /// two-character queries so the candidates are genuinely non-contiguous
+    /// and the bonus is actually reachable.
+    func testSlashIsABoundary() throws {
+        let afterSlash = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a/b"))
+        let noBoundary = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterSlash, noBoundary)
     }
 
-    // The boundary bonus lives only in the *subsequence* branch. A
-    // single-character query against "x-a" takes the substring branch
-    // instead (12_000 minus the offset), where a separator only pushes the
-    // match further right and therefore scores it *lower*. These use
-    // two-character queries so the candidates are genuinely non-contiguous
-    // and the bonus is actually reachable.
-    func testDotIsABoundary() {
-        let afterDot = FuzzyMatcher.score(query: "ab", candidate: "a.b")!
-        let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+    /// The boundary bonus lives only in the *subsequence* branch. A
+    /// single-character query against "x-a" takes the substring branch
+    /// instead (12_000 minus the offset), where a separator only pushes the
+    /// match further right and therefore scores it *lower*. These use
+    /// two-character queries so the candidates are genuinely non-contiguous
+    /// and the bonus is actually reachable.
+    func testDotIsABoundary() throws {
+        let afterDot = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a.b"))
+        let noBoundary = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterDot, noBoundary)
     }
 
-    // The boundary bonus lives only in the *subsequence* branch. A
-    // single-character query against "x-a" takes the substring branch
-    // instead (12_000 minus the offset), where a separator only pushes the
-    // match further right and therefore scores it *lower*. These use
-    // two-character queries so the candidates are genuinely non-contiguous
-    // and the bonus is actually reachable.
-    func testSpaceIsABoundary() {
-        let afterSpace = FuzzyMatcher.score(query: "ab", candidate: "a b")!
-        let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")!
+    /// The boundary bonus lives only in the *subsequence* branch. A
+    /// single-character query against "x-a" takes the substring branch
+    /// instead (12_000 minus the offset), where a separator only pushes the
+    /// match further right and therefore scores it *lower*. These use
+    /// two-character queries so the candidates are genuinely non-contiguous
+    /// and the bonus is actually reachable.
+    func testSpaceIsABoundary() throws {
+        let afterSpace = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a b"))
+        let noBoundary = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "azb"))
         XCTAssertGreaterThan(afterSpace, noBoundary)
     }
 
-    func testStartOfStringIsABoundary() {
-        let atStart = FuzzyMatcher.score(query: "a", candidate: "abc")!
-        let notAtStart = FuzzyMatcher.score(query: "a", candidate: "xabc")!
+    func testStartOfStringIsABoundary() throws {
+        let atStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "abc"))
+        let notAtStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "xabc"))
         XCTAssertGreaterThan(atStart, notAtStart)
     }
 
     // MARK: - Consecutive scoring
 
-    func testConsecutiveMatchesScoreHigherThanNonConsecutive() {
-        let consecutive = FuzzyMatcher.score(query: "abc", candidate: "abc")!
-        let scattered = FuzzyMatcher.score(query: "abc", candidate: "axbxc")!
+    func testConsecutiveMatchesScoreHigherThanNonConsecutive() throws {
+        let consecutive = try XCTUnwrap(FuzzyMatcher.score(query: "abc", candidate: "abc"))
+        let scattered = try XCTUnwrap(FuzzyMatcher.score(query: "abc", candidate: "axbxc"))
         XCTAssertGreaterThan(consecutive, scattered)
     }
 
-    func testLongerConsecutiveRunScoresHigher() {
-        let longRun = FuzzyMatcher.score(query: "aaaa", candidate: "aaaax")!
-        let shortRun = FuzzyMatcher.score(query: "aaaa", candidate: "axaaxa")!
+    func testLongerConsecutiveRunScoresHigher() throws {
+        let longRun = try XCTUnwrap(FuzzyMatcher.score(query: "aaaa", candidate: "aaaax"))
+        let shortRun = try XCTUnwrap(FuzzyMatcher.score(query: "aaaa", candidate: "axaaxa"))
         XCTAssertGreaterThan(longRun, shortRun)
     }
 
@@ -186,36 +186,36 @@ final class FuzzyMatcherStressTests: XCTestCase {
         XCTAssertEqual(FuzzyMatcher.score(query: "test", candidate: "test"), 20_000)
     }
 
-    func testPrefixMatchScoreIs15000MinusCount() {
+    func testPrefixMatchScoreIs15000MinusCount() throws {
         let candidate = "spotlight"
-        let score = FuzzyMatcher.score(query: "spot", candidate: candidate)!
+        let score = try XCTUnwrap(FuzzyMatcher.score(query: "spot", candidate: candidate))
         XCTAssertEqual(score, 15_000 - candidate.count)
     }
 
-    func testSubstringMatchScoreIs12000MinusStart() {
+    func testSubstringMatchScoreIs12000MinusStart() throws {
         let candidate = "spotlight"
         let query = "pot"
-        let range = candidate.range(of: query)!
+        let range = try XCTUnwrap(candidate.range(of: query))
         let startOffset = candidate.distance(from: candidate.startIndex, to: range.lowerBound)
-        let score = FuzzyMatcher.score(query: query, candidate: candidate)!
+        let score = try XCTUnwrap(FuzzyMatcher.score(query: query, candidate: candidate))
         XCTAssertEqual(score, 12_000 - startOffset)
     }
 
-    func testSubsequenceMatchStartsAt8000() {
+    func testSubsequenceMatchStartsAt8000() throws {
         // The subsequence band opens at 8000; boundary and consecutive
         // bonuses can lift a score above the base, but it stays well below
         // the substring band (12000).
-        let score = FuzzyMatcher.score(query: "sf", candidate: "safari")!
+        let score = try XCTUnwrap(FuzzyMatcher.score(query: "sf", candidate: "safari"))
         XCTAssertGreaterThan(score, 0)
         XCTAssertLessThan(score, 12_000)
     }
 
-    func testExactBeatsPrefixBeatsSubstringBeatsSubsequence() {
+    func testExactBeatsPrefixBeatsSubstringBeatsSubsequence() throws {
         let candidate = "spotlight"
-        let exact = FuzzyMatcher.score(query: "spotlight", candidate: candidate)!
-        let prefix = FuzzyMatcher.score(query: "spot", candidate: candidate)!
-        let substring = FuzzyMatcher.score(query: "pot", candidate: candidate)!
-        let subsequence = FuzzyMatcher.score(query: "spt", candidate: candidate)!
+        let exact = try XCTUnwrap(FuzzyMatcher.score(query: "spotlight", candidate: candidate))
+        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "spot", candidate: candidate))
+        let substring = try XCTUnwrap(FuzzyMatcher.score(query: "pot", candidate: candidate))
+        let subsequence = try XCTUnwrap(FuzzyMatcher.score(query: "spt", candidate: candidate))
         XCTAssertGreaterThan(exact, prefix)
         XCTAssertGreaterThan(prefix, substring)
         XCTAssertGreaterThan(substring, subsequence)
@@ -233,12 +233,12 @@ final class FuzzyMatcherStressTests: XCTestCase {
         )
     }
 
-    func testASCIIFastPathPrefixMatch() {
+    func testASCIIFastPathPrefixMatch() throws {
         let candidate = Array("spotlight".utf8)
-        let score = FuzzyMatcher.scoreASCII(
+        let score = try XCTUnwrap(FuzzyMatcher.scoreASCII(
             normalizedQuery: Array("spot".utf8),
             normalizedCandidate: candidate
-        )!
+        ))
         XCTAssertEqual(score, 15_000 - candidate.count)
     }
 

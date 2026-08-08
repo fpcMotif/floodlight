@@ -45,6 +45,7 @@ package struct KeywordEngine: Sendable, Identifiable {
         self.kind = kind
         self.destination = destination
     }
+
     package var symbolName: String {
         switch id {
         case "youtube": "play.rectangle.fill"
@@ -64,7 +65,7 @@ package struct KeywordEngine: Sendable, Identifiable {
     /// the fallback row, web mode — derives its URL here, so they can
     /// never drift apart.
     package func searchURL(for query: String) -> URL? {
-        guard case .webSearch(let urlTemplate) = destination else { return nil }
+        guard case let .webSearch(urlTemplate) = destination else { return nil }
         guard
             let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
             let url = URL(string: urlTemplate.replacingOccurrences(of: "{query}", with: encoded))
@@ -88,14 +89,18 @@ package struct KeywordEngine: Sendable, Identifiable {
     /// shared by `makeSearchItem` and anything else that needs to
     /// recognize "the row this engine's keyword match would rank," such as
     /// the Tab-completion affordance on that row.
-    package var rowID: String { "keyword-engine:\(id)" }
+    package var rowID: String {
+        "keyword-engine:\(id)"
+    }
 
     /// Builds the row for a matched `remainder`, or `nil` if the remainder
     /// can't become a valid URL (a `.webSearch` destination only).
     package func makeSearchItem(remainder: String) -> SearchItem? {
         switch destination {
         case .webSearch:
-            guard let url = searchURL(for: remainder), let title = searchTitle(for: remainder) else {
+            guard let url = searchURL(for: remainder),
+                  let title = searchTitle(for: remainder)
+            else {
                 return nil
             }
             return SearchItem(
@@ -106,7 +111,7 @@ package struct KeywordEngine: Sendable, Identifiable {
                 action: .open(url),
                 score: SearchItemRanking.keywordEngine
             )
-        case .assistant(let command, let baseArguments):
+        case let .assistant(command, baseArguments):
             return SearchItem(
                 id: rowID,
                 title: "\(title): \(remainder)",
@@ -143,7 +148,9 @@ package enum KeywordEngineCatalog {
             // hit rate in natural queries is too high.
             keywords: ["wiki", "wikipedia", "!wiki"],
             kind: .web,
-            destination: .webSearch(urlTemplate: "https://en.wikipedia.org/wiki/Special:Search?search={query}")
+            destination: .webSearch(
+                urlTemplate: "https://en.wikipedia.org/wiki/Special:Search?search={query}"
+            )
         ),
         KeywordEngine(
             id: "github",
@@ -171,7 +178,9 @@ package enum KeywordEngineCatalog {
             title: "Search YouTube",
             keywords: ["yt", "youtube", "!yt"],
             kind: .web,
-            destination: .webSearch(urlTemplate: "https://www.youtube.com/results?search_query={query}")
+            destination: .webSearch(
+                urlTemplate: "https://www.youtube.com/results?search_query={query}"
+            )
         ),
         KeywordEngine(
             id: "codex",
@@ -215,7 +224,8 @@ package enum KeywordEngineCatalog {
         let remainder = trimmed[trimmed.index(after: spaceIndex)...]
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !remainder.isEmpty else { return nil }
-        guard let engine = engines.first(where: { $0.keywords.contains(keyword) }) else { return nil }
+        guard let engine = engines.first(where: { $0.keywords.contains(keyword) })
+        else { return nil }
 
         return (engine, remainder)
     }
@@ -233,13 +243,15 @@ package enum KeywordEngineCatalog {
     /// engines are always available, and an assistant engine only survives
     /// if its CLI resolves on this machine — an unresolvable "Ask Codex" row
     /// would be guaranteed to fail every time it's selected.
-    package static func availableEngines(runner: any AssistantProcessRunning) async -> [KeywordEngine] {
+    package static func availableEngines(runner: any AssistantProcessRunning) async
+        -> [KeywordEngine]
+    {
         var available: [KeywordEngine] = []
         for engine in all {
             switch engine.destination {
             case .webSearch:
                 available.append(engine)
-            case .assistant(let command, _):
+            case let .assistant(command, _):
                 if await runner.isAvailable(command: command) {
                     available.append(engine)
                 }

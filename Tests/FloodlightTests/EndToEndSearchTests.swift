@@ -14,7 +14,6 @@ import XCTest
 /// which is the question the whole application exists to answer.
 @MainActor
 final class EndToEndSearchTests: XCTestCase {
-
     private var tree: TemporaryTree!
     private var defaults: IsolatedDefaults!
     private var supportURL: URL!
@@ -93,7 +92,7 @@ final class EndToEndSearchTests: XCTestCase {
         let semaphore = DispatchSemaphore(value: 0)
         let box = NSMutableArray()
         Task {
-            let found = (try? await index.search("quarterly")) ?? []
+            let found = await (try? index.search("quarterly")) ?? []
             box.add(found.count)
             semaphore.signal()
         }
@@ -159,7 +158,7 @@ final class EndToEndSearchTests: XCTestCase {
         XCTAssertEqual(row.kind, .file)
         XCTAssertEqual(row.fileURL?.lastPathComponent, "quarterly-report.pdf")
         XCTAssertTrue(row.isPreviewable)
-        XCTAssertEqual(row.action, .open(try XCTUnwrap(row.fileURL)))
+        XCTAssertEqual(row.action, try .open(XCTUnwrap(row.fileURL)))
     }
 
     func testTypingAFolderNameReturnsThatFolder() async throws {
@@ -218,7 +217,8 @@ final class EndToEndSearchTests: XCTestCase {
         coordinator.selectFilter(.images)
         XCTAssertTrue(
             coordinator.results.allSatisfy {
-                ["png", "jpg", "jpeg", "heic"].contains($0.fileURL?.pathExtension.lowercased() ?? "")
+                ["png", "jpg", "jpeg", "heic"]
+                    .contains($0.fileURL?.pathExtension.lowercased() ?? "")
             }
         )
 
@@ -351,7 +351,8 @@ final class EndToEndSearchTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
 
         XCTAssertFalse(
-            coordinator.results.contains { $0.kind == .file && $0.title.contains("quarterly-report") },
+            coordinator.results
+                .contains { $0.kind == .file && $0.title.contains("quarterly-report") },
             "a file outside the new scope should no longer be found"
         )
     }

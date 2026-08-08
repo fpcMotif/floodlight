@@ -21,7 +21,10 @@ struct ResultRow: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
 
-    static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
+    /// `View` is main-actor isolated but `Equatable.==` is not, so the
+    /// conformance has to opt out explicitly. Safe: compared properties are
+    /// Sendable value types and neither reads view state.
+    nonisolated static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
         lhs.item == rhs.item
             && lhs.isSelected == rhs.isSelected
             && lhs.isTopHit == rhs.isTopHit
@@ -31,12 +34,17 @@ struct ResultRow: View, Equatable {
 
     var body: some View {
         HStack(spacing: 12) {
-            ResultIcon(item: item, size: isTopHit ? FloodlightMetrics.topHitIconSize : FloodlightMetrics.standardIconSize)
+            ResultIcon(
+                item: item,
+                size: isTopHit ? FloodlightMetrics.topHitIconSize : FloodlightMetrics
+                    .standardIconSize
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(item.title)
-                        .font(isTopHit ? FloodlightMetrics.Typography.topHitTitle : FloodlightMetrics.Typography.rowTitle)
+                        .font(isTopHit ? FloodlightMetrics.Typography
+                            .topHitTitle : FloodlightMetrics.Typography.rowTitle)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
@@ -146,14 +154,14 @@ private struct AssistantAnswerView: View {
             }
             .font(FloodlightMetrics.Typography.rowSubtitle)
             .foregroundStyle(.secondary)
-        case .answered(let text):
+        case let .answered(text):
             Text(text)
                 .font(FloodlightMetrics.Typography.assistantAnswer)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
-        case .failed(let message):
+        case let .failed(message):
             Text(message)
                 .font(FloodlightMetrics.Typography.rowSubtitle)
                 .foregroundStyle(.red)
@@ -184,8 +192,12 @@ private struct ResultIcon: View {
                     .padding(size * 0.21)
                     .foregroundStyle(FloodlightMetrics.iconTint(for: item))
                     .background(
-                        FloodlightMetrics.iconTint(for: item).opacity(FloodlightMetrics.iconTileTintOpacity),
-                        in: RoundedRectangle(cornerRadius: FloodlightMetrics.iconTileCornerRadius, style: .continuous)
+                        FloodlightMetrics.iconTint(for: item)
+                            .opacity(FloodlightMetrics.iconTileTintOpacity),
+                        in: RoundedRectangle(
+                            cornerRadius: FloodlightMetrics.iconTileCornerRadius,
+                            style: .continuous
+                        )
                     )
             }
         }

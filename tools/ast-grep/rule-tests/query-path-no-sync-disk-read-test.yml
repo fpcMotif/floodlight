@@ -1,0 +1,42 @@
+id: query-path-no-sync-disk-read
+valid:
+  # Discovery is *allowed* to touch the disk — it runs behind `start` and
+  # `refreshIfNeeded`, not on a keystroke. This is the case a file-glob-only
+  # rule would have flagged, and the reason the rule is scoped by function.
+  - |
+    private static func discoverApplications() -> [Application] {
+        let children = (try? fileManager.contentsOfDirectory(at: root)) ?? []
+        return children.map(Application.init)
+    }
+  - |
+    package func refreshIfNeeded(minimumInterval: TimeInterval) async -> Bool {
+        let fingerprint = fileManager.attributesOfItem(atPath: path)
+        return fingerprint != previous
+    }
+  # The query path reading the snapshot discovery published is the whole point.
+  - |
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let matches = snapshotApplications().compactMap(score)
+        return SearchItemRanking.page(matches, limit: limit)
+    }
+invalid:
+  - |
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let children = (try? fileManager.contentsOfDirectory(at: root)) ?? []
+        return SearchItemRanking.page(children.map(item), limit: limit)
+    }
+  - |
+    package func immediatePage(for query: String, limit: Int) -> SearchItemPage {
+        let raw = Data(contentsOf: cacheURL)
+        return decode(raw)
+    }
+  - |
+    package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        guard fileManager.fileExists(atPath: markerRoot.path) else { return [] }
+        return try await index.searchFiles(query)
+    }
+  - |
+    package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        let text = String(contentsOf: manifestURL, encoding: .utf8)
+        return parse(text)
+    }

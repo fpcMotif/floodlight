@@ -58,7 +58,9 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         .documents,
     ]
 
-    package var id: String { rawValue }
+    package var id: String {
+        rawValue
+    }
 
     package var title: String {
         switch self {
@@ -72,6 +74,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         case .documents: "Documents"
         }
     }
+
     package var symbolName: String {
         switch self {
         case .all: "sparkle.magnifyingglass"
@@ -177,7 +180,16 @@ package struct SearchFilterOption: Identifiable, Equatable, Sendable {
     package let count: Int
     package let isLoading: Bool
 
-    package var id: SearchResultFilter { filter }
+    package var id: SearchResultFilter {
+        filter
+    }
+
+    /// Whether this filter matched nothing — the condition that hides a dynamic
+    /// chip, and that sends the selection back to `.all` when the chip the user
+    /// is standing on empties out.
+    package var isEmpty: Bool {
+        count == 0
+    }
 
     package init(filter: SearchResultFilter, count: Int, isLoading: Bool) {
         self.filter = filter

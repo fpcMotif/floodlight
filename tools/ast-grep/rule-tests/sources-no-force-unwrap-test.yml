@@ -1,0 +1,26 @@
+id: sources-no-force-unwrap
+valid:
+  # An implicitly-unwrapped property *type* is a different node from the
+  # postfix `!` operator. Getting this wrong is the classic false red, which is
+  # why it is the first case here.
+  - |
+    var window: NSWindow!
+  - |
+    let flipped = !isVisible
+  - |
+    let present = value != nil
+  - |
+    let score = value ?? 0
+  - |
+    let hint = "value! is not code here"
+  - |
+    guard let score = Self.score(of: application) else {
+        return nil
+    }
+invalid:
+  - |
+    let score = value!
+  - |
+    let name = dictionary["name"]!
+  - |
+    let frame = window!.frame

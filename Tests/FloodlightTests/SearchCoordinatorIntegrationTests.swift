@@ -15,7 +15,6 @@ import XCTest
 /// indexed pass can land after the user has already typed something else.
 @MainActor
 final class SearchCoordinatorIntegrationTests: XCTestCase {
-
     private var tree: TemporaryTree!
 
     override func setUpWithError() throws {
@@ -51,11 +50,11 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
     ) async throws -> SearchCoordinator {
         let index = try makeIndex()
         try await index.start()
-        return SearchCoordinator(
+        return try SearchCoordinator(
             index: index,
             applicationCatalog: applications,
             settingsCatalog: settings,
-            recentStore: RecentStore(defaults: try IsolatedDefaults().defaults),
+            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: runner
         )
@@ -96,7 +95,8 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
 
         // No awaiting: the first page has to be on screen before the next
         // keystroke, which is the whole point of the immediate pass.
-        XCTAssertTrue(coordinator.results.contains { $0.id == "application:/Applications/Xcode.app" })
+        XCTAssertTrue(coordinator.results
+            .contains { $0.id == "application:/Applications/Xcode.app" })
         XCTAssertTrue(coordinator.results.contains { $0.kind == .systemSetting })
         XCTAssertTrue(coordinator.results.contains { $0.id == "web-search" })
         XCTAssertTrue(coordinator.isSearching, "the asynchronous pass should be pending")
@@ -342,7 +342,11 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
         let applications = ScriptedCatalog(
             .init(
                 immediate: (0..<4).map {
-                    SearchFixtures.application(id: "app:\($0)", name: "App \($0)", score: 120_000 - $0)
+                    SearchFixtures.application(
+                        id: "app:\($0)",
+                        name: "App \($0)",
+                        score: 120_000 - $0
+                    )
                 },
                 indexed: [SearchFixtures.application(id: "app:late", name: "App Late", score: 100)],
                 indexedDelay: .milliseconds(120)
@@ -357,7 +361,11 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
 
         try await settle(coordinator)
 
-        XCTAssertEqual(coordinator.selectedID, chosen, "the indexed pass stole the user's selection")
+        XCTAssertEqual(
+            coordinator.selectedID,
+            chosen,
+            "the indexed pass stole the user's selection"
+        )
     }
 
     func testAnAutomaticWebFallbackSelectionYieldsToARealResult() async throws {
@@ -770,7 +778,7 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
         var dismissed = false
         coordinator.onDismiss = { dismissed = true }
 
-        coordinator.activate(try assistantRow(coordinator))
+        try coordinator.activate(assistantRow(coordinator))
 
         XCTAssertFalse(dismissed)
         XCTAssertEqual(coordinator.assistantRun?.state, .running)
@@ -879,7 +887,8 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
             guard !query.isEmpty else { return !hasWebRow }
             // A query that cannot be percent-encoded produces no row; every
             // other non-empty query must.
-            let encodable = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) != nil
+            let encodable = query
+                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) != nil
             return hasWebRow == encodable
         }
     }
@@ -911,8 +920,14 @@ final class SearchCoordinatorIntegrationTests: XCTestCase {
         for index in 0..<200 {
             applications.setBehavior(
                 .init(
-                    immediate: [SearchFixtures.application(id: "app:\(index)", name: "App \(index)")],
-                    indexed: [SearchFixtures.application(id: "idx:\(index)", name: "Indexed \(index)")],
+                    immediate: [SearchFixtures.application(
+                        id: "app:\(index)",
+                        name: "App \(index)"
+                    )],
+                    indexed: [SearchFixtures.application(
+                        id: "idx:\(index)",
+                        name: "Indexed \(index)"
+                    )],
                     indexedDelay: .milliseconds(index.isMultiple(of: 7) ? 40 : 0)
                 ),
                 forQuery: "q\(index)"

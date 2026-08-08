@@ -14,7 +14,6 @@ import XCTest
 /// the generators can produce, the two scorers must return *the same
 /// number*, not merely the same ordering.
 final class FuzzyMatcherDifferentialTests: XCTestCase {
-
     private let asciiQuery = Gen<String>.string(
         alphabet: Array("abcdefgh -_/."),
         length: 0...8
@@ -74,7 +73,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testTheTwoScorersAgreeOnTheRealSettingsVocabulary() throws {
+    func testTheTwoScorersAgreeOnTheRealSettingsVocabulary() {
         // The exact strings `SystemCatalog` scores in production, so the
         // agreement is checked on the data that actually flows through the
         // fast path rather than only on synthetic alphabets.
@@ -374,7 +373,9 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         // marks do not; that case is pinned separately below.
         let realisticText = Gen<String>.frequency([
             (5, .string(
-                alphabet: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_/."),
+                alphabet: Array(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_/."
+                ),
                 length: 0...20
             )),
             (3, .string(alphabet: Array("éüñçåøßÆΩàèìòùÄÖÜ"), length: 0...10)),
@@ -406,8 +407,17 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         // assert that at least one arrangement is non-idempotent. If that
         // ever stops being true, folding became a fixed-point operation and
         // the property above can widen to cover everything.
-        let scalars = ["\u{200B}", "\u{200D}", "\u{FEFF}", "\u{202E}",
-                       "\u{0301}", "\u{0328}", "\u{00A0}", "\u{2028}", " "]
+        let scalars = [
+            "\u{200B}",
+            "\u{200D}",
+            "\u{FEFF}",
+            "\u{202E}",
+            "\u{0301}",
+            "\u{0328}",
+            "\u{00A0}",
+            "\u{2028}",
+            " ",
+        ]
         var offenders: [String] = []
         for first in scalars {
             for second in scalars {

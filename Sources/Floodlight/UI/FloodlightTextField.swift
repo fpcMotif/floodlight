@@ -34,17 +34,17 @@ struct FloodlightTextField: NSViewRepresentable {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)),
              #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            return commandKeyIsDown ? .commandSubmit : .submit
+            commandKeyIsDown ? .commandSubmit : .submit
         case #selector(NSResponder.cancelOperation(_:)):
-            return .cancel
+            .cancel
         case #selector(NSResponder.insertTab(_:)):
-            return .tab
+            .tab
         case #selector(NSResponder.insertBacktab(_:)):
-            return .shiftTab
+            .shiftTab
         case #selector(NSResponder.deleteBackward(_:)) where textIsEmpty:
-            return .backspaceOnEmptyText
+            .backspaceOnEmptyText
         default:
-            return nil
+            nil
         }
     }
 

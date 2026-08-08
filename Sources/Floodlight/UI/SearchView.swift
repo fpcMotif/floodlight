@@ -49,7 +49,10 @@ private struct SearchBar: View {
                 .font(.system(size: FloodlightMetrics.searchIconSize, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
-                .frame(width: FloodlightMetrics.searchIconSize, height: FloodlightMetrics.searchIconSize)
+                .frame(
+                    width: FloodlightMetrics.searchIconSize,
+                    height: FloodlightMetrics.searchIconSize
+                )
                 .transaction { transaction in
                     transaction.animation = nil
                     transaction.disablesAnimations = true
@@ -107,7 +110,10 @@ private struct SearchBar: View {
             }
             .buttonStyle(.plain)
             .onHover { isClearButtonHovered = $0 }
-            .frame(width: FloodlightMetrics.clearButtonSize, height: FloodlightMetrics.clearButtonSize)
+            .frame(
+                width: FloodlightMetrics.clearButtonSize,
+                height: FloodlightMetrics.clearButtonSize
+            )
         } else if let shortcut = model.activeShortcutDisplayName {
             KeyChip(label: shortcut)
                 .accessibilityLabel("Summon shortcut \(shortcut)")
@@ -301,7 +307,7 @@ private struct ResultList: View {
                 }
                 guard
                     index == 0
-                        || index >= FloodlightMetrics.maximumVisibleResults
+                    || index >= FloodlightMetrics.maximumVisibleResults
                 else {
                     return
                 }

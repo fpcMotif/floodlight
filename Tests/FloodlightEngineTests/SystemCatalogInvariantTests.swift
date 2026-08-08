@@ -15,7 +15,6 @@ import XCTest
 /// thousands of generated queries. Any false negative the bit-twiddling
 /// introduces shows up as a divergence.
 final class SystemCatalogInvariantTests: XCTestCase {
-
     private static let fixtures: [SystemCatalog.DiscoveredSetting] = [
         .init(name: "Aurora Controls", keywords: "brightness glow ambient", pane: "test.aurora"),
         .init(name: "Nebula Network", keywords: "wifi ethernet vpn", pane: "test.nebula"),
@@ -97,7 +96,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
         )
     }
 
-    func testTheMaskAgreesWithTheReferenceOnRealSettingsVocabulary() async throws {
+    func testTheMaskAgreesWithTheReferenceOnRealSettingsVocabulary() async {
         let catalog = await makeCatalog(Self.fixtures)
         let queries = [
             "aurora", "nebula", "quasar", "pulsar", "meteor", "zenith",
@@ -131,7 +130,8 @@ final class SystemCatalogInvariantTests: XCTestCase {
                     && item.subtitle == "System Settings"
                     && item.id.hasPrefix("setting:")
                     && item.fileURL == nil
-                    && item.score >= SearchItemRanking.setting + FuzzyMatcher.confidentMatchThreshold
+                    && item.score >= SearchItemRanking.setting + FuzzyMatcher
+                    .confidentMatchThreshold
                     && !item.title.isEmpty
             }
         }
@@ -202,17 +202,20 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
         // "neb" prefixes "nebula", so it matches.
         XCTAssertTrue(
-            catalog.immediatePage(for: "neb", limit: 50).items.contains { $0.id == "setting:test.nebula" }
+            catalog.immediatePage(for: "neb", limit: 50).items
+                .contains { $0.id == "setting:test.nebula" }
         )
         // "nbl" is a subsequence of "nebula" but prefixes no word, so a
         // three-character query must not surface it. This rule is what
         // keeps the settings list quiet while a user is still typing.
         XCTAssertFalse(
-            catalog.immediatePage(for: "nbl", limit: 50).items.contains { $0.id == "setting:test.nebula" }
+            catalog.immediatePage(for: "nbl", limit: 50).items
+                .contains { $0.id == "setting:test.nebula" }
         )
         // At four characters the rule lifts.
         XCTAssertEqual(
-            catalog.immediatePage(for: "nbla", limit: 50).items.contains { $0.id == "setting:test.nebula" },
+            catalog.immediatePage(for: "nbla", limit: 50).items
+                .contains { $0.id == "setting:test.nebula" },
             referenceMatches(query: "nbla", in: Self.fixtures).contains("setting:test.nebula")
         )
     }
@@ -228,7 +231,8 @@ final class SystemCatalogInvariantTests: XCTestCase {
             let normalized = FuzzyMatcher.normalized(query)
             let returned = self.fixtureMatches(from: catalog, query: query)
             return returned.allSatisfy { id in
-                guard let setting = Self.fixtures.first(where: { "setting:\($0.pane)" == id }) else {
+                guard let setting = Self.fixtures.first(where: { id == "setting:\($0.pane)" })
+                else {
                     return false
                 }
                 let candidate = FuzzyMatcher.normalized("\(setting.name) \(setting.keywords)")
@@ -273,7 +277,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
     // MARK: - Discovery, refresh, and de-duplication
 
-    func testARowExistsExactlyWhenItsPaneFormsAURL() async throws {
+    func testARowExistsExactlyWhenItsPaneFormsAURL() async {
         // The pane identifier goes straight into
         // `x-apple.systempreferences:<pane>`, and a row is only emitted if
         // that parses. Asserted differentially against `URL(string:)`
@@ -316,7 +320,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
             catalog.immediatePage(for: "Working Pane", limit: 50).items
                 .first { $0.id == "setting:test.working" }
         )
-        guard case .open(let url) = item.action else {
+        guard case let .open(url) = item.action else {
             return XCTFail("a settings row must open a URL")
         }
         XCTAssertEqual(url.scheme, "x-apple.systempreferences")
@@ -327,7 +331,11 @@ final class SystemCatalogInvariantTests: XCTestCase {
         // Discovery walks several directories and can find the same pane
         // twice; built-ins are listed first, so they win the de-duplication.
         let catalog = await makeCatalog([
-            .init(name: "Impostor Bluetooth", keywords: "fake", pane: "com.apple.BluetoothSettings"),
+            .init(
+                name: "Impostor Bluetooth",
+                keywords: "fake",
+                pane: "com.apple.BluetoothSettings"
+            ),
             .init(name: "Duplicate One", keywords: "first", pane: "test.duplicate"),
             .init(name: "Duplicate Two", keywords: "second", pane: "test.duplicate"),
         ])
@@ -369,7 +377,10 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
         let firstRefresh = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
         XCTAssertTrue(firstRefresh)
-        let unchangedRefresh = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+        let unchangedRefresh = await catalog.refreshIfNeeded(
+            minimumInterval: 0,
+            forceDiscovery: true
+        )
         XCTAssertFalse(unchangedRefresh, "an unchanged snapshot must not report a change")
 
         discovery.replace(with: Self.fixtures + [
@@ -408,7 +419,11 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
     func testAKeywordOnlyChangeIsDetected() async {
         let discovery = MutableDiscovery([
-            SystemCatalog.DiscoveredSetting(name: "Steady", keywords: "alpha", pane: "test.keywords"),
+            SystemCatalog.DiscoveredSetting(
+                name: "Steady",
+                keywords: "alpha",
+                pane: "test.keywords"
+            ),
         ])
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)

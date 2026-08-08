@@ -1,17 +1,17 @@
 import Foundation
 
-/// A deterministic, reproducible property-based testing harness.
-///
-/// Every run is driven by an explicit seed, so a failure is replayable from
-/// the message alone — no "it failed on CI once" cases. On failure the
-/// harness shrinks the counterexample toward the smallest input that still
-/// falsifies the property, then throws, which XCTest surfaces as the test's
-/// failure with the shrunk value attached.
-///
-/// This lives in its own target rather than in either test target because
-/// both the engine's tests and the shell's tests need the same generators —
-/// duplicating a PRNG is exactly how two suites start disagreeing about
-/// what "the same random input" means.
+// A deterministic, reproducible property-based testing harness.
+//
+// Every run is driven by an explicit seed, so a failure is replayable from
+// the message alone — no "it failed on CI once" cases. On failure the
+// harness shrinks the counterexample toward the smallest input that still
+// falsifies the property, then throws, which XCTest surfaces as the test's
+// failure with the shrunk value attached.
+//
+// This lives in its own target rather than in either test target because
+// both the engine's tests and the shell's tests need the same generators —
+// duplicating a PRNG is exactly how two suites start disagreeing about
+// what "the same random input" means.
 
 // MARK: - Deterministic randomness
 
@@ -54,7 +54,7 @@ package struct Gen<Value> {
     }
 
     package func map<Mapped>(_ transform: @escaping (Value) -> Mapped) -> Gen<Mapped> {
-        Gen<Mapped>(generate: { rng in transform(self.generate(&rng)) })
+        Gen<Mapped>(generate: { rng in transform(generate(&rng)) })
     }
 
     /// Maps while preserving shrinking by keeping the *source* value around,
@@ -64,11 +64,11 @@ package struct Gen<Value> {
     ) -> Gen<(source: Value, value: Mapped)> {
         Gen<(source: Value, value: Mapped)>(
             generate: { rng in
-                let source = self.generate(&rng)
+                let source = generate(&rng)
                 return (source, transform(source))
             },
             shrink: { pair in
-                self.shrink(pair.source).map { ($0, transform($0)) }
+                shrink(pair.source).map { ($0, transform($0)) }
             }
         )
     }
@@ -79,15 +79,15 @@ package struct Gen<Value> {
     ) -> Gen<Value> {
         Gen(
             generate: { rng in
-                var candidate = self.generate(&rng)
+                var candidate = generate(&rng)
                 var remaining = attempts
                 while !isIncluded(candidate), remaining > 0 {
-                    candidate = self.generate(&rng)
+                    candidate = generate(&rng)
                     remaining -= 1
                 }
                 return candidate
             },
-            shrink: { value in self.shrink(value).filter(isIncluded) }
+            shrink: { value in shrink(value).filter(isIncluded) }
         )
     }
 }
@@ -272,9 +272,21 @@ package extension Gen where Value == String {
     /// string handling: combining marks, emoji sequences, bidi overrides,
     /// zero-width joiners, and CJK.
     static let hostile = Gen<String>.frequency([
-        (6, .string(alphabet: Array("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), length: 0...20)),
+        (
+            6,
+            .string(
+                alphabet: Array("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+                length: 0...20
+            )
+        ),
         (3, .string(alphabet: Array("éüñçåøßÆΩ日本語テスト한국어Кириллица"), length: 0...12)),
-        (2, .string(alphabet: Array("\u{200B}\u{200D}\u{FEFF}\u{202E}\u{0301}\u{0328}\u{00A0}\u{2028}"), length: 0...8)),
+        (
+            2,
+            .string(
+                alphabet: Array("\u{200B}\u{200D}\u{FEFF}\u{202E}\u{0301}\u{0328}\u{00A0}\u{2028}"),
+                length: 0...8
+            )
+        ),
         (2, .string(alphabet: Array("👨‍👩‍👧‍👦🇦🇶🏳️‍🌈👋🏽🧑‍🚀"), length: 0...5)),
         (3, .string(alphabet: Array("\\\"'`$&|;<>(){}[]*?!#%~^"), length: 0...10)),
         (1, .element(of: AdversarialCorpus.strings)),
@@ -302,7 +314,9 @@ package struct PropertyFailure: LocalizedError, CustomStringConvertible {
         """
     }
 
-    package var errorDescription: String? { description }
+    package var errorDescription: String? {
+        description
+    }
 }
 
 /// The default number of cases each property runs.

@@ -18,7 +18,6 @@ import XCTest
 /// `^` is right-associative, and division or modulo by exactly zero fails
 /// the whole expression instead of producing infinity.
 final class CalculatorDifferentialTests: XCTestCase {
-
     // MARK: - The reference interpreter
 
     /// A node of the grammar the parser implements. Numbers carry their
@@ -39,22 +38,22 @@ final class CalculatorDifferentialTests: XCTestCase {
     /// parser is expected to reject the rendered source.
     private func evaluate(_ expression: Expression) -> Double? {
         switch expression {
-        case .number(let text):
+        case let .number(text):
             return Double(text.replacingOccurrences(of: ",", with: ""))
-        case .negate(let inner):
+        case let .negate(inner):
             return evaluate(inner).map { -$0 }
-        case .unaryPlus(let inner):
+        case let .unaryPlus(inner):
             return evaluate(inner)
-        case .grouped(let inner):
+        case let .grouped(inner):
             return evaluate(inner)
-        case .additive(let head, let rest):
+        case let .additive(head, rest):
             guard var value = evaluate(head) else { return nil }
             for (op, operand) in rest {
                 guard let rhs = evaluate(operand) else { return nil }
                 if op == "+" { value += rhs } else { value -= rhs }
             }
             return value
-        case .multiplicative(let head, let rest):
+        case let .multiplicative(head, rest):
             guard var value = evaluate(head) else { return nil }
             for (op, operand) in rest {
                 guard let rhs = evaluate(operand) else { return nil }
@@ -72,7 +71,7 @@ final class CalculatorDifferentialTests: XCTestCase {
                 }
             }
             return value
-        case .power(let base, let exponent):
+        case let .power(base, exponent):
             guard let baseValue = evaluate(base), let exponentValue = evaluate(exponent) else {
                 return nil
             }
@@ -82,24 +81,24 @@ final class CalculatorDifferentialTests: XCTestCase {
 
     private func render(_ expression: Expression, gap: () -> String) -> String {
         switch expression {
-        case .number(let text):
-            return text
-        case .negate(let inner):
-            return "-\(gap())\(render(inner, gap: gap))"
-        case .unaryPlus(let inner):
-            return "+\(gap())\(render(inner, gap: gap))"
-        case .grouped(let inner):
-            return "(\(gap())\(render(inner, gap: gap))\(gap()))"
-        case .additive(let head, let rest):
-            return rest.reduce(render(head, gap: gap)) { text, step in
+        case let .number(text):
+            text
+        case let .negate(inner):
+            "-\(gap())\(render(inner, gap: gap))"
+        case let .unaryPlus(inner):
+            "+\(gap())\(render(inner, gap: gap))"
+        case let .grouped(inner):
+            "(\(gap())\(render(inner, gap: gap))\(gap()))"
+        case let .additive(head, rest):
+            rest.reduce(render(head, gap: gap)) { text, step in
                 "\(text)\(gap())\(step.0)\(gap())\(render(step.1, gap: gap))"
             }
-        case .multiplicative(let head, let rest):
-            return rest.reduce(render(head, gap: gap)) { text, step in
+        case let .multiplicative(head, rest):
+            rest.reduce(render(head, gap: gap)) { text, step in
                 "\(text)\(gap())\(step.0)\(gap())\(render(step.1, gap: gap))"
             }
-        case .power(let base, let exponent):
-            return "\(render(base, gap: gap))\(gap())^\(gap())\(render(exponent, gap: gap))"
+        case let .power(base, exponent):
+            "\(render(base, gap: gap))\(gap())^\(gap())\(render(exponent, gap: gap))"
         }
     }
 
@@ -111,19 +110,19 @@ final class CalculatorDifferentialTests: XCTestCase {
     private func makeNumberText(_ rng: inout SeededGenerator) -> String {
         switch Int.random(in: 0...9, using: &rng) {
         case 0:
-            return "0"
+            "0"
         case 1:
-            return "\(Int.random(in: 0...9, using: &rng))"
+            "\(Int.random(in: 0...9, using: &rng))"
         case 2, 3:
-            return String(
+            String(
                 format: "%.\(Int.random(in: 1...3, using: &rng))f",
                 Double.random(in: 0...50, using: &rng)
             )
         case 4:
             // Leading zeroes are legal and must not change the value.
-            return "00\(Int.random(in: 1...99, using: &rng))"
+            "00\(Int.random(in: 1...99, using: &rng))"
         default:
-            return "\(Int.random(in: 1...9_999, using: &rng))"
+            "\(Int.random(in: 1...9_999, using: &rng))"
         }
     }
 
@@ -146,7 +145,10 @@ final class CalculatorDifferentialTests: XCTestCase {
         var rest: [(Character, Expression)] = []
         for _ in 1..<max(factors, 1) {
             let operators: [Character] = ["*", "/", "%"]
-            rest.append((operators[Int.random(in: 0...2, using: &rng)], makePower(&rng, depth: depth)))
+            rest.append((
+                operators[Int.random(in: 0...2, using: &rng)],
+                makePower(&rng, depth: depth)
+            ))
         }
         return rest.isEmpty ? head : .multiplicative(head, rest)
     }
@@ -163,11 +165,11 @@ final class CalculatorDifferentialTests: XCTestCase {
     private func makeUnary(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         switch Int.random(in: 0...9, using: &rng) {
         case 0:
-            return .negate(makeUnary(&rng, depth: depth))
+            .negate(makeUnary(&rng, depth: depth))
         case 1:
-            return .unaryPlus(makeUnary(&rng, depth: depth))
+            .unaryPlus(makeUnary(&rng, depth: depth))
         default:
-            return makePrimary(&rng, depth: depth)
+            makePrimary(&rng, depth: depth)
         }
     }
 
@@ -206,11 +208,10 @@ final class CalculatorDifferentialTests: XCTestCase {
         let expected: Double?
 
         var debugDescription: String {
-            let outcome: String
-            if let expected {
-                outcome = String(expected)
+            let outcome = if let expected {
+                String(expected)
             } else {
-                outcome = "rejected"
+                "rejected"
             }
             return "\(String(reflecting: source)) → \(outcome)"
         }
@@ -531,7 +532,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         // the table must still be rejected rather than silently coerced.
         XCTAssertNil(Calculator.evaluate("6 ∗ 7"))
         XCTAssertNil(Calculator.evaluate("6 ⨯ 7"))
-        XCTAssertNil(Calculator.evaluate("50 – 8"))  // en dash, not minus sign
+        XCTAssertNil(Calculator.evaluate("50 – 8")) // en dash, not minus sign
     }
 
     // MARK: - Non-finite results

@@ -1,0 +1,16 @@
+id: sources-no-force-cast
+snapshots:
+  ? |
+    let date = attributes[.modificationDate] as! Date
+  : labels:
+    - source: attributes[.modificationDate] as! Date
+      style: primary
+      start: 11
+      end: 49
+  ? |
+    let widget = thing as! Widget
+  : labels:
+    - source: thing as! Widget
+      style: primary
+      start: 13
+      end: 29

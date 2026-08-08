@@ -228,7 +228,7 @@ final class CalculatorStressTests: XCTestCase {
 
     func testFormatHandlesNegativeNumbers() {
         XCTAssertEqual(Calculator.format(-1), "-1")
-        XCTAssertEqual(Calculator.format(-1000), "-1,000")
+        XCTAssertEqual(Calculator.format(-1_000), "-1,000")
     }
 
     func testFormatHandlesLargeNumbers() {
@@ -236,7 +236,7 @@ final class CalculatorStressTests: XCTestCase {
     }
 
     func testFormatHandlesDecimals() {
-        XCTAssertEqual(Calculator.format(1234.5), "1,234.5")
+        XCTAssertEqual(Calculator.format(1_234.5), "1,234.5")
     }
 
     func testFormatTrimsTrailingZeros() {
@@ -282,8 +282,8 @@ final class CalculatorStressTests: XCTestCase {
     // MARK: - Comma handling
 
     func testThousandsSeparatorsAreStripped() {
-        assertEvalEqual(Calculator.evaluate("1,000 + 2,000"), 3000, accuracy: accuracy)
-        assertEvalEqual(Calculator.evaluate("1,000,000 / 1,000"), 1000, accuracy: accuracy)
+        assertEvalEqual(Calculator.evaluate("1,000 + 2,000"), 3_000, accuracy: accuracy)
+        assertEvalEqual(Calculator.evaluate("1,000,000 / 1,000"), 1_000, accuracy: accuracy)
     }
 
     func testCommasAreStrippedBeforeParsing() {

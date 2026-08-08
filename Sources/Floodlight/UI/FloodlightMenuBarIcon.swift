@@ -6,7 +6,8 @@ enum FloodlightMenuBarIcon {
     static func image(resourceURL: URL? = bundledResourceURL) -> NSImage {
         if let resourceURL,
            let image = NSImage(contentsOf: resourceURL),
-           image.isValid {
+           image.isValid
+        {
             return prepare(image)
         }
 

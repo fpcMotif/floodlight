@@ -24,7 +24,7 @@ final class FloodlightMetricsTests: XCTestCase {
                 + FloodlightMetrics.filterBarHeight
                 + FloodlightMetrics.resultPadding * 2
                 + CGFloat(FloodlightMetrics.maximumVisibleResults)
-                    * FloodlightMetrics.resultRowHeight
+                * FloodlightMetrics.resultRowHeight
         )
     }
 

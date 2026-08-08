@@ -20,16 +20,19 @@ struct KeyChip: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .frame(minWidth: 24, minHeight: 24)
-            .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .background(
+                .secondary.opacity(0.1),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
     }
 
     @ViewBuilder
     private var chipContent: some View {
         switch content {
-        case .symbol(let name):
+        case let .symbol(name):
             Image(systemName: name)
                 .font(FloodlightMetrics.Typography.keyChip)
-        case .text(let label):
+        case let .text(label):
             Text(label)
                 .font(FloodlightMetrics.Typography.keyChip)
         }

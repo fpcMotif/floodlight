@@ -48,7 +48,7 @@ final class KeywordEngineTests: XCTestCase {
 
         XCTAssertEqual(item.kind, .web)
         XCTAssertEqual(item.score, SearchItemRanking.keywordEngine)
-        guard case .open(let url) = item.action else {
+        guard case let .open(url) = item.action else {
             return XCTFail("expected an .open action")
         }
         XCTAssertEqual(url.absoluteString, "https://x.com/search?q=floodlight%20app")
@@ -58,10 +58,13 @@ final class KeywordEngineTests: XCTestCase {
         let items = KeywordEngineCatalog.search("yt lofi hip hop")
         let item = try XCTUnwrap(items.first)
 
-        guard case .open(let url) = item.action else {
+        guard case let .open(url) = item.action else {
             return XCTFail("expected an .open action")
         }
-        XCTAssertEqual(url.absoluteString, "https://www.youtube.com/results?search_query=lofi%20hip%20hop")
+        XCTAssertEqual(
+            url.absoluteString,
+            "https://www.youtube.com/results?search_query=lofi%20hip%20hop"
+        )
     }
 
     func testSearchBuildsAnAssistantSearchItemForClaude() throws {
@@ -70,14 +73,20 @@ final class KeywordEngineTests: XCTestCase {
 
         XCTAssertEqual(item.kind, .assistant)
         XCTAssertEqual(item.score, SearchItemRanking.keywordEngine)
-        XCTAssertEqual(item.action, .askAssistant(command: "claude", arguments: ["-p", "explain this function"]))
+        XCTAssertEqual(
+            item.action,
+            .askAssistant(command: "claude", arguments: ["-p", "explain this function"])
+        )
     }
 
     func testSearchBuildsAnAssistantSearchItemForCodex() throws {
         let items = KeywordEngineCatalog.search("codex fix the flaky test")
         let item = try XCTUnwrap(items.first)
 
-        XCTAssertEqual(item.action, .askAssistant(command: "codex", arguments: ["exec", "fix the flaky test"]))
+        XCTAssertEqual(
+            item.action,
+            .askAssistant(command: "codex", arguments: ["exec", "fix the flaky test"])
+        )
     }
 
     func testSearchReturnsNothingForAnUnmatchedQuery() {
@@ -129,7 +138,10 @@ final class KeywordEngineTests: XCTestCase {
     func testEveryPresetEngineBuildsItsExpectedSearchURL() throws {
         let expectations: [(query: String, url: String)] = [
             ("g swift concurrency", "https://www.google.com/search?q=swift%20concurrency"),
-            ("wiki alan turing", "https://en.wikipedia.org/wiki/Special:Search?search=alan%20turing"),
+            (
+                "wiki alan turing",
+                "https://en.wikipedia.org/wiki/Special:Search?search=alan%20turing"
+            ),
             ("gh swift-testing", "https://github.com/search?q=swift-testing"),
             ("so nsurlsession retry", "https://stackoverflow.com/search?q=nsurlsession%20retry"),
         ]
@@ -137,7 +149,7 @@ final class KeywordEngineTests: XCTestCase {
         for (query, expected) in expectations {
             let item = try XCTUnwrap(KeywordEngineCatalog.search(query).first, query)
             XCTAssertEqual(item.kind, .web, query)
-            guard case .open(let url) = item.action else {
+            guard case let .open(url) = item.action else {
                 return XCTFail("expected an .open action for \(query)")
             }
             XCTAssertEqual(url.absoluteString, expected, query)
@@ -168,7 +180,8 @@ final class KeywordEngineTests: XCTestCase {
 
     func testTheDefaultEngineIsGoogleAndComesFromTheTable() {
         XCTAssertEqual(KeywordEngineCatalog.defaultEngine.id, "google")
-        XCTAssertTrue(KeywordEngineCatalog.all.contains { $0.id == KeywordEngineCatalog.defaultEngine.id })
+        XCTAssertTrue(KeywordEngineCatalog.all
+            .contains { $0.id == KeywordEngineCatalog.defaultEngine.id })
     }
 
     func testWebSearchEnginesListsOnlyURLEnginesInTableOrder() {

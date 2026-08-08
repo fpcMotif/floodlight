@@ -166,7 +166,7 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertEqual(fallback.score, .min)
         XCTAssertEqual(
             fallback.action,
-            .open(URL(string: "https://www.google.com/search?q=shortcut")!)
+            try .open(XCTUnwrap(URL(string: "https://www.google.com/search?q=shortcut")))
         )
     }
 
@@ -393,7 +393,10 @@ final class SearchCoordinatorTests: XCTestCase {
         await runner.complete(with: .success("It returns the sum."))
 
         try await waitUntil {
-            coordinator.assistantRun == AssistantRun(itemID: item.id, state: .answered("It returns the sum."))
+            coordinator.assistantRun == AssistantRun(
+                itemID: item.id,
+                state: .answered("It returns the sum.")
+            )
         }
     }
 
@@ -403,10 +406,16 @@ final class SearchCoordinatorTests: XCTestCase {
         let item = try makeClaudeAskItem(coordinator)
 
         coordinator.activate(item)
-        await runner.complete(with: .failure(AssistantProcessError.nonZeroExit(status: 1, message: "network error")))
+        await runner.complete(with: .failure(AssistantProcessError.nonZeroExit(
+            status: 1,
+            message: "network error"
+        )))
 
         try await waitUntil {
-            coordinator.assistantRun == AssistantRun(itemID: item.id, state: .failed("network error"))
+            coordinator.assistantRun == AssistantRun(
+                itemID: item.id,
+                state: .failed("network error")
+            )
         }
     }
 

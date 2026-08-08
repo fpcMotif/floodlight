@@ -1,0 +1,102 @@
+name: CI
+
+# The merge gate. Everything here is `make <target>` and nothing else, so the
+# verdict on a pull request is the verdict a contributor already got locally —
+# if these steps and `make check` could disagree, the local command would stop
+# being worth running.
+#
+# The release workflow is deliberately untouched by this: shipping stays
+# decoupled from lint policy.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Gates
+    runs-on: macos-26
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # Keyed on the pins themselves, so bumping a version in
+      # tool-versions.env invalidates the cache in the same commit that
+      # changes the verdict.
+      - name: Restore pinned tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      - name: Restore build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: floodlight-spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            floodlight-spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-
+            floodlight-spm-${{ runner.os }}-${{ runner.arch }}-
+
+      # Pinned release binaries downloaded straight from each tool's own
+      # repository — no package manager in the loop, so CI and a laptop install
+      # the same bytes and neither waits on a third party's formula.
+      - name: Install pinned tools
+        run: make install-tools
+
+      - name: Report tool versions
+        run: |
+          cat scripts/tool-versions.env
+          swift --version
+
+      # Formatting, SwiftLint, ast-grep rules and their self-test, the
+      # architecture script, a warnings-as-errors build of every target, and
+      # the Periphery dead-code scan.
+      - name: Run gates
+        run: make check
+
+  test:
+    name: Tests
+    runs-on: macos-26
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: floodlight-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            floodlight-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-
+            floodlight-test-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Run tests
+        run: make test
+
+      # Its own step, and in release configuration: a debug build's search path
+      # is several times slower, so a budget measured there is either uselessly
+      # loose or permanently red. The budgets have margin for shared-runner
+      # variance — they catch an order-of-magnitude regression, not a 10% one.
+      - name: Run performance budgets
+        run: make test-performance
+
+      # The measured numbers, kept even on a green run, so a budget that starts
+      # creeping is visible before it is breached.
+      - name: Record benchmark numbers
+        if: always()
+        run: |
+          if [ -f .build/performance.log ]; then
+            grep FLOODLIGHT_BENCH .build/performance.log >> "$GITHUB_STEP_SUMMARY" || true
+          fi

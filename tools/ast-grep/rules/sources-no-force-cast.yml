@@ -1,0 +1,16 @@
+id: sources-no-force-cast
+language: Swift
+severity: error
+message: >-
+  `as!` crashes the launcher when the cast is wrong — use `as?` with a `guard`
+  and a defined fallback.
+note: >-
+  Most casts in this codebase are reading untyped system data (`attributes[
+  .modificationDate] as? Date ?? .distantPast`). The type is whatever the OS
+  decided to put there this release, so the conditional cast plus a default is
+  both shorter and honest. `CatalogDirectoryFingerprint.modificationDate` is the
+  pattern.
+files:
+  - "Sources/**/*.swift"
+rule:
+  pattern: $EXPR as! $TYPE

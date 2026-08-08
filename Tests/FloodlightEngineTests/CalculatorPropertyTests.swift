@@ -24,12 +24,12 @@ final class CalculatorPropertyTests: XCTestCase {
 
     /// A double generator kept in a range where the parser's integer
     /// arithmetic and `pow` stay exact enough to compare with `accuracy`.
-    private let smallDouble = Gen<Double>.double(in: -1000...1000)
+    private let smallDouble = Gen<Double>.double(in: -1_000...1_000)
 
-    private let nonzeroDouble = Gen<Double>.double(in: -1000...1000)
+    private let nonzeroDouble = Gen<Double>.double(in: -1_000...1_000)
         .filter { abs($0) > 0.5 }
 
-    private let positiveDouble = Gen<Double>.double(in: 0.5...1000)
+    private let positiveDouble = Gen<Double>.double(in: 0.5...1_000)
 
     // MARK: - Commutativity
 
@@ -104,7 +104,8 @@ final class CalculatorPropertyTests: XCTestCase {
             runs: 400
         ) { a, b, c in
             let lhs = Calculator.evaluate("\(formatNum(a)) * (\(formatNum(b)) + \(formatNum(c)))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) * \(formatNum(b)) + \(formatNum(a)) * \(formatNum(c))")
+            let rhs = Calculator
+                .evaluate("\(formatNum(a)) * \(formatNum(b)) + \(formatNum(a)) * \(formatNum(c))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-4
         }
@@ -355,7 +356,7 @@ final class CalculatorPropertyTests: XCTestCase {
     // MARK: - Format round-trip
 
     func testFormatPreservesWholeNumbers() {
-        XCTAssertEqual(Calculator.format(1000), "1,000")
+        XCTAssertEqual(Calculator.format(1_000), "1,000")
         XCTAssertEqual(Calculator.format(0), "0")
         XCTAssertEqual(Calculator.format(-42), "-42")
     }

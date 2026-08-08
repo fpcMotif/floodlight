@@ -88,7 +88,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             onOpenSpotlightSettings: { [weak self] in
                 self?.flow.beginSpotlightReplacement()
             },
-            onOpenFullDiskAccess: Self.openFullDiskAccess,
+            // Wrapped rather than passed as `Self.openFullDiskAccess`: an
+            // unapplied method reference carries no isolation, so it will not
+            // convert to the callback's `@MainActor @Sendable` type.
+            onOpenFullDiskAccess: { Self.openFullDiskAccess() },
             onFinish: { [weak self] in self?.finish() }
         )
         window.contentViewController = NSHostingController(rootView: view)
@@ -153,7 +156,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private static func openFullDiskAccess() {
         openSystemSettings(
             primary:
-                "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
             fallback: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
         )
     }
@@ -161,7 +164,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private static func openSystemSettings(primary: String, fallback: String) {
         guard let primaryURL = URL(string: primary),
               !NSWorkspace.shared.open(primaryURL),
-              let fallbackURL = URL(string: fallback) else {
+              let fallbackURL = URL(string: fallback)
+        else {
             return
         }
         NSWorkspace.shared.open(fallbackURL)

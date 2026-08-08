@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private var activeShortcut: FloodlightShortcut?
+    // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
+    // back an unowned item, so dropping this reference removes the menu bar
+    // icon. The assignment *is* the use.
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
     private var launchAtLoginItem: NSMenuItem?
@@ -165,11 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ? "Floodlight could not be added to Login Items."
                 : "Floodlight could not be removed from Login Items."
             alert.informativeText = """
-                \(error.localizedDescription)
+            \(error.localizedDescription)
 
-                You can change this yourself in System Settings → General → \
-                Login Items & Extensions.
-                """
+            You can change this yourself in System Settings → General → \
+            Login Items & Extensions.
+            """
             alert.alertStyle = .warning
             alert.runModal()
         }

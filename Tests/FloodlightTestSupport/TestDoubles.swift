@@ -195,7 +195,7 @@ package actor ScriptedAssistantRunner: AssistantProcessRunning {
     private var nextCallID = 0
     private var recordedRuns: [(command: String, arguments: [String])] = []
     private var availabilityChecks: [String] = []
-    private(set) package var cancellations = 0
+    package private(set) var cancellations = 0
 
     package init(
         availableCommands: Set<String> = [],
@@ -213,9 +213,17 @@ package actor ScriptedAssistantRunner: AssistantProcessRunning {
         availableCommands = commands
     }
 
-    package var runs: [(command: String, arguments: [String])] { recordedRuns }
-    package var checkedCommands: [String] { availabilityChecks }
-    package var pendingCount: Int { pending.count }
+    package var runs: [(command: String, arguments: [String])] {
+        recordedRuns
+    }
+
+    package var checkedCommands: [String] {
+        availabilityChecks
+    }
+
+    package var pendingCount: Int {
+        pending.count
+    }
 
     package func isAvailable(command: String) async -> Bool {
         availabilityChecks.append(command)
@@ -225,7 +233,7 @@ package actor ScriptedAssistantRunner: AssistantProcessRunning {
     package func run(command: String, arguments: [String]) async throws -> String {
         recordedRuns.append((command, arguments))
         switch mode {
-        case .immediate(let result):
+        case let .immediate(result):
             return try result.get()
         case .suspending:
             let callID = nextCallID
@@ -327,7 +335,7 @@ package enum TestError: LocalizedError, Equatable {
 
     package var errorDescription: String? {
         switch self {
-        case .scripted(let message): message
+        case let .scripted(message): message
         }
     }
 }

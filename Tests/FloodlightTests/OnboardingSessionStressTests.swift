@@ -180,7 +180,10 @@ final class OnboardingSessionStressTests: XCTestCase {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(OnboardingSession.currentVersion, forKey: OnboardingSession.completedVersionKey)
+        defaults.set(
+            OnboardingSession.currentVersion,
+            forKey: OnboardingSession.completedVersionKey
+        )
 
         XCTAssertFalse(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
     }
@@ -189,7 +192,10 @@ final class OnboardingSessionStressTests: XCTestCase {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(OnboardingSession.currentVersion - 1, forKey: OnboardingSession.completedVersionKey)
+        defaults.set(
+            OnboardingSession.currentVersion - 1,
+            forKey: OnboardingSession.completedVersionKey
+        )
 
         XCTAssertTrue(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
     }
@@ -198,7 +204,10 @@ final class OnboardingSessionStressTests: XCTestCase {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(OnboardingSession.currentVersion, forKey: OnboardingSession.completedVersionKey)
+        defaults.set(
+            OnboardingSession.currentVersion,
+            forKey: OnboardingSession.completedVersionKey
+        )
 
         XCTAssertTrue(
             OnboardingSession.shouldPresent(
@@ -212,7 +221,10 @@ final class OnboardingSessionStressTests: XCTestCase {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(OnboardingSession.currentVersion, forKey: OnboardingSession.completedVersionKey)
+        defaults.set(
+            OnboardingSession.currentVersion,
+            forKey: OnboardingSession.completedVersionKey
+        )
 
         XCTAssertFalse(
             OnboardingSession.shouldPresent(
@@ -278,6 +290,6 @@ final class OnboardingSessionStressTests: XCTestCase {
 
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suiteName = "OnboardingSessionStressTests-\(UUID().uuidString)"
-        return (try XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
+        return try (XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
     }
 }

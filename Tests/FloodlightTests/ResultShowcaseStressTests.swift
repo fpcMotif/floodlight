@@ -103,19 +103,23 @@ final class ResultShowcaseStressTests: XCTestCase {
         XCTAssertTrue(result.hasPrefix("Today at "))
     }
 
-    func testFormattedModifiedDateForYesterday() {
+    func testFormattedModifiedDateForYesterday() throws {
         let now = Self.fixedNow
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+        let yesterday = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: now))
         XCTAssertEqual(
             ResultShowcase.formattedModifiedDate(yesterday, now: now),
             "Yesterday"
         )
     }
 
-    func testFormattedModifiedDateForTwoToSixDaysAgo() {
+    func testFormattedModifiedDateForTwoToSixDaysAgo() throws {
         let now = Self.fixedNow
         for daysAgo in 2...6 {
-            let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: now)!
+            let date = try XCTUnwrap(Calendar.current.date(
+                byAdding: .day,
+                value: -daysAgo,
+                to: now
+            ))
             let result = ResultShowcase.formattedModifiedDate(date, now: now)
             XCTAssertTrue(
                 result.contains(" at "),
@@ -126,9 +130,9 @@ final class ResultShowcaseStressTests: XCTestCase {
         }
     }
 
-    func testFormattedModifiedDateForSevenDaysAgo() {
+    func testFormattedModifiedDateForSevenDaysAgo() throws {
         let now = Self.fixedNow
-        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: now)!
+        let sevenDaysAgo = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -7, to: now))
         let result = ResultShowcase.formattedModifiedDate(sevenDaysAgo, now: now)
         // 7 days ago falls outside the 2...6 range, so it's an absolute date.
         XCTAssertFalse(result.contains(" at "))
@@ -136,18 +140,18 @@ final class ResultShowcaseStressTests: XCTestCase {
         XCTAssertFalse(result.hasPrefix("Today"))
     }
 
-    func testFormattedModifiedDateForOneYearAgo() {
+    func testFormattedModifiedDateForOneYearAgo() throws {
         let now = Self.fixedNow
-        let oneYearAgo = Calendar.current.date(byAdding: .year, value: -1, to: now)!
+        let oneYearAgo = try XCTUnwrap(Calendar.current.date(byAdding: .year, value: -1, to: now))
         let result = ResultShowcase.formattedModifiedDate(oneYearAgo, now: now)
         XCTAssertFalse(result.contains(" at "))
         XCTAssertFalse(result == "Yesterday")
         XCTAssertFalse(result.hasPrefix("Today"))
     }
 
-    func testFormattedModifiedDateForFutureDate() {
+    func testFormattedModifiedDateForFutureDate() throws {
         let now = Self.fixedNow
-        let future = Calendar.current.date(byAdding: .day, value: 5, to: now)!
+        let future = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 5, to: now))
         let result = ResultShowcase.formattedModifiedDate(future, now: now)
         // Future dates fall through to the absolute-date branch.
         XCTAssertFalse(result.contains(" at "))
@@ -155,26 +159,26 @@ final class ResultShowcaseStressTests: XCTestCase {
         XCTAssertFalse(result.hasPrefix("Today"))
     }
 
-    func testFormattedModifiedDateForFarFuture() {
+    func testFormattedModifiedDateForFarFuture() throws {
         let now = Self.fixedNow
-        let farFuture = Calendar.current.date(byAdding: .year, value: 10, to: now)!
+        let farFuture = try XCTUnwrap(Calendar.current.date(byAdding: .year, value: 10, to: now))
         let result = ResultShowcase.formattedModifiedDate(farFuture, now: now)
         XCTAssertFalse(result.contains(" at "))
         XCTAssertFalse(result == "Yesterday")
         XCTAssertFalse(result.hasPrefix("Today"))
     }
 
-    func testFormattedModifiedDateWithCustomCalendar() {
+    func testFormattedModifiedDateWithCustomCalendar() throws {
         let now = Self.fixedNow
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
         let result = ResultShowcase.formattedModifiedDate(now, now: now, calendar: calendar)
         XCTAssertTrue(result.hasPrefix("Today at "))
     }
 
-    func testFormattedModifiedDateIsDeterministic() {
+    func testFormattedModifiedDateIsDeterministic() throws {
         let now = Self.fixedNow
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+        let yesterday = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: now))
         let first = ResultShowcase.formattedModifiedDate(yesterday, now: now)
         let second = ResultShowcase.formattedModifiedDate(yesterday, now: now)
         XCTAssertEqual(first, second)

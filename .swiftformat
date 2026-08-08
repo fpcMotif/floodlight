@@ -1,0 +1,79 @@
+# SwiftFormat owns the one deterministic style for this repo.
+#
+# `make format` applies it; `make check` runs it in lint mode, so formatting
+# feedback is never something a human hand-edits. The aggressive semantic
+# cleanups (redundantSelf, unusedArguments, hoistPatternLet) are the point of
+# picking nicklockwood/SwiftFormat over swift-format — they delete noise the
+# compiler tolerates but a reader has to skip past.
+#
+# Version is pinned in scripts/tool-versions.env and asserted by
+# scripts/check-format.sh. An unpinned formatter is a formatting war waiting
+# to happen.
+
+--swift-version 5.10
+
+# Match the tree as it already reads: 4-space indent, 100-column wrap,
+# arguments wrapped before the first one, closing paren balanced on its own
+# line. Return types and conditions are left alone — wrapping them is where
+# SwiftFormat's output stops looking like something a person would write.
+--indent 4
+--max-width 100
+--wrap-arguments before-first
+--wrap-parameters before-first
+--wrap-collections before-first
+--wrap-conditions preserve
+--wrap-return-type preserve
+--wrap-effects preserve
+--closing-paren balanced
+
+# `0..<9`, not `0 ..< 9`.
+--ranges no-space
+--operator-func spaced
+
+# `1_000` and `2_500`, the grouping the tree already uses everywhere.
+--decimal-grouping 3,4
+
+# Multiline collection literals keep their trailing comma, so adding an
+# element is a one-line diff.
+--trailing-commas always
+
+--trim-whitespace always
+--empty-braces no-space
+--void-type void
+--some-any true
+--strip-unused-args closure-only
+--self remove
+--pattern-let hoist
+--semicolons never
+--else-position same-line
+--guard-else auto
+--header ignore
+
+# Imports sorted alphabetically with `@testable` last — the shape the test
+# suite already uses.
+--import-grouping testable-bottom
+
+# Style rules that are off by default but express choices this tree already
+# made implicitly.
+--enable blankLineAfterImports
+--enable blockComments
+--enable isEmpty
+--enable redundantVariable
+--enable sortTypealiases
+--enable wrapEnumCases
+
+# `redundantFileprivate` rewrites `fileprivate` to `private`, which changes
+# access in ways scripts/check-architecture.sh cares about; leave
+# access-control edits to humans.
+--disable redundantFileprivate
+
+# `redundantSendable` strips explicit `Sendable` from non-public types on the
+# grounds that the compiler infers it anyway. It does — until someone adds one
+# non-Sendable stored property, at which point the conformance silently
+# disappears and the error surfaces at some distant use site instead of at the
+# declaration. Nothing under Sources is public, so this rule would delete every
+# `Sendable` in the package. Writing it down is the point: it is a promise the
+# type makes, and the compiler checks promises at the place they are made.
+--disable redundantSendable
+
+--exclude .build,.tools,docs,Sources/Floodlight/Resources

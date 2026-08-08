@@ -1,0 +1,35 @@
+id: sources-no-force-unwrap
+snapshots:
+  ? |
+    let frame = window!.frame
+  : labels:
+    - source: window!
+      style: primary
+      start: 12
+      end: 19
+    - source: '!'
+      style: secondary
+      start: 18
+      end: 19
+  ? |
+    let name = dictionary["name"]!
+  : labels:
+    - source: dictionary["name"]!
+      style: primary
+      start: 11
+      end: 30
+    - source: '!'
+      style: secondary
+      start: 29
+      end: 30
+  ? |
+    let score = value!
+  : labels:
+    - source: value!
+      style: primary
+      start: 12
+      end: 18
+    - source: '!'
+      style: secondary
+      start: 17
+      end: 18

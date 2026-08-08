@@ -328,7 +328,7 @@ final class OnboardingTests: XCTestCase {
 
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suiteName = "FloodlightOnboardingTests-\(UUID().uuidString)"
-        return (try XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
+        return try (XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
     }
 
     private func writeSnapshot(_ view: OnboardingView, to url: URL) throws {

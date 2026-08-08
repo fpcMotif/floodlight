@@ -7,7 +7,6 @@ import XCTest
 /// delegate consumes is exactly what maps to a command; anything unmapped
 /// falls through to the field editor untouched.
 final class SearchFieldKeymapTests: XCTestCase {
-
     private func command(
         _ selector: Selector,
         commandKeyIsDown: Bool = false,

@@ -13,13 +13,15 @@ final class SearchCoordinator {
             selectionWasUserDriven = false
             guard !isResetting else { return }
             if case .local = mode,
-               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 refreshApplicationsIfNeeded()
                 refreshSettingsIfNeeded()
             }
             scheduleSearch()
         }
     }
+
     /// Local fuzzy search, or web mode scoped to one engine (entered with
     /// Tab, shown as the field's token). All transitions run through
     /// `SearchMode.transition` — this only publishes what it decides.
@@ -53,7 +55,7 @@ final class SearchCoordinator {
         let primary = SearchResultFilter.primary.map(makeFilterOption)
         let dynamic = SearchResultFilter.dynamic.compactMap { filter -> SearchFilterOption? in
             let option = makeFilterOption(filter)
-            guard option.count > 0 || selectedFilter == filter else { return nil }
+            guard !option.isEmpty || selectedFilter == filter else { return nil }
             return option
         }
         return primary + dynamic
@@ -62,7 +64,7 @@ final class SearchCoordinator {
     /// The engine web mode is scoped to, or `nil` in local mode — what the
     /// search field's token renders.
     var activeWebEngine: KeywordEngine? {
-        guard case .web(let context) = mode else { return nil }
+        guard case let .web(context) = mode else { return nil }
         return KeywordEngineCatalog.webSearchEngines.first { $0.id == context.engineID }
     }
 
@@ -80,7 +82,8 @@ final class SearchCoordinator {
     /// Assistant engines ("Ask Codex", "Ask Claude") only ever appear once
     /// their binary is confirmed runnable at startup; web-search engines
     /// (Twitter/X, YouTube) don't need that check and are always included.
-    private var availableKeywordEngines: [KeywordEngine] = KeywordEngineCatalog.all.filter { $0.kind != .assistant }
+    private var availableKeywordEngines: [KeywordEngine] = KeywordEngineCatalog.all
+        .filter { $0.kind != .assistant }
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
@@ -181,7 +184,8 @@ final class SearchCoordinator {
                 async let startFiles: Void = index.start()
                 async let startApplications: Void = applicationCatalog.start()
                 async let startSettings: Void = settingsCatalog.start()
-                async let resolvedKeywordEngines = KeywordEngineCatalog.availableEngines(runner: assistantRunner)
+                async let resolvedKeywordEngines = KeywordEngineCatalog
+                    .availableEngines(runner: assistantRunner)
 
                 try await startApplications
                 isApplicationCatalogLoading = false
@@ -333,7 +337,8 @@ final class SearchCoordinator {
 
     func moveSelection(by delta: Int) {
         guard !results.isEmpty else { return }
-        let currentIndex = selectedID.flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
+        let currentIndex = selectedID
+            .flatMap { id in results.firstIndex(where: { $0.id == id }) } ?? 0
         let nextIndex = min(max(currentIndex + delta, 0), results.count - 1)
         selectedID = results[nextIndex].id
         selectionWasUserDriven = true
@@ -378,11 +383,11 @@ final class SearchCoordinator {
         let selectedQuery = query
 
         switch item.action {
-        case .copy(let value):
+        case let .copy(value):
             onDismiss?()
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
-        case .open(let url):
+        case let .open(url):
             onDismiss?()
             open(url, asApplication: item.kind == .application)
             if item.kind == .file || item.kind == .folder {
@@ -393,7 +398,7 @@ final class SearchCoordinator {
         case .showFloodlightSettings:
             onDismiss?()
             onShowSettings?()
-        case .askAssistant(let command, let arguments):
+        case let .askAssistant(command, arguments):
             // Keeps the panel open through a running/answered/failed cycle
             // instead of the eager dismiss-then-act every other action uses.
             runAssistant(command: command, arguments: arguments, for: item)
@@ -417,13 +422,19 @@ final class SearchCoordinator {
                 assistantRun = AssistantRun(itemID: item.id, state: .answered(output))
             } catch is CancellationError {
                 return
-            } catch AssistantProcessError.executableNotFound(let missingCommand) {
+            } catch let AssistantProcessError.executableNotFound(missingCommand) {
                 guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(itemID: item.id, state: .failed("\(missingCommand) isn't installed."))
+                assistantRun = AssistantRun(
+                    itemID: item.id,
+                    state: .failed("\(missingCommand) isn't installed.")
+                )
             } catch AssistantProcessError.timedOut {
                 guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(itemID: item.id, state: .failed("That ask took too long and was stopped."))
-            } catch AssistantProcessError.nonZeroExit(_, let message) where !message.isEmpty {
+                assistantRun = AssistantRun(
+                    itemID: item.id,
+                    state: .failed("That ask took too long and was stopped.")
+                )
+            } catch let AssistantProcessError.nonZeroExit(_, message) where !message.isEmpty {
                 guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
                 assistantRun = AssistantRun(itemID: item.id, state: .failed(message))
             } catch {
@@ -452,19 +463,20 @@ final class SearchCoordinator {
 
     func copySelection() {
         guard let item = selectedItem else { return }
-        let value: String
-        switch item.action {
-        case .copy(let text):
-            value = text
-        case .open(let url):
-            value = url.isFileURL ? url.path : url.absoluteString
+        let value: String = switch item.action {
+        case let .copy(text):
+            text
+        case let .open(url):
+            url.isFileURL ? url.path : url.absoluteString
         case .showFloodlightSettings:
-            value = item.title
+            item.title
         case .askAssistant:
-            if let assistantRun, assistantRun.itemID == item.id, case .answered(let text) = assistantRun.state {
-                value = text
+            if let assistantRun, assistantRun.itemID == item.id,
+               case let .answered(text) = assistantRun.state
+            {
+                text
             } else {
-                value = item.title
+                item.title
             }
         }
         NSPasteboard.general.clearContents()
@@ -540,7 +552,7 @@ final class SearchCoordinator {
     }
 
     private func scheduleSearch(immediate: Bool = false) {
-        if case .web(let context) = mode {
+        if case let .web(context) = mode {
             publishWebModeResults(context: context)
             return
         }
@@ -732,7 +744,9 @@ final class SearchCoordinator {
             + engines.filter { $0.id != activeEngineID }
 
         return ordered.enumerated().compactMap { position, engine in
-            guard let url = engine.searchURL(for: query), let title = engine.searchTitle(for: query) else {
+            guard let url = engine.searchURL(for: query),
+                  let title = engine.searchTitle(for: query)
+            else {
                 return nil
             }
             return SearchItem(
@@ -781,7 +795,8 @@ final class SearchCoordinator {
         let defaultEngine = KeywordEngineCatalog.defaultEngine
         if !query.isEmpty,
            let url = defaultEngine.searchURL(for: query),
-           let title = defaultEngine.searchTitle(for: query) {
+           let title = defaultEngine.searchTitle(for: query)
+        {
             let localMatchCount = apps.count + system.count + indexed.count
             let promoted = WebSearchIntent.shouldPromote(
                 query: query,
@@ -844,11 +859,13 @@ final class SearchCoordinator {
         }
         if promoteWebFallback,
            previousSelection == webSearchResultID,
-           first.id != webSearchResultID {
+           first.id != webSearchResultID
+        {
             return first.id
         }
         if let previousSelection,
-           results.contains(where: { $0.id == previousSelection }) {
+           results.contains(where: { $0.id == previousSelection })
+        {
             return previousSelection
         }
         return first.id
@@ -857,35 +874,33 @@ final class SearchCoordinator {
     private func reconcileSelectedFilter() {
         guard selectedFilter.isDynamic else { return }
         let option = makeFilterOption(selectedFilter)
-        guard option.count == 0, !option.isLoading else { return }
+        guard option.isEmpty, !option.isLoading else { return }
         selectedFilter = .all
         applySelectedFilter(resetSelection: true)
     }
 
     private func makeFilterOption(_ filter: SearchResultFilter) -> SearchFilterOption {
         let visibleCount = filterCounts[filter]
-        let count: Int
-        switch filter {
+        let count: Int = switch filter {
         case .applications:
-            count = max(applicationMatchCount, visibleCount)
+            max(applicationMatchCount, visibleCount)
         case .settings:
-            count = max(settingsMatchCount, visibleCount)
+            max(settingsMatchCount, visibleCount)
         case .all, .files, .folders, .pdfs, .images, .documents:
-            count = visibleCount
+            visibleCount
         }
 
-        let isLoading: Bool
-        switch filter {
+        let isLoading: Bool = switch filter {
         case .all:
-            isLoading = isSearching
+            isSearching
                 || isApplicationCatalogLoading
                 || isSettingsCatalogLoading
         case .applications:
-            isLoading = isApplicationCatalogLoading
+            isApplicationCatalogLoading
         case .files, .folders, .pdfs, .images, .documents:
-            isLoading = isSearching
+            isSearching
         case .settings:
-            isLoading = isSettingsCatalogLoading
+            isSettingsCatalogLoading
         }
 
         return SearchFilterOption(

@@ -259,17 +259,20 @@ package final class SystemCatalog: Catalog {
         defer { refreshGuard.release() }
 
         let previousFingerprint = directoryFingerprint.withLock { $0 }
-        let discoveryProvider = discoveryProvider
-        let discovery = await Task.detached(priority: .utility) {
-            let fingerprint = Self.makeDirectoryFingerprint(fileManager: .default)
-            guard forceDiscovery || fingerprint != previousFingerprint else {
-                return (settings: Optional<[DiscoveredSetting]>.none, fingerprint: fingerprint)
-            }
-            return (settings: Optional(discoveryProvider()), fingerprint: fingerprint)
-        }.value
 
-        directoryFingerprint.withLock { $0 = discovery.fingerprint }
-        guard let discovered = discovery.settings else { return false }
+        // Fingerprinting and discovery both walk the filesystem, but this
+        // function is `nonisolated async`: it already runs on the cooperative
+        // pool and never on the main actor, so a detached task would buy
+        // nothing here — it would only cut the work loose from the caller's
+        // cancellation and priority.
+        let fingerprint = Self.makeDirectoryFingerprint(fileManager: .default)
+        guard forceDiscovery || fingerprint != previousFingerprint else {
+            directoryFingerprint.withLock { $0 = fingerprint }
+            return false
+        }
+        let discovered = discoveryProvider()
+
+        directoryFingerprint.withLock { $0 = fingerprint }
 
         let installed = discovered.map {
             Setting(name: $0.name, keywords: $0.keywords, pane: $0.pane)
@@ -342,25 +345,25 @@ package final class SystemCatalog: Catalog {
             }
             guard
                 !requiresWordPrefix
-                    || setting.words.contains(where: { $0.hasPrefix(normalizedQuery) })
+                || setting.words.contains(where: { $0.hasPrefix(normalizedQuery) })
             else {
                 return nil
             }
-            let score: Int?
-            if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
-                score = FuzzyMatcher.scoreASCII(
+            let score: Int? = if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
+                FuzzyMatcher.scoreASCII(
                     normalizedQuery: asciiQuery,
                     normalizedCandidate: asciiCandidate
                 )
             } else {
-                score = FuzzyMatcher.score(
+                FuzzyMatcher.score(
                     normalizedQuery: normalizedQuery,
                     normalizedCandidate: setting.normalizedCandidate
                 )
             }
             guard let score,
                   score >= FuzzyMatcher.confidentMatchThreshold,
-                  let url = setting.url else {
+                  let url = setting.url
+            else {
                 return nil
             }
             return SearchItem(
@@ -379,16 +382,15 @@ package final class SystemCatalog: Catalog {
 
     private static func characterMask(_ value: String) -> UInt64 {
         value.utf8.reduce(into: 0) { mask, byte in
-            let bit: UInt64?
-            switch byte {
+            let bit: UInt64? = switch byte {
             case 0x61...0x7A:
-                bit = UInt64(byte - 0x61)
+                UInt64(byte - 0x61)
             case 0x41...0x5A:
-                bit = UInt64(byte - 0x41)
+                UInt64(byte - 0x41)
             case 0x30...0x39:
-                bit = UInt64(byte - 0x30 + 26)
+                UInt64(byte - 0x30 + 26)
             default:
-                bit = nil
+                nil
             }
             if let bit {
                 mask |= 1 << bit
@@ -409,7 +411,8 @@ package final class SystemCatalog: Catalog {
             )) ?? []
 
             for url in children
-                where url.pathExtension.caseInsensitiveCompare(root.pathExtension) == .orderedSame {
+                where url.pathExtension.caseInsensitiveCompare(root.pathExtension) == .orderedSame
+            {
                 guard
                     let bundle = Bundle(url: url),
                     let identifier = bundle.bundleIdentifier,
@@ -475,11 +478,11 @@ package final class SystemCatalog: Catalog {
             return nil
         }
 
-        for suffix in [" Settings Extension", " Settings", " Preferences", " Preference Pane"] {
-            if name.lowercased().hasSuffix(suffix.lowercased()) {
-                name.removeLast(suffix.count)
-                break
-            }
+        for suffix in [" Settings Extension", " Settings", " Preferences", " Preference Pane"]
+            where name.lowercased().hasSuffix(suffix.lowercased())
+        {
+            name.removeLast(suffix.count)
+            break
         }
         return name.isEmpty ? nil : name
     }

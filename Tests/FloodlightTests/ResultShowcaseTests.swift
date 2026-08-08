@@ -47,32 +47,32 @@ final class ResultShowcaseTests: XCTestCase {
         )
     }
 
-    func testYesterdayFormatsWithoutATimeOfDay() {
+    func testYesterdayFormatsWithoutATimeOfDay() throws {
         let now = Self.fixedNow
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+        let yesterday = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: now))
         XCTAssertEqual(ResultShowcase.formattedModifiedDate(yesterday, now: now), "Yesterday")
     }
 
-    func testWithinThePastWeekFormatsAsWeekdayAndTime() {
+    func testWithinThePastWeekFormatsAsWeekdayAndTime() throws {
         let now = Self.fixedNow
-        let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: now)!
+        let threeDaysAgo = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -3, to: now))
         let result = ResultShowcase.formattedModifiedDate(threeDaysAgo, now: now)
         XCTAssertTrue(result.contains(" at "))
         XCTAssertNotEqual(result, "Yesterday")
         XCTAssertFalse(result.hasPrefix("Today"))
     }
 
-    func testOlderThanAWeekFormatsAsAnAbsoluteDateWithNoTime() {
+    func testOlderThanAWeekFormatsAsAnAbsoluteDateWithNoTime() throws {
         let now = Self.fixedNow
-        let longAgo = Calendar.current.date(byAdding: .day, value: -30, to: now)!
+        let longAgo = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -30, to: now))
         let result = ResultShowcase.formattedModifiedDate(longAgo, now: now)
         XCTAssertFalse(result.contains(" at "))
         XCTAssertNotEqual(result, "Yesterday")
     }
 
-    func testAFutureDateFallsBackToAnAbsoluteDateRatherThanNegativeDays() {
+    func testAFutureDateFallsBackToAnAbsoluteDateRatherThanNegativeDays() throws {
         let now = Self.fixedNow
-        let nextWeek = Calendar.current.date(byAdding: .day, value: 8, to: now)!
+        let nextWeek = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 8, to: now))
         let result = ResultShowcase.formattedModifiedDate(nextWeek, now: now)
         XCTAssertFalse(result.contains(" at "))
         XCTAssertNotEqual(result, "Yesterday")

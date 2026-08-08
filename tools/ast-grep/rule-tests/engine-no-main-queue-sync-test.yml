@@ -1,0 +1,17 @@
+id: engine-no-main-queue-sync
+valid:
+  - |
+    DispatchQueue.main.async { self.publish(results) }
+  - |
+    discoveryQueue.sync { prepare() }
+  - |
+    await MainActor.run { self.publish(results) }
+  - |
+    let hint = "never DispatchQueue.main.sync from here"
+invalid:
+  - |
+    DispatchQueue.main.sync { self.publish(results) }
+  - |
+    let value = DispatchQueue.main.sync { self.results }
+  - |
+    DispatchQueue.main.asyncAndWait { self.publish(results) }

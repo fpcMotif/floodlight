@@ -10,17 +10,20 @@ struct FloodlightChipSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         // Three paths, not two: glass; macOS 26 with glass suppressed (Reduce
         // Transparency), which is new territory free to gain the Increase
         // Contrast stroke; and genuine macOS 14/15, which #1 freezes pixel
         // -for-pixel — no stroke, no new geometry, ever.
         if #available(macOS 26.0, *) {
-            if GlassAvailability.rendersGlass(isSupported: true, reduceTransparency: reduceTransparency) {
+            if GlassAvailability.rendersGlass(
+                isSupported: true,
+                reduceTransparency: reduceTransparency
+            ) {
                 content
                     .glassEffect(
-                        isSelected ? .regular.tint(.primary.opacity(0.14)).interactive() : .regular.interactive(),
+                        isSelected ? .regular.tint(.primary.opacity(0.14)).interactive() : .regular
+                            .interactive(),
                         in: .capsule
                     )
             } else {
@@ -59,12 +62,17 @@ struct FloodlightSelectionSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: FloodlightMetrics.resultRowCornerRadius, style: .continuous)
+        let shape = RoundedRectangle(
+            cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+            style: .continuous
+        )
         // Same three-path split as FloodlightChipSurface — see its comment.
         if #available(macOS 26.0, *) {
-            if isSelected, GlassAvailability.rendersGlass(isSupported: true, reduceTransparency: reduceTransparency) {
+            if isSelected, GlassAvailability.rendersGlass(
+                isSupported: true,
+                reduceTransparency: reduceTransparency
+            ) {
                 content
                     .glassEffect(
                         isHovered ? .regular.tint(.primary.opacity(0.08)) : .regular,
@@ -92,7 +100,6 @@ struct FloodlightSelectionSurface: ViewModifier {
 /// instead of clipping hard against it. No fallback styling needed below
 /// 26 — the modifier simply doesn't apply, leaving today's hard clip.
 struct FloodlightScrollEdge: ViewModifier {
-    @ViewBuilder
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
             content.scrollEdgeEffectStyle(.soft, for: .top)
