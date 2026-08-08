@@ -1,0 +1,66 @@
+<!-- @dsCard group="Components" name="Empty filter state" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Empty filter state</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .slab {
+    width: 640px; padding: 7px 7px 40px; border-radius: 30px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .filters { display: flex; gap: 7px; padding: 10px 12px 18px; }
+  .chip { height: 26px; padding: 0 12px; border-radius: 13px; display: flex; align-items: center;
+    font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,.9);
+    background: rgba(255,255,255,.055); }
+  .chip.active { background: rgba(255,255,255,.16); box-shadow: inset 0 1px 0 rgba(255,255,255,.3); }
+  .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 0 6px; }
+  .empty svg { opacity: .28; }
+  .empty .msg { font-size: 13px; color: rgba(255,255,255,.4); text-align: center; }
+  .empty .msg b { color: rgba(255,255,255,.58); font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="slab">
+    <div class="filters">
+      <div class="chip">All · 128</div>
+      <div class="chip active">Web · 0</div>
+      <div class="chip">Files · 96</div>
+      <div class="chip">Folders · 20</div>
+    </div>
+    <div class="empty">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+        <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M7 7l7 7" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <div class="msg">No <b>web</b> results for “<b>release notes format</b>”</div>
+    </div>
+  </div>
+</body>
+</html>

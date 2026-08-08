@@ -1,0 +1,121 @@
+<!-- @dsCard group="Components" name="Top Hit &amp; result showcase" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Top Hit &amp; result showcase</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .slab {
+    width: 640px; padding: 7px; border-radius: 30px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .tophit {
+    display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 23px;
+    background: rgba(255,255,255,.045); margin-bottom: 4px;
+  }
+  .tophit .tile { flex: none; width: 46px; height: 46px; border-radius: 12px;
+    background: rgba(10,132,255,.16); display: grid; place-items: center; }
+  .tophit .title { font-size: 19px; font-weight: 650; color: rgba(255,255,255,.98); letter-spacing: -.2px; }
+  .tophit .sub { margin-top: 2px; font-size: 12px; color: rgba(255,255,255,.55); }
+  .row { display: flex; align-items: center; gap: 12px;
+    height: 58px; padding: 0 12px; border-radius: 12px; position: relative; }
+  .tile { flex: none; width: 38px; height: 38px; border-radius: 10px;
+    background: rgba(10,132,255,.14); display: grid; place-items: center; }
+  .text { flex: 1; min-width: 0; }
+  .titleline { display: flex; align-items: baseline; gap: 7px; }
+  .title { font-size: 15px; font-weight: 500; color: rgba(255, 255, 255, .96); }
+  .kind { font-size: 8.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+    color: rgba(255, 255, 255, .46); padding: 2px 5px; border-radius: 6px;
+    background: rgba(255, 255, 255, .07); }
+  .sub { margin-top: 3px; font-size: 11px; color: rgba(255, 255, 255, .5); }
+  .return { flex: none; width: 24px; height: 24px; border-radius: 7px;
+    background: rgba(255, 255, 255, .1);
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .2);
+    display: grid; place-items: center; }
+  .caption { font-size: 9.5px; color: rgba(255,255,255,.4); margin-top: 8px; padding: 0 12px; }
+</style>
+</head>
+<body>
+  <div class="slab">
+    <div class="tophit">
+      <span class="tile">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+          <rect x="3.5" y="3.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="13.5" y="3.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="3.5" y="13.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="13.5" y="13.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+        </svg>
+      </span>
+      <span class="text">
+        <div class="title">Floodlight</div>
+        <div class="sub">~/Applications · Top Hit</div>
+      </span>
+      <span class="return">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M12 3v4a2 2 0 0 1-2 2H4" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M6.5 6.5 4 9l2.5 2.5" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">release-notes.md</span><span class="kind">File</span></span>
+        <div class="sub">396 KB · Yesterday</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Releases</span><span class="kind">Folder</span></span>
+        <div class="sub">12 items · 2 days ago</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">bundle.sh</span><span class="kind">File</span></span>
+        <div class="sub">3 KB · Tue at 4:12 PM</div>
+      </span>
+    </div>
+  </div>
+  <div class="caption">No section header between Top Hit and the rest — one flat ranked list; grouping is explicitly rejected, not deferred</div>
+</body>
+</html>

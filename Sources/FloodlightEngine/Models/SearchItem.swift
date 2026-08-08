@@ -23,13 +23,13 @@ package enum SearchItemKind: String, Hashable, Sendable {
 
     package var symbolName: String {
         switch self {
-        case .application: "app.dashed"
+        case .application: "square.grid.2x2.fill"
         case .assistant: "sparkles"
-        case .calculator: "plus.forwardslash.minus"
-        case .file: "doc"
-        case .folder: "folder"
-        case .systemSetting: "gearshape"
-        case .web: "globe"
+        case .calculator: "function"
+        case .file: "doc.text.fill"
+        case .folder: "folder.fill"
+        case .systemSetting: "gearshape.fill"
+        case .web: "globe.americas.fill"
         }
     }
 }
@@ -70,6 +70,18 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         case .pdfs: "PDFs"
         case .images: "Images"
         case .documents: "Documents"
+        }
+    }
+    package var symbolName: String {
+        switch self {
+        case .all: "sparkle.magnifyingglass"
+        case .applications: "square.grid.2x2.fill"
+        case .files: "doc.text.fill"
+        case .folders: "folder.fill"
+        case .settings: "gearshape.fill"
+        case .pdfs: "doc.richtext.fill"
+        case .images: "photo.fill"
+        case .documents: "doc.fill"
         }
     }
 

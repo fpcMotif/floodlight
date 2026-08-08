@@ -55,15 +55,15 @@ enum FloodlightMetrics {
     enum Typography {
         static let rowTitle = Font.system(size: 15, weight: .medium)
         static let topHitTitle = Font.system(size: 19, weight: .semibold)
-        static let rowSubtitle = Font.system(size: 11, weight: .regular)
+        static let rowSubtitle = Font.system(size: 11.5, weight: .medium)
         /// The assistant row's answered state — one size up from
         /// `rowSubtitle` since it's the actual answer, not metadata about
         /// it. Its running/failed states reuse `rowSubtitle` directly.
-        static let assistantAnswer = Font.system(size: 12, weight: .regular)
+        static let assistantAnswer = Font.system(size: 12.5, weight: .regular)
         static let badge = Font.system(size: 8.5, weight: .bold)
         static let chip = Font.system(size: 11.5, weight: .semibold)
         static let keyChip = Font.system(size: 11, weight: .semibold)
-        static let emptyState = Font.system(size: 13, weight: .regular)
+        static let emptyState = Font.system(size: 13.5, weight: .medium)
         /// Point size only — `FloodlightTextField` sets this on an `NSFont`
         /// directly, so there's no shared SwiftUI `Font` value to hand it.
         static let inputSize: CGFloat = 24
@@ -81,6 +81,41 @@ enum FloodlightMetrics {
         case .web: .blue
         case .application, .file, .folder: .accentColor
         }
+    }
+
+    static func iconTint(for item: SearchItem) -> Color {
+        if item.id.contains("youtube") || item.title.localizedCaseInsensitiveContains("youtube") {
+            return .red
+        }
+        if item.id.contains("twitter") || item.title.localizedCaseInsensitiveContains("twitter") {
+            return .cyan
+        }
+        if item.id.contains("github") || item.title.localizedCaseInsensitiveContains("github") {
+            return .primary
+        }
+        if item.id.contains("wikipedia") || item.title.localizedCaseInsensitiveContains("wikipedia") {
+            return .secondary
+        }
+        return iconTint(for: item.kind)
+    }
+
+    static func iconSymbol(for item: SearchItem) -> String {
+        if item.id.contains("youtube") || item.title.localizedCaseInsensitiveContains("youtube") {
+            return "play.rectangle.fill"
+        }
+        if item.id.contains("google") || item.title.localizedCaseInsensitiveContains("google") {
+            return "magnifyingglass.circle.fill"
+        }
+        if item.id.contains("github") || item.title.localizedCaseInsensitiveContains("github") {
+            return "code"
+        }
+        if item.id.contains("twitter") || item.title.localizedCaseInsensitiveContains("twitter") {
+            return "at"
+        }
+        if item.id.contains("wikipedia") || item.title.localizedCaseInsensitiveContains("wikipedia") {
+            return "book.closed.fill"
+        }
+        return item.kind.symbolName
     }
 
     // MARK: - Liquid Glass shell (#1)

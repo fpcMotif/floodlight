@@ -7,15 +7,10 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             SearchBar(model: model)
-            // This crossfade runs unconditionally, Reduce Motion included —
-            // it's the substitute for the panel's spatial growth
-            // (`FloodlightPanelController.resize` skips its own animation
-            // under Reduce Motion), not a faster copy of that motion.
             SearchResultsSection(model: model)
                 .transition(.opacity)
         }
-        .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
-        .frame(width: FloodlightMetrics.panelWidth)
+        .frame(width: FloodlightMetrics.panelWidth, alignment: .top)
         .modifier(FloodlightSurface())
         .clipShape(
             RoundedRectangle(
@@ -23,6 +18,24 @@ struct SearchView: View {
                 style: .continuous
             )
         )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: FloodlightMetrics.cornerRadius,
+                style: .continuous
+            )
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        .white.opacity(0.35),
+                        .white.opacity(0.12),
+                        .white.opacity(0.06),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 0.5
+            )
+        }
     }
 }
 
@@ -31,13 +44,23 @@ private struct SearchBar: View {
     @State private var isClearButtonHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: FloodlightMetrics.searchIconSize, weight: .regular))
+                .font(.system(size: FloodlightMetrics.searchIconSize, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
+                .frame(width: FloodlightMetrics.searchIconSize, height: FloodlightMetrics.searchIconSize)
+                .transaction { transaction in
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
 
             if let engine = model.activeWebEngine {
-                WebModeToken(title: engine.title)
+                WebModeToken(engine: engine)
+                    .transaction { transaction in
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
             }
 
             FloodlightTextField(
@@ -61,7 +84,11 @@ private struct SearchBar: View {
                 }
         }
         .padding(.horizontal, 20)
-        .frame(height: FloodlightMetrics.searchHeight)
+        .frame(height: FloodlightMetrics.searchHeight, alignment: .center)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 
     /// A clear button once there's a query to clear, or — while idle, if
@@ -93,14 +120,14 @@ private struct SearchBar: View {
 /// filter bar. Purely indicative — exiting the mode is Esc/Shift-Tab/
 /// backspace-on-empty, so the token needs no interaction of its own.
 private struct WebModeToken: View {
-    let title: String
+    let engine: KeywordEngine
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: SearchItemKind.web.symbolName)
+            Image(systemName: engine.symbolName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(title)
+                .foregroundStyle(engineSymbolTint)
+            Text(engine.title)
         }
         .font(FloodlightMetrics.Typography.chip)
         .foregroundStyle(.primary)
@@ -109,7 +136,16 @@ private struct WebModeToken: View {
         .fixedSize()
         .modifier(FloodlightChipSurface(isSelected: true))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Web search mode: \(title)")
+        .accessibilityLabel("Web search mode: \(engine.title)")
+    }
+
+    private var engineSymbolTint: Color {
+        switch engine.id {
+        case "youtube": .red
+        case "twitter": .cyan
+        case "github": .primary
+        default: .secondary
+        }
     }
 }
 
@@ -211,8 +247,11 @@ private struct SearchFilterChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Text(option.filter.title)
+                Image(systemName: option.filter.symbolName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
 
+                Text(option.filter.title)
                 Group {
                     if option.isLoading {
                         ProgressView()

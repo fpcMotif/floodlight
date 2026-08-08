@@ -145,26 +145,12 @@ final class FloodlightPanelController {
         }
 
         let glassView = NSGlassEffectView()
-        glassView.style = .regular
+        glassView.style = .clear
         glassView.cornerRadius = FloodlightMetrics.cornerRadius
         glassView.contentView = hostingController.view
-        glassView.translatesAutoresizingMaskIntoConstraints = false
-
-        let backdropView = NSVisualEffectView()
-        backdropView.material = .hudWindow
-        backdropView.blendingMode = .behindWindow
-        backdropView.state = .active
-        backdropView.maskImage = makeCapsuleMask()
-        backdropView.addSubview(glassView)
-        NSLayoutConstraint.activate([
-            glassView.leadingAnchor.constraint(equalTo: backdropView.leadingAnchor),
-            glassView.trailingAnchor.constraint(equalTo: backdropView.trailingAnchor),
-            glassView.topAnchor.constraint(equalTo: backdropView.topAnchor),
-            glassView.bottomAnchor.constraint(equalTo: backdropView.bottomAnchor),
-        ])
 
         let glassController = NSViewController()
-        glassController.view = backdropView
+        glassController.view = glassView
         glassController.addChild(hostingController)
         return glassController
     }
@@ -216,9 +202,9 @@ final class FloodlightPanelController {
     func show() {
         let signpost = FloodlightPerformance.begin("ShowPanel")
         positionOnActiveScreen()
+        model.prepareForPresentation()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        model.prepareForPresentation()
         DispatchQueue.main.async {
             FloodlightPerformance.end("ShowPanel", id: signpost)
         }
@@ -289,8 +275,8 @@ final class FloodlightPanelController {
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.32
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
             panel.animator().setFrame(frame, display: true)
         }
     }

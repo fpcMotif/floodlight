@@ -1,0 +1,96 @@
+<!-- @dsCard group="Search" name="Search field — before / after" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Search field golden state</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .stack { display: flex; flex-direction: column; gap: 34px; align-items: center; }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+    color: rgba(255,255,255,.4); margin-bottom: 14px; text-align: center; }
+  .capsule {
+    width: 640px; height: 60px; border-radius: 30px; display: flex; align-items: center; gap: 12px;
+    padding: 0 20px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .glass-icon { flex: none; opacity: .55; }
+  .before .qtext { font-size: 13px; font-weight: 400; color: rgba(255,255,255,.9); }
+  .before .qtext.placeholder { color: rgba(255,255,255,.34); }
+  .after .qtext { font-size: 24px; font-weight: 300; color: rgba(255,255,255,.96); letter-spacing: -.2px; }
+  .after .qtext.placeholder { color: rgba(255,255,255,.35); font-weight: 300; }
+  .caret { display: inline-block; width: 1.5px; height: 22px; background: #4f9dff;
+    margin-left: 2px; vertical-align: -4px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .clear { margin-left: auto; flex: none; opacity: .5; }
+  .after .clear { opacity: .38; transform: scale(.86); }
+  .callout { position: relative; padding-bottom: 46px; }
+  .tag { position: absolute; top: 100px; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,.6);
+    width: 150px; line-height: 1.35; }
+  .tag::before { content: ''; position: absolute; top: -14px; width: 1px; height: 14px;
+    background: rgba(255,255,255,.28); }
+  .tag.t1 { left: 8px; text-align: left; }
+  .tag.t1::before { left: 26px; }
+  .tag.t2 { left: 245px; width: 170px; text-align: center; }
+  .tag.t2::before { left: 84px; }
+  .tag.t3 { right: 8px; text-align: right; }
+  .tag.t3::before { right: 26px; }
+  .selected-text { background: rgba(79,157,255,.35); border-radius: 2px; padding: 0 1px; }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div>
+      <div class="label">Before — ad-hoc 13pt system field</div>
+      <div class="capsule before">
+        <svg class="glass-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.8"/>
+          <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span class="qtext placeholder">Floodlight search</span>
+      </div>
+    </div>
+    <div class="callout">
+      <div class="label">After — Spotlight-proportioned golden state</div>
+      <div class="capsule after">
+        <svg class="glass-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+          <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="qtext">rele<span class="selected-text">ase</span><span class="caret"></span></span>
+        <svg class="clear" width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" fill="#fff" fill-opacity=".16"/>
+          <path d="M9 9l6 6M15 9l-6 6" stroke="#fff" stroke-opacity=".8" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="tag t1">22pt icon, optically matched to 24/300 text</div>
+      <div class="tag t2">accent-color caret &amp; selection tint</div>
+      <div class="tag t3">clear button: 18pt, quiet until hover</div>
+    </div>
+  </div>
+</body>
+</html>

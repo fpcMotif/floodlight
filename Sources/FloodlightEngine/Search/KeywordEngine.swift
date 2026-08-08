@@ -23,7 +23,11 @@ package struct KeywordEngine: Sendable, Identifiable {
     package let title: String
     /// Case-insensitive first-word triggers, including any bang alias
     /// (`"x"`, `"twitter"`, `"!x"`). Matched against the query's first
-    /// whitespace-delimited token only.
+    /// whitespace-delimited token only. Order is meaningful: the first
+    /// entry is the engine's primary/canonical spelling — what
+    /// `SearchMode.exitFieldText` reconstructs in the field on exiting web
+    /// mode once the query has been edited and the originally-typed
+    /// spelling no longer applies.
     package let keywords: [String]
     package let kind: SearchItemKind
     package let destination: Destination
@@ -40,6 +44,18 @@ package struct KeywordEngine: Sendable, Identifiable {
         self.keywords = keywords
         self.kind = kind
         self.destination = destination
+    }
+    package var symbolName: String {
+        switch id {
+        case "youtube": "play.rectangle.fill"
+        case "google": "magnifyingglass.circle.fill"
+        case "github": "code"
+        case "twitter": "at"
+        case "wikipedia": "book.closed.fill"
+        case "stackoverflow": "bubble.left.and.bubble.right.fill"
+        case "codex", "claude": "sparkles"
+        default: kind.symbolName
+        }
     }
 
     /// The engine's results page for `query`, or `nil` for an assistant
@@ -58,15 +74,33 @@ package struct KeywordEngine: Sendable, Identifiable {
         return url
     }
 
+    /// The row title for a `.webSearch` engine's results page, or `nil` for
+    /// an assistant engine — `nil` `query` reads as "not typed yet" (web
+    /// mode's bare-keyword state) rather than "for empty string". Shares
+    /// one format across the keyword row, web mode, and the fallback row,
+    /// the same guarantee `searchURL(for:)` already gives the URL itself.
+    package func searchTitle(for query: String) -> String? {
+        guard case .webSearch = destination else { return nil }
+        return query.isEmpty ? title : "\(title) for “\(query)”"
+    }
+
+    /// The row identifier a keyword match produces for this engine —
+    /// shared by `makeSearchItem` and anything else that needs to
+    /// recognize "the row this engine's keyword match would rank," such as
+    /// the Tab-completion affordance on that row.
+    package var rowID: String { "keyword-engine:\(id)" }
+
     /// Builds the row for a matched `remainder`, or `nil` if the remainder
     /// can't become a valid URL (a `.webSearch` destination only).
     package func makeSearchItem(remainder: String) -> SearchItem? {
         switch destination {
         case .webSearch:
-            guard let url = searchURL(for: remainder) else { return nil }
+            guard let url = searchURL(for: remainder), let title = searchTitle(for: remainder) else {
+                return nil
+            }
             return SearchItem(
-                id: "keyword-engine:\(id)",
-                title: "\(title) for “\(remainder)”",
+                id: rowID,
+                title: title,
                 subtitle: "Open in your default browser",
                 kind: kind,
                 action: .open(url),
@@ -74,7 +108,7 @@ package struct KeywordEngine: Sendable, Identifiable {
             )
         case .assistant(let command, let baseArguments):
             return SearchItem(
-                id: "keyword-engine:\(id)",
+                id: rowID,
                 title: "\(title): \(remainder)",
                 subtitle: "Press Return to ask",
                 kind: kind,
@@ -102,13 +136,6 @@ package enum KeywordEngineCatalog {
 
     package static let all: [KeywordEngine] = [
         defaultEngine,
-        KeywordEngine(
-            id: "duckduckgo",
-            title: "Search DuckDuckGo",
-            keywords: ["ddg", "duckduckgo", "!ddg"],
-            kind: .web,
-            destination: .webSearch(urlTemplate: "https://duckduckgo.com/?q={query}")
-        ),
         KeywordEngine(
             id: "wikipedia",
             title: "Search Wikipedia",

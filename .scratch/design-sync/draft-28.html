@@ -1,0 +1,1009 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Golden-State Content — Design Draft #28</title>
+<style>
+  :root {
+    --paper: #f4f6fb;
+    --panel: #ffffff;
+    --panel-line: rgba(18,21,28,.08);
+    --ink: #12151c;
+    --ink-muted: #5b6472;
+    --ink-faint: #8891a0;
+    --line: rgba(18,21,28,.1);
+    --accent: #0a5fd8;
+    --accent-soft: rgba(10,95,216,.09);
+    --accent-ink: #0a5fd8;
+    --stage-shadow: 0 24px 48px rgba(18,21,28,.16), 0 2px 8px rgba(18,21,28,.08);
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0a0c12; --panel: #12141d; --panel-line: rgba(255,255,255,.08);
+      --ink: #eef1f7; --ink-muted: #9aa4b6; --ink-faint: #626b7b;
+      --line: rgba(255,255,255,.09);
+      --accent: #4fa2ff; --accent-soft: rgba(79,162,255,.14); --accent-ink: #7cb8ff;
+      --stage-shadow: 0 24px 56px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0a0c12; --panel: #12141d; --panel-line: rgba(255,255,255,.08);
+    --ink: #eef1f7; --ink-muted: #9aa4b6; --ink-faint: #626b7b;
+    --line: rgba(255,255,255,.09);
+    --accent: #4fa2ff; --accent-soft: rgba(79,162,255,.14); --accent-ink: #7cb8ff;
+    --stage-shadow: 0 24px 56px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+  }
+  :root[data-theme="light"] {
+    --paper: #f4f6fb; --panel: #ffffff; --panel-line: rgba(18,21,28,.08);
+    --ink: #12151c; --ink-muted: #5b6472; --ink-faint: #8891a0;
+    --line: rgba(18,21,28,.1);
+    --accent: #0a5fd8; --accent-soft: rgba(10,95,216,.09); --accent-ink: #0a5fd8;
+    --stage-shadow: 0 24px 48px rgba(18,21,28,.16), 0 2px 8px rgba(18,21,28,.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; line-height: 1.5;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent-ink); }
+  a:focus-visible, button:focus-visible, .navlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 720px) { .wrap { padding: 0 20px; } }
+
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .top-inner { display: flex; align-items: center; gap: 18px; padding: 16px 0; flex-wrap: wrap; }
+  .brand { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .5px;
+    color: var(--ink-faint); text-transform: uppercase; }
+  .brand b { color: var(--ink); }
+  .status {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .3px;
+    color: var(--accent-ink); background: var(--accent-soft); padding: 4px 9px; border-radius: 20px;
+    text-transform: uppercase;
+  }
+  .top-links { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+  .top-links a { font-size: 12.5px; font-weight: 500; text-decoration: none; color: var(--ink-muted); }
+  .top-links a:hover { color: var(--accent-ink); }
+  .top-links span.dim { color: var(--ink-faint); font-size: 12.5px; }
+
+  nav.index { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 0 16px; }
+  nav.index a {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .2px;
+    color: var(--ink-muted); text-decoration: none; padding: 5px 10px; border-radius: 7px;
+    border: 1px solid var(--line);
+  }
+  nav.index a:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  .hero { padding: 56px 0 40px; max-width: 780px; }
+  .hero h1 {
+    font-size: clamp(30px, 4.2vw, 44px); font-weight: 750; letter-spacing: -0.02em;
+    text-wrap: balance; margin-bottom: 16px;
+  }
+  .hero p { font-size: 16px; color: var(--ink-muted); max-width: 62ch; }
+  .hero p + p { margin-top: 12px; }
+
+  .siblings { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .sibling {
+    font-size: 11.5px; font-family: var(--mono); color: var(--ink-faint);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  }
+  .sibling b { color: var(--ink-muted); font-weight: 600; }
+
+  section.spec {
+    display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 44px;
+    padding: 52px 0; border-top: 1px solid var(--line); align-items: start;
+    scroll-margin-top: 90px;
+  }
+  @media (max-width: 880px) { section.spec { grid-template-columns: 1fr; gap: 24px; } }
+
+  .eyebrow { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--accent-ink); margin-bottom: 10px; }
+  .spec h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; text-wrap: balance; }
+  .spec .rationale { font-size: 14.5px; color: var(--ink-muted); max-width: 46ch; margin-bottom: 18px; }
+  .decisions { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .decisions li { font-size: 13px; color: var(--ink-muted); padding-left: 16px; position: relative; }
+  .decisions li::before {
+    content: ''; position: absolute; left: 0; top: 7px; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .decisions b { color: var(--ink); font-weight: 600; }
+
+  .stage {
+    border-radius: 22px; overflow: hidden; box-shadow: var(--stage-shadow);
+    border: 1px solid var(--panel-line);
+    max-width: 100%;
+  }
+  .stage-scroll { overflow-x: auto; }
+  .stage iframe { display: block; border: 0; width: 100%; }
+
+  footer.deck {
+    border-top: 1px solid var(--line); padding: 52px 0 64px; margin-top: 8px;
+  }
+  .footer-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; }
+  @media (max-width: 880px) { .footer-grid { grid-template-columns: 1fr; } }
+  footer.deck h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+  footer.deck ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  footer.deck li { font-size: 13.5px; color: var(--ink-muted); }
+  footer.deck li b { color: var(--ink); }
+
+  .sync-list { display: flex; flex-direction: column; gap: 10px; }
+  .sync-item { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-muted); }
+  .check {
+    flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft);
+    color: var(--accent-ink); display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  }
+
+  .cta {
+    margin-top: 28px; padding: 18px 20px; border-radius: 14px; background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .cta p { font-size: 13.5px; color: var(--ink); }
+  .cta p + p { margin-top: 6px; color: var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="top-inner">
+      <span class="brand"><b>Floodlight</b> · Golden-State Content</span>
+      <span class="status">Shipped · commit 83ccf2b</span>
+      <div class="top-links">
+        <a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener">⌘ Try the live prototype ↗</a>
+        <a href="https://github.com/fpcMotif/floodlight/issues/28" target="_blank" rel="noopener">Issue #28 ↗</a>
+        <a href="https://www.figma.com/design/k8C7ZtvsLyPaOlSCo3Zn45" target="_blank" rel="noopener">Figma canvas ↗</a>
+        <span class="dim">Claude Design · “Floodlight — Liquid Glass” (synced)</span>
+      </div>
+    </div>
+    <nav class="index">
+      <a href="#foundations">01 Foundations</a>
+      <a href="#search-field">02 Search field</a>
+      <a href="#top-hit">03 Top Hit</a>
+      <a href="#icon-tiles">04 Symbol tiles</a>
+      <a href="#empty-state">05 Empty state</a>
+      <a href="#motion">06 Motion</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <h1>The content inside the glass, drawn to Spotlight's own standard.</h1>
+    <p>#1 gives the panel a Liquid Glass shell. This is what goes <em>inside</em> it: a real type scale and tint palette instead of scattered inline literals, a Top Hit that earns the Return key without reading the list, symbol rows on tinted continuous-curve tiles instead of flat rectangles, and a panel that grows on a spring instead of snapping.</p>
+    <p>Six decisions below, each with the reasoning, the mockup it produced, and now the shipped Swift behind it. Nothing here touches ranking, filtering, or key handling — this is presentation only, so the existing coordinator tests stayed the proof.</p>
+    <p><a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener" style="font-weight:600">⌘ Play with the real thing — an interactive HTML/JS prototype ↗</a> — type a query, arrow through results, try “12 * 4 + 6” or a question.</p>
+    <div class="siblings">
+      <span class="sibling"><b>#1</b> owns the glass shell</span>
+      <span class="sibling"><b>#27</b> shipped — keyword engines &amp; assistant rows</span>
+      <span class="sibling"><b>#28</b> shipped — content &amp; motion (this page)</span>
+    </div>
+  </section>
+
+  <section class="spec" id="foundations">
+    <div>
+      <div class="eyebrow">01 · Foundations</div>
+      <h2>One type scale, one tint recipe</h2>
+      <p class="rationale">Today a 24pt input, 11.5pt chips, and seven white-opacity recipes accumulated independently. Centralizing them means every future row or control reaches for a name, not a number.</p>
+      <ul class="decisions">
+        <li><b>Badge quieted</b> from 9/600 on 12% fill to 8.5/700 on 7% fill — it should never out-compete the title.</li>
+        <li><b>Icon-tile tint</b> = kind color at 14% fill; tile radius derives from row radius minus icon inset (12 − 3 = 9pt).</li>
+        <li><b>Top Hit eligibility</b> is a pure helper: first result, no active filter, non-empty. Shown as a truth table so it's directly testable.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-foundations" title="Content type & palette" height="560" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="search-field">
+    <div>
+      <div class="eyebrow">02 · Search field</div>
+      <h2>Spotlight's proportions, not a system default</h2>
+      <p class="rationale">Today's field is a plain 13pt <code style="font-family:var(--mono)">TextField</code>. Spotlight's input runs large and light — 24pt at a 300 weight — with a placeholder that's quiet rather than labeled, and an icon optically matched to the text it sits beside.</p>
+      <ul class="decisions">
+        <li><b>Input</b> 24/300, tertiary placeholder at 35% opacity, vanishes the instant typing starts.</li>
+        <li><b>Caret &amp; selection</b> pick up the system accent color rather than a fixed tint.</li>
+        <li><b>Clear button</b> shrinks and quiets to 38% opacity until hovered — present, not shouting.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-search" title="Search field before/after" height="520" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="top-hit">
+    <div>
+      <div class="eyebrow">03 · Result showcase</div>
+      <h2>One confident Top Hit, then a quiet list</h2>
+      <p class="rationale">Every row reads identically today — the best match gets no more presence than the seventh. Spotlight's Top Hit lets you commit to Return without scanning. Metadata adopts Finder's own relative-date and byte-count formatting.</p>
+      <ul class="decisions">
+        <li><b>Top Hit</b> — 46pt tile, 19/650 title, sits in its own wash (primary 4.5%), separated by a hairline and a “More results” eyebrow.</li>
+        <li><b>No filter active</b> required — the moment a chip is selected, the user has already narrowed intent, so Top Hit disappears.</li>
+        <li><b>Metadata</b> — “396 KB · Yesterday”, “12 items · 2 days ago” — Finder's own vocabulary, not a raw byte count and ISO date.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-tophit" title="Top Hit and result showcase" height="420" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="icon-tiles">
+    <div>
+      <div class="eyebrow">04 · Symbol rows</div>
+      <h2>Calculator, settings, web, and assistant — finished, not bolted on</h2>
+      <p class="rationale">Symbol rows sit on flat colored rectangles today. The system puts them on tinted continuous-curve tiles. #27's assistant rows inherit this same language, plus the loading / answer / error states this spec defines for them.</p>
+      <ul class="decisions">
+        <li><b>Web row</b> states its destination plainly — “Search Google for …” — with a glyph that signals leaving the app.</li>
+        <li><b>Assistant states</b> — a pulsing dot while thinking, a body-type answer block, a quiet red error line.</li>
+        <li><b>Key chip</b> — the selected row's Return hint reuses #1's idle-capsule hotkey chip component, not a lookalike.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-tiles" title="Symbol tiles and key chip" height="580" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="empty-state">
+    <div>
+      <div class="eyebrow">05 · Empty state</div>
+      <h2>A quiet message, never a void</h2>
+      <p class="rationale">The web fallback guarantees the unfiltered list is never empty — but filtering into “Web” with zero hits currently shows nothing at all, which reads as a rendering bug rather than a real answer.</p>
+      <ul class="decisions">
+        <li><b>Centered, tertiary-tone</b> line naming both the active filter and the query.</li>
+        <li>Selection and key handling treat it as an ordinary zero-row list — no special-casing beyond the message.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-empty" title="Empty filter state" height="400" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="motion">
+    <div>
+      <div class="eyebrow">06 · Motion</div>
+      <h2>The panel grows — it doesn't snap</h2>
+      <p class="rationale">Today the panel jumps between collapsed and expanded with zero transition. A system-standard spring reads as fluid; Reduce Motion collapses the same transition to a plain crossfade. Selection itself stays instant either way, so rapid arrowing never feels laggy.</p>
+      <ul class="decisions">
+        <li><b>Panel height</b> animates on a spring (response .42, damping .86); rows fade in fast, no slide.</li>
+        <li><b>Reduce Motion</b> resolves to a 120ms crossfade of height and content together.</li>
+        <li>This preview genuinely respects <code style="font-family:var(--mono)">prefers-reduced-motion</code> — try it in your OS settings.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-motion" title="Panel spring and Reduce Motion" height="440" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+</main>
+
+<footer class="deck">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h3>Out of scope, on purpose</h3>
+        <ul>
+          <li>Glass materials, filter-chip capsules, and the selection lozenge — <b>#1's territory</b>, this spec only reuses its key chip and radius math.</li>
+          <li>Keyword-engine parsing, ranking, and the process seam — <b>#27's territory</b>, shipped separately.</li>
+          <li>Grouped/sectioned results — considered, rejected, and caught once more: an early pass added a "More results" divider between Top Hit and the rest. A multi-agent Standards + Spec review flagged it as exactly the pattern this spec rejects, so it never shipped — one flat ranked list throughout, in the code and now in this deck.</li>
+        </ul>
+        <div class="cta">
+          <p>Implemented, reviewed, and committed — <code style="font-family:var(--mono)">feat/golden-state-content</code>, commit <code style="font-family:var(--mono)">83ccf2b</code>. 136 tests pass; <code style="font-family:var(--mono)">SearchCoordinator.swift</code> is byte-for-byte unchanged.</p>
+          <p>Type scale + palette live in <code style="font-family:var(--mono)">FloodlightMetrics</code>, the pure helpers (Top Hit eligibility, empty-state message, metadata formatting) in <code style="font-family:var(--mono)">ResultShowcase</code> with table-style tests, and the shared <code style="font-family:var(--mono)">KeyChip</code> component is ready for #1 to consume when it lands. Manual checklist (dark/light, Increase Contrast, VoiceOver, macOS 14/15, Reduce Motion end-to-end) is in the commit message, unchecked — no GUI harness in this environment.</p>
+        </div>
+      </div>
+      <div>
+        <h3>Synced to</h3>
+        <div class="sync-list">
+          <div class="sync-item"><span class="check">✓</span> This artifact — six mockups matching the shipped implementation, before/after, and the reasoning behind each</div>
+          <div class="sync-item"><span class="check">✓</span> <a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener">Interactive HTML/JS prototype ↗</a> — real typing, real filtering, real motion, real Reduce Motion</div>
+          <div class="sync-item"><span class="check">✓</span> Claude Design project “Floodlight — Liquid Glass” — six content cards + the prototype, alongside #1's five, written incrementally</div>
+          <div class="sync-item"><span class="check">✓</span> Figma canvas — “Golden-State Content” page on the same file #1 uses, with a linked-out card to the live prototype</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const set = (id, html) => { document.getElementById(id).srcdoc = html; };
+
+  set('frame-foundations', `<!-- @dsCard group="Foundations" name="Content type & palette" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Content type &amp; palette (#28)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .grid { display: grid; grid-template-columns: repeat(3, 250px); gap: 18px; }
+  .card {
+    border-radius: 20px; padding: 20px;
+    background: rgba(255, 255, 255, .09);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .16),
+      0 18px 44px rgba(0, 0, 0, .3);
+  }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .2px;
+    color: rgba(255, 255, 255, .92); margin-bottom: 4px; }
+  .use { font-size: 11px; color: rgba(255, 255, 255, .5); margin-bottom: 12px; }
+  code {
+    display: block;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px; line-height: 17px;
+    color: rgba(255, 255, 255, .68); white-space: pre;
+  }
+  .row-sample { margin-top: 10px; display: flex; align-items: baseline; gap: 8px; }
+  .row-sample .title { font-size: 15px; font-weight: 500; color: rgba(255,255,255,.96); }
+  .row-sample .badge { font-size: 8.5px; font-weight: 700; letter-spacing: .3px;
+    color: rgba(255,255,255,.46); padding: 2px 5px; border-radius: 6px;
+    background: rgba(255,255,255,.07); text-transform: uppercase; }
+  .swatch-row { display: flex; gap: 8px; margin-top: 10px; }
+  .swatch { flex: 1; height: 30px; border-radius: 8px; display: grid; place-items: center;
+    font-size: 8px; font-weight: 700; color: rgba(255,255,255,.85); letter-spacing: .2px; }
+  table.truth { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  table.truth th, table.truth td { text-align: left; font-size: 10px; padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.72); }
+  table.truth th { color: rgba(255,255,255,.42); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .3px; font-size: 8.5px; }
+  .yes { color: #8fe3a6; font-weight: 700; }
+  .no { color: rgba(255,255,255,.35); }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <h2>Type scale — content</h2>
+      <div class="use">Every size below is a named token; no view body carries a literal</div>
+      <code>input     24 / 300 · 96%
+title     15 / 500 · 96%
+topHit    19 / 650 · 98%
+subtitle  11 / 400 · 50%
+badge    8.5 / 700 · 46%
+chip     11.5 / 600 · 92%
+keyChip    11 / 600 · 80%
+empty      13 / 400 · 40%</code>
+    </div>
+    <div class="card">
+      <h2>Badge, quieted</h2>
+      <div class="use">Was 9/600 on 12% fill — competed with the title</div>
+      <div class="row-sample">
+        <span class="title">release-notes.md</span>
+        <span class="badge">FILE</span>
+      </div>
+      <code style="margin-top:10px">fill  white 7% (was 12%)
+text  white 46% (was 58%)
+size  8.5 (was 9), tracking +.3</code>
+    </div>
+    <div class="card">
+      <h2>Icon-tile tints</h2>
+      <div class="use">Continuous-curve tile fill · 14% of kind color</div>
+      <div class="swatch-row">
+        <div class="swatch" style="background:rgba(255,159,10,.24);color:#ffb454">Calc</div>
+        <div class="swatch" style="background:rgba(142,142,147,.24);color:#c7c7cc">Settings</div>
+        <div class="swatch" style="background:rgba(10,132,255,.24);color:#6cb2ff">Web</div>
+        <div class="swatch" style="background:rgba(191,90,242,.24);color:#d59bff">Assistant</div>
+      </div>
+      <code style="margin-top:10px">tile fill = kind.tint.opacity(.14)
+radius    = row radius − icon inset
+          = 12 − 3 = 9pt</code>
+    </div>
+    <div class="card">
+      <h2>Top Hit eligibility</h2>
+      <div class="use">Pure helper over the ranked list — no ranking change</div>
+      <table class="truth">
+        <tr><th>Results</th><th>Filter</th><th>Index 0?</th><th>Top Hit</th></tr>
+        <tr><td>Non-empty</td><td>All</td><td class="yes">Yes</td><td class="yes">Shown</td></tr>
+        <tr><td>Non-empty</td><td>Files</td><td class="yes">Yes</td><td class="no">Hidden</td></tr>
+        <tr><td>Non-empty</td><td>All</td><td class="no">No</td><td class="no">Hidden</td></tr>
+        <tr><td>Empty</td><td>Any</td><td class="no">—</td><td class="no">Hidden</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Metadata formatting</h2>
+      <div class="use">Finder-style relative dates &amp; locale byte counts</div>
+      <code>file    396 KB · Yesterday
+file    3 KB · Tue at 4:12 PM
+folder  12 items · 2 days ago
+app     ~/Applications
+web     spotlight.floodlight.app</code>
+    </div>
+    <div class="card">
+      <h2>Opacity recipe — content</h2>
+      <div class="use">Shared with #1's glass fallback tuning vocabulary</div>
+      <code>primary    white 96%
+secondary  white 50%
+tertiary   white 35%
+quaternary white 22%
+Top Hit wash: primary.opacity(.045)
+Increase Contrast: +18% every tier</code>
+    </div>
+  </div>
+</body>
+</html>
+`);
+  set('frame-search', `<!-- @dsCard group="Search" name="Search field — before / after" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Search field golden state</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .stack { display: flex; flex-direction: column; gap: 34px; align-items: center; }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+    color: rgba(255,255,255,.4); margin-bottom: 14px; text-align: center; }
+  .capsule {
+    width: 640px; height: 60px; border-radius: 30px; display: flex; align-items: center; gap: 12px;
+    padding: 0 20px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .glass-icon { flex: none; opacity: .55; }
+  .before .qtext { font-size: 13px; font-weight: 400; color: rgba(255,255,255,.9); }
+  .before .qtext.placeholder { color: rgba(255,255,255,.34); }
+  .after .qtext { font-size: 24px; font-weight: 300; color: rgba(255,255,255,.96); letter-spacing: -.2px; }
+  .after .qtext.placeholder { color: rgba(255,255,255,.35); font-weight: 300; }
+  .caret { display: inline-block; width: 1.5px; height: 22px; background: #4f9dff;
+    margin-left: 2px; vertical-align: -4px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .clear { margin-left: auto; flex: none; opacity: .5; }
+  .after .clear { opacity: .38; transform: scale(.86); }
+  .callout { position: relative; padding-bottom: 46px; }
+  .tag { position: absolute; top: 100px; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,.6);
+    width: 150px; line-height: 1.35; }
+  .tag::before { content: ''; position: absolute; top: -14px; width: 1px; height: 14px;
+    background: rgba(255,255,255,.28); }
+  .tag.t1 { left: 8px; text-align: left; }
+  .tag.t1::before { left: 26px; }
+  .tag.t2 { left: 245px; width: 170px; text-align: center; }
+  .tag.t2::before { left: 84px; }
+  .tag.t3 { right: 8px; text-align: right; }
+  .tag.t3::before { right: 26px; }
+  .selected-text { background: rgba(79,157,255,.35); border-radius: 2px; padding: 0 1px; }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div>
+      <div class="label">Before — ad-hoc 13pt system field</div>
+      <div class="capsule before">
+        <svg class="glass-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.8"/>
+          <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span class="qtext placeholder">Floodlight search</span>
+      </div>
+    </div>
+    <div class="callout">
+      <div class="label">After — Spotlight-proportioned golden state</div>
+      <div class="capsule after">
+        <svg class="glass-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+          <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="qtext">rele<span class="selected-text">ase</span><span class="caret"></span></span>
+        <svg class="clear" width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" fill="#fff" fill-opacity=".16"/>
+          <path d="M9 9l6 6M15 9l-6 6" stroke="#fff" stroke-opacity=".8" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="tag t1">22pt icon, optically matched to 24/300 text</div>
+      <div class="tag t2">accent-color caret &amp; selection tint</div>
+      <div class="tag t3">clear button: 18pt, quiet until hover</div>
+    </div>
+  </div>
+</body>
+</html>
+`);
+  set('frame-tophit', `<!-- @dsCard group="Components" name="Top Hit &amp; result showcase" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Top Hit &amp; result showcase</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .slab {
+    width: 640px; padding: 7px; border-radius: 30px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .tophit {
+    display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 23px;
+    background: rgba(255,255,255,.045); margin-bottom: 4px;
+  }
+  .tophit .tile { flex: none; width: 46px; height: 46px; border-radius: 12px;
+    background: rgba(10,132,255,.16); display: grid; place-items: center; }
+  .tophit .title { font-size: 19px; font-weight: 650; color: rgba(255,255,255,.98); letter-spacing: -.2px; }
+  .tophit .sub { margin-top: 2px; font-size: 12px; color: rgba(255,255,255,.55); }
+  .row { display: flex; align-items: center; gap: 12px;
+    height: 58px; padding: 0 12px; border-radius: 12px; position: relative; }
+  .tile { flex: none; width: 38px; height: 38px; border-radius: 10px;
+    background: rgba(10,132,255,.14); display: grid; place-items: center; }
+  .text { flex: 1; min-width: 0; }
+  .titleline { display: flex; align-items: baseline; gap: 7px; }
+  .title { font-size: 15px; font-weight: 500; color: rgba(255, 255, 255, .96); }
+  .kind { font-size: 8.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+    color: rgba(255, 255, 255, .46); padding: 2px 5px; border-radius: 6px;
+    background: rgba(255, 255, 255, .07); }
+  .sub { margin-top: 3px; font-size: 11px; color: rgba(255, 255, 255, .5); }
+  .return { flex: none; width: 24px; height: 24px; border-radius: 7px;
+    background: rgba(255, 255, 255, .1);
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .2);
+    display: grid; place-items: center; }
+  .caption { font-size: 9.5px; color: rgba(255,255,255,.4); margin-top: 8px; padding: 0 12px; }
+</style>
+</head>
+<body>
+  <div class="slab">
+    <div class="tophit">
+      <span class="tile">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+          <rect x="3.5" y="3.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="13.5" y="3.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="3.5" y="13.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+          <rect x="13.5" y="13.5" width="7" height="7" rx="2" stroke="#6cb2ff" stroke-width="1.7"/>
+        </svg>
+      </span>
+      <span class="text">
+        <div class="title">Floodlight</div>
+        <div class="sub">~/Applications · Top Hit</div>
+      </span>
+      <span class="return">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M12 3v4a2 2 0 0 1-2 2H4" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M6.5 6.5 4 9l2.5 2.5" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">release-notes.md</span><span class="kind">File</span></span>
+        <div class="sub">396 KB · Yesterday</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Releases</span><span class="kind">Folder</span></span>
+        <div class="sub">12 items · 2 days ago</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="#6cb2ff" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">bundle.sh</span><span class="kind">File</span></span>
+        <div class="sub">3 KB · Tue at 4:12 PM</div>
+      </span>
+    </div>
+  </div>
+  <div class="caption">No section header between Top Hit and the rest — one flat ranked list; grouping is explicitly rejected, not deferred</div>
+</body>
+</html>
+`);
+  set('frame-tiles', `<!-- @dsCard group="Components" name="Symbol tiles &amp; key chip" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Symbol tiles &amp; key chip</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .slab {
+    width: 640px; padding: 7px; border-radius: 30px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .row { display: flex; align-items: center; gap: 12px;
+    height: 58px; padding: 0 12px; border-radius: 12px; }
+  .row + .row { margin-top: 2px; }
+  .tile { flex: none; width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center; }
+  .text { flex: 1; min-width: 0; }
+  .titleline { display: flex; align-items: baseline; gap: 7px; }
+  .title { font-size: 15px; font-weight: 500; color: rgba(255, 255, 255, .96); }
+  .kind { font-size: 8.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+    color: rgba(255, 255, 255, .46); padding: 2px 5px; border-radius: 6px;
+    background: rgba(255, 255, 255, .07); }
+  .sub { margin-top: 3px; font-size: 11px; color: rgba(255, 255, 255, .5); }
+  .running { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 11px;
+    color: rgba(255,255,255,.5); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(191,90,242,.85);
+    animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  .answer { margin-top: 4px; font-size: 12px; color: rgba(255,255,255,.9); line-height: 1.4; max-width: 480px; }
+  .error { margin-top: 3px; font-size: 11px; color: #ff8a80; }
+  .return { flex: none; width: 24px; height: 24px; border-radius: 7px;
+    background: rgba(255, 255, 255, .1);
+    box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .2);
+    display: grid; place-items: center; }
+  .keychip { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px;
+    border-radius: 6px; background: rgba(255,255,255,.1);
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2);
+    font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,.8); }
+  .caption { font-size: 9.5px; color: rgba(255,255,255,.4); margin-top: 8px; padding: 0 12px; }
+</style>
+</head>
+<body>
+  <div class="slab">
+    <div class="row">
+      <span class="tile" style="background:rgba(255,159,10,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <rect x="4" y="2" width="16" height="20" rx="3" stroke="#ffb454" stroke-width="1.6"/>
+          <path d="M8 6.5h8M8 11h1.2M11.4 11h1.2M14.8 11h1.2M8 14.5h1.2M11.4 14.5h1.2M14.8 14.5h1.2M8 18h1.2M11.4 18h1.2" stroke="#ffb454" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">128 × (44 + 6)</span><span class="kind">= 1&nbsp;792</span></span>
+        <div class="sub">Calculator · press Return to copy</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile" style="background:rgba(142,142,147,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="3.2" stroke="#c7c7cc" stroke-width="1.6"/>
+          <path d="M12 3v2.4M12 18.6V21M21 12h-2.4M5.4 12H3M18 6l-1.7 1.7M7.7 16.3 6 18M18 18l-1.7-1.7M7.7 7.7 6 6" stroke="#c7c7cc" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Displays</span><span class="kind">Setting</span></span>
+        <div class="sub">System Settings</div>
+      </span>
+    </div>
+    <div class="row">
+      <span class="tile" style="background:rgba(10,132,255,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M5 5l14 14M19 5 5 19" stroke="none"/>
+          <path d="M14 4h6v6M20 4l-8 8M8 20H4v-6M4 20l8-8" stroke="#6cb2ff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Search Google for “release notes format”</span><span class="kind">Web</span></span>
+        <div class="sub">Opens in your default browser</div>
+      </span>
+    </div>
+    <div class="row" style="background:rgba(255,255,255,.06)">
+      <span class="tile" style="background:rgba(191,90,242,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z" fill="#d59bff"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Ask Claude</span><span class="kind">Assistant</span></span>
+        <div class="running"><span class="dot"></span>Thinking…</div>
+      </span>
+    </div>
+    <div class="row" style="height: auto; padding: 10px 12px; align-items: flex-start;">
+      <span class="tile" style="background:rgba(191,90,242,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z" fill="#d59bff"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Ask Claude</span><span class="kind">Assistant</span></span>
+        <div class="answer">Relative dates use “Yesterday” up to 6 days back, then a weekday + time, then an absolute date past 7 days — matching Finder's List View.</div>
+      </span>
+      <span class="return"><span class="keychip">⌘⏎</span></span>
+    </div>
+    <div class="row">
+      <span class="tile" style="background:rgba(191,90,242,.16)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z" fill="#d59bff"/>
+        </svg>
+      </span>
+      <span class="text">
+        <span class="titleline"><span class="title">Ask Claude</span><span class="kind">Assistant</span></span>
+        <div class="error">Couldn't reach the assistant — check your connection.</div>
+      </span>
+    </div>
+  </div>
+  <div class="caption">Tile radius 9pt = row radius 12 − icon inset 3 · tints at 14–16% per kind · key chip shared with #1's idle hotkey chip</div>
+</body>
+</html>
+`);
+  set('frame-empty', `<!-- @dsCard group="Components" name="Empty filter state" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Empty filter state</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .slab {
+    width: 640px; padding: 7px 7px 40px; border-radius: 30px;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .35);
+  }
+  .filters { display: flex; gap: 7px; padding: 10px 12px 18px; }
+  .chip { height: 26px; padding: 0 12px; border-radius: 13px; display: flex; align-items: center;
+    font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,.9);
+    background: rgba(255,255,255,.055); }
+  .chip.active { background: rgba(255,255,255,.16); box-shadow: inset 0 1px 0 rgba(255,255,255,.3); }
+  .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 0 6px; }
+  .empty svg { opacity: .28; }
+  .empty .msg { font-size: 13px; color: rgba(255,255,255,.4); text-align: center; }
+  .empty .msg b { color: rgba(255,255,255,.58); font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="slab">
+    <div class="filters">
+      <div class="chip">All · 128</div>
+      <div class="chip active">Web · 0</div>
+      <div class="chip">Files · 96</div>
+      <div class="chip">Folders · 20</div>
+    </div>
+    <div class="empty">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+        <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M7 7l7 7" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <div class="msg">No <b>web</b> results for “<b>release notes format</b>”</div>
+    </div>
+  </div>
+</body>
+</html>
+`);
+  set('frame-motion', `<!-- @dsCard group="Motion" name="Panel spring & Reduce Motion" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Panel motion</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .pair { display: flex; gap: 40px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    color: rgba(255,255,255,.42); }
+  .stage { width: 280px; height: 300px; position: relative; }
+  .panel {
+    position: absolute; left: 0; top: 0; width: 280px; border-radius: 26px;
+    background: rgba(255,255,255,.1);
+    -webkit-backdrop-filter: blur(30px) saturate(128%);
+    backdrop-filter: blur(30px) saturate(128%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 .5px rgba(255,255,255,.17),
+      0 18px 40px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+  .panel .bar { height: 40px; display: flex; align-items: center; padding: 0 16px;
+    font-size: 12px; color: rgba(255,255,255,.7); }
+  .row { margin: 0 8px 4px; height: 30px; border-radius: 10px; background: rgba(255,255,255,.06); }
+
+  .spring .panel { height: 40px; animation: springGrow 3.2s cubic-bezier(.34,1.4,.4,1) infinite; }
+  @keyframes springGrow {
+    0%, 14% { height: 40px; }
+    50%, 64% { height: 220px; }
+    100% { height: 40px; }
+  }
+  .spring .row { opacity: 0; animation: rowFade 3.2s ease-out infinite; }
+  .spring .row:nth-child(2) { animation-delay: .05s; }
+  .spring .row:nth-child(3) { animation-delay: .1s; }
+  .spring .row:nth-child(4) { animation-delay: .15s; }
+  @keyframes rowFade {
+    0%, 20% { opacity: 0; }
+    26%, 64% { opacity: 1; }
+    70%, 100% { opacity: 0; }
+  }
+
+  .cross .panel { height: 40px; animation: crossGrow 3.2s steps(1) infinite; }
+  @keyframes crossGrow {
+    0%, 14% { height: 40px; }
+    22%, 64% { height: 220px; }
+    72%, 100% { height: 40px; }
+  }
+  .cross .rows { animation: crossFade 3.2s ease-in-out infinite; }
+  @keyframes crossFade {
+    0%, 16% { opacity: 0; }
+    24%, 62% { opacity: 1; }
+    70%, 100% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spring .panel, .spring .row, .cross .panel, .cross .rows { animation: none !important; height: 220px; opacity: 1; }
+  }
+
+  code {
+    display: block; font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10px; line-height: 16px; color: rgba(255,255,255,.6); text-align: center; margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <div class="pair">
+    <div class="col spring">
+      <div class="label">Default — system spring</div>
+      <div class="stage">
+        <div class="panel">
+          <div class="bar">Floodlight search</div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+      </div>
+      <code>response .42 · damping .86
+rows fade in, no slide</code>
+    </div>
+    <div class="col cross">
+      <div class="label">Reduce Motion — crossfade</div>
+      <div class="stage">
+        <div class="panel">
+          <div class="bar">Floodlight search</div>
+          <div class="rows">
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+          </div>
+        </div>
+      </div>
+      <code>easeInOut 120ms
+height + content crossfade together</code>
+    </div>
+  </div>
+</body>
+</html>
+`);
+})();
+</script>
+
+</body>
+</html>

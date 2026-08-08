@@ -1,0 +1,525 @@
+<!-- @dsCard group="Prototype" name="Interactive prototype" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Floodlight — interactive prototype</title>
+<style>
+  :root {
+    --accent: #4f9dff;
+    --paper-a: #16181f;
+    --paper-b: #1c1f28;
+    --paper-c: #101218;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #fff;
+    overflow: hidden;
+    position: relative;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, var(--paper-a) 0%, var(--paper-b) 45%, var(--paper-c) 100%);
+  }
+  /* Soft blurred shapes standing in for windows/dock behind the glass —
+     proves transparency instead of just tinting a solid card. */
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(46px); z-index: 0;
+  }
+  body::before { width: 30vw; height: 24vh; min-width: 300px; min-height: 200px;
+    background: rgba(255,255,255,.08); top: 12%; left: 8%; transform: rotate(-6deg); }
+  body::after { width: 22vw; height: 30vh; min-width: 240px; min-height: 260px;
+    background: rgba(120,170,255,.12); bottom: 8%; right: 10%; transform: rotate(8deg); }
+
+  .stage { position: relative; z-index: 1; width: 100%; height: 100%; }
+
+  .hint {
+    position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+    font-size: 10.5px; font-weight: 600; letter-spacing: .2px; color: rgba(255,255,255,.32);
+    display: flex; align-items: center; gap: 6px; pointer-events: none;
+  }
+  .hint kbd {
+    font: inherit; padding: 2px 6px; border-radius: 5px; background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.1);
+  }
+
+  .panel {
+    position: absolute; left: 50%; top: 24vh; transform: translateX(-50%);
+    width: 680px; max-width: calc(100vw - 40px);
+    border-radius: 30px; overflow: hidden;
+    background: rgba(255, 255, 255, .1);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .17),
+      0 24px 60px rgba(0, 0, 0, .4);
+    height: 60px;
+    transition: height .32s cubic-bezier(.22,.61,.36,1);
+  }
+  .panel.expanded { height: var(--expanded-height, 412px); }
+  @media (prefers-reduced-motion: reduce) {
+    .panel { transition: none; }
+  }
+
+  .search-row {
+    height: 60px; padding: 0 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .search-row svg.glass { flex: none; opacity: .55; }
+  #query {
+    flex: 1; min-width: 0; background: transparent; border: 0; outline: 0;
+    font: 300 24px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+    color: rgba(255,255,255,.96);
+    caret-color: var(--accent);
+  }
+  #query::placeholder { color: rgba(255,255,255,.35); font-weight: 300; }
+  #query::selection { background: rgba(79,157,255,.4); }
+  .clear-btn {
+    flex: none; width: 18px; height: 18px; display: grid; place-items: center;
+    background: transparent; border: 0; cursor: pointer; color: rgba(255,255,255,.5);
+    visibility: hidden;
+  }
+  .clear-btn.visible { visibility: visible; }
+  .clear-btn:hover { color: rgba(255,255,255,.96); }
+
+  .results-wrap {
+    opacity: 0; transition: opacity .12s ease-out;
+  }
+  .results-wrap.visible { opacity: 1; }
+
+  .divider { height: 1px; background: rgba(255,255,255,.12); opacity: .45; }
+
+  .filters {
+    height: 40px; display: flex; align-items: center; gap: 7px; padding: 0 14px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .filters::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; height: 26px; padding: 0 10px 0 12px; border-radius: 13px;
+    display: flex; align-items: center; gap: 5px; cursor: pointer; border: 0;
+    font: 600 11.5px -apple-system, sans-serif; color: rgba(255,255,255,.92);
+    background: rgba(255,255,255,.055);
+  }
+  .chip.active { background: rgba(255,255,255,.16); box-shadow: inset 0 1px 0 rgba(255,255,255,.3); }
+  .chip .count {
+    font-size: 10px; font-weight: 600; color: rgba(255,255,255,.55);
+    min-width: 20px; text-align: center;
+  }
+
+  .results { height: 311px; overflow-y: auto; padding: 7px; }
+  .results::-webkit-scrollbar { width: 8px; }
+  .results::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 4px; }
+
+  .row {
+    display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    height: 58px; border-radius: 12px; cursor: pointer; position: relative;
+  }
+  .row.selected {
+    background: rgba(255,255,255,.12);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 .5px rgba(255,255,255,.24), 0 8px 18px rgba(0,0,0,.22);
+  }
+  .row.selected:hover { background: rgba(255,255,255,.16); }
+  .row:not(.selected):hover { background: rgba(255,255,255,.075); }
+  .row.tophit { background: rgba(255,255,255,.045); height: auto; padding: 12px; }
+  .row.tophit.selected { background: rgba(255,255,255,.12); }
+  .row.flash { animation: flash .5s ease-out; }
+  @keyframes flash { 0% { background: rgba(79,157,255,.35); } 100% { background: transparent; } }
+
+  .tile {
+    flex: none; width: 38px; height: 38px; border-radius: 9px;
+    display: grid; place-items: center;
+  }
+  .row.tophit .tile { width: 46px; height: 46px; border-radius: 12px; }
+  .tile svg { width: 20px; height: 20px; }
+  .row.tophit .tile svg { width: 24px; height: 24px; }
+
+  .text { flex: 1; min-width: 0; }
+  .titleline { display: flex; align-items: baseline; gap: 7px; }
+  .title { font-size: 15px; font-weight: 500; color: rgba(255,255,255,.96);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.tophit .title { font-size: 19px; font-weight: 650; letter-spacing: -.2px; }
+  .kind { font-size: 8.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+    color: rgba(255,255,255,.46); padding: 2px 5px; border-radius: 6px; background: rgba(255,255,255,.07);
+    flex: none; }
+  .sub { margin-top: 3px; font-size: 11px; color: rgba(255,255,255,.5);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.tophit .sub { font-size: 12px; }
+  .answer { margin-top: 4px; font-size: 12px; color: rgba(255,255,255,.9); line-height: 1.4; }
+  .running { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 11px; color: rgba(255,255,255,.5); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+
+  .keychip {
+    flex: none; min-width: 24px; height: 24px; border-radius: 7px; padding: 0 7px;
+    display: flex; align-items: center; justify-content: center; gap: 3px;
+    background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2);
+    font-size: 11px; font-weight: 600; color: rgba(255,255,255,.8);
+  }
+
+  .empty {
+    height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+  }
+  .empty svg { opacity: .28; }
+  .empty div { font-size: 13px; color: rgba(255,255,255,.4); text-align: center; padding: 0 40px; }
+  .empty b { color: rgba(255,255,255,.58); font-weight: 500; }
+
+  .toast {
+    position: absolute; bottom: -46px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; font-weight: 500; color: rgba(255,255,255,.9);
+    background: rgba(20,22,30,.9); padding: 8px 14px; border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,.4); opacity: 0; transition: opacity .15s ease-out, bottom .15s ease-out;
+    pointer-events: none; white-space: nowrap;
+  }
+  .toast.visible { opacity: 1; bottom: -54px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="hint">Click the field, then type. Try <kbd>12 * 4 + 6</kbd>, <kbd>why is the sky blue</kbd>, or ↑↓ + ⏎</div>
+
+  <div class="panel" id="panel">
+    <div class="search-row">
+      <svg class="glass" width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+        <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <input id="query" type="text" placeholder="Floodlight search" autocomplete="off" spellcheck="false" />
+      <button class="clear-btn" id="clearBtn" aria-label="Clear">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".16"/>
+          <path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="results-wrap" id="resultsWrap">
+      <div class="divider"></div>
+      <div class="filters" id="filters"></div>
+      <div class="results" id="results"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const ICONS = {
+    app: '<rect x="3.5" y="3.5" width="7" height="7" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="3.5" width="7" height="7" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="3.5" y="13.5" width="7" height="7" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="13.5" width="7" height="7" rx="2" stroke="currentColor" stroke-width="1.7"/>',
+    file: '<path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
+    folder: '<path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
+    setting: '<circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 3v2.4M12 18.6V21M21 12h-2.4M5.4 12H3M18 6l-1.7 1.7M7.7 16.3 6 18M18 18l-1.7-1.7M7.7 7.7 6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    calculator: '<rect x="4" y="2" width="16" height="20" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 6.5h8M8 11h1.2M11.4 11h1.2M14.8 11h1.2M8 14.5h1.2M11.4 14.5h1.2M14.8 14.5h1.2M8 18h1.2M11.4 18h1.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+    web: '<path d="M14 4h6v6M20 4l-8 8M8 20H4v-6M4 20l8-8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    assistant: '<path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z" fill="currentColor"/>',
+  };
+  const TINT = { calculator: '#ffb454', setting: '#c7c7cc', web: '#6cb2ff', assistant: '#d59bff', app: '#6cb2ff', file: '#6cb2ff', folder: '#6cb2ff' };
+  const KIND_LABEL = { app: 'App', file: 'File', folder: 'Folder', setting: 'Setting', calculator: 'Calculator', web: 'Web', assistant: 'Assistant' };
+  const FILTERS = [
+    { id: 'all', title: 'All', match: () => true },
+    { id: 'app', title: 'Apps', match: k => k === 'app' },
+    { id: 'file', title: 'Files', match: k => k === 'file' },
+    { id: 'folder', title: 'Folders', match: k => k === 'folder' },
+    { id: 'setting', title: 'Settings', match: k => k === 'setting' },
+  ];
+
+  const DATA = [
+    { id: 'safari', title: 'Safari', subtitle: '~/Applications', kind: 'app' },
+    { id: 'mail', title: 'Mail', subtitle: '~/Applications', kind: 'app' },
+    { id: 'notes-app', title: 'Notes', subtitle: '~/Applications', kind: 'app' },
+    { id: 'terminal', title: 'Terminal', subtitle: '~/Applications/Utilities', kind: 'app' },
+    { id: 'xcode', title: 'Xcode', subtitle: '~/Applications', kind: 'app' },
+    { id: 'slack', title: 'Slack', subtitle: '~/Applications', kind: 'app' },
+    { id: 'figma', title: 'Figma', subtitle: '~/Applications', kind: 'app' },
+    { id: 'messages', title: 'Messages', subtitle: '~/Applications', kind: 'app' },
+    { id: 'music', title: 'Music', subtitle: '~/Applications', kind: 'app' },
+    { id: 'f-report', title: 'report-q3.pdf', subtitle: '~/Documents · 1.2 MB · 2 days ago', kind: 'file', size: 1258291, days: 2 },
+    { id: 'f-roadmap', title: 'roadmap.key', subtitle: '~/Documents/Planning · 4.6 MB · 5 hours ago', kind: 'file', size: 4823449, days: 0 },
+    { id: 'f-notes', title: 'release-notes.md', subtitle: '~/devv/floodlight · 396 KB · yesterday', kind: 'file', size: 405432, days: 1 },
+    { id: 'f-vacation', title: 'vacation-photo.heic', subtitle: '~/Pictures · 8.1 MB · 3 weeks ago', kind: 'file', size: 8493294, days: 21 },
+    { id: 'f-invoice', title: 'invoice-2026.pdf', subtitle: '~/Documents/Finance · 88 KB · 6 days ago', kind: 'file', size: 90112, days: 6 },
+    { id: 'f-budget', title: 'budget.xlsx', subtitle: '~/Documents/Finance · 61 KB · 3 days ago', kind: 'file', size: 62464, days: 3 },
+    { id: 'd-downloads', title: 'Downloads', subtitle: '~ · 128 items', kind: 'folder' },
+    { id: 'd-projects', title: 'Projects', subtitle: '~/devv · 12 items', kind: 'folder' },
+    { id: 'd-screenshots', title: 'Screenshots', subtitle: '~/Pictures · 340 items', kind: 'folder' },
+    { id: 'd-desktop', title: 'Desktop', subtitle: '~ · 6 items', kind: 'folder' },
+    { id: 's-wifi', title: 'Wi-Fi', subtitle: 'System Settings', kind: 'setting' },
+    { id: 's-displays', title: 'Displays', subtitle: 'System Settings', kind: 'setting' },
+    { id: 's-sound', title: 'Sound', subtitle: 'System Settings', kind: 'setting' },
+    { id: 's-bluetooth', title: 'Bluetooth', subtitle: 'System Settings', kind: 'setting' },
+    { id: 's-notifications', title: 'Notifications', subtitle: 'System Settings', kind: 'setting' },
+  ];
+
+  const QUESTION_WORDS = ['how', 'what', 'why', 'who', 'when', 'where', 'is', 'are', 'can', 'does', 'do', 'should', 'will', 'which'];
+  function looksLikeQuestion(q) {
+    const t = q.trim();
+    if (!t) return false;
+    if (t.endsWith('?')) return true;
+    const first = t.split(' ')[0].toLowerCase();
+    return QUESTION_WORDS.includes(first);
+  }
+
+  function evalCalculator(q) {
+    const t = q.trim();
+    if (!/^[\d\s+\-*/().]+$/.test(t) || !/\d/.test(t)) return null;
+    try {
+      // eslint-disable-next-line no-new-func
+      const value = Function(`"use strict"; return (${t})`)();
+      if (typeof value !== 'number' || !isFinite(value)) return null;
+      return Math.round(value * 1e6) / 1e6;
+    } catch {
+      return null;
+    }
+  }
+
+  function formatDate(daysAgo) {
+    if (daysAgo === 0) return 'today';
+    if (daysAgo === 1) return 'yesterday';
+    if (daysAgo < 7) return `${daysAgo} days ago`;
+    return `${Math.round(daysAgo / 7)} week${daysAgo >= 14 ? 's' : ''} ago`;
+  }
+
+  function search(query) {
+    const q = query.trim();
+    if (!q) return [];
+    const ql = q.toLowerCase();
+    let results = DATA
+      .filter(d => d.title.toLowerCase().includes(ql))
+      .map(d => ({ ...d, score: d.title.toLowerCase().startsWith(ql) ? 2 : 1 }))
+      .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+
+    const calc = evalCalculator(q);
+    if (calc !== null) {
+      results.unshift({
+        id: 'calculator', kind: 'calculator', title: String(calc),
+        subtitle: `${q} = ${calc} · Press Return to copy`,
+      });
+    }
+
+    if (looksLikeQuestion(q)) {
+      results.push({ id: 'assistant', kind: 'assistant', title: 'Ask Claude', subtitle: `Ask about “${q}”`, assistantQuery: q });
+    }
+
+    const localCount = results.length;
+    const promoted = localCount <= 2 || looksLikeQuestion(q);
+    const webRow = { id: 'web', kind: 'web', title: `Search Google for “${q}”`, subtitle: 'Opens in your default browser' };
+    if (promoted && results.length > 0) {
+      results.splice(1, 0, webRow);
+    } else {
+      results.push(webRow);
+    }
+    return results;
+  }
+
+  const state = {
+    query: '',
+    filter: 'all',
+    selectedId: null,
+    assistant: {}, // id -> { state: 'running'|'answered'|'failed', text }
+  };
+
+  const panel = document.getElementById('panel');
+  const input = document.getElementById('query');
+  const clearBtn = document.getElementById('clearBtn');
+  const resultsWrap = document.getElementById('resultsWrap');
+  const resultsEl = document.getElementById('results');
+  const filtersEl = document.getElementById('filters');
+  const toastEl = document.getElementById('toast');
+
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('visible'), 1400);
+  }
+
+  function allResults() {
+    return search(state.query);
+  }
+
+  function visibleResults() {
+    const all = allResults();
+    const f = FILTERS.find(f => f.id === state.filter);
+    return all.filter(r => f.match(r.kind));
+  }
+
+  function counts() {
+    const all = allResults();
+    const out = {};
+    FILTERS.forEach(f => { out[f.id] = all.filter(r => f.match(r.kind)).length; });
+    return out;
+  }
+
+  function isTopHit(index) {
+    return index === 0 && state.filter === 'all';
+  }
+
+  function render() {
+    const hasQuery = state.query.length > 0;
+    clearBtn.classList.toggle('visible', hasQuery);
+    panel.classList.toggle('expanded', hasQuery);
+    resultsWrap.classList.toggle('visible', hasQuery);
+    if (!hasQuery) return;
+
+    const c = counts();
+    filtersEl.innerHTML = FILTERS.map(f => `
+      <button class="chip ${f.id === state.filter ? 'active' : ''}" data-filter="${f.id}">
+        ${f.title}<span class="count">${c[f.id]}</span>
+      </button>
+    `).join('');
+
+    const results = visibleResults();
+    if (!state.selectedId || !results.some(r => r.id === state.selectedId)) {
+      state.selectedId = results[0]?.id ?? null;
+    }
+
+    if (results.length === 0) {
+      const filterTitle = FILTERS.find(f => f.id === state.filter).title.toLowerCase();
+      resultsEl.innerHTML = `
+        <div class="empty">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+            <circle cx="10.5" cy="10.5" r="6.5" stroke="#fff" stroke-width="1.6"/>
+            <path d="M19 19l-4-4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M7 7l7 7" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <div>No <b>${filterTitle}</b> results for “<b>${escapeHtml(state.query)}</b>”</div>
+        </div>`;
+      return;
+    }
+
+    resultsEl.innerHTML = results.map((r, i) => rowHtml(r, i)).join('');
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function rowHtml(item, index) {
+    const selected = item.id === state.selectedId;
+    const topHit = isTopHit(index);
+    const tint = TINT[item.kind];
+    const classes = ['row', selected ? 'selected' : '', topHit ? 'tophit' : ''].filter(Boolean).join(' ');
+
+    let metaLine = '';
+    if (item.kind === 'file' && item.days !== undefined) {
+      const kb = Math.round(item.size / 1024);
+      metaLine = `<div class="sub">${kb.toLocaleString()} KB · ${formatDate(item.days)}</div>`;
+    } else {
+      metaLine = `<div class="sub">${item.subtitle}${topHit ? ' · Top Hit' : ''}</div>`;
+    }
+
+    let extra = '';
+    if (item.kind === 'assistant') {
+      const a = state.assistant[item.id];
+      if (a?.state === 'running') {
+        extra = `<div class="running"><span class="dot"></span>Thinking…</div>`;
+        metaLine = '';
+      } else if (a?.state === 'answered') {
+        extra = `<div class="answer">${escapeHtml(a.text)}</div>`;
+        metaLine = '';
+      }
+    }
+
+    const badge = topHit ? '' : `<span class="kind">${KIND_LABEL[item.kind]}</span>`;
+
+    return `
+      <div class="${classes}" data-id="${item.id}" data-index="${index}">
+        <span class="tile" style="background:${tint}${item.kind in ICONS && ['calculator','setting','web','assistant'].includes(item.kind) ? '26' : '24'};color:${tint}">
+          <svg viewBox="0 0 24 24" fill="none">${ICONS[item.kind] || ICONS.app}</svg>
+        </span>
+        <span class="text">
+          <span class="titleline"><span class="title">${escapeHtml(item.title)}</span>${badge}</span>
+          ${metaLine}
+          ${extra}
+        </span>
+        ${selected ? '<span class="keychip">⏎</span>' : ''}
+      </div>`;
+  }
+
+  function activate(item) {
+    if (item.kind === 'assistant') {
+      state.assistant[item.id] = { state: 'running' };
+      render();
+      setTimeout(() => {
+        state.assistant[item.id] = {
+          state: 'answered',
+          text: 'This is a simulated answer — in the real app this runs your installed Codex or Claude CLI and streams its stdout back into the row.',
+        };
+        render();
+      }, 900);
+      return;
+    }
+    const el = resultsEl.querySelector(`[data-id="${item.id}"]`);
+    el?.classList.add('flash');
+    setTimeout(() => el?.classList.remove('flash'), 500);
+    if (item.kind === 'calculator') toast('Copied to clipboard');
+    else if (item.kind === 'web') toast('Opening in your browser…');
+    else toast(`Opening “${item.title}”…`);
+  }
+
+  input.addEventListener('input', () => {
+    state.query = input.value;
+    if (!state.query) state.filter = 'all';
+    render();
+  });
+
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    state.query = '';
+    state.filter = 'all';
+    input.focus();
+    render();
+  });
+
+  filtersEl.addEventListener('click', e => {
+    const btn = e.target.closest('.chip');
+    if (!btn) return;
+    state.filter = btn.dataset.filter;
+    state.selectedId = null;
+    render();
+  });
+
+  resultsEl.addEventListener('click', e => {
+    const row = e.target.closest('.row');
+    if (!row) return;
+    const item = visibleResults()[Number(row.dataset.index)];
+    state.selectedId = item.id;
+    render();
+    activate(item);
+  });
+
+  document.addEventListener('keydown', e => {
+    const results = visibleResults();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!results.length) return;
+      e.preventDefault();
+      const idx = Math.max(0, results.findIndex(r => r.id === state.selectedId));
+      const next = e.key === 'ArrowDown' ? Math.min(idx + 1, results.length - 1) : Math.max(idx - 1, 0);
+      state.selectedId = results[next].id;
+      render();
+      resultsEl.querySelector('.row.selected')?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      const item = results.find(r => r.id === state.selectedId);
+      if (item) activate(item);
+    } else if (e.key === 'Escape') {
+      input.value = '';
+      state.query = '';
+      state.filter = 'all';
+      render();
+    } else if (e.metaKey && /^[1-5]$/.test(e.key)) {
+      e.preventDefault();
+      const f = FILTERS[Number(e.key) - 1];
+      if (f) { state.filter = f.id; state.selectedId = null; render(); }
+    }
+  });
+
+  input.focus();
+  render();
+})();
+</script>
+</body>
+</html>

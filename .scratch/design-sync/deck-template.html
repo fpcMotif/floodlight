@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Golden-State Content — Design Draft #28</title>
+<style>
+  :root {
+    --paper: #f4f6fb;
+    --panel: #ffffff;
+    --panel-line: rgba(18,21,28,.08);
+    --ink: #12151c;
+    --ink-muted: #5b6472;
+    --ink-faint: #8891a0;
+    --line: rgba(18,21,28,.1);
+    --accent: #0a5fd8;
+    --accent-soft: rgba(10,95,216,.09);
+    --accent-ink: #0a5fd8;
+    --stage-shadow: 0 24px 48px rgba(18,21,28,.16), 0 2px 8px rgba(18,21,28,.08);
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0a0c12; --panel: #12141d; --panel-line: rgba(255,255,255,.08);
+      --ink: #eef1f7; --ink-muted: #9aa4b6; --ink-faint: #626b7b;
+      --line: rgba(255,255,255,.09);
+      --accent: #4fa2ff; --accent-soft: rgba(79,162,255,.14); --accent-ink: #7cb8ff;
+      --stage-shadow: 0 24px 56px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0a0c12; --panel: #12141d; --panel-line: rgba(255,255,255,.08);
+    --ink: #eef1f7; --ink-muted: #9aa4b6; --ink-faint: #626b7b;
+    --line: rgba(255,255,255,.09);
+    --accent: #4fa2ff; --accent-soft: rgba(79,162,255,.14); --accent-ink: #7cb8ff;
+    --stage-shadow: 0 24px 56px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+  }
+  :root[data-theme="light"] {
+    --paper: #f4f6fb; --panel: #ffffff; --panel-line: rgba(18,21,28,.08);
+    --ink: #12151c; --ink-muted: #5b6472; --ink-faint: #8891a0;
+    --line: rgba(18,21,28,.1);
+    --accent: #0a5fd8; --accent-soft: rgba(10,95,216,.09); --accent-ink: #0a5fd8;
+    --stage-shadow: 0 24px 48px rgba(18,21,28,.16), 0 2px 8px rgba(18,21,28,.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; line-height: 1.5;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent-ink); }
+  a:focus-visible, button:focus-visible, .navlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 720px) { .wrap { padding: 0 20px; } }
+
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .top-inner { display: flex; align-items: center; gap: 18px; padding: 16px 0; flex-wrap: wrap; }
+  .brand { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .5px;
+    color: var(--ink-faint); text-transform: uppercase; }
+  .brand b { color: var(--ink); }
+  .status {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .3px;
+    color: var(--accent-ink); background: var(--accent-soft); padding: 4px 9px; border-radius: 20px;
+    text-transform: uppercase;
+  }
+  .top-links { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+  .top-links a { font-size: 12.5px; font-weight: 500; text-decoration: none; color: var(--ink-muted); }
+  .top-links a:hover { color: var(--accent-ink); }
+  .top-links span.dim { color: var(--ink-faint); font-size: 12.5px; }
+
+  nav.index { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 0 16px; }
+  nav.index a {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .2px;
+    color: var(--ink-muted); text-decoration: none; padding: 5px 10px; border-radius: 7px;
+    border: 1px solid var(--line);
+  }
+  nav.index a:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  .hero { padding: 56px 0 40px; max-width: 780px; }
+  .hero h1 {
+    font-size: clamp(30px, 4.2vw, 44px); font-weight: 750; letter-spacing: -0.02em;
+    text-wrap: balance; margin-bottom: 16px;
+  }
+  .hero p { font-size: 16px; color: var(--ink-muted); max-width: 62ch; }
+  .hero p + p { margin-top: 12px; }
+
+  .siblings { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .sibling {
+    font-size: 11.5px; font-family: var(--mono); color: var(--ink-faint);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  }
+  .sibling b { color: var(--ink-muted); font-weight: 600; }
+
+  section.spec {
+    display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 44px;
+    padding: 52px 0; border-top: 1px solid var(--line); align-items: start;
+    scroll-margin-top: 90px;
+  }
+  @media (max-width: 880px) { section.spec { grid-template-columns: 1fr; gap: 24px; } }
+
+  .eyebrow { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--accent-ink); margin-bottom: 10px; }
+  .spec h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; text-wrap: balance; }
+  .spec .rationale { font-size: 14.5px; color: var(--ink-muted); max-width: 46ch; margin-bottom: 18px; }
+  .decisions { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .decisions li { font-size: 13px; color: var(--ink-muted); padding-left: 16px; position: relative; }
+  .decisions li::before {
+    content: ''; position: absolute; left: 0; top: 7px; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .decisions b { color: var(--ink); font-weight: 600; }
+
+  .stage {
+    border-radius: 22px; overflow: hidden; box-shadow: var(--stage-shadow);
+    border: 1px solid var(--panel-line);
+    max-width: 100%;
+  }
+  .stage-scroll { overflow-x: auto; }
+  .stage iframe { display: block; border: 0; width: 100%; }
+
+  footer.deck {
+    border-top: 1px solid var(--line); padding: 52px 0 64px; margin-top: 8px;
+  }
+  .footer-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; }
+  @media (max-width: 880px) { .footer-grid { grid-template-columns: 1fr; } }
+  footer.deck h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+  footer.deck ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  footer.deck li { font-size: 13.5px; color: var(--ink-muted); }
+  footer.deck li b { color: var(--ink); }
+
+  .sync-list { display: flex; flex-direction: column; gap: 10px; }
+  .sync-item { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-muted); }
+  .check {
+    flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft);
+    color: var(--accent-ink); display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  }
+
+  .cta {
+    margin-top: 28px; padding: 18px 20px; border-radius: 14px; background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .cta p { font-size: 13.5px; color: var(--ink); }
+  .cta p + p { margin-top: 6px; color: var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="top-inner">
+      <span class="brand"><b>Floodlight</b> · Golden-State Content</span>
+      <span class="status">Shipped · commit 83ccf2b</span>
+      <div class="top-links">
+        <a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener">⌘ Try the live prototype ↗</a>
+        <a href="https://github.com/fpcMotif/floodlight/issues/28" target="_blank" rel="noopener">Issue #28 ↗</a>
+        <a href="https://www.figma.com/design/k8C7ZtvsLyPaOlSCo3Zn45" target="_blank" rel="noopener">Figma canvas ↗</a>
+        <span class="dim">Claude Design · “Floodlight — Liquid Glass” (synced)</span>
+      </div>
+    </div>
+    <nav class="index">
+      <a href="#foundations">01 Foundations</a>
+      <a href="#search-field">02 Search field</a>
+      <a href="#top-hit">03 Top Hit</a>
+      <a href="#icon-tiles">04 Symbol tiles</a>
+      <a href="#empty-state">05 Empty state</a>
+      <a href="#motion">06 Motion</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <h1>The content inside the glass, drawn to Spotlight's own standard.</h1>
+    <p>#1 gives the panel a Liquid Glass shell. This is what goes <em>inside</em> it: a real type scale and tint palette instead of scattered inline literals, a Top Hit that earns the Return key without reading the list, symbol rows on tinted continuous-curve tiles instead of flat rectangles, and a panel that grows on a spring instead of snapping.</p>
+    <p>Six decisions below, each with the reasoning, the mockup it produced, and now the shipped Swift behind it. Nothing here touches ranking, filtering, or key handling — this is presentation only, so the existing coordinator tests stayed the proof.</p>
+    <p><a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener" style="font-weight:600">⌘ Play with the real thing — an interactive HTML/JS prototype ↗</a> — type a query, arrow through results, try “12 * 4 + 6” or a question.</p>
+    <div class="siblings">
+      <span class="sibling"><b>#1</b> owns the glass shell</span>
+      <span class="sibling"><b>#27</b> shipped — keyword engines &amp; assistant rows</span>
+      <span class="sibling"><b>#28</b> shipped — content &amp; motion (this page)</span>
+    </div>
+  </section>
+
+  <section class="spec" id="foundations">
+    <div>
+      <div class="eyebrow">01 · Foundations</div>
+      <h2>One type scale, one tint recipe</h2>
+      <p class="rationale">Today a 24pt input, 11.5pt chips, and seven white-opacity recipes accumulated independently. Centralizing them means every future row or control reaches for a name, not a number.</p>
+      <ul class="decisions">
+        <li><b>Badge quieted</b> from 9/600 on 12% fill to 8.5/700 on 7% fill — it should never out-compete the title.</li>
+        <li><b>Icon-tile tint</b> = kind color at 14% fill; tile radius derives from row radius minus icon inset (12 − 3 = 9pt).</li>
+        <li><b>Top Hit eligibility</b> is a pure helper: first result, no active filter, non-empty. Shown as a truth table so it's directly testable.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-foundations" title="Content type & palette" height="560" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="search-field">
+    <div>
+      <div class="eyebrow">02 · Search field</div>
+      <h2>Spotlight's proportions, not a system default</h2>
+      <p class="rationale">Today's field is a plain 13pt <code style="font-family:var(--mono)">TextField</code>. Spotlight's input runs large and light — 24pt at a 300 weight — with a placeholder that's quiet rather than labeled, and an icon optically matched to the text it sits beside.</p>
+      <ul class="decisions">
+        <li><b>Input</b> 24/300, tertiary placeholder at 35% opacity, vanishes the instant typing starts.</li>
+        <li><b>Caret &amp; selection</b> pick up the system accent color rather than a fixed tint.</li>
+        <li><b>Clear button</b> shrinks and quiets to 38% opacity until hovered — present, not shouting.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-search" title="Search field before/after" height="520" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="top-hit">
+    <div>
+      <div class="eyebrow">03 · Result showcase</div>
+      <h2>One confident Top Hit, then a quiet list</h2>
+      <p class="rationale">Every row reads identically today — the best match gets no more presence than the seventh. Spotlight's Top Hit lets you commit to Return without scanning. Metadata adopts Finder's own relative-date and byte-count formatting.</p>
+      <ul class="decisions">
+        <li><b>Top Hit</b> — 46pt tile, 19/650 title, sits in its own wash (primary 4.5%), separated by a hairline and a “More results” eyebrow.</li>
+        <li><b>No filter active</b> required — the moment a chip is selected, the user has already narrowed intent, so Top Hit disappears.</li>
+        <li><b>Metadata</b> — “396 KB · Yesterday”, “12 items · 2 days ago” — Finder's own vocabulary, not a raw byte count and ISO date.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-tophit" title="Top Hit and result showcase" height="420" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="icon-tiles">
+    <div>
+      <div class="eyebrow">04 · Symbol rows</div>
+      <h2>Calculator, settings, web, and assistant — finished, not bolted on</h2>
+      <p class="rationale">Symbol rows sit on flat colored rectangles today. The system puts them on tinted continuous-curve tiles. #27's assistant rows inherit this same language, plus the loading / answer / error states this spec defines for them.</p>
+      <ul class="decisions">
+        <li><b>Web row</b> states its destination plainly — “Search Google for …” — with a glyph that signals leaving the app.</li>
+        <li><b>Assistant states</b> — a pulsing dot while thinking, a body-type answer block, a quiet red error line.</li>
+        <li><b>Key chip</b> — the selected row's Return hint reuses #1's idle-capsule hotkey chip component, not a lookalike.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-tiles" title="Symbol tiles and key chip" height="580" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="empty-state">
+    <div>
+      <div class="eyebrow">05 · Empty state</div>
+      <h2>A quiet message, never a void</h2>
+      <p class="rationale">The web fallback guarantees the unfiltered list is never empty — but filtering into “Web” with zero hits currently shows nothing at all, which reads as a rendering bug rather than a real answer.</p>
+      <ul class="decisions">
+        <li><b>Centered, tertiary-tone</b> line naming both the active filter and the query.</li>
+        <li>Selection and key handling treat it as an ordinary zero-row list — no special-casing beyond the message.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-empty" title="Empty filter state" height="400" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+  <section class="spec" id="motion">
+    <div>
+      <div class="eyebrow">06 · Motion</div>
+      <h2>The panel grows — it doesn't snap</h2>
+      <p class="rationale">Today the panel jumps between collapsed and expanded with zero transition. A system-standard spring reads as fluid; Reduce Motion collapses the same transition to a plain crossfade. Selection itself stays instant either way, so rapid arrowing never feels laggy.</p>
+      <ul class="decisions">
+        <li><b>Panel height</b> animates on a spring (response .42, damping .86); rows fade in fast, no slide.</li>
+        <li><b>Reduce Motion</b> resolves to a 120ms crossfade of height and content together.</li>
+        <li>This preview genuinely respects <code style="font-family:var(--mono)">prefers-reduced-motion</code> — try it in your OS settings.</li>
+      </ul>
+    </div>
+    <div class="stage"><div class="stage-scroll">
+      <iframe id="frame-motion" title="Panel spring and Reduce Motion" height="440" scrolling="no"></iframe>
+    </div></div>
+  </section>
+
+</main>
+
+<footer class="deck">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h3>Out of scope, on purpose</h3>
+        <ul>
+          <li>Glass materials, filter-chip capsules, and the selection lozenge — <b>#1's territory</b>, this spec only reuses its key chip and radius math.</li>
+          <li>Keyword-engine parsing, ranking, and the process seam — <b>#27's territory</b>, shipped separately.</li>
+          <li>Grouped/sectioned results — considered, rejected, and caught once more: an early pass added a "More results" divider between Top Hit and the rest. A multi-agent Standards + Spec review flagged it as exactly the pattern this spec rejects, so it never shipped — one flat ranked list throughout, in the code and now in this deck.</li>
+        </ul>
+        <div class="cta">
+          <p>Implemented, reviewed, and committed — <code style="font-family:var(--mono)">feat/golden-state-content</code>, commit <code style="font-family:var(--mono)">83ccf2b</code>. 136 tests pass; <code style="font-family:var(--mono)">SearchCoordinator.swift</code> is byte-for-byte unchanged.</p>
+          <p>Type scale + palette live in <code style="font-family:var(--mono)">FloodlightMetrics</code>, the pure helpers (Top Hit eligibility, empty-state message, metadata formatting) in <code style="font-family:var(--mono)">ResultShowcase</code> with table-style tests, and the shared <code style="font-family:var(--mono)">KeyChip</code> component is ready for #1 to consume when it lands. Manual checklist (dark/light, Increase Contrast, VoiceOver, macOS 14/15, Reduce Motion end-to-end) is in the commit message, unchecked — no GUI harness in this environment.</p>
+        </div>
+      </div>
+      <div>
+        <h3>Synced to</h3>
+        <div class="sync-list">
+          <div class="sync-item"><span class="check">✓</span> This artifact — six mockups matching the shipped implementation, before/after, and the reasoning behind each</div>
+          <div class="sync-item"><span class="check">✓</span> <a href="https://claude.ai/code/artifact/3d0b4580-c5d5-407f-aff2-e31ea35b28dd" target="_blank" rel="noopener">Interactive HTML/JS prototype ↗</a> — real typing, real filtering, real motion, real Reduce Motion</div>
+          <div class="sync-item"><span class="check">✓</span> Claude Design project “Floodlight — Liquid Glass” — six content cards + the prototype, alongside #1's five, written incrementally</div>
+          <div class="sync-item"><span class="check">✓</span> Figma canvas — “Golden-State Content” page on the same file #1 uses, with a linked-out card to the live prototype</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const set = (id, html) => { document.getElementById(id).srcdoc = html; };
+
+  set('frame-foundations', `__CARD_FOUNDATIONS__`);
+  set('frame-search', `__CARD_SEARCH__`);
+  set('frame-tophit', `__CARD_TOPHIT__`);
+  set('frame-tiles', `__CARD_TILES__`);
+  set('frame-empty', `__CARD_EMPTY__`);
+  set('frame-motion', `__CARD_MOTION__`);
+})();
+</script>
+
+</body>
+</html>

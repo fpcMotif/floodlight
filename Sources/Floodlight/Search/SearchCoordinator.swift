@@ -312,7 +312,7 @@ final class SearchCoordinator {
             case .local = mode,
             let match = KeywordEngineCatalog.match(query, in: availableKeywordEngines),
             case .webSearch = match.engine.destination,
-            item.id == "keyword-engine:\(match.engine.id)"
+            item.id == match.engine.rowID
         else {
             return nil
         }
@@ -586,7 +586,7 @@ final class SearchCoordinator {
             guard let self else { return }
 
             if !immediate {
-                let debounce = immediateApps.isEmpty ? 35 : 180
+                let debounce = immediateApps.isEmpty ? 15 : 20
                 try? await Task.sleep(for: .milliseconds(debounce))
             }
             guard !Task.isCancelled else { return }
@@ -625,7 +625,7 @@ final class SearchCoordinator {
                 FloodlightPerformance.end("IndexedSearch", id: asyncSignpost)
                 indexedSearchEnded = true
 
-                try await Task.sleep(for: .milliseconds(120))
+                try await Task.sleep(for: .milliseconds(30))
                 guard !Task.isCancelled, requestGeneration == generation else { return }
                 guard requestQuery.count >= 3, fffItems.count < 12 else { return }
                 let contentSignpost = FloodlightPerformance.begin("ContentSearch")
@@ -732,10 +732,12 @@ final class SearchCoordinator {
             + engines.filter { $0.id != activeEngineID }
 
         return ordered.enumerated().compactMap { position, engine in
-            guard let url = engine.searchURL(for: query) else { return nil }
+            guard let url = engine.searchURL(for: query), let title = engine.searchTitle(for: query) else {
+                return nil
+            }
             return SearchItem(
                 id: "web-mode:\(engine.id)",
-                title: query.isEmpty ? engine.title : "\(engine.title) for “\(query)”",
+                title: title,
                 subtitle: "Open in your default browser",
                 kind: .web,
                 action: .open(url),
@@ -777,7 +779,9 @@ final class SearchCoordinator {
         // "web-search" identity — reached by promotion here, the same
         // destination Tab's plain-query mode addresses deliberately.
         let defaultEngine = KeywordEngineCatalog.defaultEngine
-        if !query.isEmpty, let url = defaultEngine.searchURL(for: query) {
+        if !query.isEmpty,
+           let url = defaultEngine.searchURL(for: query),
+           let title = defaultEngine.searchTitle(for: query) {
             let localMatchCount = apps.count + system.count + indexed.count
             let promoted = WebSearchIntent.shouldPromote(
                 query: query,
@@ -786,7 +790,7 @@ final class SearchCoordinator {
             output.append(
                 SearchItem(
                     id: Self.webSearchResultID,
-                    title: "\(defaultEngine.title) for “\(query)”",
+                    title: title,
                     subtitle: "Open in your default browser",
                     kind: .web,
                     action: .open(url),

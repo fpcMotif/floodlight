@@ -150,8 +150,6 @@ final class RecentStoreConcurrencyTests: XCTestCase {
     }
 
     func testACorruptPersistedPayloadIsIgnoredRatherThanFatal() throws {
-        let defaults = try IsolatedDefaults()
-
         // Anything could be under this key: an older schema, a truncated
         // write, or a value some other tool wrote. None of it may crash a
         // launcher on startup.
@@ -163,6 +161,11 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             Data(#"{"app": {"launches": "not-a-number"}}"#.utf8),
             Data((0..<256).map { UInt8($0 % 256) }),
         ] {
+            // A fresh suite per payload: the recovery `record` below persists
+            // asynchronously, and on a shared suite that write can land after
+            // the next iteration plants its corrupt payload, replacing it
+            // with valid data.
+            let defaults = try IsolatedDefaults()
             defaults.defaults.set(payload, forKey: "recent-items-v1")
             let store = RecentStore(defaults: defaults.defaults)
             XCTAssertEqual(store.boost(for: "app"), 0)

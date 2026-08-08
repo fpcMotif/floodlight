@@ -129,7 +129,6 @@ final class KeywordEngineTests: XCTestCase {
     func testEveryPresetEngineBuildsItsExpectedSearchURL() throws {
         let expectations: [(query: String, url: String)] = [
             ("g swift concurrency", "https://www.google.com/search?q=swift%20concurrency"),
-            ("ddg swift concurrency", "https://duckduckgo.com/?q=swift%20concurrency"),
             ("wiki alan turing", "https://en.wikipedia.org/wiki/Special:Search?search=alan%20turing"),
             ("gh swift-testing", "https://github.com/search?q=swift-testing"),
             ("so nsurlsession retry", "https://stackoverflow.com/search?q=nsurlsession%20retry"),
@@ -148,7 +147,6 @@ final class KeywordEngineTests: XCTestCase {
     func testEveryPresetKeywordSpellingAddressesItsEngine() {
         let spellings: [(keyword: String, engineID: String)] = [
             ("g", "google"), ("google", "google"), ("!g", "google"),
-            ("ddg", "duckduckgo"), ("duckduckgo", "duckduckgo"), ("!ddg", "duckduckgo"),
             ("wiki", "wikipedia"), ("wikipedia", "wikipedia"), ("!wiki", "wikipedia"),
             ("gh", "github"), ("github", "github"), ("!gh", "github"),
             ("so", "stackoverflow"), ("stackoverflow", "stackoverflow"), ("!so", "stackoverflow"),
@@ -177,7 +175,7 @@ final class KeywordEngineTests: XCTestCase {
         let engines = KeywordEngineCatalog.webSearchEngines
         XCTAssertEqual(
             engines.map(\.id),
-            ["google", "duckduckgo", "wikipedia", "github", "stackoverflow", "twitter", "youtube"]
+            ["google", "wikipedia", "github", "stackoverflow", "twitter", "youtube"]
         )
         XCTAssertTrue(engines.allSatisfy { engine in
             if case .webSearch = engine.destination { return true }
@@ -192,6 +190,21 @@ final class KeywordEngineTests: XCTestCase {
         XCTAssertEqual(url.host, "www.google.com")
         XCTAssertFalse(url.absoluteString.contains(" "))
         XCTAssertNil(url.fragment, "a '#' in the query must never become a fragment")
+    }
+
+    /// The table-integrity requirement from the spec's Testing Decisions —
+    /// "each preset engine yields a well-formed URL for a query containing
+    /// spaces and reserved characters" — for every URL engine, not just the
+    /// default one `testSearchURLPercentEncodesSpacesAndReservedCharacters`
+    /// already covers.
+    func testEveryURLEngineProducesAWellFormedURLForSpacesAndReservedCharacters() throws {
+        let query = "café & crème #1/2?"
+        for engine in KeywordEngineCatalog.webSearchEngines {
+            let url = try XCTUnwrap(engine.searchURL(for: query), engine.id)
+            XCTAssertFalse(url.absoluteString.contains(" "), engine.id)
+            XCTAssertNil(url.fragment, "'#' must never become a fragment: \(engine.id)")
+            XCTAssertNotNil(url.host, engine.id)
+        }
     }
 
     func testSearchURLForAnAssistantEngineIsNil() throws {

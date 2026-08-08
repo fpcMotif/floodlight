@@ -1,0 +1,118 @@
+<!-- @dsCard group="Motion" name="Panel spring & Reduce Motion" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Panel motion</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .pair { display: flex; gap: 40px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    color: rgba(255,255,255,.42); }
+  .stage { width: 280px; height: 300px; position: relative; }
+  .panel {
+    position: absolute; left: 0; top: 0; width: 280px; border-radius: 26px;
+    background: rgba(255,255,255,.1);
+    -webkit-backdrop-filter: blur(30px) saturate(128%);
+    backdrop-filter: blur(30px) saturate(128%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 .5px rgba(255,255,255,.17),
+      0 18px 40px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+  .panel .bar { height: 40px; display: flex; align-items: center; padding: 0 16px;
+    font-size: 12px; color: rgba(255,255,255,.7); }
+  .row { margin: 0 8px 4px; height: 30px; border-radius: 10px; background: rgba(255,255,255,.06); }
+
+  .spring .panel { height: 40px; animation: springGrow 3.2s cubic-bezier(.34,1.4,.4,1) infinite; }
+  @keyframes springGrow {
+    0%, 14% { height: 40px; }
+    50%, 64% { height: 220px; }
+    100% { height: 40px; }
+  }
+  .spring .row { opacity: 0; animation: rowFade 3.2s ease-out infinite; }
+  .spring .row:nth-child(2) { animation-delay: .05s; }
+  .spring .row:nth-child(3) { animation-delay: .1s; }
+  .spring .row:nth-child(4) { animation-delay: .15s; }
+  @keyframes rowFade {
+    0%, 20% { opacity: 0; }
+    26%, 64% { opacity: 1; }
+    70%, 100% { opacity: 0; }
+  }
+
+  .cross .panel { height: 40px; animation: crossGrow 3.2s steps(1) infinite; }
+  @keyframes crossGrow {
+    0%, 14% { height: 40px; }
+    22%, 64% { height: 220px; }
+    72%, 100% { height: 40px; }
+  }
+  .cross .rows { animation: crossFade 3.2s ease-in-out infinite; }
+  @keyframes crossFade {
+    0%, 16% { opacity: 0; }
+    24%, 62% { opacity: 1; }
+    70%, 100% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spring .panel, .spring .row, .cross .panel, .cross .rows { animation: none !important; height: 220px; opacity: 1; }
+  }
+
+  code {
+    display: block; font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10px; line-height: 16px; color: rgba(255,255,255,.6); text-align: center; margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <div class="pair">
+    <div class="col spring">
+      <div class="label">Default — system spring</div>
+      <div class="stage">
+        <div class="panel">
+          <div class="bar">Floodlight search</div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+      </div>
+      <code>response .42 · damping .86
+rows fade in, no slide</code>
+    </div>
+    <div class="col cross">
+      <div class="label">Reduce Motion — crossfade</div>
+      <div class="stage">
+        <div class="panel">
+          <div class="bar">Floodlight search</div>
+          <div class="rows">
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+          </div>
+        </div>
+      </div>
+      <code>easeInOut 120ms
+height + content crossfade together</code>
+    </div>
+  </div>
+</body>
+</html>

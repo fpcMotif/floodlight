@@ -178,13 +178,13 @@ private struct ResultIcon: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                Image(systemName: item.kind.symbolName)
+                Image(systemName: FloodlightMetrics.iconSymbol(for: item))
                     .resizable()
                     .scaledToFit()
                     .padding(size * 0.21)
-                    .foregroundStyle(FloodlightMetrics.iconTint(for: item.kind))
+                    .foregroundStyle(FloodlightMetrics.iconTint(for: item))
                     .background(
-                        FloodlightMetrics.iconTint(for: item.kind).opacity(FloodlightMetrics.iconTileTintOpacity),
+                        FloodlightMetrics.iconTint(for: item).opacity(FloodlightMetrics.iconTileTintOpacity),
                         in: RoundedRectangle(cornerRadius: FloodlightMetrics.iconTileCornerRadius, style: .continuous)
                     )
             }

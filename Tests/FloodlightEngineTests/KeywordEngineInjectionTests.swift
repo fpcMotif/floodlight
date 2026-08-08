@@ -446,7 +446,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
 
     func testWebEnginesAreAlwaysAvailableAndAssistantsAreGated() async {
         let webEngineIDs: Set<String> = [
-            "google", "duckduckgo", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
+            "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
         ]
 
         let none = ScriptedAssistantRunner(availableCommands: [])

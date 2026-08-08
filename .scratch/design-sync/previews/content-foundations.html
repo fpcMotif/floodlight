@@ -1,0 +1,134 @@
+<!-- @dsCard group="Foundations" name="Content type & palette" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floodlight — Content type &amp; palette (#28)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; position: relative; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 12% 8%, rgba(255, 214, 170, .09), transparent 62%),
+      radial-gradient(55% 46% at 88% 88%, rgba(120, 170, 255, .13), transparent 64%),
+      linear-gradient(165deg, #16181f 0%, #1c1f28 45%, #101218 100%);
+  }
+  body::before, body::after {
+    content: ''; position: absolute; border-radius: 32px; filter: blur(42px); z-index: 0;
+  }
+  body::before { width: 360px; height: 230px; background: rgba(255,255,255,.09);
+    top: 10%; left: 8%; transform: rotate(-7deg); }
+  body::after { width: 260px; height: 320px; background: rgba(120,170,255,.14);
+    bottom: 6%; right: 9%; transform: rotate(9deg); }
+  body > * { position: relative; z-index: 1; }
+  .grid { display: grid; grid-template-columns: repeat(3, 250px); gap: 18px; }
+  .card {
+    border-radius: 20px; padding: 20px;
+    background: rgba(255, 255, 255, .09);
+    -webkit-backdrop-filter: blur(34px) saturate(128%);
+    backdrop-filter: blur(34px) saturate(128%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .26),
+      inset 0 0 0 .5px rgba(255, 255, 255, .16),
+      0 18px 44px rgba(0, 0, 0, .3);
+  }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .2px;
+    color: rgba(255, 255, 255, .92); margin-bottom: 4px; }
+  .use { font-size: 11px; color: rgba(255, 255, 255, .5); margin-bottom: 12px; }
+  code {
+    display: block;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px; line-height: 17px;
+    color: rgba(255, 255, 255, .68); white-space: pre;
+  }
+  .row-sample { margin-top: 10px; display: flex; align-items: baseline; gap: 8px; }
+  .row-sample .title { font-size: 15px; font-weight: 500; color: rgba(255,255,255,.96); }
+  .row-sample .badge { font-size: 8.5px; font-weight: 700; letter-spacing: .3px;
+    color: rgba(255,255,255,.46); padding: 2px 5px; border-radius: 6px;
+    background: rgba(255,255,255,.07); text-transform: uppercase; }
+  .swatch-row { display: flex; gap: 8px; margin-top: 10px; }
+  .swatch { flex: 1; height: 30px; border-radius: 8px; display: grid; place-items: center;
+    font-size: 8px; font-weight: 700; color: rgba(255,255,255,.85); letter-spacing: .2px; }
+  table.truth { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  table.truth th, table.truth td { text-align: left; font-size: 10px; padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.72); }
+  table.truth th { color: rgba(255,255,255,.42); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .3px; font-size: 8.5px; }
+  .yes { color: #8fe3a6; font-weight: 700; }
+  .no { color: rgba(255,255,255,.35); }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <h2>Type scale — content</h2>
+      <div class="use">Every size below is a named token; no view body carries a literal</div>
+      <code>input     24 / 300 · 96%
+title     15 / 500 · 96%
+topHit    19 / 650 · 98%
+subtitle  11 / 400 · 50%
+badge    8.5 / 700 · 46%
+chip     11.5 / 600 · 92%
+keyChip    11 / 600 · 80%
+empty      13 / 400 · 40%</code>
+    </div>
+    <div class="card">
+      <h2>Badge, quieted</h2>
+      <div class="use">Was 9/600 on 12% fill — competed with the title</div>
+      <div class="row-sample">
+        <span class="title">release-notes.md</span>
+        <span class="badge">FILE</span>
+      </div>
+      <code style="margin-top:10px">fill  white 7% (was 12%)
+text  white 46% (was 58%)
+size  8.5 (was 9), tracking +.3</code>
+    </div>
+    <div class="card">
+      <h2>Icon-tile tints</h2>
+      <div class="use">Continuous-curve tile fill · 14% of kind color</div>
+      <div class="swatch-row">
+        <div class="swatch" style="background:rgba(255,159,10,.24);color:#ffb454">Calc</div>
+        <div class="swatch" style="background:rgba(142,142,147,.24);color:#c7c7cc">Settings</div>
+        <div class="swatch" style="background:rgba(10,132,255,.24);color:#6cb2ff">Web</div>
+        <div class="swatch" style="background:rgba(191,90,242,.24);color:#d59bff">Assistant</div>
+      </div>
+      <code style="margin-top:10px">tile fill = kind.tint.opacity(.14)
+radius    = row radius − icon inset
+          = 12 − 3 = 9pt</code>
+    </div>
+    <div class="card">
+      <h2>Top Hit eligibility</h2>
+      <div class="use">Pure helper over the ranked list — no ranking change</div>
+      <table class="truth">
+        <tr><th>Results</th><th>Filter</th><th>Index 0?</th><th>Top Hit</th></tr>
+        <tr><td>Non-empty</td><td>All</td><td class="yes">Yes</td><td class="yes">Shown</td></tr>
+        <tr><td>Non-empty</td><td>Files</td><td class="yes">Yes</td><td class="no">Hidden</td></tr>
+        <tr><td>Non-empty</td><td>All</td><td class="no">No</td><td class="no">Hidden</td></tr>
+        <tr><td>Empty</td><td>Any</td><td class="no">—</td><td class="no">Hidden</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Metadata formatting</h2>
+      <div class="use">Finder-style relative dates &amp; locale byte counts</div>
+      <code>file    396 KB · Yesterday
+file    3 KB · Tue at 4:12 PM
+folder  12 items · 2 days ago
+app     ~/Applications
+web     spotlight.floodlight.app</code>
+    </div>
+    <div class="card">
+      <h2>Opacity recipe — content</h2>
+      <div class="use">Shared with #1's glass fallback tuning vocabulary</div>
+      <code>primary    white 96%
+secondary  white 50%
+tertiary   white 35%
+quaternary white 22%
+Top Hit wash: primary.opacity(.045)
+Increase Contrast: +18% every tier</code>
+    </div>
+  </div>
+</body>
+</html>

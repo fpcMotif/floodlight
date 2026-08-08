@@ -14,7 +14,7 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     private var tree: TemporaryTree!
 
     private static let presetOrder = [
-        "google", "duckduckgo", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
+        "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
     ]
 
     override func setUpWithError() throws {
@@ -119,12 +119,12 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         coordinator.handleTab()
 
         coordinator.moveSelection(by: 1)
-        XCTAssertEqual(coordinator.selectedID, "web-mode:duckduckgo")
+        XCTAssertEqual(coordinator.selectedID, "web-mode:wikipedia")
 
         coordinator.query = "swift actors"
         XCTAssertEqual(
             coordinator.selectedID,
-            "web-mode:duckduckgo",
+            "web-mode:wikipedia",
             "typing must not steal the engine the user arrowed to"
         )
     }
