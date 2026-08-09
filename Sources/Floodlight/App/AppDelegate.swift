@@ -2,18 +2,21 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var panelController: FloodlightPanelController?
-    private var onboardingController: OnboardingWindowController?
     private lazy var model = SearchCoordinator(
         onDismiss: { [weak self] in
-            self?.panelController?.hide()
+            self?.searchDidDismiss()
         },
         onShowSettings: { [weak self] in
-            self?.showSettingsFromSearch()
+            self?.searchDidRequestConfiguration()
         }
     )
+    private lazy var panelController = FloodlightPanelController(model: model)
+    private lazy var presentation = ApplicationPresentationCoordinator(
+        effects: self,
+        ensureSearchStarted: { [weak self] in self?.ensureSearchStarted() }
+    )
     private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] in
-        self?.togglePanel()
+        self?.globalHotKeyDidFire()
     }
 
     // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
@@ -25,17 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        panelController = FloodlightPanelController(model: model)
         installMenu()
         installStatusItem()
         installGlobalHotKey()
         LaunchAtLogin.enableOnFirstRun()
-        if OnboardingSession.shouldPresent() {
-            showInitialSetup()
-        } else {
-            model.start()
-            panelController?.show()
-        }
+        presentation.launch(initialSetupRequired: OnboardingSession.shouldPresent())
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -46,103 +43,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        if onboardingController?.window?.isVisible == true {
-            onboardingController?.show()
-            return true
-        }
-        panelController?.show()
+        presentation.showSearch()
         return true
     }
 
-    @objc func togglePanel() {
-        if onboardingController?.window?.isVisible == true {
-            onboardingController?.show()
-            return
-        }
-        panelController?.toggle()
-    }
-
     @objc private func showPanel() {
-        if onboardingController?.window?.isVisible == true {
-            onboardingController?.show()
-            return
-        }
-        panelController?.show()
-    }
-
-    private func showInitialSetup() {
-        showConfiguration(
-            presentation: .onboarding,
-            showSearchOnFinish: true,
-            showSearchOnDismiss: false
-        )
+        presentation.showSearch()
     }
 
     @objc private func showSettings() {
-        showConfiguration(
-            presentation: .settings,
-            showSearchOnFinish: false,
-            showSearchOnDismiss: false
-        )
+        presentation.showConfiguration(from: .statusMenu)
     }
 
     @objc private func showSettingsFromSearch() {
-        showConfiguration(
-            presentation: .settings,
-            showSearchOnFinish: true,
-            showSearchOnDismiss: true
-        )
-    }
-
-    private func showConfiguration(
-        presentation: FloodlightConfigurationPresentation,
-        showSearchOnFinish: Bool,
-        showSearchOnDismiss: Bool
-    ) {
-        if let onboardingController, onboardingController.window?.isVisible == true {
-            onboardingController.show()
-            return
-        }
-
-        panelController?.hide()
-        let controller = OnboardingWindowController(
-            presentation: presentation,
-            activeShortcut: globalHotKeyRegistration.activeShortcut,
-            launchesAtLogin: LaunchAtLogin.launchesAtLogin,
-            rootURL: model.rootURL,
-            selectShortcut: { [weak self] shortcut in
-                self?.selectShortcut(shortcut) ?? .noShortcutActive
-            },
-            setLaunchAtLogin: { enabled in
-                do {
-                    try LaunchAtLogin.setLaunchAtLogin(enabled)
-                    return nil
-                } catch {
-                    return error.localizedDescription
-                }
-            },
-            chooseScope: { [weak self] in
-                guard let self else { return nil }
-                return RootPicker.chooseAndApply(to: model)
-            },
-            onFinished: { [weak self] in
-                self?.configurationClosed(showSearch: showSearchOnFinish)
-            },
-            onDismissed: { [weak self] in
-                self?.configurationClosed(showSearch: showSearchOnDismiss)
-            }
-        )
-        onboardingController = controller
-        controller.show()
+        presentation.showConfiguration(from: .search)
     }
 
     @objc private func chooseRoot() {
-        panelController?.show()
+        guard presentation.showSearch() == .searchPresented else { return }
         RootPicker.chooseAndApply(to: model)
     }
 
     @objc private func rebuildIndex() {
         model.rebuildIndex()
+    }
+
+    private func searchDidDismiss() {
+        presentation.hideSearch()
+    }
+
+    func searchDidRequestConfiguration() {
+        presentation.showConfiguration(from: .search)
+    }
+
+    private func ensureSearchStarted() {
+        model.start()
+    }
+
+    func globalHotKeyDidFire() {
+        presentation.toggleSearch()
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -179,16 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let outcome = globalHotKeyRegistration.replace(with: shortcut)
         model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
         return outcome
-    }
-
-    private func configurationClosed(showSearch: Bool) {
-        model.start()
-        if showSearch {
-            panelController?.show()
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.onboardingController = nil
-        }
     }
 
     private func installStatusItem() {
@@ -367,5 +296,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(editItem)
 
         return mainMenu
+    }
+}
+
+extension AppDelegate: ApplicationPresentationEffects {
+    func showSearch() {
+        panelController.show()
+    }
+
+    func hideSearch() {
+        panelController.hide()
+    }
+
+    func toggleSearch() {
+        panelController.toggle()
+    }
+
+    func makeConfiguration(
+        origin: ConfigurationOrigin,
+        onFinished: @escaping @MainActor () -> Void,
+        onDismissed: @escaping @MainActor () -> Void
+    ) -> any ConfigurationPresenting {
+        FloodlightConfigurationWindowController(
+            presentation: origin == .initialSetup ? .onboarding : .settings,
+            activeShortcut: globalHotKeyRegistration.activeShortcut,
+            launchesAtLogin: LaunchAtLogin.launchesAtLogin,
+            rootURL: model.rootURL,
+            selectShortcut: { [weak self] shortcut in
+                self?.selectShortcut(shortcut) ?? .noShortcutActive
+            },
+            setLaunchAtLogin: { enabled in
+                do {
+                    try LaunchAtLogin.setLaunchAtLogin(enabled)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            },
+            chooseScope: { [weak self] in
+                guard let self else { return nil }
+                return RootPicker.chooseAndApply(to: model)
+            },
+            onFinished: onFinished,
+            onDismissed: onDismissed
+        )
     }
 }

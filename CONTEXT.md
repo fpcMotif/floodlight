@@ -40,6 +40,10 @@ _Avoid_: Published fields, result state
 An explicit activation, copy, or Finder-reveal operation on the selected result, together with its search-dismissal and learning consequences. Preview and search-administration commands are not Selected-Result Actions.
 _Avoid_: Panel command, item command
 
+**Application Presentation**:
+The exclusive coordination of Floodlight’s Search and Configuration surfaces, including launch choice, surface priority, Configuration lifetime, and Search restoration.
+_Avoid_: Window management, AppDelegate state
+
 **Assistant Request**:
 One immutable invocation of an installed assistant CLI, including the originating result identity, executable command, and arguments.
 _Avoid_: Assistant command, process request

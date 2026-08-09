@@ -21,7 +21,7 @@ enum FloodlightConfigurationPresentation {
 }
 
 @MainActor
-final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
+final class FloodlightConfigurationWindowController: NSWindowController, NSWindowDelegate {
     private let presentation: FloodlightConfigurationPresentation
     private let session: OnboardingSession
     private let flow: OnboardingFlowState
@@ -51,7 +51,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         flow = OnboardingFlowState(
             session: session,
             selectShortcut: selectShortcut,
-            openSpotlightSettings: OnboardingWindowController.openSpotlightSettings
+            openSpotlightSettings: FloodlightConfigurationWindowController.openSpotlightSettings
         )
         self.setLaunchAtLogin = setLaunchAtLogin
         self.chooseScope = chooseScope
@@ -137,7 +137,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         session.rootURL = selectedURL.standardizedFileURL
     }
 
-    private func finish() {
+    func finish() {
         if presentation == .onboarding {
             session.complete()
         }
@@ -171,3 +171,5 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         NSWorkspace.shared.open(fallbackURL)
     }
 }
+
+extension FloodlightConfigurationWindowController: ConfigurationPresenting {}
