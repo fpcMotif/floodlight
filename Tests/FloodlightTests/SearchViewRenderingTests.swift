@@ -39,7 +39,9 @@ final class SearchViewRenderingTests: XCTestCase {
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
-            assistantRunner: ScriptedAssistantRunner()
+            assistantRunner: ScriptedAssistantRunner(),
+            onDismiss: {},
+            onShowSettings: {}
         )
     }
 

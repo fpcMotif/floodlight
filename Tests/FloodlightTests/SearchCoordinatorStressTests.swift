@@ -8,7 +8,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - moveSelection
 
     func testMoveSelectionDownAdvancesSelectedID() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
@@ -20,7 +20,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testMoveSelectionUpMovesBackward() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
@@ -32,7 +32,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testMoveSelectionClampsAtLowerBound() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
 
@@ -43,7 +43,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testMoveSelectionClampsAtUpperBound() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let lastID = try XCTUnwrap(coordinator.results.last?.id)
 
@@ -54,7 +54,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testMoveSelectionOnEmptyResultsIsNoOp() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         XCTAssertTrue(coordinator.results.isEmpty)
         XCTAssertNil(coordinator.selectedID)
 
@@ -65,7 +65,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testMoveSelectionWithZeroDeltaKeepsSelection() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
 
@@ -78,7 +78,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - reset
 
     func testResetClearsAllState() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         XCTAssertFalse(coordinator.results.isEmpty)
 
@@ -96,7 +96,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testResetIsIdempotent() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         coordinator.reset()
         let snapshotQuery = coordinator.query
@@ -113,7 +113,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - selectFilter
 
     func testSelectFilterChangesFilterAndResetsSelection() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         coordinator.selectFilter(.settings)
 
@@ -123,7 +123,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testSelectFilterWithSameFilterIncrementsFocusGeneration() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         coordinator.selectFilter(.settings)
         let generationBefore = coordinator.focusGeneration
@@ -135,7 +135,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testSelectFilterToEmptyFilterClearsSelection() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         coordinator.selectFilter(.folders)
 
@@ -146,7 +146,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - select
 
     func testSelectSetsSelectedID() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first else {
             XCTFail("expected at least one result")
@@ -161,7 +161,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - copySelection
 
     func testCopySelectionWithFileURLWritesPathToPasteboard() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first(where: { $0.fileURL != nil }) else {
             // Skip: no file URL result available for this query
@@ -181,7 +181,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testCopySelectionWithNoSelectionIsNoOp() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         XCTAssertNil(coordinator.selectedID)
 
         // Should not crash; nothing to copy.
@@ -191,7 +191,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - previewableSelectionURL
 
     func testPreviewableSelectionURLIsNilForNonFileSelection() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let webItem = coordinator.results.first(where: { $0.kind == .web }) else {
             // Skip: no web result available
@@ -203,13 +203,13 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testPreviewableSelectionURLIsNilWhenNoSelection() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         XCTAssertNil(coordinator.selectedID)
         XCTAssertNil(coordinator.previewableSelectionURL)
     }
 
     func testPreviewableSelectionURLReturnsFileURLForFileSelection() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let fileItem = coordinator.results.first(where: { $0.kind == .file }) else {
             // Skip: no file result available for this query
@@ -223,7 +223,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - assistantAnswerState
 
     func testAssistantAnswerStateIsNilForNonMatchingItem() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first else {
             XCTFail("expected at least one result")
@@ -234,7 +234,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testAssistantAnswerStateIsNilWhenNoRunExists() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         let item = SearchItem(
             id: "keyword-engine:claude",
             title: "Ask Claude: test",
@@ -322,7 +322,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     // MARK: - query changes
 
     func testChangingQueryTriggersNewSearch() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstResults = coordinator.results
 
@@ -335,7 +335,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testSettingSameQueryValueDoesNotTriggerSearch() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let snapshotResults = coordinator.results
 
@@ -345,7 +345,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     }
 
     func testSettingEmptyQueryClearsResults() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         XCTAssertFalse(coordinator.results.isEmpty)
 

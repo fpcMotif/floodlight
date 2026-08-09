@@ -2,6 +2,17 @@ import FloodlightEngine
 @testable import Floodlight
 
 @MainActor
+func makeSearchCoordinatorWithInertPresentation(
+    assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()
+) -> SearchCoordinator {
+    SearchCoordinator(
+        assistantRunner: assistantRunner,
+        onDismiss: {},
+        onShowSettings: {}
+    )
+}
+
+@MainActor
 func projectResults(
     query: String,
     indexed: [SearchItem],

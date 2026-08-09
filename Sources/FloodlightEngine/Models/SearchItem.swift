@@ -219,28 +219,6 @@ package enum SearchItemAction: Hashable, Sendable {
     case askAssistant(command: String, arguments: [String])
 }
 
-/// What's happened since a user selected an "Ask Codex"/"Ask Claude" row.
-/// Scoped to a single ask — there's no conversation history, and a fresh
-/// selection (or a query edit) replaces whatever state came before.
-package enum AssistantAnswerState: Equatable, Sendable {
-    case running
-    case answered(String)
-    case failed(String)
-}
-
-/// Ties an `AssistantAnswerState` back to the row that triggered it, so a
-/// stale answer never renders under a different result after the query
-/// changes and the results list is rebuilt.
-package struct AssistantRun: Equatable, Sendable {
-    package let itemID: SearchItem.ID
-    package let state: AssistantAnswerState
-
-    package init(itemID: SearchItem.ID, state: AssistantAnswerState) {
-        self.itemID = itemID
-        self.state = state
-    }
-}
-
 package enum SearchItemIconSource: Hashable, Sendable {
     case inferred
     case floodlightApplication

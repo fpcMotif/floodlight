@@ -165,20 +165,24 @@ reference](docs/src/content/docs/guides/keyboard-shortcuts.mdx).
 ## Architecture
 
 ```text
-SwiftUI search panel
-  └─ SearchCoordinator
-      ├─ FFFKit → static XCFramework → vendored fff-search
-      ├─ ApplicationCatalog → private app markers → a second FFFIndex
-      ├─ SystemCatalog
-      ├─ Calculator
-      └─ QuickLookController / NSWorkspace
+FloodlightPanelController
+  ├─ SwiftUI search panel
+  │   └─ SearchCoordinator (Search Session and selection)
+  │       ├─ SourceSearchEngine actor
+  │       │   ├─ FFFFileSource → FFFKit → vendored fff-search
+  │       │   ├─ ApplicationCatalog → private app markers → a second FFFIndex
+  │       │   └─ SystemCatalog
+  │       ├─ Calculator
+  │       └─ SelectedResultActionPerformer (selected-result action policy)
+  │           └─ SelectedResultActionEffects → NSPasteboard / NSWorkspace
+  └─ QuickLookController
 ```
 
-Each FFF instance serializes its own calls on a high-priority queue. Application
-and System Settings matches are published immediately; the asynchronous file
-and application-marker searches then run concurrently. File search waits 35 ms
-when there is no immediate app match, or 180 ms when an app is already visible,
-and stale generations are discarded.
+The actor owns source startup, cancellation, scope changes, and rebuilds. Each
+FFF instance serializes its own calls on a high-priority queue. Application and
+System Settings matches publish immediately. File and application-marker search
+then run concurrently after a 15–20 ms debounce. Content search waits another
+30 ms. New queries cancel stale work before it can publish.
 
 macOS applications are directory packages, while FFF indexes regular files and
 derives directories from indexed file paths. Floodlight discovers apps in

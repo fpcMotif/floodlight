@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class SearchCoordinatorTests: XCTestCase {
     func testPublicationReplacementInvalidatesAllResultFacingObservationsTogether() async {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         let resultsChanged = expectation(description: "results changed")
         withObservationTracking {
             _ = coordinator.results
@@ -337,7 +337,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testSelectingAFilterNarrowsPublishedResults() {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
 
         XCTAssertTrue(coordinator.results.contains { $0.kind == .web })
@@ -359,7 +359,7 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testSelectingAFilterReconcilesSelectionWithVisibleResults() throws {
-        let coordinator = SearchCoordinator()
+        let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let unfiltered = coordinator.results
         XCTAssertGreaterThan(unfiltered.count, 1)
@@ -430,9 +430,12 @@ final class SearchCoordinatorTests: XCTestCase {
 
     func testActivatingAnAssistantRowDoesNotDismissThePanel() throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
-        let coordinator = SearchCoordinator(assistantRunner: runner)
         var dismissed = false
-        coordinator.onDismiss = { dismissed = true }
+        let coordinator = SearchCoordinator(
+            assistantRunner: runner,
+            onDismiss: { dismissed = true },
+            onShowSettings: {}
+        )
 
         let item = try makeClaudeAskItem(coordinator)
         coordinator.activate(item)
@@ -443,7 +446,7 @@ final class SearchCoordinatorTests: XCTestCase {
 
     func testAssistantRunTransitionsToAnsweredOnSuccess() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
-        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
 
         coordinator.activate(item)
@@ -457,9 +460,26 @@ final class SearchCoordinatorTests: XCTestCase {
         }
     }
 
+    func testAssistantAnswerStateParticipatesInObservation() async throws {
+        let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
+        let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
+        let item = try makeClaudeAskItem(coordinator)
+        coordinator.activate(item)
+        let changed = expectation(description: "assistant answer state changed")
+
+        withObservationTracking {
+            _ = coordinator.assistantAnswerState(for: item)
+        } onChange: {
+            changed.fulfill()
+        }
+
+        await runner.complete(with: .success("Observed answer."))
+        await fulfillment(of: [changed], timeout: 2)
+    }
+
     func testAssistantRunTransitionsToFailedOnError() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
-        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
 
         coordinator.activate(item)
@@ -478,12 +498,13 @@ final class SearchCoordinatorTests: XCTestCase {
 
     func testEditingTheQueryCancelsAndClearsAnInFlightAssistantRun() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
-        let coordinator = SearchCoordinator(assistantRunner: runner)
+        let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
 
         coordinator.query = "claude explain this function"
         coordinator.activate(item)
         XCTAssertNotNil(coordinator.assistantRun)
+        try await waitUntil { await runner.hasPendingRun }
 
         coordinator.query = "claude explain this function differently"
 
@@ -598,6 +619,10 @@ private actor FakeAssistantProcessRunner: AssistantProcessRunning {
 
     init(availableCommands: Set<String>) {
         self.availableCommands = availableCommands
+    }
+
+    var hasPendingRun: Bool {
+        !pendingContinuations.isEmpty
     }
 
     func isAvailable(command: String) async -> Bool {

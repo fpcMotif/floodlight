@@ -26,7 +26,8 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
 
     private func makeCoordinator(
         applications: ScriptedCatalog = ScriptedCatalog(),
-        settings: ScriptedCatalog = ScriptedCatalog()
+        settings: ScriptedCatalog = ScriptedCatalog(),
+        onDismiss: @escaping @MainActor () -> Void = {}
     ) async throws -> SearchCoordinator {
         try SearchCoordinator(
             sourceSearch: SourceSearchEngine(
@@ -36,7 +37,9 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
-            assistantRunner: ScriptedAssistantRunner()
+            assistantRunner: ScriptedAssistantRunner(),
+            onDismiss: onDismiss,
+            onShowSettings: {}
         )
     }
 
@@ -225,9 +228,8 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     // MARK: - Return semantics
 
     func testReturnOnAnEmptyWebModeQueryDoesNothing() async throws {
-        let coordinator = try await makeCoordinator()
         var dismissed = false
-        coordinator.onDismiss = { dismissed = true }
+        let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
 
         coordinator.handleTab()
         XCTAssertEqual(coordinator.results.first?.title, "Search Google")
@@ -238,9 +240,8 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     }
 
     func testClickingARowWithAnEmptyQueryAlsoDoesNothing() async throws {
-        let coordinator = try await makeCoordinator()
         var dismissed = false
-        coordinator.onDismiss = { dismissed = true }
+        let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
 
         coordinator.handleTab()
         let row = try XCTUnwrap(coordinator.results.last)
@@ -276,9 +277,8 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     }
 
     func testEscapeInWebModeDoesNotDismissButASecondEscapeDoes() async throws {
-        let coordinator = try await makeCoordinator()
         var dismissed = false
-        coordinator.onDismiss = { dismissed = true }
+        let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
         coordinator.query = "swift"
         coordinator.handleTab()
 

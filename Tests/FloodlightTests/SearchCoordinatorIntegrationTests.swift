@@ -28,7 +28,9 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
     func makeCoordinator(
         applications: ScriptedCatalog = ScriptedCatalog(),
         settings: ScriptedCatalog = ScriptedCatalog(),
-        runner: ScriptedAssistantRunner = ScriptedAssistantRunner()
+        runner: ScriptedAssistantRunner = ScriptedAssistantRunner(),
+        onDismiss: @escaping @MainActor () -> Void = {},
+        onShowSettings: @escaping @MainActor () -> Void = {}
     ) async throws -> SearchCoordinator {
         try SearchCoordinator(
             sourceSearch: SourceSearchEngine(
@@ -38,7 +40,9 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
-            assistantRunner: runner
+            assistantRunner: runner,
+            onDismiss: onDismiss,
+            onShowSettings: onShowSettings
         )
     }
 
@@ -759,9 +763,11 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
     func testActivatingAnAssistantRowKeepsThePanelOpen() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
-        let coordinator = try await makeCoordinator(runner: runner)
         var dismissed = false
-        coordinator.onDismiss = { dismissed = true }
+        let coordinator = try await makeCoordinator(
+            runner: runner,
+            onDismiss: { dismissed = true }
+        )
 
         try coordinator.activate(assistantRow(coordinator))
 
@@ -770,11 +776,12 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
     }
 
     func testTheSettingsCommandDismissesAndOpensSettings() async throws {
-        let coordinator = try await makeCoordinator()
         var dismissed = false
         var openedSettings = false
-        coordinator.onDismiss = { dismissed = true }
-        coordinator.onShowSettings = { openedSettings = true }
+        let coordinator = try await makeCoordinator(
+            onDismiss: { dismissed = true },
+            onShowSettings: { openedSettings = true }
+        )
 
         let command = try XCTUnwrap(
             projectResults(query: "settings", indexed: [], apps: [], system: [])

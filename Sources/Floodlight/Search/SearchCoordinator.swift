@@ -1,4 +1,3 @@
-import AppKit
 import FloodlightEngine
 import Foundation
 import Observation
@@ -9,7 +8,7 @@ final class SearchCoordinator {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
-            cancelAssistantRun()
+            assistantRunSession.cancel()
             guard !isResetting else { return }
             scheduleSearch()
         }
@@ -38,9 +37,13 @@ final class SearchCoordinator {
 
     private(set) var rootURL: URL
     var focusGeneration = 0
-    /// The in-flight or completed state of the last "Ask Codex"/"Ask
-    /// Claude" the user triggered, or `nil` if none is active.
-    private(set) var assistantRun: AssistantRun?
+    // The in-flight or completed state of the last "Ask Codex"/"Ask
+    // Claude" the user triggered, or `nil` if none is active.
+    // periphery:ignore - Test-visible Assistant Run integration publication.
+    var assistantRun: AssistantRun? {
+        assistantRunSession.run
+    }
+
     /// The actually-registered summon shortcut ("⌘ Space"), set by
     /// `AppDelegate` once it knows whether the preferred combo registered
     /// or Carbon fell back to the alternate one — `nil` until then, or if
@@ -48,11 +51,6 @@ final class SearchCoordinator {
     /// this directly rather than re-deriving a preference that might not
     /// match what's actually active.
     var activeShortcutDisplayName: String?
-
-    @ObservationIgnored
-    var onDismiss: (() -> Void)?
-    @ObservationIgnored
-    var onShowSettings: (() -> Void)?
 
     var filterOptions: [SearchFilterOption] {
         publication.filterOptions
@@ -66,8 +64,10 @@ final class SearchCoordinator {
     }
 
     private let sourceSearch: any SourceSearching
-    private let recentStore: RecentStore
     private let assistantRunner: any AssistantProcessRunning
+    private let assistantRunSession: AssistantRunSession
+    private let actionPerformer: SelectedResultActionPerformer
+    private let onDismiss: @MainActor () -> Void
     private var publication: SearchResultPublication
     private var sourceWarmUpComplete = false
     private var availableKeywordLookup: [String: KeywordEngine]
@@ -76,8 +76,6 @@ final class SearchCoordinator {
     @ObservationIgnored
     private var startupTask: Task<Void, Never>?
     @ObservationIgnored
-    private var assistantTask: Task<Void, Never>?
-    @ObservationIgnored
     private var isResetting = false
 
     /// Builds a coordinator over an already-constructed Source Search seam.
@@ -85,12 +83,34 @@ final class SearchCoordinator {
         sourceSearch: any SourceSearching,
         recentStore: RecentStore,
         rootURL: URL,
-        assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()
+        assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
+        runningApplicationActivator: any RunningApplicationActivating =
+            WorkspaceRunningApplicationActivator(),
+        actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
+        onDismiss: @escaping @MainActor () -> Void,
+        onShowSettings: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
-        self.recentStore = recentStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
+        self.onDismiss = onDismiss
+        let assistantRunSession = AssistantRunSession(runner: assistantRunner)
+        self.assistantRunSession = assistantRunSession
+        actionPerformer = SelectedResultActionPerformer(
+            effects: actionEffects,
+            assistantRunSession: assistantRunSession,
+            runningApplicationActivator: runningApplicationActivator,
+            recentStore: recentStore,
+            trackSelection: { candidateID, selectedURL, query in
+                await sourceSearch.trackSelection(
+                    of: candidateID,
+                    selectedURL: selectedURL,
+                    for: query
+                )
+            },
+            onDismiss: onDismiss,
+            onShowSettings: onShowSettings
+        )
         let keywordLookup = KeywordEngineCatalog.makeLookup(
             for: KeywordEngineCatalog.all.filter { $0.kind != .assistant }
         )
@@ -115,7 +135,11 @@ final class SearchCoordinator {
     /// the real filesystem. `assistantRunner` is overridable so tests can
     /// exercise the "Ask Codex"/"Ask Claude" seam without spawning a real
     /// process or depending on what's installed on the test machine.
-    convenience init(assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()) {
+    convenience init(
+        assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
+        onDismiss: @escaping @MainActor () -> Void,
+        onShowSettings: @escaping @MainActor () -> Void
+    ) {
         let fileManager = FileManager.default
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
         let initialRoot = savedRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -149,14 +173,15 @@ final class SearchCoordinator {
             ),
             recentStore: recentStore,
             rootURL: initialRoot,
-            assistantRunner: assistantRunner
+            assistantRunner: assistantRunner,
+            onDismiss: onDismiss,
+            onShowSettings: onShowSettings
         )
     }
 
     deinit {
         searchTask?.cancel()
         startupTask?.cancel()
-        assistantTask?.cancel()
     }
 
     func start() {
@@ -198,6 +223,7 @@ final class SearchCoordinator {
     func reset() {
         searchTask?.cancel()
         searchTask = nil
+        assistantRunSession.cancel()
         mode = .local
         isResetting = true
         query = ""
@@ -220,7 +246,7 @@ final class SearchCoordinator {
     /// exactly as it always has.
     func handleEscape() {
         guard case .web = mode else {
-            onDismiss?()
+            onDismiss()
             return
         }
         applyModeEvent(.escape)
@@ -309,109 +335,17 @@ final class SearchCoordinator {
     }
 
     private func performAction(for item: SearchItem) {
-        let selectedQuery = query
-
-        switch item.action {
-        case let .copy(value):
-            onDismiss?()
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(value, forType: .string)
-        case let .open(url):
-            onDismiss?()
-            open(url, asApplication: item.kind == .application)
-            Task {
-                await sourceSearch.trackSelection(
-                    of: item.id,
-                    selectedURL: url,
-                    for: selectedQuery
-                )
-            }
-        case .showFloodlightSettings:
-            onDismiss?()
-            onShowSettings?()
-        case let .askAssistant(command, arguments):
-            // Keeps the panel open through a running/answered/failed cycle
-            // instead of the eager dismiss-then-act every other action uses.
-            runAssistant(command: command, arguments: arguments, for: item)
-        }
-        recentStore.record(item.id)
-    }
-
-    /// Runs an assistant engine's CLI and publishes its lifecycle to
-    /// `assistantRun`. Never fires on a keystroke — only an explicit
-    /// selection (Return or double-click) reaches this.
-    private func runAssistant(command: String, arguments: [String], for item: SearchItem) {
-        cancelAssistantRun()
-        assistantRun = AssistantRun(itemID: item.id, state: .running)
-
-        let runner = assistantRunner
-        assistantTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let output = try await runner.run(command: command, arguments: arguments)
-                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(itemID: item.id, state: .answered(output))
-            } catch is CancellationError {
-                return
-            } catch let AssistantProcessError.executableNotFound(missingCommand) {
-                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(
-                    itemID: item.id,
-                    state: .failed("\(missingCommand) isn't installed.")
-                )
-            } catch AssistantProcessError.timedOut {
-                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(
-                    itemID: item.id,
-                    state: .failed("That ask took too long and was stopped.")
-                )
-            } catch let AssistantProcessError.nonZeroExit(_, message) where !message.isEmpty {
-                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(itemID: item.id, state: .failed(message))
-            } catch {
-                guard !Task.isCancelled, assistantRun?.itemID == item.id else { return }
-                assistantRun = AssistantRun(itemID: item.id, state: .failed("That ask failed."))
-            }
-        }
-    }
-
-    /// Cancels any in-flight ask (which terminates its subprocess) and
-    /// clears whatever answer is currently displayed. Called whenever the
-    /// query changes, so a stale answer never lingers under a new query.
-    private func cancelAssistantRun() {
-        assistantTask?.cancel()
-        assistantTask = nil
-        assistantRun = nil
+        actionPerformer.activate(item, query: query)
     }
 
     func revealSelection() {
-        guard let url = selectedItem?.fileURL else { return }
-        onDismiss?()
-        DispatchQueue.main.async {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        }
+        guard let selectedItem else { return }
+        actionPerformer.reveal(selectedItem)
     }
 
     func copySelection() {
         guard let item = selectedItem else { return }
-        let value: String = switch item.action {
-        case let .copy(text):
-            text
-        case let .open(url):
-            url.isFileURL ? url.path : url.absoluteString
-        case .showFloodlightSettings:
-            item.title
-        case .askAssistant:
-            if let assistantRun, assistantRun.itemID == item.id,
-               case let .answered(text) = assistantRun.state
-            {
-                text
-            } else {
-                item.title
-            }
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+        actionPerformer.copy(item)
     }
 
     /// The previewable file URL of the current selection, or `nil` if the
@@ -426,8 +360,7 @@ final class SearchCoordinator {
     /// other row gets `nil`. The view asks for this instead of comparing
     /// `assistantRun?.itemID` against its own item at the call site.
     func assistantAnswerState(for item: SearchItem) -> AssistantAnswerState? {
-        guard assistantRun?.itemID == item.id else { return nil }
-        return assistantRun?.state
+        assistantRunSession.state(for: item.id)
     }
 
     func rebuildIndex() {
@@ -443,30 +376,6 @@ final class SearchCoordinator {
     private var selectedItem: SearchItem? {
         guard let selectedID else { return results.first }
         return results.first { $0.id == selectedID }
-    }
-
-    private func open(_ url: URL, asApplication: Bool) {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        let signpost = FloodlightPerformance.begin("OpenSelection")
-
-        if asApplication {
-            NSWorkspace.shared.openApplication(
-                at: url,
-                configuration: configuration,
-                completionHandler: { _, _ in
-                    FloodlightPerformance.end("OpenSelection", id: signpost)
-                }
-            )
-        } else {
-            NSWorkspace.shared.open(
-                url,
-                configuration: configuration,
-                completionHandler: { _, _ in
-                    FloodlightPerformance.end("OpenSelection", id: signpost)
-                }
-            )
-        }
     }
 
     func changeRoot(to url: URL) {

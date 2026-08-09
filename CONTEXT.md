@@ -20,6 +20,10 @@ _Avoid_: Provider, backend
 The part of a Search Execution that queries Search Sources and normalizes their candidates. It excludes calculator answers, Floodlight commands, addressed-search rows, and the web fallback.
 _Avoid_: Local search, catalog search
 
+**Source Selection Learning**:
+Deterministic, local ranking personalization in which Source Search routes a successfully opened result back to the Search Source that produced it for the originating query. A source may persist that query-selection association, use another ranking mechanism, or ignore it. This is not AI model training and does not send the selection to an assistant.
+_Avoid_: AI learning, model training, global recency
+
 **Search Snapshot**:
 The complete normalized Search Source candidates and progress currently known for a Search Execution. Cross-source collisions are already resolved; a settled snapshot has no pending work, and each newer snapshot replaces the previous snapshot rather than requiring it to be merged.
 _Avoid_: Search delta, partial update
@@ -31,6 +35,18 @@ _Avoid_: Result builder, result pipeline
 **Result Publication**:
 One coherent, atomically visible statement of all projected rows, visible rows, filter state, semantic selection, and search progress for a Search Session.
 _Avoid_: Published fields, result state
+
+**Selected-Result Action**:
+An explicit activation, copy, or Finder-reveal operation on the selected result, together with its search-dismissal and learning consequences. Preview and search-administration commands are not Selected-Result Actions.
+_Avoid_: Panel command, item command
+
+**Assistant Request**:
+One immutable invocation of an installed assistant CLI, including the originating result identity, executable command, and arguments.
+_Avoid_: Assistant command, process request
+
+**Assistant Run**:
+The replaceable lifecycle and coherent publication of one explicitly activated Assistant Request. It has no conversation history; starting another request replaces it, while moving selection does not cancel it.
+_Avoid_: Assistant task, conversation
 
 **Global Hot-Key Registration**:
 The main-actor-owned lifetime of Floodlight’s one system-wide summon shortcut, including its native handler, active registration identity, callback routing, and actually active shortcut.

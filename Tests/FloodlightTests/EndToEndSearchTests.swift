@@ -60,7 +60,9 @@ final class EndToEndSearchTests: XCTestCase {
             sourceSearch: sourceSearch,
             recentStore: recentStore,
             rootURL: tree.root,
-            assistantRunner: ScriptedAssistantRunner()
+            assistantRunner: ScriptedAssistantRunner(),
+            onDismiss: {},
+            onShowSettings: {}
         )
 
         coordinator.start()

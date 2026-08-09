@@ -2,9 +2,16 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let model = SearchCoordinator()
     private var panelController: FloodlightPanelController?
     private var onboardingController: OnboardingWindowController?
+    private lazy var model = SearchCoordinator(
+        onDismiss: { [weak self] in
+            self?.panelController?.hide()
+        },
+        onShowSettings: { [weak self] in
+            self?.showSettingsFromSearch()
+        }
+    )
     private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] in
         self?.togglePanel()
     }
@@ -19,8 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         panelController = FloodlightPanelController(model: model)
-        model.onDismiss = { [weak self] in self?.panelController?.hide() }
-        model.onShowSettings = { [weak self] in self?.showSettingsFromSearch() }
         installMenu()
         installStatusItem()
         installGlobalHotKey()
