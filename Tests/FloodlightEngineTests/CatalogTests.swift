@@ -160,6 +160,40 @@ final class CatalogTests: XCTestCase {
         XCTAssertTrue(catalog.immediatePage(for: "arc").items.isEmpty)
         XCTAssertEqual(catalog.immediatePage(for: "bluetooth").items.first?.title, "Bluetooth")
     }
+    func testSystemSettingsSurfacesKeywordMatchReasonInSubtitle() {
+        let catalog = SystemCatalog()
+
+        let bluetooth = catalog.immediatePage(for: "bluetooth").items
+        XCTAssertEqual(bluetooth.first?.title, "Bluetooth")
+        XCTAssertEqual(bluetooth.first?.subtitle, "System Settings")
+
+        let loginItems = catalog.immediatePage(for: "login").items
+        XCTAssertFalse(loginItems.isEmpty)
+        XCTAssertEqual(loginItems.first?.title, "Login Items & Extensions")
+        XCTAssertEqual(loginItems.first?.subtitle, "System Settings")
+
+        let keywordMatches = loginItems.dropFirst()
+        XCTAssertFalse(keywordMatches.isEmpty)
+        for match in keywordMatches {
+            XCTAssertEqual(
+                match.subtitle,
+                "Matches: login",
+                "Setting \(match.title) matched on keyword 'login' but had subtitle \(match.subtitle)"
+            )
+        }
+
+        let airdrop = catalog.immediatePage(for: "airdrop").items
+        XCTAssertEqual(airdrop.first?.title, "General")
+        XCTAssertEqual(airdrop.first?.subtitle, "Matches: airdrop")
+
+        let vpn = catalog.immediatePage(for: "vpn").items
+        XCTAssertEqual(vpn.first?.title, "Network")
+        XCTAssertEqual(vpn.first?.subtitle, "Matches: vpn")
+
+        let camera = catalog.immediatePage(for: "camera").items
+        XCTAssertEqual(camera.first?.title, "Privacy & Security")
+        XCTAssertEqual(camera.first?.subtitle, "Matches: camera")
+    }
 
     func testFastApplicationSearchDoesNotWaitForFFF() throws {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
@@ -220,6 +254,40 @@ final class CatalogTests: XCTestCase {
                 .first { $0.fileURL == orbital.url }
             XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
         }
+    }
+    func testApplicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
+        let suiteName = "FloodlightZeroEvidenceTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloodlightZeroEvidenceTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let gemini = (
+            name: "Gemini",
+            url: URL(fileURLWithPath: "/Applications/Gemini.app", isDirectory: true)
+        )
+        let migration = (
+            name: "Migration Assistant",
+            url: URL(fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app", isDirectory: true)
+        )
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [gemini, migration] }
+        )
+        try await catalog.start()
+
+        catalog.track(query: "login", selectedURL: gemini.url)
+        catalog.track(query: "login", selectedURL: migration.url)
+
+        XCTAssertTrue(catalog.immediatePage(for: "login").items.isEmpty)
+        let indexed = try await catalog.indexedItems(for: "login")
+        XCTAssertTrue(
+            indexed.isEmpty,
+            "Recalled applications with no match evidence must be discarded, but got: \(indexed.map(\.title))"
+        )
     }
 
     func testRefreshTracksApplicationInstallRenameAndRemovalAfterStartup() async throws {

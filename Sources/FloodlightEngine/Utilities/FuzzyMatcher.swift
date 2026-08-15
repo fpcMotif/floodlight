@@ -278,7 +278,7 @@ package enum FuzzyMatcher {
         }
     }
 
-    private static func isSeparatorChar(_ char: Character) -> Bool {
+    package static func isSeparatorChar(_ char: Character) -> Bool {
         char == " " || char == "-" || char == "_" || char == "/" || char == "."
             || char == "&" || char == "," || char == ":" || char == ";"
             || char == "(" || char == ")" || char == "[" || char == "]"

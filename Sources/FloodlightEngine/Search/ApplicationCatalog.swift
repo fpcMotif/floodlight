@@ -130,15 +130,13 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             limit: UInt32(max(limit * 2, limit))
         )
 
-        let matches = indexed.enumerated().compactMap { rank, result -> SearchItem? in
+        let matches = indexed.compactMap { result -> SearchItem? in
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
-            // The index also recalls applications no name match reaches — the
-            // ones learned from `track(query:selectedURL:)`. They rank under the
-            // band, keeping the index's order among themselves.
-            let score = Self.score(of: application, normalizedQuery: normalizedQuery)
-                ?? SearchItemRanking.application - (rank + 1)
+            guard let score = Self.score(of: application, normalizedQuery: normalizedQuery) else {
+                return nil
+            }
             return SearchItem(
                 id: application.id,
                 title: application.name,

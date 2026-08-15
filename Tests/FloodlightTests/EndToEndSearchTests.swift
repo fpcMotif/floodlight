@@ -245,6 +245,40 @@ final class EndToEndSearchTests: XCTestCase {
         let fileIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .file })
         XCTAssertLessThan(appIndex, fileIndex)
     }
+    func testLoginQueryReturnsZeroApplicationsAndSurfacesSystemSettingsAtTop() async throws {
+        let gemini = (
+            name: "Gemini",
+            url: URL(fileURLWithPath: "/Applications/Gemini.app", isDirectory: true)
+        )
+        let colorSync = (
+            name: "ColorSync Utility",
+            url: URL(fileURLWithPath: "/System/Applications/Utilities/ColorSync Utility.app", isDirectory: true)
+        )
+        let migration = (
+            name: "Migration Assistant",
+            url: URL(fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app", isDirectory: true)
+        )
+        let coordinator = try await makeCoordinator(applications: [gemini, colorSync, migration])
+
+        coordinator.query = "login"
+        try await waitUntil("the search settles for query login") { !coordinator.isSearching }
+
+        let appResults = coordinator.results.filter { $0.kind == .application }
+        XCTAssertTrue(
+            appResults.isEmpty,
+            "Typing 'login' must return 0 application results, but got: \(appResults.map(\.title))"
+        )
+        let firstResult = try XCTUnwrap(coordinator.results.first)
+        XCTAssertEqual(firstResult.kind, .systemSetting)
+        XCTAssertEqual(firstResult.title, "Login Items & Extensions")
+        XCTAssertEqual(firstResult.subtitle, "System Settings")
+
+        let settingResults = coordinator.results.filter { $0.kind == .systemSetting }
+        XCTAssertGreaterThanOrEqual(settingResults.count, 4)
+        for keywordMatch in settingResults.dropFirst() {
+            XCTAssertEqual(keywordMatch.subtitle, "Matches: login")
+        }
+    }
 
     // MARK: - Cross-cutting rows
 

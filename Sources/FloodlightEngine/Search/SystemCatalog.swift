@@ -12,6 +12,8 @@ package final class SystemCatalog: Catalog {
         let name: String
         let keywords: String
         let pane: String
+        let nameLength: Int
+        let titleWordCount: Int
         let normalizedCandidate: String
         let asciiCandidate: [UInt8]?
         let words: [String]
@@ -22,6 +24,11 @@ package final class SystemCatalog: Catalog {
             self.name = name
             self.keywords = keywords
             self.pane = pane
+            let normalizedName = FuzzyMatcher.normalized(name)
+            nameLength = normalizedName.count
+            titleWordCount = normalizedName
+                .split(whereSeparator: { FuzzyMatcher.isSeparatorChar($0) })
+                .count
             normalizedCandidate = FuzzyMatcher.normalized("\(name) \(keywords)")
             let bytes = Array(normalizedCandidate.utf8)
             asciiCandidate = bytes.allSatisfy { $0 < 0x80 } ? bytes : nil
@@ -350,35 +357,73 @@ package final class SystemCatalog: Catalog {
             else {
                 return nil
             }
-            let score: Int? = if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
-                FuzzyMatcher.scoreASCII(
+            let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
+                FuzzyMatcher.matchASCII(
                     normalizedQuery: asciiQuery,
                     normalizedCandidate: asciiCandidate
                 )
             } else {
-                FuzzyMatcher.score(
+                FuzzyMatcher.match(
                     normalizedQuery: normalizedQuery,
                     normalizedCandidate: setting.normalizedCandidate
                 )
             }
-            guard let score,
-                  score >= FuzzyMatcher.confidentMatchThreshold,
-                  let url = setting.url
-            else {
+            guard let evidence, let url = setting.url else {
                 return nil
             }
+
+            let isTitleMatch: Bool = switch evidence.shape {
+            case .exact, .namePrefix:
+                true
+            case .wordPrefix(let offset), .typo(_, let offset):
+                offset < setting.nameLength
+            case .acronym(let wordIndex):
+                wordIndex < setting.titleWordCount
+            }
+
+            let subtitle: String
+            if isTitleMatch {
+                subtitle = "System Settings"
+            } else {
+                let keyword: String = switch evidence.shape {
+                case .acronym(let wordIndex):
+                    wordIndex < setting.words.count ? setting.words[wordIndex] : ""
+                case .wordPrefix(let offset), .typo(_, let offset):
+                    Self.extractMatchedKeyword(from: setting.normalizedCandidate, startingAt: offset)
+                case .exact, .namePrefix:
+                    ""
+                }
+                subtitle = keyword.isEmpty ? "System Settings" : "Matches: \(keyword)"
+            }
+
             return SearchItem(
                 id: "setting:\(setting.pane)",
                 title: setting.name,
-                subtitle: "System Settings",
+                subtitle: subtitle,
                 kind: .systemSetting,
                 action: .open(url),
-                score: SearchItemRanking.setting + score,
+                score: SearchItemRanking.setting + evidence.score,
                 fileURL: nil
             )
         }
 
         return SearchItemRanking.page(matches, limit: limit)
+    }
+
+    private static func extractMatchedKeyword(
+        from candidate: String,
+        startingAt offset: Int
+    ) -> String {
+        let chars = Array(candidate)
+        guard offset < chars.count else { return "" }
+        var endIndex = offset
+        for index in offset..<chars.count {
+            if FuzzyMatcher.isSeparatorChar(chars[index]) {
+                break
+            }
+            endIndex = index + 1
+        }
+        return String(chars[offset..<endIndex])
     }
 
     private static func characterMask(_ value: String) -> UInt64 {

@@ -166,7 +166,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
         ) { query in
             catalog.immediatePage(for: query, limit: 50).items.allSatisfy { item in
                 item.kind == .systemSetting
-                    && item.subtitle == "System Settings"
+                    && (item.subtitle == "System Settings" || item.subtitle.hasPrefix("Matches: "))
                     && item.id.hasPrefix("setting:")
                     && item.fileURL == nil
                     && item.score >= SearchItemRanking.setting + FuzzyMatcher
