@@ -118,8 +118,8 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
     ]
 
     fileprivate static let documentExtensions: Set<String> = [
-        "csv", "doc", "docx", "key", "md", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls",
-        "xlsx",
+        "azw", "azw3", "cbr", "cbz", "csv", "djvu", "doc", "docx", "epub", "fb2", "key", "md",
+        "mobi", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls", "xlsx",
     ]
 }
 

@@ -33,6 +33,8 @@ final class EndToEndSearchTests: XCTestCase {
         try tree.makeDirectory("Code/floodlight/Sources")
         try tree.makeDirectory("Archive")
         try tree.makeFile("Archive/solitary-vault/placeholder.dat", contents: "x")
+        try tree.makeFile("Downloads/swift-concurrency.epub", contents: "Swift Concurrency eBook")
+        try tree.makeFile("Downloads/ghostty-manual.epub", contents: "Ghostty Manual")
     }
 
     override func tearDown() {
@@ -121,6 +123,55 @@ final class EndToEndSearchTests: XCTestCase {
         XCTAssertEqual(row.fileURL?.lastPathComponent, "quarterly-report.pdf")
         XCTAssertTrue(row.isPreviewable)
         XCTAssertEqual(row.action, try .open(XCTUnwrap(row.fileURL)))
+    }
+
+    func testTypingAnEpubFileNameReturnsThatBookAndAppearsInDocumentsFilter() async throws {
+        let coordinator = try await makeCoordinator()
+
+        try await search(
+            coordinator,
+            "concurrency",
+            forRowMatching: { $0.title.contains("swift-concurrency") },
+            description: "the swift concurrency epub appears"
+        )
+
+        let row = try XCTUnwrap(
+            coordinator.results.first { $0.title.contains("swift-concurrency") }
+        )
+        XCTAssertEqual(row.kind, .file)
+        XCTAssertEqual(row.fileURL?.lastPathComponent, "swift-concurrency.epub")
+        XCTAssertTrue(row.isPreviewable)
+        XCTAssertEqual(row.action, try .open(XCTUnwrap(row.fileURL)))
+
+        coordinator.selectFilter(.documents)
+        XCTAssertTrue(
+            coordinator.results
+                .contains { $0.fileURL?.lastPathComponent == "swift-concurrency.epub" },
+            "the epub book must appear under the documents filter"
+        )
+        let documentFilterOption = coordinator.filterOptions.first { $0.filter == .documents }
+        XCTAssertGreaterThanOrEqual(
+            documentFilterOption?.count ?? 0,
+            1,
+            "document filter count must include epub files"
+        )
+    }
+
+    func testApplicationOutranksEpubBookInDownloads() async throws {
+        let ghostty = (
+            name: "Ghostty",
+            url: URL(fileURLWithPath: "/Applications/Ghostty.app", isDirectory: true)
+        )
+        let coordinator = try await makeCoordinator(applications: [ghostty])
+
+        coordinator.query = "gh"
+        try await waitUntil("the search settles for query gh") { !coordinator.isSearching }
+
+        let appIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .application })
+        XCTAssertEqual(appIndex, 0, "the application Ghostty must lead the results")
+        let firstResult = try XCTUnwrap(coordinator.results.first)
+        XCTAssertEqual(firstResult.kind, .application)
+        XCTAssertEqual(firstResult.title, "Ghostty")
     }
 
     func testTypingAFolderNameReturnsThatFolder() async throws {

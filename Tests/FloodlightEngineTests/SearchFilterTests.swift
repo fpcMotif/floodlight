@@ -39,6 +39,33 @@ final class SearchFilterTests: XCTestCase {
         XCTAssertFalse(SearchResultFilter.documents.includes(pdf))
     }
 
+    func testEBookAndPublicationFormatsAreIncludedInDocumentFilter() {
+        let ebookExtensions = ["epub", "mobi", "azw", "azw3", "djvu", "fb2", "cbr", "cbz"]
+
+        for ext in ebookExtensions {
+            let uppercaseFile = item(
+                kind: .file,
+                path: "/Users/test/Downloads/book.\(ext.uppercased())"
+            )
+            let lowercaseFile = item(kind: .file, path: "/Users/test/Downloads/book.\(ext)")
+
+            XCTAssertTrue(
+                SearchResultFilter.documents.includes(uppercaseFile),
+                "Expected .\(ext) to be included in documents"
+            )
+            XCTAssertTrue(
+                SearchResultFilter.documents.includes(lowercaseFile),
+                "Expected .\(ext) to be included in documents"
+            )
+            XCTAssertTrue(SearchResultFilter.files.includes(lowercaseFile))
+            XCTAssertTrue(SearchResultFilter.all.includes(lowercaseFile))
+            XCTAssertFalse(SearchResultFilter.images.includes(lowercaseFile))
+            XCTAssertFalse(SearchResultFilter.pdfs.includes(lowercaseFile))
+            XCTAssertFalse(SearchResultFilter.applications.includes(lowercaseFile))
+            XCTAssertFalse(SearchResultFilter.settings.includes(lowercaseFile))
+        }
+    }
+
     func testSinglePassFilterCountsMatchFilterPredicates() {
         let items = [
             item(kind: .application, path: "/Applications/Floodlight.app"),
@@ -47,6 +74,9 @@ final class SearchFilterTests: XCTestCase {
             item(kind: .file, path: "/Users/test/Downloads/guide.pdf"),
             item(kind: .file, path: "/Users/test/Desktop/photo.png"),
             item(kind: .file, path: "/Users/test/Documents/notes.txt"),
+            item(kind: .file, path: "/Users/test/Downloads/book.epub"),
+            item(kind: .file, path: "/Users/test/Downloads/handbook.mobi"),
+            item(kind: .file, path: "/Users/test/Downloads/manual.azw3"),
             item(kind: .web, path: nil),
         ]
         let counts = SearchFilterCounts(items: items)
