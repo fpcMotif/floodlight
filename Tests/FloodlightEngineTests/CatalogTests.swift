@@ -160,6 +160,7 @@ final class CatalogTests: XCTestCase {
         XCTAssertTrue(catalog.immediatePage(for: "arc").items.isEmpty)
         XCTAssertEqual(catalog.immediatePage(for: "bluetooth").items.first?.title, "Bluetooth")
     }
+
     func testSystemSettingsSurfacesKeywordMatchReasonInSubtitle() {
         let catalog = SystemCatalog()
 
@@ -255,12 +256,16 @@ final class CatalogTests: XCTestCase {
             XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
         }
     }
+
     func testApplicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
         let suiteName = "FloodlightZeroEvidenceTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloodlightZeroEvidenceTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "FloodlightZeroEvidenceTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let gemini = (
@@ -269,7 +274,10 @@ final class CatalogTests: XCTestCase {
         )
         let migration = (
             name: "Migration Assistant",
-            url: URL(fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app", isDirectory: true)
+            url: URL(
+                fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app",
+                isDirectory: true
+            )
         )
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),

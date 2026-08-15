@@ -196,11 +196,6 @@ final class EndToEndSearchTests: XCTestCase {
 
         let web = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
         XCTAssertEqual(web.kind, .web)
-        XCTAssertEqual(
-            web.score,
-            SearchItemRanking.webPromoted,
-            "with no local matches the web row should be promoted"
-        )
         XCTAssertEqual(coordinator.selectedID, web.id, "the only row is the selected one")
     }
 
@@ -245,6 +240,60 @@ final class EndToEndSearchTests: XCTestCase {
         let fileIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .file })
         XCTAssertLessThan(appIndex, fileIndex)
     }
+
+    func testGhQueryReturnsOnlyGhosttyInTopSlots() async throws {
+        let ghostty = (
+            name: "Ghostty",
+            url: URL(fileURLWithPath: "/Applications/Ghostty.app", isDirectory: true)
+        )
+        let googleChrome = (
+            name: "Google Chrome",
+            url: URL(fileURLWithPath: "/Applications/Google Chrome.app", isDirectory: true)
+        )
+        let grapher = (
+            name: "Grapher",
+            url: URL(
+                fileURLWithPath: "/System/Applications/Utilities/Grapher.app",
+                isDirectory: true
+            )
+        )
+        let zedNightly = (
+            name: "Zed Nightly",
+            url: URL(fileURLWithPath: "/Applications/Zed Nightly.app", isDirectory: true)
+        )
+        let coordinator = try await makeCoordinator(
+            applications: [ghostty, googleChrome, grapher, zedNightly]
+        )
+
+        coordinator.query = "gh"
+        try await waitUntil("the search settles for query gh") { !coordinator.isSearching }
+
+        let appResults = coordinator.results.filter { $0.kind == .application }
+        XCTAssertEqual(
+            appResults.map(\.title),
+            ["Ghostty"],
+            "Typing 'gh' must return only Ghostty among applications"
+        )
+        let firstResult = try XCTUnwrap(coordinator.results.first)
+        XCTAssertEqual(firstResult.kind, .application)
+        XCTAssertEqual(firstResult.title, "Ghostty")
+    }
+
+    func testSafriQueryReturnsSafariViaTypoMatching() async throws {
+        let safari = (
+            name: "Safari",
+            url: URL(fileURLWithPath: "/Applications/Safari.app", isDirectory: true)
+        )
+        let coordinator = try await makeCoordinator(applications: [safari])
+
+        coordinator.query = "safri"
+        try await waitUntil("the search settles for query safri") { !coordinator.isSearching }
+
+        let firstResult = try XCTUnwrap(coordinator.results.first)
+        XCTAssertEqual(firstResult.kind, .application)
+        XCTAssertEqual(firstResult.title, "Safari")
+    }
+
     func testLoginQueryReturnsZeroApplicationsAndSurfacesSystemSettingsAtTop() async throws {
         let gemini = (
             name: "Gemini",
@@ -252,11 +301,17 @@ final class EndToEndSearchTests: XCTestCase {
         )
         let colorSync = (
             name: "ColorSync Utility",
-            url: URL(fileURLWithPath: "/System/Applications/Utilities/ColorSync Utility.app", isDirectory: true)
+            url: URL(
+                fileURLWithPath: "/System/Applications/Utilities/ColorSync Utility.app",
+                isDirectory: true
+            )
         )
         let migration = (
             name: "Migration Assistant",
-            url: URL(fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app", isDirectory: true)
+            url: URL(
+                fileURLWithPath: "/System/Applications/Utilities/Migration Assistant.app",
+                isDirectory: true
+            )
         )
         let coordinator = try await makeCoordinator(applications: [gemini, colorSync, migration])
 

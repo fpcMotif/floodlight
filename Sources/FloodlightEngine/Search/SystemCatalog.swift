@@ -357,7 +357,10 @@ package final class SystemCatalog: Catalog {
             else {
                 return nil
             }
-            let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
+            let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery,
+                                                           let asciiCandidate = setting
+                                                           .asciiCandidate
+            {
                 FuzzyMatcher.matchASCII(
                     normalizedQuery: asciiQuery,
                     normalizedCandidate: asciiCandidate
@@ -375,9 +378,9 @@ package final class SystemCatalog: Catalog {
             let isTitleMatch: Bool = switch evidence.shape {
             case .exact, .namePrefix:
                 true
-            case .wordPrefix(let offset), .typo(_, let offset):
+            case let .wordPrefix(offset), let .typo(_, offset):
                 offset < setting.nameLength
-            case .acronym(let wordIndex):
+            case let .acronym(wordIndex):
                 wordIndex < setting.titleWordCount
             }
 
@@ -386,10 +389,13 @@ package final class SystemCatalog: Catalog {
                 subtitle = "System Settings"
             } else {
                 let keyword: String = switch evidence.shape {
-                case .acronym(let wordIndex):
+                case let .acronym(wordIndex):
                     wordIndex < setting.words.count ? setting.words[wordIndex] : ""
-                case .wordPrefix(let offset), .typo(_, let offset):
-                    Self.extractMatchedKeyword(from: setting.normalizedCandidate, startingAt: offset)
+                case let .wordPrefix(offset), let .typo(_, offset):
+                    Self.extractMatchedKeyword(
+                        from: setting.normalizedCandidate,
+                        startingAt: offset
+                    )
                 case .exact, .namePrefix:
                     ""
                 }

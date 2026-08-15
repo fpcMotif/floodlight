@@ -148,9 +148,11 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
                 system: system
             )
             let ids = results.map(\.id)
+            let localResults = results.filter { $0.kind != .web }
             return ids.count == Set(ids).count
                 && results.count <= 80
-                && zip(results, results.dropFirst()).allSatisfy { $0.score >= $1.score }
+                && (results.last?.kind == .web || results.isEmpty)
+                && zip(localResults, localResults.dropFirst()).allSatisfy { $0.score >= $1.score }
         }
     }
 

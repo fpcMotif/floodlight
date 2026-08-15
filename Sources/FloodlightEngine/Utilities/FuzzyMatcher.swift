@@ -11,7 +11,6 @@ package enum FuzzyMatcher {
             case typo(edits: Int, offset: Int)
         }
 
-        // periphery:ignore - Carries the matched structural shape for match-evidence consumers in Search Sources.
         package let shape: Shape
         package let score: Int
 
@@ -21,6 +20,7 @@ package enum FuzzyMatcher {
         }
     }
 
+    // periphery:ignore - Confident match threshold referenced in test assertions.
     /// The lowest score that counts as a confident match.
     package static let confidentMatchThreshold = 7_000
 
@@ -48,6 +48,7 @@ package enum FuzzyMatcher {
         return match(normalizedQuery: query, normalizedCandidate: candidate)?.score
     }
 
+    // periphery:ignore - Fast path ASCII score calculation tested against general path.
     package static func scoreASCII(
         normalizedQuery query: [UInt8],
         normalizedCandidate candidate: [UInt8]

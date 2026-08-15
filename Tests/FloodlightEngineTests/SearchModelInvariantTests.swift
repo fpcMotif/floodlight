@@ -398,43 +398,68 @@ final class SearchModelInvariantTests: XCTestCase {
         items.sorted(by: SearchItemRanking.ranksBefore)
     }
 
-    func testRankingBandsAreSeparatedByMoreThanAnyFuzzyScore() {
-        // Each band is supposed to sit far enough from its neighbours that
-        // no match quality can cross it. The fuzzy matcher's ceiling is
-        // 20_000 (an exact hit), so any two adjacent bands must differ by
-        // more than that — otherwise a superb file match could outrank a
-        // mediocre application match.
-        let ordered = [
-            SearchItemRanking.keywordEngine,
-            SearchItemRanking.calculator,
-        ]
-        for (higher, lower) in zip(ordered, ordered.dropFirst()) {
-            XCTAssertGreaterThan(
-                higher - lower,
-                20_000,
-                "bands \(higher) and \(lower) are close enough for a fuzzy score to cross"
-            )
+    func testRankingBandsAreSeparatedByMoreThanAnyAchievableMatchScore() throws {
+        struct Tier: Sendable {
+            let name: String
+            let baseScore: Int
         }
-        XCTAssertEqual(SearchItemRanking.calculator, SearchItemRanking.application)
-        XCTAssertGreaterThan(SearchItemRanking.application - SearchItemRanking.setting, 20_000)
-        XCTAssertGreaterThan(SearchItemRanking.setting, SearchItemRanking.webPromoted - 1_000)
-        XCTAssertGreaterThan(SearchItemRanking.webPromoted, SearchItemRanking.content)
-        XCTAssertEqual(SearchItemRanking.webFallback, Int.min)
-    }
 
-    func testTheWebFallbackBandCannotBeOutrankedDownward() throws {
-        // `Int.min` is the floor, so nothing can sort below the unpromoted
-        // web row — and adding a fuzzy score to it would overflow, which is
-        // exactly why the fallback band is never used as a base for
-        // arithmetic anywhere in the engine.
-        try checkProperty(
-            "nothing ranks after the web fallback",
-            SearchGenerators.item(),
-            runs: 300
-        ) { item in
-            let fallback = SearchFixtures.web(score: SearchItemRanking.webFallback)
-            guard item.score > Int.min else { return true }
-            return SearchItemRanking.ranksBefore(item, fallback)
+        let tiers: [Tier] = [
+            Tier(name: "keywordEngine", baseScore: SearchItemRanking.keywordEngine),
+            Tier(name: "calculator", baseScore: SearchItemRanking.calculator),
+            Tier(name: "application", baseScore: SearchItemRanking.application),
+            Tier(name: "setting", baseScore: SearchItemRanking.setting),
+            Tier(name: "content", baseScore: SearchItemRanking.content),
+        ]
+
+        let declaredExemptions: Set = [
+            "calculator-application",
+        ]
+
+        let maxAchievableMatchScore = 20_000
+
+        for (higher, lower) in zip(tiers, tiers.dropFirst()) {
+            let pairKey = "\(higher.name)-\(lower.name)"
+            if declaredExemptions.contains(pairKey) {
+                XCTAssertEqual(
+                    higher.baseScore,
+                    lower.baseScore,
+                    "Exempt pair \(pairKey) must be explicitly tied"
+                )
+                continue
+            }
+
+            XCTAssertGreaterThan(
+                higher.baseScore - lower.baseScore,
+                maxAchievableMatchScore,
+                "Band gap between \(higher.name) (\(higher.baseScore)) and \(lower.name) (\(lower.baseScore)) must exceed max match score \(maxAchievableMatchScore)"
+            )
+
+            try checkProperty(
+                "no match score can cause tier inversion between \(higher.name) and \(lower.name)",
+                Gen<Int>.int(in: 0...maxAchievableMatchScore),
+                Gen<Int>.int(in: 0...maxAchievableMatchScore),
+                runs: 200
+            ) { higherMatchScore, lowerMatchScore in
+                let higherItem = SearchItem(
+                    id: "higher:\(higher.name)",
+                    title: "higher",
+                    subtitle: "sub",
+                    kind: .application,
+                    action: .copy("test"),
+                    score: higher.baseScore + higherMatchScore
+                )
+                let lowerItem = SearchItem(
+                    id: "lower:\(lower.name)",
+                    title: "lower",
+                    subtitle: "sub",
+                    kind: .file,
+                    action: .copy("test"),
+                    score: lower.baseScore + lowerMatchScore
+                )
+                return SearchItemRanking.ranksBefore(higherItem, lowerItem)
+                    && !SearchItemRanking.ranksBefore(lowerItem, higherItem)
+            }
         }
     }
 

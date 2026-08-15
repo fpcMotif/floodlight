@@ -87,7 +87,7 @@ package enum SearchFixtures {
     package static func web(
         id: String = "web-search",
         query: String = "example",
-        score: Int = Int.min
+        score: Int = 0
     ) -> SearchItem {
         SearchItem(
             id: id,
@@ -145,8 +145,7 @@ package enum SearchGenerators {
     )
 
     /// Scores spanning every published band plus the extremes, so ranking
-    /// properties get exercised at `Int.min` (the web fallback's real
-    /// value) as well as in the ordinary middle.
+    /// properties get exercised across all tiers as well as in the ordinary middle.
     package static let score = Gen<Int>.frequency([
         (6, .int(in: -5_000...250_000)),
         (2, .element(of: [
@@ -155,7 +154,6 @@ package enum SearchGenerators {
             SearchItemRanking.application,
             SearchItemRanking.setting,
             SearchItemRanking.content,
-            SearchItemRanking.webPromoted,
         ])),
         (1, .element(of: [Int.min, Int.max, 0, -1, 1])),
     ])

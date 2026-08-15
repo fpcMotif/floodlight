@@ -109,13 +109,13 @@ final class KeywordEngineTests: XCTestCase {
         let registry = KeywordEngineRegistry(engines: [example], defaultWebEngineID: example.id)
 
         let result = try XCTUnwrap(
-            registry.defaultWebResult(for: "swift concurrency", promoted: true)
+            registry.defaultWebResult(for: "swift concurrency")
         )
         XCTAssertEqual(result.id, "web-search")
-        XCTAssertEqual(result.score, SearchItemRanking.webPromoted)
         XCTAssertEqual(
             result.action,
-            try .open(XCTUnwrap(URL(string: "https://example.com/?q=swift%20concurrency")))
+            try SearchItemAction
+                .open(XCTUnwrap(URL(string: "https://example.com/?q=swift%20concurrency")))
         )
     }
 
@@ -201,13 +201,13 @@ final class KeywordEngineTests: XCTestCase {
         )
 
         let fallback = try XCTUnwrap(
-            catalogRegistry.defaultWebResult(for: "lofi", promoted: false)
+            catalogRegistry.defaultWebResult(for: "lofi")
         )
         XCTAssertEqual(fallback.title, "Google")
         XCTAssertEqual(fallback.subtitle, "google.com")
         XCTAssertEqual(
             fallback.iconSource,
-            .engine(symbol: "magnifyingglass", tint: .blue)
+            SearchItemIconSource.engine(symbol: "magnifyingglass", tint: .blue)
         )
 
         let modeRows = catalogRegistry.webModeResults(for: "lofi", activeEngineID: "google")

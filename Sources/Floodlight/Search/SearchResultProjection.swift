@@ -143,6 +143,8 @@ enum SearchResultProjection {
         )
     }
 
+    private static let maxResultsLimit = 80
+
     private static func buildLocalRows(_ context: LocalContext) -> [SearchItem] {
         var output: [SearchItem] = []
         if let value = Calculator.evaluate(context.query) {
@@ -161,21 +163,20 @@ enum SearchResultProjection {
         }
         output.append(contentsOf: context.candidates)
 
-        if !context.query.isEmpty,
-           let fallback = context.keywordRegistry.defaultWebResult(
-               for: context.query,
-               promoted: WebSearchIntent.shouldPromote(
-                   query: context.query,
-                   localMatchCount: context.candidates.count
-               )
-           )
-        {
-            output.append(fallback)
-        }
-
         var seen = Set<SearchItem.ID>()
         output.removeAll { !seen.insert($0.id).inserted }
-        return SearchItemRanking.topRankedInPlace(&output, limit: 80)
+
+        let fallback = !context.query.isEmpty
+            ? context.keywordRegistry.defaultWebResult(for: context.query)
+            : nil
+        let localLimit = fallback != nil ? maxResultsLimit - 1 : maxResultsLimit
+        var ranked = SearchItemRanking.topRankedInPlace(&output, limit: localLimit)
+
+        if let fallback, !seen.contains(fallback.id) {
+            ranked.append(fallback)
+        }
+
+        return ranked
     }
 
     private static func reconcile(

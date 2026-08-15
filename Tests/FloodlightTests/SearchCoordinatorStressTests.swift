@@ -349,6 +349,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
             system: []
         )
         XCTAssertEqual(results.count, 80)
+        XCTAssertEqual(results.last?.id, "web-search")
     }
 
     func testBuildResultsProducesCalculatorActionForExpression() throws {

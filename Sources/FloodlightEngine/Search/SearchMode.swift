@@ -5,8 +5,7 @@ import Foundation
 /// how it was entered that exiting can put the user's field back exactly —
 /// Tab and Esc are true inverses.
 ///
-/// Shaped like `WebSearchIntent`: values plus a pure, synchronous
-/// transition, no I/O, no UI types.
+/// Pure values plus a synchronous transition, no I/O, no UI types.
 package enum SearchMode: Equatable, Sendable {
     case local
     case web(WebContext)

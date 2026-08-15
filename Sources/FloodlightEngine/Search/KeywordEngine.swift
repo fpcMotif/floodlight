@@ -245,7 +245,7 @@ package struct KeywordEngineRegistry: Sendable {
         )
     }
 
-    package func defaultWebResult(for query: String, promoted: Bool) -> SearchItem? {
+    package func defaultWebResult(for query: String) -> SearchItem? {
         guard let url = defaultWebEngine.searchURL(for: query),
               let subtitle = defaultWebEngine.searchSubtitle
         else {
@@ -261,7 +261,7 @@ package struct KeywordEngineRegistry: Sendable {
                 symbol: defaultWebEngine.symbolName,
                 tint: defaultWebEngine.tint
             ),
-            score: promoted ? SearchItemRanking.webPromoted : SearchItemRanking.webFallback
+            score: 0
         )
     }
 

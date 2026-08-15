@@ -227,7 +227,7 @@ final class SearchCoordinatorTests: XCTestCase {
         )
     }
 
-    func testWebFallbackTrailsResultsWithTheLowestScoreWhenLocalMatchesAreHealthy() throws {
+    func testWebFallbackAppearsLastForNonEmptyQueriesWithLocalMatches() throws {
         let results = projectResults(
             query: "shortcut",
             indexed: [
@@ -242,14 +242,13 @@ final class SearchCoordinatorTests: XCTestCase {
         let fallback = try XCTUnwrap(results.last)
         XCTAssertEqual(fallback.id, "web-search")
         XCTAssertEqual(fallback.kind, .web)
-        XCTAssertEqual(fallback.score, .min)
         XCTAssertEqual(
             fallback.action,
             try .open(XCTUnwrap(URL(string: "https://www.google.com/search?q=shortcut")))
         )
     }
 
-    func testWebFallbackIsPromotedWhenLocalMatchesAreWeak() throws {
+    func testWebFallbackIsPositionedAfterWeakLocalMatches() {
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
 
         let results = projectResults(
@@ -259,46 +258,35 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
-        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
-        // A promoted web row outranks the one weak file match it's competing
-        // with, even though it still trails higher-priority bands like
-        // Floodlight's own commands.
-        let fallbackIndex = try XCTUnwrap(results.firstIndex { $0.id == "web-search" })
-        let fileIndex = try XCTUnwrap(results.firstIndex { $0.id == file.id })
-        XCTAssertLessThan(fallbackIndex, fileIndex)
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(results.first?.id, file.id)
+        XCTAssertEqual(results.last?.id, "web-search")
     }
 
-    func testWebFallbackIsPromotedForAQuestionShapedQueryEvenWithManyLocalMatches() throws {
+    func testWebFallbackIsPositionedAfterLocalMatchesForQuestionShapedQuery() {
+        let file = makeIndexedFile(name: "password-notes.txt", score: 500)
         let results = projectResults(
             query: "how do I reset my password",
-            indexed: [
-                makeIndexedFile(name: "password-notes.txt", score: 500),
-                makeIndexedFile(name: "password-plan.txt", score: 400),
-                makeIndexedFile(name: "password-log.txt", score: 300),
-            ],
+            indexed: [file],
             apps: [],
             system: []
         )
 
-        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
-        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
+        XCTAssertEqual(results.first?.id, file.id)
+        XCTAssertEqual(results.last?.id, "web-search")
     }
 
-    func testWebFallbackIsPromotedForAURLShapedQuery() throws {
+    func testWebFallbackIsPositionedAfterLocalMatchesForURLShapedQuery() {
+        let file = makeIndexedFile(name: "github-notes.txt", score: 500)
         let results = projectResults(
             query: "github.com",
-            indexed: [
-                makeIndexedFile(name: "github-notes.txt", score: 500),
-                makeIndexedFile(name: "github-plan.txt", score: 400),
-                makeIndexedFile(name: "github-log.txt", score: 300),
-            ],
+            indexed: [file],
             apps: [],
             system: []
         )
 
-        let fallback = try XCTUnwrap(results.first { $0.id == "web-search" })
-        XCTAssertEqual(fallback.score, SearchItemRanking.webPromoted)
+        XCTAssertEqual(results.first?.id, file.id)
+        XCTAssertEqual(results.last?.id, "web-search")
     }
 
     func testEmptyQueryOmitsTheWebFallback() {
@@ -326,8 +314,8 @@ final class SearchCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(results.count, 80)
         XCTAssertEqual(results.first?.score, 1_000)
-        XCTAssertEqual(results.last?.score, 921)
-        XCTAssertFalse(results.contains { $0.kind == .web })
+        XCTAssertEqual(results.dropLast().last?.score, 922)
+        XCTAssertEqual(results.last?.id, "web-search")
     }
 
     // MARK: - Keyword engines
