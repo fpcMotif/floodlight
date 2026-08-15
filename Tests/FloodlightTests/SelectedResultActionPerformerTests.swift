@@ -53,16 +53,6 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         XCTAssertTrue(harness.presentation.events.isEmpty)
     }
 
-    func testExplicitCopyUsesSettingsTitleAndKeepsSearchOpen() {
-        let harness = makeHarness()
-        let item = settingsItem()
-
-        harness.performer.copy(item)
-
-        XCTAssertEqual(harness.effects.clipboardValues, [item.title])
-        XCTAssertTrue(harness.presentation.events.isEmpty)
-    }
-
     func testExplicitCopyUsesAssistantTitleBeforeAnAnswerExists() {
         let harness = makeHarness()
         let item = assistantItem()
@@ -229,16 +219,6 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         )
     }
 
-    func testSettingsDismissesBeforeRequestingSettings() {
-        let harness = makeHarness()
-        let item = settingsItem()
-
-        harness.performer.activate(item, query: "settings")
-
-        XCTAssertEqual(harness.presentation.events, [.dismiss, .showSettings])
-        XCTAssertEqual(harness.events.events, [.dismiss, .showSettings])
-    }
-
     func testAssistantRunKeepsSearchOpen() {
         let harness = makeHarness()
         let item = assistantItem()
@@ -328,17 +308,6 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         )
     }
 
-    private func settingsItem() -> SearchItem {
-        SearchItem(
-            id: "floodlight-command:settings",
-            title: "Floodlight settings",
-            subtitle: "",
-            kind: .systemSetting,
-            action: .showFloodlightSettings,
-            score: 1
-        )
-    }
-
     private func waitUntil(
         timeout: TimeInterval = 2,
         _ condition: () async -> Bool
@@ -401,10 +370,6 @@ private final class Harness {
             onDismiss: {
                 presentation.events.append(.dismiss)
                 events.record(.dismiss)
-            },
-            onShowSettings: {
-                presentation.events.append(.showSettings)
-                events.record(.showSettings)
             }
         )
     }

@@ -24,40 +24,6 @@ final class FloodlightMetricsStressTests: XCTestCase {
         XCTAssertGreaterThan(FloodlightMetrics.expandedPanelHeight, FloodlightMetrics.searchHeight)
     }
 
-    // MARK: - shouldVirtualizeResults
-
-    func testShouldVirtualizeResultsAtThreshold() {
-        XCTAssertFalse(
-            FloodlightMetrics.shouldVirtualizeResults(
-                count: FloodlightMetrics.resultVirtualizationThreshold
-            )
-        )
-    }
-
-    func testShouldVirtualizeResultsAboveThreshold() {
-        XCTAssertTrue(
-            FloodlightMetrics.shouldVirtualizeResults(
-                count: FloodlightMetrics.resultVirtualizationThreshold + 1
-            )
-        )
-    }
-
-    func testShouldVirtualizeResultsBelowThreshold() {
-        XCTAssertFalse(
-            FloodlightMetrics.shouldVirtualizeResults(
-                count: FloodlightMetrics.resultVirtualizationThreshold - 1
-            )
-        )
-    }
-
-    func testShouldVirtualizeResultsForZero() {
-        XCTAssertFalse(FloodlightMetrics.shouldVirtualizeResults(count: 0))
-    }
-
-    func testShouldVirtualizeResultsForOne() {
-        XCTAssertFalse(FloodlightMetrics.shouldVirtualizeResults(count: 1))
-    }
-
     // MARK: - cornerRadius
 
     func testCornerRadiusIsHalfSearchHeight() {
@@ -131,15 +97,6 @@ final class FloodlightMetricsStressTests: XCTestCase {
         XCTAssertGreaterThan(
             FloodlightMetrics.topHitIconSize,
             FloodlightMetrics.standardIconSize
-        )
-    }
-
-    // MARK: - resultVirtualizationThreshold
-
-    func testResultVirtualizationThresholdEqualsMaximumVisibleResults() {
-        XCTAssertEqual(
-            FloodlightMetrics.resultVirtualizationThreshold,
-            FloodlightMetrics.maximumVisibleResults
         )
     }
 

@@ -38,8 +38,7 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
-            onDismiss: onDismiss,
-            onShowSettings: {}
+            onDismiss: onDismiss
         )
     }
 
@@ -91,21 +90,23 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             ["web-mode:youtube"] + Self.presetOrder.dropLast().map { "web-mode:\($0)" }
         )
         XCTAssertEqual(coordinator.selectedID, "web-mode:youtube")
-        XCTAssertEqual(
-            coordinator.results.first?.title,
-            "Search YouTube for “lofi”"
-        )
+        XCTAssertEqual(coordinator.results.first?.title, "YouTube")
+        XCTAssertEqual(coordinator.results.first?.subtitle, "youtube.com")
     }
 
-    func testWebModeRowTitlesAndURLsTrackTheLiveQuery() async throws {
+    func testWebModeRowTitlesStayStableWhileURLsTrackTheLiveQuery() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "lofi"
         coordinator.handleTab()
+        let titleBefore = coordinator.results.first?.title
 
         coordinator.query = "lofi beats"
 
+        // The title names the destination, so it must not reflow per
+        // keystroke; the live query rides in the URL the row opens.
         let first = coordinator.results.first
-        XCTAssertEqual(first?.title, "Search Google for “lofi beats”")
+        XCTAssertEqual(first?.title, "Google")
+        XCTAssertEqual(first?.title, titleBefore)
         XCTAssertEqual(
             openedURL(of: first)?.absoluteString,
             "https://www.google.com/search?q=lofi%20beats"
@@ -232,7 +233,7 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
 
         coordinator.handleTab()
-        XCTAssertEqual(coordinator.results.first?.title, "Search Google")
+        XCTAssertEqual(coordinator.results.first?.title, "Google")
 
         coordinator.openSelection()
 
@@ -385,7 +386,8 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             coordinator.results.contains { $0.id == "web-search" }
         }
         let fallback = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
-        XCTAssertEqual(fallback.title, "Search Google for “quaternion slerp”")
+        XCTAssertEqual(fallback.title, "Google")
+        XCTAssertEqual(fallback.subtitle, "google.com")
         XCTAssertEqual(
             openedURL(of: fallback)?.absoluteString,
             "https://www.google.com/search?q=quaternion%20slerp"

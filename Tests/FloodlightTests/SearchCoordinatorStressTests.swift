@@ -1,15 +1,51 @@
 import FloodlightEngine
+import FloodlightTestSupport
 import Foundation
 import XCTest
 @testable import Floodlight
 
 @MainActor
 final class SearchCoordinatorStressTests: XCTestCase {
+    private func makeStressCoordinator(
+        applications: [SearchItem] = [],
+        settings: [SearchItem] = []
+    ) throws -> SearchCoordinator {
+        try SearchCoordinator(
+            sourceSearch: SourceSearchEngine(
+                files: ScriptedFileSource(),
+                applications: ScriptedCatalog(immediate: applications),
+                settings: ScriptedCatalog(immediate: settings)
+            ),
+            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
+            rootURL: URL(fileURLWithPath: "/tmp"),
+            assistantRunner: ScriptedAssistantRunner(),
+            onDismiss: {}
+        )
+    }
+
+    private func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 5,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () async throws -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if try await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("never became true: \(description)", file: file, line: line)
+    }
+
     // MARK: - moveSelection
 
-    func testMoveSelectionDownAdvancesSelectedID() throws {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testMoveSelectionDownAdvancesSelectedID() async throws {
+        let app = SearchFixtures.application(name: "Xcode", score: 100_000)
+        let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
+        let coordinator = try makeStressCoordinator(applications: [app], settings: [setting])
+        coordinator.query = "k"
+        try await waitUntil("candidates arrive") { coordinator.results.count >= 2 }
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
 
@@ -19,9 +55,12 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedID, secondID)
     }
 
-    func testMoveSelectionUpMovesBackward() throws {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testMoveSelectionUpMovesBackward() async throws {
+        let app = SearchFixtures.application(name: "Xcode", score: 100_000)
+        let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
+        let coordinator = try makeStressCoordinator(applications: [app], settings: [setting])
+        coordinator.query = "k"
+        try await waitUntil("candidates arrive") { coordinator.results.count >= 2 }
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
         let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
 
@@ -31,9 +70,11 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedID, firstID)
     }
 
-    func testMoveSelectionClampsAtLowerBound() throws {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testMoveSelectionClampsAtLowerBound() async throws {
+        let app = SearchFixtures.application(name: "Xcode", score: 100_000)
+        let coordinator = try makeStressCoordinator(applications: [app])
+        coordinator.query = "x"
+        try await waitUntil("candidates arrive") { !coordinator.results.isEmpty }
         let firstID = try XCTUnwrap(coordinator.results.first?.id)
 
         try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
@@ -42,9 +83,11 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedID, firstID)
     }
 
-    func testMoveSelectionClampsAtUpperBound() throws {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testMoveSelectionClampsAtUpperBound() async throws {
+        let app = SearchFixtures.application(name: "Xcode", score: 100_000)
+        let coordinator = try makeStressCoordinator(applications: [app])
+        coordinator.query = "x"
+        try await waitUntil("candidates arrive") { !coordinator.results.isEmpty }
         let lastID = try XCTUnwrap(coordinator.results.last?.id)
 
         try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == lastID }))
@@ -112,19 +155,29 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
     // MARK: - selectFilter
 
-    func testSelectFilterChangesFilterAndResetsSelection() {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testSelectFilterChangesFilterAndResetsSelection() async throws {
+        let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
+        let coordinator = try makeStressCoordinator(settings: [setting])
+        coordinator.query = "k"
+        try await waitUntil("candidates arrive") {
+            coordinator.results.contains { $0.id == setting.id }
+        }
+
         coordinator.selectFilter(.settings)
 
         XCTAssertEqual(coordinator.selectedFilter, .settings)
+        XCTAssertFalse(coordinator.results.isEmpty)
         XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
+        XCTAssertEqual(coordinator.selectedID, setting.id)
     }
 
-    func testSelectFilterWithSameFilterIncrementsFocusGeneration() {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testSelectFilterWithSameFilterIncrementsFocusGeneration() async throws {
+        let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
+        let coordinator = try makeStressCoordinator(settings: [setting])
+        coordinator.query = "k"
+        try await waitUntil("candidates arrive") {
+            coordinator.results.contains { $0.id == setting.id }
+        }
         coordinator.selectFilter(.settings)
         let generationBefore = coordinator.focusGeneration
 
@@ -134,9 +187,15 @@ final class SearchCoordinatorStressTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedFilter, .settings)
     }
 
-    func testSelectFilterToEmptyFilterClearsSelection() {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
+    func testSelectFilterToEmptyFilterClearsSelection() async throws {
+        let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
+        let coordinator = try makeStressCoordinator(settings: [setting])
+        coordinator.query = "k"
+        try await waitUntil("candidates arrive") {
+            coordinator.results.contains { $0.id == setting.id }
+        }
+        XCTAssertNotNil(coordinator.selectedID)
+
         coordinator.selectFilter(.folders)
 
         XCTAssertTrue(coordinator.results.isEmpty)

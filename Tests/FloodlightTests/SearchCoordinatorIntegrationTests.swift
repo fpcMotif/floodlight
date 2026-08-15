@@ -29,8 +29,7 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
         applications: ScriptedCatalog = ScriptedCatalog(),
         settings: ScriptedCatalog = ScriptedCatalog(),
         runner: ScriptedAssistantRunner = ScriptedAssistantRunner(),
-        onDismiss: @escaping @MainActor () -> Void = {},
-        onShowSettings: @escaping @MainActor () -> Void = {}
+        onDismiss: @escaping @MainActor () -> Void = {}
     ) async throws -> SearchCoordinator {
         try SearchCoordinator(
             sourceSearch: SourceSearchEngine(
@@ -41,8 +40,7 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: runner,
-            onDismiss: onDismiss,
-            onShowSettings: onShowSettings
+            onDismiss: onDismiss
         )
     }
 
@@ -577,23 +575,20 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
     func testStartupResolvesWhichAssistantEnginesAreInstalled() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
+        coordinator.query = "claude explain this"
+        XCTAssertFalse(coordinator.results.contains { $0.id == "keyword-engine:claude" })
 
         coordinator.start()
-        try await waitUntil("availability is probed") {
-            coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false
-        }
-        try await waitUntil("the engine list is adopted") {
-            !projectResults(
-                query: "claude explain this",
-                indexed: [],
-                apps: [],
-                system: [],
-                keywordEngines: KeywordEngineCatalog.all
-            ).isEmpty
+        try await waitUntil("the resolved registry is adopted") {
+            coordinator.results.contains { $0.id == "keyword-engine:claude" }
         }
 
         let checked = await runner.checkedCommands
         XCTAssertEqual(checked.sorted(), ["claude", "codex"])
+
+        coordinator.query = "codex explain this"
+        try await settle(coordinator)
+        XCTAssertFalse(coordinator.results.contains { $0.id == "keyword-engine:codex" })
     }
 
     func testPreparingForPresentationRefocusesAndResearches() async throws {
@@ -637,7 +632,10 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
                 indexed: [],
                 apps: [],
                 system: [],
-                keywordEngines: KeywordEngineCatalog.all
+                keywordRegistry: KeywordEngineRegistry(
+                    engines: KeywordEngineCatalog.all,
+                    defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+                )
             ).first { $0.id == "keyword-engine:claude" }
         )
     }
@@ -773,23 +771,5 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         XCTAssertFalse(dismissed)
         XCTAssertEqual(coordinator.assistantRun?.state, .running)
-    }
-
-    func testTheSettingsCommandDismissesAndOpensSettings() async throws {
-        var dismissed = false
-        var openedSettings = false
-        let coordinator = try await makeCoordinator(
-            onDismiss: { dismissed = true },
-            onShowSettings: { openedSettings = true }
-        )
-
-        let command = try XCTUnwrap(
-            projectResults(query: "settings", indexed: [], apps: [], system: [])
-                .first { $0.id == "floodlight-command:settings" }
-        )
-        coordinator.activate(command)
-
-        XCTAssertTrue(dismissed)
-        XCTAssertTrue(openedSettings)
     }
 }

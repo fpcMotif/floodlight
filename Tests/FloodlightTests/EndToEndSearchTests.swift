@@ -61,8 +61,7 @@ final class EndToEndSearchTests: XCTestCase {
             recentStore: recentStore,
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
-            onDismiss: {},
-            onShowSettings: {}
+            onDismiss: {}
         )
 
         coordinator.start()
@@ -158,7 +157,7 @@ final class EndToEndSearchTests: XCTestCase {
         try await search(
             coordinator,
             "unicode",
-            forRowMatching: { $0.title.localizedCaseInsensitiveContains("nicod") },
+            forRowMatching: { $0.kind == .file && $0.title.contains("café") },
             description: "the accented file is found by its plain spelling"
         )
     }
@@ -275,19 +274,30 @@ final class EndToEndSearchTests: XCTestCase {
         XCTAssertEqual(engineIndex, 0, "an explicitly addressed engine leads the list")
     }
 
-    func testTheSettingsCommandIsReachableFromASetupQuery() async throws {
+    func testSettingsCommandsDoNotAppearInSearchResults() async throws {
         let coordinator = try await makeCoordinator()
 
-        coordinator.query = "floodlight settings"
-        try await waitUntil("the settings command appears") {
-            coordinator.results.contains { $0.id == "floodlight-command:settings" }
-        }
+        for query in [
+            "floodlight settings",
+            "settings",
+            "setup",
+            "permissions",
+            "shortcut",
+            "gh",
+            "login",
+        ] {
+            coordinator.query = query
+            try await waitUntil("the search settles for query \(query)") { !coordinator.isSearching
+            }
 
-        let command = try XCTUnwrap(
-            coordinator.results.first { $0.id == "floodlight-command:settings" }
-        )
-        XCTAssertEqual(command.action, .showFloodlightSettings)
-        XCTAssertEqual(command.iconSource, .floodlightApplication)
+            XCTAssertFalse(
+                coordinator.results
+                    .contains {
+                        $0.id.hasPrefix("floodlight-command:") || $0.title == "Floodlight settings"
+                    },
+                "Floodlight settings command should never appear in search results for query '\(query)'"
+            )
+        }
     }
 
     // MARK: - Re-rooting and rescanning

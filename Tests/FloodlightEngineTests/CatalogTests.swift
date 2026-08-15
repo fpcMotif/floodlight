@@ -161,17 +161,6 @@ final class CatalogTests: XCTestCase {
         XCTAssertEqual(catalog.immediatePage(for: "bluetooth").items.first?.title, "Bluetooth")
     }
 
-    func testFloodlightSettingsAreSearchableBySetupTerms() {
-        for query in ["settings", "setup", "permissions", "shortcut", "search scope"] {
-            let result = FloodlightCommandCatalog.search(query).first
-            XCTAssertEqual(result?.id, "floodlight-command:settings", query)
-            XCTAssertEqual(result?.action, .showFloodlightSettings, query)
-            XCTAssertEqual(result?.iconSource, .floodlightApplication, query)
-        }
-
-        XCTAssertTrue(FloodlightCommandCatalog.search("claude").isEmpty)
-    }
-
     func testFastApplicationSearchDoesNotWaitForFFF() throws {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -60,7 +60,7 @@ final class SearchCoordinator {
     /// search field's token renders.
     var activeWebEngine: KeywordEngine? {
         guard case let .web(context) = mode else { return nil }
-        return KeywordEngineCatalog.webSearchEngines.first { $0.id == context.engineID }
+        return keywordRegistry.webEngine(id: context.engineID)
     }
 
     private let sourceSearch: any SourceSearching
@@ -70,7 +70,7 @@ final class SearchCoordinator {
     private let onDismiss: @MainActor () -> Void
     private var publication: SearchResultPublication
     private var sourceWarmUpComplete = false
-    private var availableKeywordLookup: [String: KeywordEngine]
+    private var keywordRegistry: KeywordEngineRegistry
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?
     @ObservationIgnored
@@ -87,8 +87,7 @@ final class SearchCoordinator {
         runningApplicationActivator: any RunningApplicationActivating =
             WorkspaceRunningApplicationActivator(),
         actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
-        onDismiss: @escaping @MainActor () -> Void,
-        onShowSettings: @escaping @MainActor () -> Void
+        onDismiss: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
         self.rootURL = rootURL
@@ -108,18 +107,15 @@ final class SearchCoordinator {
                     for: query
                 )
             },
-            onDismiss: onDismiss,
-            onShowSettings: onShowSettings
+            onDismiss: onDismiss
         )
-        let keywordLookup = KeywordEngineCatalog.makeLookup(
-            for: KeywordEngineCatalog.all.filter { $0.kind != .assistant }
-        )
-        availableKeywordLookup = keywordLookup
+        let keywordRegistry = KeywordEngineCatalog.initialRegistry
+        self.keywordRegistry = keywordRegistry
         publication = SearchResultProjection.project(
             .local(.init(
                 query: "",
                 candidates: [],
-                keywordLookup: keywordLookup,
+                keywordRegistry: keywordRegistry,
                 selectedFilter: .all,
                 selection: nil,
                 progress: SearchResultProgress(
@@ -137,8 +133,7 @@ final class SearchCoordinator {
     /// process or depending on what's installed on the test machine.
     convenience init(
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
-        onDismiss: @escaping @MainActor () -> Void,
-        onShowSettings: @escaping @MainActor () -> Void
+        onDismiss: @escaping @MainActor () -> Void
     ) {
         let fileManager = FileManager.default
         let savedRoot = UserDefaults.standard.string(forKey: "index-root")
@@ -174,8 +169,7 @@ final class SearchCoordinator {
             recentStore: recentStore,
             rootURL: initialRoot,
             assistantRunner: assistantRunner,
-            onDismiss: onDismiss,
-            onShowSettings: onShowSettings
+            onDismiss: onDismiss
         )
     }
 
@@ -193,8 +187,8 @@ final class SearchCoordinator {
                 FloodlightPerformance.end("IndexStartup", id: signpost)
             }
             async let sourceWarmUp: Void = sourceSearch.warmUp()
-            async let resolvedKeywordEngines = KeywordEngineCatalog
-                .availableEngines(runner: assistantRunner)
+            async let resolvedKeywordRegistry = KeywordEngineCatalog
+                .availableRegistry(runner: assistantRunner)
             await sourceWarmUp
             guard !Task.isCancelled else { return }
             sourceWarmUpComplete = true
@@ -203,10 +197,9 @@ final class SearchCoordinator {
             {
                 publication = idleLocalPublication()
             }
-            let resolvedEngines = await resolvedKeywordEngines
-            availableKeywordLookup = KeywordEngineCatalog.makeLookup(
-                for: resolvedEngines
-            )
+            let resolvedRegistry = await resolvedKeywordRegistry
+            guard !Task.isCancelled else { return }
+            keywordRegistry = resolvedRegistry
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 scheduleSearch(immediate: true)
             }
@@ -263,17 +256,20 @@ final class SearchCoordinator {
     func tabCompletionHint(for item: SearchItem) -> String? {
         guard
             case .local = mode,
-            let match = KeywordEngineCatalog.match(query, lookup: availableKeywordLookup),
-            case .webSearch = match.engine.destination,
-            item.id == match.engine.rowID
+            let title = keywordRegistry.tabCompletionTitle(for: query, resultID: item.id)
         else {
             return nil
         }
-        return match.engine.title
+        return title
     }
 
     private func applyModeEvent(_ event: SearchModeEvent) {
-        let next = SearchMode.transition(from: mode, query: query, event: event)
+        let next = SearchMode.transition(
+            from: mode,
+            query: query,
+            event: event,
+            registry: keywordRegistry
+        )
         guard next.mode != mode || next.query != query else { return }
         mode = next.mode
         if query != next.query {
@@ -407,13 +403,21 @@ final class SearchCoordinator {
             return
         }
 
+        // Stale-while-revalidate: the previous publication's rows stay on
+        // screen until the new Search Execution's first snapshot lands.
+        // Clearing them here collapsed the list to the handful of synthetic
+        // rows for a frame or two on every keystroke — and, under a narrow
+        // filter, swapped the whole list for the empty state and back —
+        // which read as a jump. The synthetic rows (calculator, keyword,
+        // web fallback) still rebuild for the new query in this pass, so
+        // they stay live; only the source rows wait for their snapshot.
         publication = projectLocal(
-            candidates: [],
+            candidates: publication.sourceCandidates,
             selectedFilter: selectedFilter,
-            selection: nil,
+            selection: publication.selection,
             progress: SearchResultProgress(
                 isSearching: true,
-                totalMatches: [:],
+                totalMatches: publication.progress.totalMatches,
                 pendingKinds: sourceWarmUpComplete
                     ? [.application]
                     : [.application, .systemSetting]
@@ -461,7 +465,7 @@ final class SearchCoordinator {
             .web(.init(
                 query: query.trimmingCharacters(in: .whitespacesAndNewlines),
                 activeEngineID: context.engineID,
-                engines: KeywordEngineCatalog.webSearchEngines,
+                keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: publication.selection
             ))
@@ -480,7 +484,7 @@ final class SearchCoordinator {
             .local(.init(
                 query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
                 candidates: candidates,
-                keywordLookup: availableKeywordLookup,
+                keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,
                 progress: progress,

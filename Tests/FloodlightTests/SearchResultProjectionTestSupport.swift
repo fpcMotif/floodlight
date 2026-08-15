@@ -7,8 +7,7 @@ func makeSearchCoordinatorWithInertPresentation(
 ) -> SearchCoordinator {
     SearchCoordinator(
         assistantRunner: assistantRunner,
-        onDismiss: {},
-        onShowSettings: {}
+        onDismiss: {}
     )
 }
 
@@ -18,13 +17,16 @@ func projectResults(
     indexed: [SearchItem],
     apps: [SearchItem],
     system: [SearchItem],
-    keywordEngines: [KeywordEngine] = KeywordEngineCatalog.all
+    keywordRegistry: KeywordEngineRegistry = KeywordEngineRegistry(
+        engines: KeywordEngineCatalog.all,
+        defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+    )
 ) -> [SearchItem] {
     SearchResultProjection.project(
         .local(.init(
             query: query,
             candidates: apps + system + indexed,
-            keywordLookup: KeywordEngineCatalog.makeLookup(for: keywordEngines),
+            keywordRegistry: keywordRegistry,
             selectedFilter: .all,
             selection: nil,
             progress: .settled

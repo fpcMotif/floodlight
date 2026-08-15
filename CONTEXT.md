@@ -17,12 +17,15 @@ An origin of searchable candidates with its own readiness and refresh behavior. 
 _Avoid_: Provider, backend
 
 **Source Search**:
-The part of a Search Execution that queries Search Sources and normalizes their candidates. It excludes calculator answers, Floodlight commands, addressed-search rows, and the web fallback.
+The part of a Search Execution that queries Search Sources and normalizes their candidates. It excludes calculator answers, addressed-search rows, and the web fallback.
 _Avoid_: Local search, catalog search
-
 **Source Selection Learning**:
 Deterministic, local ranking personalization in which Source Search routes a successfully opened result back to the Search Source that produced it for the originating query. A source may persist that query-selection association, use another ranking mechanism, or ignore it. This is not AI model training and does not send the selection to an assistant.
 _Avoid_: AI learning, model training, global recency
+
+**Search Scope**:
+The successfully committed folder tree within which Floodlight’s file Search Source indexes and searches. A folder selected by the user does not become the Search Scope until the source accepts the change.
+_Avoid_: Search root, selected folder, index path
 
 **Search Snapshot**:
 The complete normalized Search Source candidates and progress currently known for a Search Execution. Cross-source collisions are already resolved; a settled snapshot has no pending work, and each newer snapshot replaces the previous snapshot rather than requiring it to be merged.
@@ -35,6 +38,10 @@ _Avoid_: Result builder, result pipeline
 **Result Publication**:
 One coherent, atomically visible statement of all projected rows, visible rows, filter state, semantic selection, and search progress for a Search Session.
 _Avoid_: Published fields, result state
+
+**Keyword-Addressed Search**:
+A search intent that explicitly selects a destination through a recognized first query token, such as `yt` for YouTube or `claude` for an assistant. The remaining query is interpreted by that destination rather than by Source Search.
+_Avoid_: Keyword engine search, bang search
 
 **Selected-Result Action**:
 An explicit activation, copy, or Finder-reveal operation on the selected result, together with its search-dismissal and learning consequences. Preview and search-administration commands are not Selected-Result Actions.

@@ -217,6 +217,8 @@ final class SearchModeTests: XCTestCase {
         let custom = KeywordEngine(
             id: "example",
             title: "Search Example",
+            name: "Example",
+            tint: .blue,
             keywords: ["ex"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://example.com/?q={query}")
@@ -226,7 +228,7 @@ final class SearchModeTests: XCTestCase {
             from: .local,
             query: "ex thing",
             event: .tab,
-            engines: [custom]
+            registry: KeywordEngineRegistry(engines: [custom], defaultWebEngineID: custom.id)
         )
         XCTAssertEqual(
             matched.mode,
@@ -239,11 +241,11 @@ final class SearchModeTests: XCTestCase {
             from: .local,
             query: "yt lofi",
             event: .tab,
-            engines: [custom]
+            registry: KeywordEngineRegistry(engines: [custom], defaultWebEngineID: custom.id)
         )
         XCTAssertEqual(
             unmatched.mode,
-            webContext(engineID: "google", queryAtEntry: "yt lofi")
+            webContext(engineID: "example", queryAtEntry: "yt lofi")
         )
     }
 }

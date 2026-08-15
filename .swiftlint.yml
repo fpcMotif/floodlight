@@ -11,6 +11,7 @@
 
 excluded:
   - .build
+  - .scratch
   - .tools
   - docs
   - Sources/Floodlight/Resources

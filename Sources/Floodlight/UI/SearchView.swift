@@ -3,12 +3,18 @@ import SwiftUI
 
 struct SearchView: View {
     let model: SearchCoordinator
+    let usesGlassSlab: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(model: SearchCoordinator, usesGlassSlab: Bool = false) {
+        self.model = model
+        self.usesGlassSlab = usesGlassSlab
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             SearchBar(model: model)
             SearchResultsSection(model: model)
-                .transition(.opacity)
         }
         .frame(width: FloodlightMetrics.panelWidth, alignment: .top)
         .modifier(FloodlightSurface())
@@ -19,22 +25,30 @@ struct SearchView: View {
             )
         )
         .overlay {
-            RoundedRectangle(
-                cornerRadius: FloodlightMetrics.cornerRadius,
-                style: .continuous
-            )
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        .white.opacity(0.35),
-                        .white.opacity(0.12),
-                        .white.opacity(0.06),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 0.5
-            )
+            if !usesGlassSlab {
+                RoundedRectangle(
+                    cornerRadius: FloodlightMetrics.cornerRadius,
+                    style: .continuous
+                )
+                .strokeBorder(
+                    LinearGradient(
+                        colors: colorScheme == .dark
+                            ? [
+                                .white.opacity(0.35),
+                                .white.opacity(0.12),
+                                .white.opacity(0.06),
+                            ]
+                            : [
+                                .white.opacity(0.8),
+                                .black.opacity(0.12),
+                                .black.opacity(0.06),
+                            ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.5
+                )
+            }
         }
     }
 }
@@ -107,13 +121,16 @@ private struct SearchBar: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: FloodlightMetrics.clearButtonSize))
                     .foregroundStyle(isClearButtonHovered ? .primary : .secondary)
+                    .frame(
+                        width: FloodlightMetrics.clearButtonSize,
+                        height: FloodlightMetrics.clearButtonSize
+                    )
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { isClearButtonHovered = $0 }
-            .frame(
-                width: FloodlightMetrics.clearButtonSize,
-                height: FloodlightMetrics.clearButtonSize
-            )
+            .accessibilityLabel("Clear search")
         } else if let shortcut = model.activeShortcutDisplayName {
             KeyChip(label: shortcut)
                 .accessibilityLabel("Summon shortcut \(shortcut)")
@@ -132,7 +149,7 @@ private struct WebModeToken: View {
         HStack(spacing: 5) {
             Image(systemName: engine.symbolName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(engineSymbolTint)
+                .foregroundStyle(engine.tint.color)
             Text(engine.title)
         }
         .font(FloodlightMetrics.Typography.chip)
@@ -144,32 +161,34 @@ private struct WebModeToken: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Web search mode: \(engine.title)")
     }
-
-    private var engineSymbolTint: Color {
-        switch engine.id {
-        case "youtube": .red
-        case "twitter": .cyan
-        case "github": .primary
-        default: .secondary
-        }
-    }
 }
 
 private struct SearchResultsSection: View {
-    @Bindable var model: SearchCoordinator
+    let model: SearchCoordinator
 
     var body: some View {
         if !model.query.isEmpty {
             Divider().opacity(0.45)
-            SearchFilterBar(model: model)
+            // Web mode publishes no filter options — rendering the bar
+            // anyway leaves an empty strip between the field and the rows.
+            // Its height goes to the results, so the panel never resizes.
+            if showsFilterBar {
+                SearchFilterBar(model: model)
+            }
             resultsContent
-                .frame(
-                    height: FloodlightMetrics.expandedPanelHeight
-                        - FloodlightMetrics.searchHeight
-                        - 1
-                        - FloodlightMetrics.filterBarHeight
-                )
+                .frame(height: resultsHeight)
         }
+    }
+
+    private var showsFilterBar: Bool {
+        !model.filterOptions.isEmpty
+    }
+
+    private var resultsHeight: CGFloat {
+        FloodlightMetrics.expandedPanelHeight
+            - FloodlightMetrics.searchHeight
+            - 1
+            - (showsFilterBar ? FloodlightMetrics.filterBarHeight : 0)
     }
 
     @ViewBuilder
@@ -205,7 +224,7 @@ private struct EmptyResultsView: View {
 }
 
 private struct SearchFilterBar: View {
-    @Bindable var model: SearchCoordinator
+    let model: SearchCoordinator
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -217,18 +236,8 @@ private struct SearchFilterBar: View {
         .accessibilityLabel("Search filters")
     }
 
-    /// Chips share one `GlassEffectContainer` on macOS 26 so adjacent
-    /// glass capsules can merge/morph as they scroll — a fallback `HStack`
-    /// with no container below 26, where nothing needs to merge.
-    @ViewBuilder
     private var chips: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: 7) {
-                chipRow
-            }
-        } else {
-            chipRow
-        }
+        chipRow
     }
 
     private var chipRow: some View {
@@ -242,6 +251,7 @@ private struct SearchFilterBar: View {
                 }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .center)
     }
 }
 
@@ -291,7 +301,7 @@ private struct SearchFilterChip: View {
 }
 
 private struct ResultList: View {
-    @Bindable var model: SearchCoordinator
+    let model: SearchCoordinator
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -320,16 +330,12 @@ private struct ResultList: View {
         }
     }
 
-    @ViewBuilder
     private var resultStack: some View {
-        if FloodlightMetrics.shouldVirtualizeResults(count: model.results.count) {
-            LazyVStack(spacing: 0) {
-                resultRows
-            }
-        } else {
-            VStack(spacing: 0) {
-                resultRows
-            }
+        // Keep one container identity as progressive snapshots add rows.
+        // Swapping VStack for LazyVStack at a count threshold reconstructs
+        // every row and briefly replaces loaded icons with placeholders.
+        LazyVStack(spacing: 0) {
+            resultRows
         }
     }
 
@@ -338,9 +344,16 @@ private struct ResultList: View {
     /// title, a quiet wash), never a section header: #28 explicitly rejects
     /// grouped/sectioned results, so nothing here inserts a divider between
     /// the Top Hit row and the rest.
+    @ViewBuilder
     private var resultRows: some View {
-        ForEach(Array(model.results.enumerated()), id: \.element.id) { index, item in
-            row(for: item, index: index)
+        if #available(macOS 26.0, *) {
+            ForEach(model.results.enumerated(), id: \.element.id) { index, item in
+                row(for: item, index: index)
+            }
+        } else {
+            ForEach(Array(model.results.enumerated()), id: \.element.id) { index, item in
+                row(for: item, index: index)
+            }
         }
     }
 

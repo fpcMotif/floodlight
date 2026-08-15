@@ -36,7 +36,7 @@ final class CalculatorDifferentialTests: XCTestCase {
 
     /// Evaluates a tree with the parser's exact semantics. `nil` means the
     /// parser is expected to reject the rendered source.
-    private func evaluate(_ expression: Expression) -> Double? {
+    private static func evaluate(_ expression: Expression) -> Double? {
         switch expression {
         case let .number(text):
             return Double(text.replacingOccurrences(of: ",", with: ""))
@@ -79,7 +79,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    private func render(_ expression: Expression, gap: () -> String) -> String {
+    private static func render(_ expression: Expression, gap: () -> String) -> String {
         switch expression {
         case let .number(text):
             text
@@ -107,7 +107,7 @@ final class CalculatorDifferentialTests: XCTestCase {
     /// Renders a number `parseNumber` can consume in full: digits with at
     /// most one decimal point, never scientific notation (an `e` would fail
     /// `looksLikeExpression` before the parser ever runs).
-    private func makeNumberText(_ rng: inout SeededGenerator) -> String {
+    private static func makeNumberText(_ rng: inout SeededGenerator) -> String {
         switch Int.random(in: 0...9, using: &rng) {
         case 0:
             "0"
@@ -126,7 +126,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    private func makeExpression(_ rng: inout SeededGenerator, depth: Int) -> Expression {
+    private static func makeExpression(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         guard depth > 0 else { return .number(makeNumberText(&rng)) }
 
         let terms = Int.random(in: 1...3, using: &rng)
@@ -139,7 +139,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         return rest.isEmpty ? head : .additive(head, rest)
     }
 
-    private func makeTerm(_ rng: inout SeededGenerator, depth: Int) -> Expression {
+    private static func makeTerm(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         let factors = Int.random(in: 1...3, using: &rng)
         let head = makePower(&rng, depth: depth)
         var rest: [(Character, Expression)] = []
@@ -153,7 +153,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         return rest.isEmpty ? head : .multiplicative(head, rest)
     }
 
-    private func makePower(_ rng: inout SeededGenerator, depth: Int) -> Expression {
+    private static func makePower(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         let base = makeUnary(&rng, depth: depth)
         // Exponents stay small: `pow` on a random pair overflows to
         // infinity almost immediately, and an expression that can only ever
@@ -162,7 +162,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         return .power(base, .number("\(Int.random(in: 0...3, using: &rng))"))
     }
 
-    private func makeUnary(_ rng: inout SeededGenerator, depth: Int) -> Expression {
+    private static func makeUnary(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         switch Int.random(in: 0...9, using: &rng) {
         case 0:
             .negate(makeUnary(&rng, depth: depth))
@@ -173,7 +173,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    private func makePrimary(_ rng: inout SeededGenerator, depth: Int) -> Expression {
+    private static func makePrimary(_ rng: inout SeededGenerator, depth: Int) -> Expression {
         guard depth > 0, Int.random(in: 0...2, using: &rng) == 0 else {
             return .number(makeNumberText(&rng))
         }
@@ -185,13 +185,13 @@ final class CalculatorDifferentialTests: XCTestCase {
         whitespace: Bool = true
     ) -> Gen<GeneratedExpression> {
         Gen(generate: { rng in
-            let tree = self.makeExpression(&rng, depth: maxDepth)
+            let tree = Self.makeExpression(&rng, depth: maxDepth)
             var localRNG = rng
             let gap: () -> String = {
                 guard whitespace else { return "" }
                 return String(repeating: " ", count: Int.random(in: 0...2, using: &localRNG))
             }
-            var source = self.render(tree, gap: gap)
+            var source = Self.render(tree, gap: gap)
             rng = localRNG
             // `looksLikeExpression` demands at least one operator character,
             // so a tree that collapsed to a bare number would be rejected
@@ -199,7 +199,7 @@ final class CalculatorDifferentialTests: XCTestCase {
             if !source.contains(where: { "+-*/%^()".contains($0) }) {
                 source = "(\(source))"
             }
-            return GeneratedExpression(source: source, expected: self.evaluate(tree))
+            return GeneratedExpression(source: source, expected: Self.evaluate(tree))
         })
     }
 

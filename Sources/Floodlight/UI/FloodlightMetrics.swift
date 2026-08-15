@@ -10,7 +10,6 @@ enum FloodlightMetrics {
     static let resultRowHeight: CGFloat = 58
     static let resultPadding: CGFloat = 7
     static let maximumVisibleResults = 7
-    static let resultVirtualizationThreshold = maximumVisibleResults
 
     static var expandedPanelHeight: CGFloat {
         searchHeight
@@ -23,10 +22,6 @@ enum FloodlightMetrics {
     static func panelHeight(hasQuery: Bool) -> CGFloat {
         guard hasQuery else { return searchHeight }
         return expandedPanelHeight
-    }
-
-    static func shouldVirtualizeResults(count: Int) -> Bool {
-        count > resultVirtualizationThreshold
     }
 
     // MARK: - Content showcase (golden-state polish, #28)
@@ -86,45 +81,6 @@ enum FloodlightMetrics {
         }
     }
 
-    static func iconTint(for item: SearchItem) -> Color {
-        if item.id.contains("youtube") || item.title.localizedCaseInsensitiveContains("youtube") {
-            return .red
-        }
-        if item.id.contains("twitter") || item.title.localizedCaseInsensitiveContains("twitter") {
-            return .cyan
-        }
-        if item.id.contains("github") || item.title.localizedCaseInsensitiveContains("github") {
-            return .primary
-        }
-        if item.id.contains("wikipedia") || item.title
-            .localizedCaseInsensitiveContains("wikipedia")
-        {
-            return .secondary
-        }
-        return iconTint(for: item.kind)
-    }
-
-    static func iconSymbol(for item: SearchItem) -> String {
-        if item.id.contains("youtube") || item.title.localizedCaseInsensitiveContains("youtube") {
-            return "play.rectangle.fill"
-        }
-        if item.id.contains("google") || item.title.localizedCaseInsensitiveContains("google") {
-            return "magnifyingglass.circle.fill"
-        }
-        if item.id.contains("github") || item.title.localizedCaseInsensitiveContains("github") {
-            return "code"
-        }
-        if item.id.contains("twitter") || item.title.localizedCaseInsensitiveContains("twitter") {
-            return "at"
-        }
-        if item.id.contains("wikipedia") || item.title
-            .localizedCaseInsensitiveContains("wikipedia")
-        {
-            return "book.closed.fill"
-        }
-        return item.kind.symbolName
-    }
-
     // MARK: - Liquid Glass shell (#1)
 
     /// The fallback-path stroke opacity Increase Contrast raises chips and
@@ -133,4 +89,20 @@ enum FloodlightMetrics {
     /// `resultRowCornerRadius`/`Capsule()` shapes directly; nothing about
     /// this spec's geometry is new, only the material is.
     static let increasedContrastStrokeOpacity: Double = 0.45
+}
+
+extension SearchItemIconTint {
+    /// The one place an engine's tint name becomes a color, so the result
+    /// row's icon tile and the field's mode token can never drift apart.
+    var color: Color {
+        switch self {
+        case .blue: .blue
+        case .cyan: .cyan
+        case .gray: .gray
+        case .orange: .orange
+        case .primary: .primary
+        case .purple: .purple
+        case .red: .red
+        }
+    }
 }

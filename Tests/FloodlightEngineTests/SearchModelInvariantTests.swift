@@ -405,7 +405,6 @@ final class SearchModelInvariantTests: XCTestCase {
         // more than that — otherwise a superb file match could outrank a
         // mediocre application match.
         let ordered = [
-            SearchItemRanking.command,
             SearchItemRanking.keywordEngine,
             SearchItemRanking.calculator,
         ]
@@ -576,7 +575,6 @@ final class SearchModelInvariantTests: XCTestCase {
             .copy("b"),
             .open(url),
             .open(URL(fileURLWithPath: "/tmp/y")),
-            .showFloodlightSettings,
             .askAssistant(command: "claude", arguments: ["-p", "hi"]),
             .askAssistant(command: "claude", arguments: ["-p", "bye"]),
             .askAssistant(command: "codex", arguments: ["-p", "hi"]),

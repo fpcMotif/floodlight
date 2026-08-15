@@ -65,7 +65,7 @@ final class SearchCoordinatorTests: XCTestCase {
                 .init(
                     query: "shortcut",
                     candidates: [folder],
-                    keywordLookup: [:],
+                    keywordRegistry: KeywordEngineCatalog.initialRegistry,
                     selectedFilter: .all,
                     selection: .init(id: "web-search", origin: .automatic),
                     progress: .settled
@@ -85,7 +85,7 @@ final class SearchCoordinatorTests: XCTestCase {
             .local(.init(
                 query: "shortcut",
                 candidates: [folder],
-                keywordLookup: [:],
+                keywordRegistry: KeywordEngineCatalog.initialRegistry,
                 selectedFilter: .all,
                 selection: .init(id: web.id, origin: .user),
                 progress: .settled
@@ -100,7 +100,7 @@ final class SearchCoordinatorTests: XCTestCase {
             .local(.init(
                 query: "notes",
                 candidates: [],
-                keywordLookup: [:],
+                keywordRegistry: KeywordEngineCatalog.initialRegistry,
                 selectedFilter: .pdfs,
                 selection: nil,
                 progress: .settled,
@@ -118,7 +118,7 @@ final class SearchCoordinatorTests: XCTestCase {
             .local(.init(
                 query: "notes",
                 candidates: [],
-                keywordLookup: [:],
+                keywordRegistry: KeywordEngineCatalog.initialRegistry,
                 selectedFilter: .pdfs,
                 selection: nil,
                 progress: .settled,
@@ -169,7 +169,6 @@ final class SearchCoordinatorTests: XCTestCase {
         )
 
         let ids = Set(results.map(\.id))
-        XCTAssertTrue(ids.contains("floodlight-command:settings"))
         XCTAssertTrue(ids.contains(app.id))
         XCTAssertTrue(ids.contains(setting.id))
         XCTAssertTrue(ids.contains(file.id))
@@ -177,7 +176,6 @@ final class SearchCoordinatorTests: XCTestCase {
     }
 
     func testEarlierSourcesWinWhenIdentifiersCollide() throws {
-        let commandID = "floodlight-command:settings"
         let appsVersusSystemID = "collision:apps-versus-system"
         let systemVersusIndexedID = "collision:system-versus-indexed"
 
@@ -191,7 +189,6 @@ final class SearchCoordinatorTests: XCTestCase {
                 ),
             ],
             apps: [
-                makeApplication(id: commandID, name: "From apps", score: 900_000),
                 makeApplication(id: appsVersusSystemID, name: "From apps", score: 10),
             ],
             system: [
@@ -201,9 +198,6 @@ final class SearchCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(results.count, Set(results.map(\.id)).count)
-
-        let command = try XCTUnwrap(results.first { $0.id == commandID })
-        XCTAssertEqual(command.title, "Floodlight settings")
 
         let appsWin = try XCTUnwrap(results.first { $0.id == appsVersusSystemID })
         XCTAssertEqual(appsWin.title, "From apps")
@@ -336,42 +330,6 @@ final class SearchCoordinatorTests: XCTestCase {
         XCTAssertFalse(results.contains { $0.kind == .web })
     }
 
-    func testSelectingAFilterNarrowsPublishedResults() {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
-
-        XCTAssertTrue(coordinator.results.contains { $0.kind == .web })
-        XCTAssertTrue(coordinator.results.contains { $0.id == "floodlight-command:settings" })
-
-        coordinator.selectFilter(.settings)
-
-        XCTAssertFalse(coordinator.results.isEmpty)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
-        XCTAssertFalse(coordinator.results.contains { $0.kind == .web })
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
-
-        // No source feeding this query can produce a folder, so the filter has
-        // nothing to show and the selection clears with it.
-        coordinator.selectFilter(.folders)
-
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
-    }
-
-    func testSelectingAFilterReconcilesSelectionWithVisibleResults() throws {
-        let coordinator = makeSearchCoordinatorWithInertPresentation()
-        coordinator.query = "shortcut"
-        let unfiltered = coordinator.results
-        XCTAssertGreaterThan(unfiltered.count, 1)
-
-        try coordinator.select(XCTUnwrap(unfiltered.last))
-        coordinator.selectFilter(.settings)
-        let visible = coordinator.results
-        XCTAssertFalse(visible.isEmpty)
-        XCTAssertFalse(visible.contains { $0.id == "web-search" })
-        XCTAssertEqual(coordinator.selectedID, visible.first?.id)
-    }
-
     // MARK: - Keyword engines
 
     func testKeywordEngineRowOutranksApplicationAndCalculatorMatches() throws {
@@ -387,20 +345,6 @@ final class SearchCoordinatorTests: XCTestCase {
         let engineIndex = try XCTUnwrap(results.firstIndex { $0.id == "keyword-engine:youtube" })
         let appIndex = try XCTUnwrap(results.firstIndex { $0.id == app.id })
         XCTAssertLessThan(engineIndex, appIndex)
-    }
-
-    func testKeywordEngineRowDefersToFloodlightCommands() throws {
-        let results = projectResults(
-            query: "yt lofi hip hop",
-            indexed: [],
-            apps: [],
-            system: []
-        )
-
-        // "yt lofi hip hop" doesn't fuzzy-match the settings command, so
-        // assert the ranking relationship directly instead.
-        let engine = try XCTUnwrap(results.first { $0.id == "keyword-engine:youtube" })
-        XCTAssertLessThan(engine.score, SearchItemRanking.command)
     }
 
     func testUnmatchedQueryProducesNoKeywordEngineRow() {
@@ -420,7 +364,10 @@ final class SearchCoordinatorTests: XCTestCase {
             indexed: [],
             apps: [],
             system: [],
-            keywordEngines: KeywordEngineCatalog.all.filter { $0.id != "claude" }
+            keywordRegistry: KeywordEngineRegistry(
+                engines: KeywordEngineCatalog.all.filter { $0.id != "claude" },
+                defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+            )
         )
 
         XCTAssertFalse(results.contains { $0.id == "keyword-engine:claude" })
@@ -433,8 +380,7 @@ final class SearchCoordinatorTests: XCTestCase {
         var dismissed = false
         let coordinator = SearchCoordinator(
             assistantRunner: runner,
-            onDismiss: { dismissed = true },
-            onShowSettings: {}
+            onDismiss: { dismissed = true }
         )
 
         let item = try makeClaudeAskItem(coordinator)
@@ -517,14 +463,17 @@ final class SearchCoordinatorTests: XCTestCase {
     /// Builds the "Ask Claude" row directly through Result Projection — the
     /// coordinator's live pipeline only includes it once `start()` resolves
     /// availability, which these tests don't drive (that's covered by
-    /// `KeywordEngineCatalog.availableEngines` tests in FloodlightEngine).
+    /// `KeywordEngineCatalog.availableRegistry` tests in FloodlightEngine).
     private func makeClaudeAskItem(_ coordinator: SearchCoordinator) throws -> SearchItem {
         let results = projectResults(
             query: "claude explain this function",
             indexed: [],
             apps: [],
             system: [],
-            keywordEngines: KeywordEngineCatalog.all
+            keywordRegistry: KeywordEngineRegistry(
+                engines: KeywordEngineCatalog.all,
+                defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+            )
         )
         return try XCTUnwrap(results.first { $0.id == "keyword-engine:claude" })
     }

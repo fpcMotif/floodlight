@@ -14,10 +14,97 @@ final class AssistantProcessRunnerTests: XCTestCase {
         XCTAssertFalse(available)
     }
 
+    func testIsAvailableRejectsACommandThatEscapesTheSearchDirectory() async {
+        let runner = AssistantProcessRunner()
+
+        let available = await runner.isAvailable(command: "../bin/echo")
+
+        XCTAssertFalse(available)
+    }
+
+    func testIsAvailableRejectsEveryNonBareCommandShape() async {
+        let runner = AssistantProcessRunner()
+        let invalidNames = [
+            "", ".", "..", "/bin/echo", "foo/bar", "../echo", "echo\ntrue", "echo true",
+            "écho", "echo\u{0000}true",
+        ]
+
+        for command in invalidNames {
+            let available = await runner.isAvailable(command: command)
+            XCTAssertFalse(available, String(reflecting: command))
+        }
+    }
+
     func testRunCapturesStdoutFromASuccessfulProcess() async throws {
         let runner = AssistantProcessRunner()
         let output = try await runner.run(command: "echo", arguments: ["hello from the assistant"])
         XCTAssertEqual(output, "hello from the assistant")
+    }
+
+    func testRunDrainsSuccessfulOutputLargerThanAPipeBuffer() async throws {
+        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 256 * 1_024)
+
+        let output = try await runner.run(command: "jot", arguments: ["-b", "x", "70000"])
+
+        XCTAssertEqual(output.utf8.count, 139_999)
+    }
+
+    func testRunRejectsOutputBeyondTheMemoryLimit() async throws {
+        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 1_024)
+        let start = ContinuousClock.now
+
+        do {
+            _ = try await runner.run(command: "jot", arguments: ["-b", "x", "10000"])
+            XCTFail("expected outputLimitExceeded")
+        } catch let AssistantProcessError.outputLimitExceeded(limit) {
+            XCTAssertEqual(limit, 1_024)
+        } catch {
+            XCTFail("expected outputLimitExceeded, got \(error)")
+        }
+        XCTAssertLessThan(start.duration(to: .now), .seconds(2))
+    }
+
+    func testRunAppliesOneLimitAcrossStdoutAndStderr() async throws {
+        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 1_024)
+        let program = """
+        BEGIN {
+            for (i = 0; i < 400; i++) print "stdout"
+            for (i = 0; i < 400; i++) print "stderr" > "/dev/stderr"
+        }
+        """
+
+        do {
+            _ = try await runner.run(command: "awk", arguments: [program])
+            XCTFail("expected outputLimitExceeded")
+        } catch let AssistantProcessError.outputLimitExceeded(limit) {
+            XCTAssertEqual(limit, 1_024)
+        } catch {
+            XCTFail("expected outputLimitExceeded, got \(error)")
+        }
+    }
+
+    func testConcurrentRunsNeverMixTheirOutput() async throws {
+        let runner = AssistantProcessRunner(timeout: .seconds(5))
+
+        let outputs = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for index in 0..<32 {
+                group.addTask {
+                    let marker = "assistant-run-\(index)"
+                    let output = try await runner.run(command: "echo", arguments: [marker])
+                    return (index, output)
+                }
+            }
+
+            var collected: [Int: String] = [:]
+            for try await (index, output) in group {
+                collected[index] = output
+            }
+            return collected
+        }
+
+        for index in 0..<32 {
+            XCTAssertEqual(outputs[index], "assistant-run-\(index)")
+        }
     }
 
     /// The query text is a single element of `arguments`, passed straight

@@ -23,6 +23,20 @@ final class FloodlightPanelTests: XCTestCase {
         )
     }
 
+    func testImmediateReopenStartsWithAResetSearchSession() {
+        let model = makeSearchCoordinatorWithInertPresentation()
+        let controller = FloodlightPanelController(model: model)
+        model.query = "stale query"
+        controller.panel.orderFront(nil)
+        defer { controller.panel.orderOut(nil) }
+
+        controller.hide()
+        controller.show()
+
+        XCTAssertEqual(model.query, "")
+        XCTAssertTrue(controller.panel.isVisible)
+    }
+
     func testCommandDigitsOneThroughFiveMapToVisibleFilterSlots() {
         for digit in 1...5 {
             XCTAssertEqual(

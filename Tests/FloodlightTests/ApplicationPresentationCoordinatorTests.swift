@@ -307,7 +307,7 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
     func testAppDelegateSearchConfigurationRestoresSearchAfterClosing() throws {
         let delegate = AppDelegate()
-        delegate.searchDidRequestConfiguration()
+        delegate.showSettingsFromSearch()
         let controller = try XCTUnwrap(activeConfigurationController())
         defer { delegate.hideSearch() }
 

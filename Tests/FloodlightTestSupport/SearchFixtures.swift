@@ -150,7 +150,6 @@ package enum SearchGenerators {
     package static let score = Gen<Int>.frequency([
         (6, .int(in: -5_000...250_000)),
         (2, .element(of: [
-            SearchItemRanking.command,
             SearchItemRanking.keywordEngine,
             SearchItemRanking.calculator,
             SearchItemRanking.application,

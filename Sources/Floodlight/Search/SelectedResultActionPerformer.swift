@@ -82,7 +82,6 @@ final class SelectedResultActionPerformer {
     private let recentStore: RecentStore
     private let trackSelection: TrackSelection
     private let onDismiss: @MainActor () -> Void
-    private let onShowSettings: @MainActor () -> Void
 
     init(
         effects: any SelectedResultActionEffects,
@@ -90,8 +89,7 @@ final class SelectedResultActionPerformer {
         runningApplicationActivator: any RunningApplicationActivating,
         recentStore: RecentStore,
         trackSelection: @escaping TrackSelection,
-        onDismiss: @escaping @MainActor () -> Void,
-        onShowSettings: @escaping @MainActor () -> Void
+        onDismiss: @escaping @MainActor () -> Void
     ) {
         self.effects = effects
         self.assistantRunSession = assistantRunSession
@@ -99,7 +97,6 @@ final class SelectedResultActionPerformer {
         self.recentStore = recentStore
         self.trackSelection = trackSelection
         self.onDismiss = onDismiss
-        self.onShowSettings = onShowSettings
     }
 
     func activate(_ item: SearchItem, query: String) {
@@ -113,10 +110,6 @@ final class SelectedResultActionPerformer {
 
         case let .open(url):
             open(url, for: item, query: query)
-
-        case .showFloodlightSettings:
-            onDismiss()
-            onShowSettings()
 
         case let .askAssistant(command, arguments):
             assistantRunSession.start(AssistantRequest(
@@ -180,8 +173,6 @@ final class SelectedResultActionPerformer {
             value
         case let .open(url):
             url.isFileURL ? url.path : url.absoluteString
-        case .showFloodlightSettings:
-            item.title
         case .askAssistant:
             assistantRunSession.answeredText(for: item.id) ?? item.title
         }

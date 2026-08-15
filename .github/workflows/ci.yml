@@ -100,3 +100,33 @@ jobs:
           if [ -f .build/performance.log ]; then
             grep FLOODLIGHT_BENCH .build/performance.log >> "$GITHUB_STEP_SUMMARY" || true
           fi
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: macos-26
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: AddressSanitizer
+            target: test-address-sanitizer
+            scratch: address-sanitizer
+          - name: ThreadSanitizer
+            target: test-thread-sanitizer
+            scratch: thread-sanitizer
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore sanitizer build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build/${{ matrix.scratch }}
+          key: floodlight-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            floodlight-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-
+
+      - name: Run ${{ matrix.name }}
+        run: make ${{ matrix.target }}

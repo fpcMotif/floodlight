@@ -58,7 +58,7 @@ enum SearchResultProjection {
     struct LocalContext {
         let query: String
         let candidates: [SearchItem]
-        let keywordLookup: [String: KeywordEngine]
+        let keywordRegistry: KeywordEngineRegistry
         let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
         let progress: SearchResultProgress
@@ -67,7 +67,7 @@ enum SearchResultProjection {
         init(
             query: String,
             candidates: [SearchItem],
-            keywordLookup: [String: KeywordEngine],
+            keywordRegistry: KeywordEngineRegistry,
             selectedFilter: SearchResultFilter,
             selection: SearchResultSelection?,
             progress: SearchResultProgress,
@@ -75,7 +75,7 @@ enum SearchResultProjection {
         ) {
             self.query = query
             self.candidates = candidates
-            self.keywordLookup = keywordLookup
+            self.keywordRegistry = keywordRegistry
             self.selectedFilter = selectedFilter
             self.selection = selection
             self.progress = progress
@@ -86,7 +86,7 @@ enum SearchResultProjection {
     struct WebContext {
         let query: String
         let activeEngineID: String
-        let engines: [KeywordEngine]
+        let keywordRegistry: KeywordEngineRegistry
         let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
     }
@@ -128,27 +128,10 @@ enum SearchResultProjection {
     }
 
     private static func projectWeb(_ context: WebContext) -> SearchResultPublication {
-        var rows: [SearchItem] = []
-        var position = 0
-        for activePass in [true, false] {
-            for engine in context.engines
-                where (engine.id == context.activeEngineID) == activePass
-            {
-                if let url = engine.searchURL(for: context.query),
-                   let title = engine.searchTitle(for: context.query)
-                {
-                    rows.append(SearchItem(
-                        id: "web-mode:\(engine.id)",
-                        title: title,
-                        subtitle: "Open in your default browser",
-                        kind: .web,
-                        action: .open(url),
-                        score: SearchItemRanking.keywordEngine - position
-                    ))
-                }
-                position += 1
-            }
-        }
+        let rows = context.keywordRegistry.webModeResults(
+            for: context.query,
+            activeEngineID: context.activeEngineID
+        )
         return SearchResultPublication(
             sourceCandidates: [],
             allRows: rows,
@@ -173,31 +156,21 @@ enum SearchResultProjection {
                 score: SearchItemRanking.calculator
             ))
         }
-        output.append(contentsOf: FloodlightCommandCatalog.search(context.query))
-        if let match = KeywordEngineCatalog.match(context.query, lookup: context.keywordLookup),
-           let item = match.engine.makeSearchItem(remainder: match.remainder)
-        {
+        if let item = context.keywordRegistry.addressedResult(for: context.query) {
             output.append(item)
         }
         output.append(contentsOf: context.candidates)
 
-        let defaultEngine = KeywordEngineCatalog.defaultEngine
         if !context.query.isEmpty,
-           let url = defaultEngine.searchURL(for: context.query),
-           let title = defaultEngine.searchTitle(for: context.query)
+           let fallback = context.keywordRegistry.defaultWebResult(
+               for: context.query,
+               promoted: WebSearchIntent.shouldPromote(
+                   query: context.query,
+                   localMatchCount: context.candidates.count
+               )
+           )
         {
-            let promoted = WebSearchIntent.shouldPromote(
-                query: context.query,
-                localMatchCount: context.candidates.count
-            )
-            output.append(SearchItem(
-                id: "web-search",
-                title: title,
-                subtitle: "Open in your default browser",
-                kind: .web,
-                action: .open(url),
-                score: promoted ? SearchItemRanking.webPromoted : SearchItemRanking.webFallback
-            ))
+            output.append(fallback)
         }
 
         var seen = Set<SearchItem.ID>()

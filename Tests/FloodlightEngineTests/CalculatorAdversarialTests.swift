@@ -14,8 +14,12 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "addition is commutative",
             .double(in: -10_000...10_000), .double(in: -10_000...10_000)
-        ) { a, b in
-            evalEqual(formatExpression(a, "+", b), formatExpression(b, "+", a), accuracy: 1e-6)
+        ) { leftOperand, rightOperand in
+            evalEqual(
+                formatExpression(leftOperand, "+", rightOperand),
+                formatExpression(rightOperand, "+", leftOperand),
+                accuracy: 1e-6
+            )
         }
     }
 
@@ -23,8 +27,12 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "multiplication is commutative",
             .double(in: -10_000...10_000), .double(in: -10_000...10_000)
-        ) { a, b in
-            evalEqual(formatExpression(a, "*", b), formatExpression(b, "*", a), accuracy: 1e-6)
+        ) { leftOperand, rightOperand in
+            evalEqual(
+                formatExpression(leftOperand, "*", rightOperand),
+                formatExpression(rightOperand, "*", leftOperand),
+                accuracy: 1e-6
+            )
         }
     }
 
@@ -32,11 +40,11 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "addition is associative",
             .double(in: -1_000...1_000), .double(in: -1_000...1_000)
-        ) { a, b in
-            let c = a / 2
+        ) { firstValue, secondValue in
+            let thirdValue = firstValue / 2
             return evalEqual(
-                "(\(num(a)) + \(num(b))) + \(num(c))",
-                "\(num(a)) + (\(num(b)) + \(num(c)))",
+                "(\(num(firstValue)) + \(num(secondValue))) + \(num(thirdValue))",
+                "\(num(firstValue)) + (\(num(secondValue)) + \(num(thirdValue)))",
                 accuracy: 0.01
             )
         }
@@ -46,27 +54,27 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "multiplication distributes over addition",
             .double(in: -100...100), .double(in: -100...100)
-        ) { a, b in
-            let c = b / 3
+        ) { multiplier, firstAddend in
+            let secondAddend = firstAddend / 3
             return evalEqual(
-                "\(num(a)) * (\(num(b)) + \(num(c)))",
-                "\(num(a)) * \(num(b)) + \(num(a)) * \(num(c))",
+                "\(num(multiplier)) * (\(num(firstAddend)) + \(num(secondAddend)))",
+                "\(num(multiplier)) * \(num(firstAddend)) + \(num(multiplier)) * \(num(secondAddend))",
                 accuracy: 0.01
             )
         }
     }
 
     func testAdditiveAndMultiplicativeIdentities() throws {
-        try checkProperty("identities hold", .double(in: -10_000...10_000)) { a in
-            evalEqual("\(num(a)) + 0", a, accuracy: 1e-9)
-                && evalEqual("\(num(a)) * 1", a, accuracy: 1e-9)
-                && evalEqual("\(num(a)) * 0", 0, accuracy: 1e-9)
+        try checkProperty("identities hold", .double(in: -10_000...10_000)) { value in
+            evalEqual("\(num(value)) + 0", value, accuracy: 1e-9)
+                && evalEqual("\(num(value)) * 1", value, accuracy: 1e-9)
+                && evalEqual("\(num(value)) * 0", 0, accuracy: 1e-9)
         }
     }
 
     func testDoubleNegationIsIdentity() throws {
-        try checkProperty("--a == a", .double(in: -10_000...10_000)) { a in
-            evalEqual("--\(num(a))", a, accuracy: 1e-9)
+        try checkProperty("--a == a", .double(in: -10_000...10_000)) { value in
+            evalEqual("--\(num(value))", value, accuracy: 1e-9)
         }
     }
 
@@ -74,17 +82,17 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "a - a == 0 and a / a == 1",
             .double(in: 0.5...10_000)
-        ) { a in
-            evalEqual("\(num(a)) - \(num(a))", 0, accuracy: 1e-9)
-                && evalEqual("\(num(a)) / \(num(a))", 1, accuracy: 1e-9)
+        ) { value in
+            evalEqual("\(num(value)) - \(num(value))", 0, accuracy: 1e-9)
+                && evalEqual("\(num(value)) / \(num(value))", 1, accuracy: 1e-9)
         }
     }
 
     func testPowerProperties() throws {
-        try checkProperty("a^1 == a, a^0 == 1", .double(in: 0.5...100)) { a in
-            evalEqual("\(num(a)) ^ 1", a, accuracy: 1e-9)
-                && evalEqual("\(num(a)) ^ 0", 1, accuracy: 1e-9)
-                && evalEqual("\(num(a)) ^ 2", a * a, accuracy: 0.01)
+        try checkProperty("a^1 == a, a^0 == 1", .double(in: 0.5...100)) { base in
+            evalEqual("\(num(base)) ^ 1", base, accuracy: 1e-9)
+                && evalEqual("\(num(base)) ^ 0", 1, accuracy: 1e-9)
+                && evalEqual("\(num(base)) ^ 2", base * base, accuracy: 0.01)
         }
     }
 
@@ -92,11 +100,23 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "precedence and left associativity",
             .double(in: 1...100), .double(in: 1...100)
-        ) { a, b in
-            let c = b / 2
-            return evalEqual("\(num(a)) + \(num(b)) * \(num(c))", a + b * c, accuracy: 0.01)
-                && evalEqual("\(num(a)) - \(num(b)) - \(num(c))", a - b - c, accuracy: 0.01)
-                && evalEqual("\(num(a)) / \(num(b)) / \(num(c))", a / b / c, accuracy: 0.01)
+        ) { firstValue, secondValue in
+            let thirdValue = secondValue / 2
+            return evalEqual(
+                "\(num(firstValue)) + \(num(secondValue)) * \(num(thirdValue))",
+                firstValue + secondValue * thirdValue,
+                accuracy: 0.01
+            )
+                && evalEqual(
+                    "\(num(firstValue)) - \(num(secondValue)) - \(num(thirdValue))",
+                    firstValue - secondValue - thirdValue,
+                    accuracy: 0.01
+                )
+                && evalEqual(
+                    "\(num(firstValue)) / \(num(secondValue)) / \(num(thirdValue))",
+                    firstValue / secondValue / thirdValue,
+                    accuracy: 0.01
+                )
         }
     }
 
@@ -104,8 +124,8 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "(n*k) % k == 0 for integers",
             .int(in: 1...100), .int(in: 2...20)
-        ) { n, k in
-            evalEqual("\(n * k) % \(k)", 0, accuracy: 1e-9)
+        ) { multiplier, divisor in
+            evalEqual("\(multiplier * divisor) % \(divisor)", 0, accuracy: 1e-9)
         }
     }
 
@@ -113,11 +133,23 @@ final class CalculatorAdversarialTests: XCTestCase {
         try checkProperty(
             "whitespace and unicode operators do not change results",
             .double(in: -100...100), .double(in: 0.5...100)
-        ) { a, b in
-            evalEqual("\(num(a))+\(num(b))", "\(num(a))  +  \(num(b))", accuracy: 1e-9)
-                && evalEqual("\(num(a)) × \(num(b))", "\(num(a)) * \(num(b))", accuracy: 1e-9)
-                && evalEqual("\(num(a)) ÷ \(num(b))", "\(num(a)) / \(num(b))", accuracy: 1e-9)
-                && evalEqual("−\(num(a))", "-\(num(a))", accuracy: 1e-9)
+        ) { leftOperand, rightOperand in
+            evalEqual(
+                "\(num(leftOperand))+\(num(rightOperand))",
+                "\(num(leftOperand))  +  \(num(rightOperand))",
+                accuracy: 1e-9
+            )
+                && evalEqual(
+                    "\(num(leftOperand)) × \(num(rightOperand))",
+                    "\(num(leftOperand)) * \(num(rightOperand))",
+                    accuracy: 1e-9
+                )
+                && evalEqual(
+                    "\(num(leftOperand)) ÷ \(num(rightOperand))",
+                    "\(num(leftOperand)) / \(num(rightOperand))",
+                    accuracy: 1e-9
+                )
+                && evalEqual("−\(num(leftOperand))", "-\(num(leftOperand))", accuracy: 1e-9)
         }
     }
 
@@ -346,8 +378,12 @@ final class CalculatorAdversarialTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func formatExpression(_ a: Double, _ op: String, _ b: Double) -> String {
-        "\(num(a)) \(op) \(num(b))"
+    private func formatExpression(
+        _ leftOperand: Double,
+        _ operatorSymbol: String,
+        _ rightOperand: Double
+    ) -> String {
+        "\(num(leftOperand)) \(operatorSymbol) \(num(rightOperand))"
     }
 
     /// `String(Double)` switches to scientific notation below 1e-4, which
@@ -356,12 +392,12 @@ final class CalculatorAdversarialTests: XCTestCase {
         if value == value.rounded(), abs(value) < 1e15 {
             return String(Int64(value))
         }
-        var s = String(format: "%.10f", value)
-        while s.hasSuffix("0") {
-            s.removeLast()
+        var formatted = String(format: "%.10f", value)
+        while formatted.hasSuffix("0") {
+            formatted.removeLast()
         }
-        if s.hasSuffix(".") { s.removeLast() }
-        return s
+        if formatted.hasSuffix(".") { formatted.removeLast() }
+        return formatted
     }
 
     /// Compares two expression strings (or an expression and an expected

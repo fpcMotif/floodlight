@@ -40,8 +40,7 @@ final class SearchViewRenderingTests: XCTestCase {
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
-            onDismiss: {},
-            onShowSettings: {}
+            onDismiss: {}
         )
     }
 
@@ -137,6 +136,25 @@ final class SearchViewRenderingTests: XCTestCase {
         XCTAssertEqual(image.height, Int(FloodlightMetrics.expandedPanelHeight))
     }
 
+    func testTheWebModePanelRendersWithoutTheFilterBar() throws {
+        // Web mode publishes no filter options, so the section drops the
+        // chip bar and hands its height to the results — render that path
+        // at the panel's real size to catch a layout that traps.
+        let coordinator = try makeCoordinator()
+        coordinator.query = "yt lofi"
+        coordinator.handleTab()
+
+        XCTAssertTrue(coordinator.filterOptions.isEmpty)
+        XCTAssertFalse(coordinator.results.isEmpty)
+        let image = try render(
+            SearchView(model: coordinator),
+            width: FloodlightMetrics.panelWidth,
+            height: FloodlightMetrics.expandedPanelHeight
+        )
+        XCTAssertEqual(image.width, Int(FloodlightMetrics.panelWidth))
+        XCTAssertEqual(image.height, Int(FloodlightMetrics.expandedPanelHeight))
+    }
+
     func testTheEmptyFilterStateRenders() throws {
         // A filter with no matches is the one branch that renders
         // `EmptyResultsView` instead of the list.
@@ -174,10 +192,8 @@ final class SearchViewRenderingTests: XCTestCase {
     }
 
     func testTheLargestReachableResultSetRendersWithinBudget() async throws {
-        // The list virtualizes past seven rows, so rendering the widest set
-        // the pipeline can actually publish is how a layout that is
-        // accidentally O(n²) shows up as a timeout rather than as a slow
-        // panel in the field.
+        // Rendering the widest set the pipeline can publish catches a layout
+        // that is accidentally O(n²) before it reaches the panel.
         //
         // Note the ceiling: the coordinator pages each source (12
         // applications, 24 settings), so the panel tops out well below the
@@ -206,9 +222,6 @@ final class SearchViewRenderingTests: XCTestCase {
             coordinator.results.count > FloodlightMetrics.maximumVisibleResults
         }
         XCTAssertGreaterThan(coordinator.results.count, FloodlightMetrics.maximumVisibleResults)
-        XCTAssertTrue(
-            FloodlightMetrics.shouldVirtualizeResults(count: coordinator.results.count)
-        )
 
         let start = ContinuousClock.now
         _ = try render(
@@ -397,6 +410,18 @@ final class SearchViewRenderingTests: XCTestCase {
         _ = try render(KeyChip(symbolName: "not.a.real.symbol.name"), width: 40, height: 24)
     }
 
+    func testEveryShippingEngineSymbolResolvesToARealSFImage() {
+        // An unknown symbol name renders as an empty tile — the row looks
+        // broken rather than merely plain, so the catalog's names are
+        // pinned against NSImage's resolver.
+        for engine in KeywordEngineCatalog.all {
+            XCTAssertNotNil(
+                NSImage(systemSymbolName: engine.symbolName, accessibilityDescription: nil),
+                "\(engine.id)'s symbolName must be a real SF Symbol"
+            )
+        }
+    }
+
     // MARK: - Accessibility
 
     func testEveryResultKindExposesANonEmptyAccessibilityLabel() {
@@ -460,17 +485,5 @@ final class SearchViewRenderingTests: XCTestCase {
                 .resultRowHeight
         )
         XCTAssertGreaterThan(resultsHeight, 0)
-    }
-
-    func testVirtualizationKicksInExactlyPastTheVisibleRowCount() {
-        for count in 0...FloodlightMetrics.maximumVisibleResults {
-            XCTAssertFalse(FloodlightMetrics.shouldVirtualizeResults(count: count), "\(count)")
-        }
-        XCTAssertTrue(
-            FloodlightMetrics.shouldVirtualizeResults(
-                count: FloodlightMetrics.maximumVisibleResults + 1
-            )
-        )
-        XCTAssertTrue(FloodlightMetrics.shouldVirtualizeResults(count: 80))
     }
 }

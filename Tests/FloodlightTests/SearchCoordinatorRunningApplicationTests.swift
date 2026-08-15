@@ -35,8 +35,7 @@ final class SearchCoordinatorRunningApplicationTests: XCTestCase {
             assistantRunner: ScriptedAssistantRunner(),
             runningApplicationActivator: runningApplicationActivator,
             actionEffects: ScriptedSelectedResultActionEffects(),
-            onDismiss: onDismiss,
-            onShowSettings: {}
+            onDismiss: onDismiss
         )
     }
 

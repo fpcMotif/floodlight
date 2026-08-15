@@ -27,6 +27,7 @@ final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
     private let quickLook = QuickLookController()
+
     // Opaque observer tokens, handed back by AppKit as `Any` and
     // `NSObjectProtocol` — neither of which is Sendable. They are written and
     // read only on the main actor, plus once from `deinit`, which runs after
@@ -34,6 +35,7 @@ final class FloodlightPanelController {
     private nonisolated(unsafe) var localKeyMonitor: Any?
     private nonisolated(unsafe) var resignActiveObservation: NSObjectProtocol?
     private nonisolated(unsafe) var accessibilityDisplayObservation: NSObjectProtocol?
+    private var appliedGlassSlabState: Bool?
 
     init(model: SearchCoordinator) {
         self.model = model
@@ -48,16 +50,17 @@ final class FloodlightPanelController {
             backing: .buffered,
             defer: true
         )
-        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
-        panel.hidesOnDeactivate = true
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        panel.animationBehavior = .utilityWindow
+        panel.animationBehavior = .none
         panel.keyEquivalentHandler = { [weak self] event in
             self?.handleCommandKeyEquivalent(event) ?? false
         }
@@ -119,6 +122,8 @@ final class FloodlightPanelController {
     /// swap untouched; only the surrounding material changes.
     private func applyGlassSlabState() {
         let usesGlassSlab = Self.shouldUseGlassSlab()
+        guard usesGlassSlab != appliedGlassSlabState else { return }
+        appliedGlassSlabState = usesGlassSlab
         panel.contentViewController = Self.makeContentController(
             model: model,
             usesGlassSlab: usesGlassSlab
@@ -152,7 +157,9 @@ final class FloodlightPanelController {
         model: SearchCoordinator,
         usesGlassSlab: Bool
     ) -> NSViewController {
-        let hostingController = NSHostingController(rootView: SearchView(model: model))
+        let hostingController = NSHostingController(
+            rootView: SearchView(model: model, usesGlassSlab: usesGlassSlab)
+        )
         guard #available(macOS 26.0, *), usesGlassSlab else {
             return hostingController
         }
@@ -166,30 +173,6 @@ final class FloodlightPanelController {
         glassController.view = glassView
         glassController.addChild(hostingController)
         return glassController
-    }
-
-    @available(macOS 26.0, *)
-    private static func makeCapsuleMask() -> NSImage {
-        let diameter = FloodlightMetrics.cornerRadius * 2
-        let size = NSSize(width: diameter, height: diameter)
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor.white.setFill()
-            NSBezierPath(
-                roundedRect: rect,
-                xRadius: FloodlightMetrics.cornerRadius,
-                yRadius: FloodlightMetrics.cornerRadius
-            ).fill()
-            return true
-        }
-        let capInset = FloodlightMetrics.cornerRadius - 1
-        image.capInsets = NSEdgeInsets(
-            top: capInset,
-            left: capInset,
-            bottom: capInset,
-            right: capInset
-        )
-        image.resizingMode = .stretch
-        return image
     }
 
     func toggle() {
@@ -214,21 +197,20 @@ final class FloodlightPanelController {
 
     func show() {
         let signpost = FloodlightPerformance.begin("ShowPanel")
+        defer { FloodlightPerformance.end("ShowPanel", id: signpost) }
         positionOnActiveScreen()
         model.prepareForPresentation()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async {
-            FloodlightPerformance.end("ShowPanel", id: signpost)
-        }
+        panel.makeKey()
     }
 
     func hide() {
         let signpost = FloodlightPerformance.begin("HidePanel")
+        defer { FloodlightPerformance.end("HidePanel", id: signpost) }
+        quickLook.close()
         panel.orderOut(nil)
         model.reset()
-        quickLook.close()
-        FloodlightPerformance.end("HidePanel", id: signpost)
     }
 
     private func positionOnActiveScreen() {
@@ -270,11 +252,8 @@ final class FloodlightPanelController {
         }
     }
 
-    /// Grows or shrinks the panel instead of snapping between heights. Under
-    /// Reduce Motion the resize itself is instant — no sliding or growing —
-    /// because that spatial movement is exactly what Reduce Motion asks to
-    /// remove; `SearchView`'s content crossfade is the substitute motion,
-    /// not a faster version of this one.
+    /// Grows or shrinks the visible panel without slowing result publication.
+    /// Hidden panels and Reduce Motion use the final frame immediately.
     private func resize(to height: CGFloat) {
         guard abs(panel.frame.height - height) > 0.5 else { return }
         var frame = panel.frame
@@ -282,14 +261,16 @@ final class FloodlightPanelController {
         frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
         frame.origin.y = top - height
 
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard panel.isVisible,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        else {
             panel.setFrame(frame, display: false, animate: false)
             return
         }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
             panel.animator().setFrame(frame, display: true)
         }
     }

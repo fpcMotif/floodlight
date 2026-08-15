@@ -39,9 +39,9 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b in
-            let lhs = Calculator.evaluate("\(formatNum(a)) + \(formatNum(b))")
-            let rhs = Calculator.evaluate("\(formatNum(b)) + \(formatNum(a))")
+        ) { left, right in
+            let lhs = Calculator.evaluate("\(formatNum(left)) + \(formatNum(right))")
+            let rhs = Calculator.evaluate("\(formatNum(right)) + \(formatNum(left))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -53,9 +53,9 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b in
-            let lhs = Calculator.evaluate("\(formatNum(a)) * \(formatNum(b))")
-            let rhs = Calculator.evaluate("\(formatNum(b)) * \(formatNum(a))")
+        ) { left, right in
+            let lhs = Calculator.evaluate("\(formatNum(left)) * \(formatNum(right))")
+            let rhs = Calculator.evaluate("\(formatNum(right)) * \(formatNum(left))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -70,9 +70,13 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b, c in
-            let lhs = Calculator.evaluate("(\(formatNum(a)) + \(formatNum(b))) + \(formatNum(c))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) + (\(formatNum(b)) + \(formatNum(c)))")
+        ) { first, second, third in
+            let lhs = Calculator.evaluate(
+                "(\(formatNum(first)) + \(formatNum(second))) + \(formatNum(third))"
+            )
+            let rhs = Calculator.evaluate(
+                "\(formatNum(first)) + (\(formatNum(second)) + \(formatNum(third)))"
+            )
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -85,9 +89,13 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b, c in
-            let lhs = Calculator.evaluate("(\(formatNum(a)) * \(formatNum(b))) * \(formatNum(c))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) * (\(formatNum(b)) * \(formatNum(c)))")
+        ) { first, second, third in
+            let lhs = Calculator.evaluate(
+                "(\(formatNum(first)) * \(formatNum(second))) * \(formatNum(third))"
+            )
+            let rhs = Calculator.evaluate(
+                "\(formatNum(first)) * (\(formatNum(second)) * \(formatNum(third)))"
+            )
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -102,10 +110,15 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b, c in
-            let lhs = Calculator.evaluate("\(formatNum(a)) * (\(formatNum(b)) + \(formatNum(c)))")
+        ) { multiplier, firstAddend, secondAddend in
+            let lhs = Calculator.evaluate(
+                "\(formatNum(multiplier)) * (\(formatNum(firstAddend)) + \(formatNum(secondAddend)))"
+            )
             let rhs = Calculator
-                .evaluate("\(formatNum(a)) * \(formatNum(b)) + \(formatNum(a)) * \(formatNum(c))")
+                .evaluate(
+                    "\(formatNum(multiplier)) * \(formatNum(firstAddend))"
+                        + " + \(formatNum(multiplier)) * \(formatNum(secondAddend))"
+                )
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-4
         }
@@ -118,9 +131,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "a + 0 == a",
             smallDouble,
             runs: 400
-        ) { a in
-            guard let result = Calculator.evaluate("\(formatNum(a)) + 0") else { return true }
-            return abs(result - a) < 1e-6
+        ) { operand in
+            guard let result = Calculator.evaluate("\(formatNum(operand)) + 0") else { return true }
+            return abs(result - operand) < 1e-6
         }
     }
 
@@ -129,9 +142,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "a * 1 == a",
             smallDouble,
             runs: 400
-        ) { a in
-            guard let result = Calculator.evaluate("\(formatNum(a)) * 1") else { return true }
-            return abs(result - a) < 1e-6
+        ) { operand in
+            guard let result = Calculator.evaluate("\(formatNum(operand)) * 1") else { return true }
+            return abs(result - operand) < 1e-6
         }
     }
 
@@ -140,9 +153,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "a - 0 == a",
             smallDouble,
             runs: 400
-        ) { a in
-            guard let result = Calculator.evaluate("\(formatNum(a)) - 0") else { return true }
-            return abs(result - a) < 1e-6
+        ) { operand in
+            guard let result = Calculator.evaluate("\(formatNum(operand)) - 0") else { return true }
+            return abs(result - operand) < 1e-6
         }
     }
 
@@ -153,9 +166,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "-(-a) == a",
             smallDouble,
             runs: 400
-        ) { a in
-            guard let result = Calculator.evaluate("-(-\(formatNum(a)))") else { return true }
-            return abs(result - a) < 1e-6
+        ) { operand in
+            guard let result = Calculator.evaluate("-(-\(formatNum(operand)))") else { return true }
+            return abs(result - operand) < 1e-6
         }
     }
 
@@ -164,9 +177,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "-a == 0 - a",
             smallDouble,
             runs: 400
-        ) { a in
-            let lhs = Calculator.evaluate("-\(formatNum(a))")
-            let rhs = Calculator.evaluate("0 - \(formatNum(a))")
+        ) { operand in
+            let lhs = Calculator.evaluate("-\(formatNum(operand))")
+            let rhs = Calculator.evaluate("0 - \(formatNum(operand))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -179,9 +192,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "a ^ 2 == a * a",
             smallDouble,
             runs: 400
-        ) { a in
-            let lhs = Calculator.evaluate("\(formatNum(a)) ^ 2")
-            let rhs = Calculator.evaluate("\(formatNum(a)) * \(formatNum(a))")
+        ) { operand in
+            let lhs = Calculator.evaluate("\(formatNum(operand)) ^ 2")
+            let rhs = Calculator.evaluate("\(formatNum(operand)) * \(formatNum(operand))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-4
         }
@@ -192,9 +205,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "a ^ 1 == a",
             smallDouble,
             runs: 400
-        ) { a in
-            guard let result = Calculator.evaluate("\(formatNum(a)) ^ 1") else { return true }
-            return abs(result - a) < 1e-6
+        ) { operand in
+            guard let result = Calculator.evaluate("\(formatNum(operand)) ^ 1") else { return true }
+            return abs(result - operand) < 1e-6
         }
     }
 
@@ -206,11 +219,13 @@ final class CalculatorPropertyTests: XCTestCase {
             positiveDouble,
             positiveDouble,
             runs: 400
-        ) { a, b in
-            guard let result = Calculator.evaluate("\(formatNum(a)) % \(formatNum(b))") else {
+        ) { dividend, divisor in
+            guard let result = Calculator.evaluate(
+                "\(formatNum(dividend)) % \(formatNum(divisor))"
+            ) else {
                 return true
             }
-            return result < b && result >= 0
+            return result < divisor && result >= 0
         }
     }
 
@@ -227,9 +242,11 @@ final class CalculatorPropertyTests: XCTestCase {
             factor,
             divisor,
             runs: 400
-        ) { a, b in
-            let product = a * b
-            guard let result = Calculator.evaluate("\(product) % \(b)") else { return false }
+        ) { generatedFactor, generatedDivisor in
+            let product = generatedFactor * generatedDivisor
+            guard let result = Calculator.evaluate("\(product) % \(generatedDivisor)") else {
+                return false
+            }
             return result == 0
         }
     }
@@ -252,14 +269,20 @@ final class CalculatorPropertyTests: XCTestCase {
         let spacingGen = Gen<String>.element(of: ["", " ", "  ", "\t", " \t "])
         try checkProperty(
             "a <sp> + <sp> b == a + b regardless of spacing",
-            smallDouble,
-            smallDouble,
-            spacingGen,
-            spacingGen,
+            PropertyGenerators4(
+                first: smallDouble,
+                second: smallDouble,
+                third: spacingGen,
+                fourth: spacingGen
+            ),
             runs: 400
-        ) { a, b, leftGap, rightGap in
-            let lhs = Calculator.evaluate("\(formatNum(a))\(leftGap)+\(rightGap)\(formatNum(b))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) + \(formatNum(b))")
+        ) { leftOperand, rightOperand, leftGap, rightGap in
+            let lhs = Calculator.evaluate(
+                "\(formatNum(leftOperand))\(leftGap)+\(rightGap)\(formatNum(rightOperand))"
+            )
+            let rhs = Calculator.evaluate(
+                "\(formatNum(leftOperand)) + \(formatNum(rightOperand))"
+            )
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -269,14 +292,21 @@ final class CalculatorPropertyTests: XCTestCase {
         let paddingGen = Gen<String>.element(of: ["", "  ", "\n", " \n "])
         try checkProperty(
             "padded 'a + b' == 'a + b'",
-            smallDouble,
-            smallDouble,
-            paddingGen,
-            paddingGen,
+            PropertyGenerators4(
+                first: smallDouble,
+                second: smallDouble,
+                third: paddingGen,
+                fourth: paddingGen
+            ),
             runs: 400
-        ) { a, b, lead, trail in
-            let lhs = Calculator.evaluate("\(lead)\(formatNum(a)) + \(formatNum(b))\(trail)")
-            let rhs = Calculator.evaluate("\(formatNum(a)) + \(formatNum(b))")
+        ) { leftOperand, rightOperand, leadingPadding, trailingPadding in
+            let lhs = Calculator.evaluate(
+                "\(leadingPadding)\(formatNum(leftOperand))"
+                    + " + \(formatNum(rightOperand))\(trailingPadding)"
+            )
+            let rhs = Calculator.evaluate(
+                "\(formatNum(leftOperand)) + \(formatNum(rightOperand))"
+            )
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -290,9 +320,9 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             smallDouble,
             runs: 400
-        ) { a, b in
-            let lhs = Calculator.evaluate("\(formatNum(a)) × \(formatNum(b))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) * \(formatNum(b))")
+        ) { left, right in
+            let lhs = Calculator.evaluate("\(formatNum(left)) × \(formatNum(right))")
+            let rhs = Calculator.evaluate("\(formatNum(left)) * \(formatNum(right))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -304,9 +334,9 @@ final class CalculatorPropertyTests: XCTestCase {
             smallDouble,
             nonzeroDouble,
             runs: 400
-        ) { a, b in
-            let lhs = Calculator.evaluate("\(formatNum(a)) ÷ \(formatNum(b))")
-            let rhs = Calculator.evaluate("\(formatNum(a)) / \(formatNum(b))")
+        ) { dividend, divisor in
+            let lhs = Calculator.evaluate("\(formatNum(dividend)) ÷ \(formatNum(divisor))")
+            let rhs = Calculator.evaluate("\(formatNum(dividend)) / \(formatNum(divisor))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -317,9 +347,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "−a == 0 - a",
             smallDouble,
             runs: 400
-        ) { a in
-            let lhs = Calculator.evaluate("−\(formatNum(a))")
-            let rhs = Calculator.evaluate("0 - \(formatNum(a))")
+        ) { operand in
+            let lhs = Calculator.evaluate("−\(formatNum(operand))")
+            let rhs = Calculator.evaluate("0 - \(formatNum(operand))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -332,9 +362,9 @@ final class CalculatorPropertyTests: XCTestCase {
             "'1,000 + a' == '1000 + a'",
             smallDouble,
             runs: 400
-        ) { a in
-            let lhs = Calculator.evaluate("1,000 + \(formatNum(a))")
-            let rhs = Calculator.evaluate("1000 + \(formatNum(a))")
+        ) { operand in
+            let lhs = Calculator.evaluate("1,000 + \(formatNum(operand))")
+            let rhs = Calculator.evaluate("1000 + \(formatNum(operand))")
             guard let lhs, let rhs else { return true }
             return abs(lhs - rhs) < 1e-6
         }
@@ -397,37 +427,86 @@ private func checkProperty<A, B, C>(
     }
 }
 
-/// Four-argument form, for the whitespace-invariance properties that vary
-/// two operands and two padding strings.
-private func checkProperty<A, B, C, D>(
+private struct PropertyGenerators4<
+    First: Sendable,
+    Second: Sendable,
+    Third: Sendable,
+    Fourth: Sendable
+>: Sendable {
+    let first: Gen<First>
+    let second: Gen<Second>
+    let third: Gen<Third>
+    let fourth: Gen<Fourth>
+}
+
+private struct PropertyValues4<
+    First: Sendable,
+    Second: Sendable,
+    Third: Sendable,
+    Fourth: Sendable
+>: Sendable {
+    let first: First
+    let second: Second
+    let third: Third
+    let fourth: Fourth
+}
+
+/// Four-value form for whitespace properties. Named values keep the generator
+/// and shrink paths clear without a large tuple or a wide helper signature.
+private func checkProperty<A: Sendable, B: Sendable, C: Sendable, D: Sendable>(
     _ description: String,
-    _ first: Gen<A>,
-    _ second: Gen<B>,
-    _ third: Gen<C>,
-    _ fourth: Gen<D>,
+    _ generators: PropertyGenerators4<A, B, C, D>,
     runs: Int = defaultPropertyRuns,
     seed: UInt64 = 0xF100_D116_4700_0004,
     file: StaticString = #fileID,
     line: UInt = #line,
     _ property: (A, B, C, D) throws -> Bool
 ) throws {
-    let quad = Gen<(A, B, C, D)>(
+    let values = Gen<PropertyValues4<A, B, C, D>>(
         generate: { rng in
-            (
-                first.generate(&rng),
-                second.generate(&rng),
-                third.generate(&rng),
-                fourth.generate(&rng)
+            PropertyValues4(
+                first: generators.first.generate(&rng),
+                second: generators.second.generate(&rng),
+                third: generators.third.generate(&rng),
+                fourth: generators.fourth.generate(&rng)
             )
         },
-        shrink: { tuple in
-            first.shrink(tuple.0).map { ($0, tuple.1, tuple.2, tuple.3) }
-                + second.shrink(tuple.1).map { (tuple.0, $0, tuple.2, tuple.3) }
-                + third.shrink(tuple.2).map { (tuple.0, tuple.1, $0, tuple.3) }
-                + fourth.shrink(tuple.3).map { (tuple.0, tuple.1, tuple.2, $0) }
+        shrink: { values in
+            generators.first.shrink(values.first).map {
+                PropertyValues4(
+                    first: $0,
+                    second: values.second,
+                    third: values.third,
+                    fourth: values.fourth
+                )
+            }
+                + generators.second.shrink(values.second).map {
+                    PropertyValues4(
+                        first: values.first,
+                        second: $0,
+                        third: values.third,
+                        fourth: values.fourth
+                    )
+                }
+                + generators.third.shrink(values.third).map {
+                    PropertyValues4(
+                        first: values.first,
+                        second: values.second,
+                        third: $0,
+                        fourth: values.fourth
+                    )
+                }
+                + generators.fourth.shrink(values.fourth).map {
+                    PropertyValues4(
+                        first: values.first,
+                        second: values.second,
+                        third: values.third,
+                        fourth: $0
+                    )
+                }
         }
     )
-    try checkProperty(description, quad, runs: runs, seed: seed, file: file, line: line) {
-        try property($0.0, $0.1, $0.2, $0.3)
+    try checkProperty(description, values, runs: runs, seed: seed, file: file, line: line) {
+        try property($0.first, $0.second, $0.third, $0.fourth)
     }
 }

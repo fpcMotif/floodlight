@@ -22,8 +22,7 @@ mouse.
 - Persistent FFF frecency and query history
 - FFF-ranked application search via a package-marker index
 - Native System Settings search
-- Searchable Floodlight settings for shortcuts, permissions, and scope
-- Arithmetic with precedence, parentheses, powers, and percentages
+- Arithmetic with precedence, powers, percentages, and unit conversions
 - Web-search fallback in the default browser
 - Open, Finder reveal, Quick Look, copy, and drag actions
 - Configurable indexing scope and manual index rebuild
@@ -197,8 +196,9 @@ elsewhere inside the selected scope are also recognized by the main FFF index.
 
 Floodlight indexes the current user's home directory by default. Change the
 scope with `⌘L`, or from the menu-bar flashlight. The main file
-index is rebuilt in memory at launch. Persistent FFF history, frecency data, and
-private app markers stay on the Mac under
+index uses FFF's native macOS scanner and file-system watcher. Startup, rebuild,
+and scope changes wait until the new snapshot is searchable before results are
+marked settled. Persistent FFF history, frecency data, and private app markers stay on the Mac under
 `~/Library/Application Support/Floodlight`.
 
 macOS privacy rules still apply. To search protected locations, grant Floodlight

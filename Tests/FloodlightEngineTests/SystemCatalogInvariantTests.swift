@@ -602,9 +602,9 @@ final class SystemCatalogInvariantTests: XCTestCase {
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
 
         let observed = ConcurrentBag<Bool>()
-        let refresher = Task.detached {
+        let refresher = Task.detached { [discovery, catalog, fixtures = Self.fixtures] in
             for round in 0..<40 {
-                discovery.replace(with: round.isMultiple(of: 2) ? Self.fixtures : [])
+                discovery.replace(with: round.isMultiple(of: 2) ? fixtures : [])
                 _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
             }
         }

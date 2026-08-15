@@ -1,6 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
+import os
 import XCTest
 
 /// The `Catalog` seam itself: the protocol's default implementations, the
@@ -16,7 +17,7 @@ final class CatalogContractTests: XCTestCase {
     /// A catalog that implements only what the protocol *requires*, so the
     /// defaults supplied by the protocol extension are what get tested.
     private final class MinimalCatalog: Catalog, @unchecked Sendable {
-        private let lock = NSLock()
+        private let lock = OSAllocatedUnfairLock(initialState: ())
         private(set) var lastLimit: Int?
         private(set) var lastMinimumInterval: TimeInterval?
         private(set) var lastForceDiscovery: Bool?
@@ -27,17 +28,17 @@ final class CatalogContractTests: XCTestCase {
             minimumInterval: TimeInterval,
             forceDiscovery: Bool
         ) async throws -> Bool {
-            lock.lock()
-            lastMinimumInterval = minimumInterval
-            lastForceDiscovery = forceDiscovery
-            lock.unlock()
+            lock.withLock { _ in
+                lastMinimumInterval = minimumInterval
+                lastForceDiscovery = forceDiscovery
+            }
             return true
         }
 
         func immediatePage(for query: String, limit: Int) -> SearchItemPage {
-            lock.lock()
-            lastLimit = limit
-            lock.unlock()
+            lock.withLock { _ in
+                lastLimit = limit
+            }
             return SearchItemPage(items: [], totalMatched: 0)
         }
     }
@@ -286,9 +287,8 @@ final class CatalogContractTests: XCTestCase {
 
     func testFingerprintingManyPathsConcurrentlyIsSafe() throws {
         let tree = try TemporaryTree(label: "FingerprintConcurrentTests")
-        var paths: [String] = []
-        for index in 0..<20 {
-            try paths.append(tree.makeDirectory("dir-\(index)").path)
+        let paths = try (0..<20).map { index in
+            try tree.makeDirectory("dir-\(index)").path
         }
         let counts = ConcurrentBag<Int>()
 

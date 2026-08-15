@@ -20,6 +20,7 @@ package protocol AssistantProcessRunning: Sendable {
 package enum AssistantProcessError: Error, Equatable, Sendable {
     case executableNotFound(String)
     case nonZeroExit(status: Int32, message: String)
+    case outputLimitExceeded(limit: Int)
     case timedOut
 }
 
@@ -42,9 +43,66 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
     private static let terminationGracePeriod: Duration = .seconds(2)
 
     private let timeout: Duration
+    private let maxOutputBytes: Int
 
-    package init(timeout: Duration = .seconds(45)) {
+    private struct CapturedOutput: Sendable {
+        var stdout = Data()
+        var stderr = Data()
+        var storedByteCount = 0
+        var exceededLimit = false
+
+        mutating func append(
+            _ chunk: Data,
+            toStdout: Bool,
+            limit: Int
+        ) -> Bool {
+            guard !exceededLimit else { return false }
+            let remaining = max(0, limit - storedByteCount)
+            let storedCount = min(remaining, chunk.count)
+            if storedCount > 0 {
+                if toStdout {
+                    stdout.append(contentsOf: chunk.prefix(storedCount))
+                } else {
+                    stderr.append(contentsOf: chunk.prefix(storedCount))
+                }
+                storedByteCount += storedCount
+            }
+            guard storedCount < chunk.count else { return false }
+            exceededLimit = true
+            return true
+        }
+    }
+
+    private struct OutputDrainer: Sendable {
+        let process: Process
+        let capturedOutput: OSAllocatedUnfairLock<CapturedOutput>
+        let limit: Int
+        let group: DispatchGroup
+        let queue: DispatchQueue
+
+        func start(_ handle: FileHandle, toStdout: Bool) {
+            queue.async {
+                defer { group.leave() }
+                while let chunk = try? handle.read(upToCount: 16 * 1_024),
+                      !chunk.isEmpty
+                {
+                    let exceeded = capturedOutput.withLock { captured in
+                        captured.append(chunk, toStdout: toStdout, limit: limit)
+                    }
+                    if exceeded, process.isRunning {
+                        process.terminate()
+                    }
+                }
+            }
+        }
+    }
+
+    package init(
+        timeout: Duration = .seconds(45),
+        maxOutputBytes: Int = 256 * 1_024
+    ) {
         self.timeout = timeout
+        self.maxOutputBytes = max(1, maxOutputBytes)
     }
 
     package func isAvailable(command: String) async -> Bool {
@@ -58,11 +116,13 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         return try await Self.run(
             executableURL: executableURL,
             arguments: arguments,
-            timeout: timeout
+            timeout: timeout,
+            maxOutputBytes: maxOutputBytes
         )
     }
 
     package static func resolveExecutable(named command: String) async -> URL? {
+        guard isBareExecutableName(command) else { return nil }
         let fileManager = FileManager.default
         for directory in commonDirectories {
             let candidate = URL(fileURLWithPath: directory).appendingPathComponent(command)
@@ -76,7 +136,8 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         guard let loginPath = try? await run(
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
             arguments: ["-l", "-c", "echo -n \"$PATH\""],
-            timeout: .seconds(5)
+            timeout: .seconds(5),
+            maxOutputBytes: 64 * 1_024
         ) else {
             return nil
         }
@@ -90,10 +151,23 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         return nil
     }
 
+    private static func isBareExecutableName(_ command: String) -> Bool {
+        !command.isEmpty && command != "." && command != ".." && command.utf8.allSatisfy { byte in
+            byte >= 0x41 && byte <= 0x5A
+                || byte >= 0x61 && byte <= 0x7A
+                || byte >= 0x30 && byte <= 0x39
+                || byte == 0x2D
+                || byte == 0x2E
+                || byte == 0x5F
+                || byte == 0x2B
+        }
+    }
+
     private static func run(
         executableURL: URL,
         arguments: [String],
-        timeout: Duration
+        timeout: Duration,
+        maxOutputBytes: Int
     ) async throws -> String {
         let process = Process()
         process.executableURL = executableURL
@@ -102,6 +176,21 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+
+        let capturedOutput = OSAllocatedUnfairLock(initialState: CapturedOutput())
+        let drains = DispatchGroup()
+        let drainQueue = DispatchQueue(
+            label: "com.floodlight.assistant-output",
+            qos: .userInitiated,
+            attributes: .concurrent
+        )
+        let drainer = OutputDrainer(
+            process: process,
+            capturedOutput: capturedOutput,
+            limit: maxOutputBytes,
+            group: drains,
+            queue: drainQueue
+        )
 
         // `Process.terminate()` raises on a process that was never
         // launched, and both the watchdog and cancellation can reach for it
@@ -141,36 +230,30 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
                 }
 
                 process.terminationHandler = { finished in
-                    watchdog.cancel()
-                    let output = String(
-                        data: stdout.fileHandleForReading.readDataToEndOfFile(),
-                        encoding: .utf8
-                    ) ?? ""
-                    guard finished.terminationStatus == 0 else {
-                        let message = String(
-                            data: stderr.fileHandleForReading.readDataToEndOfFile(),
-                            encoding: .utf8
-                        ) ?? ""
+                    drains.notify(queue: drainQueue) {
+                        watchdog.cancel()
+                        let captured = capturedOutput.withLock { $0 }
                         resumeOnce(
                             continuation,
-                            with: .failure(
-                                AssistantProcessError.nonZeroExit(
-                                    status: finished.terminationStatus,
-                                    message: message.trimmingCharacters(in: .whitespacesAndNewlines)
-                                )
+                            with: processResult(
+                                status: finished.terminationStatus,
+                                captured: captured,
+                                limit: maxOutputBytes
                             )
                         )
-                        return
                     }
-                    resumeOnce(
-                        continuation,
-                        with: .success(output.trimmingCharacters(in: .whitespacesAndNewlines))
-                    )
                 }
 
                 do {
+                    drains.enter()
+                    drains.enter()
                     try process.run()
+
+                    drainer.start(stdout.fileHandleForReading, toStdout: true)
+                    drainer.start(stderr.fileHandleForReading, toStdout: false)
                 } catch {
+                    drains.leave()
+                    drains.leave()
                     watchdog.cancel()
                     resumeOnce(continuation, with: .failure(error))
                 }
@@ -179,5 +262,26 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
             guard process.isRunning else { return }
             process.terminate()
         }
+    }
+
+    private static func processResult(
+        status: Int32,
+        captured: CapturedOutput,
+        limit: Int
+    ) -> Result<String, Error> {
+        if captured.exceededLimit {
+            return .failure(AssistantProcessError.outputLimitExceeded(limit: limit))
+        }
+        guard status == 0 else {
+            let message = String(data: captured.stderr, encoding: .utf8) ?? ""
+            return .failure(
+                AssistantProcessError.nonZeroExit(
+                    status: status,
+                    message: message.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+        }
+        let output = String(data: captured.stdout, encoding: .utf8) ?? ""
+        return .success(output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

@@ -48,8 +48,7 @@ extension SearchMode {
         from mode: SearchMode,
         query: String,
         event: SearchModeEvent,
-        engines: [KeywordEngine] = KeywordEngineCatalog.all,
-        defaultEngine: KeywordEngine = KeywordEngineCatalog.defaultEngine
+        registry: KeywordEngineRegistry = KeywordEngineCatalog.initialRegistry
     ) -> (mode: SearchMode, query: String) {
         switch event {
         case .reset:
@@ -57,11 +56,11 @@ extension SearchMode {
 
         case .tab:
             guard case .local = mode else { return (mode, query) }
-            return entered(query: query, engines: engines, defaultEngine: defaultEngine)
+            return entered(query: query, registry: registry)
 
         case .shiftTab, .escape, .backspaceOnEmptyQuery:
             guard case let .web(context) = mode else { return (mode, query) }
-            return (.local, exitFieldText(for: context, query: query, engines: engines))
+            return (.local, exitFieldText(for: context, query: query, registry: registry))
         }
     }
 
@@ -72,35 +71,23 @@ extension SearchMode {
     /// default engine's mode carrying the query unchanged.
     private static func entered(
         query: String,
-        engines: [KeywordEngine],
-        defaultEngine: KeywordEngine
+        registry: KeywordEngineRegistry
     ) -> (mode: SearchMode, query: String) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let typedKeyword = String(trimmed.prefix { !$0.isWhitespace })
-        let keyword = typedKeyword.lowercased()
-
-        let matched = engines.first { engine in
-            guard case .webSearch = engine.destination else { return false }
-            return engine.keywords.contains(keyword)
-        }
-
-        guard let matched else {
+        guard let address = registry.webModeAddress(for: query) else {
             let context = WebContext(
-                engineID: defaultEngine.id,
+                engineID: registry.defaultWebEngineID,
                 typedKeyword: nil,
                 queryAtEntry: query
             )
             return (.web(context), query)
         }
 
-        let remainder = trimmed.dropFirst(typedKeyword.count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
         let context = WebContext(
-            engineID: matched.id,
-            typedKeyword: typedKeyword,
-            queryAtEntry: remainder
+            engineID: address.engineID,
+            typedKeyword: address.typedKeyword,
+            queryAtEntry: address.remainder
         )
-        return (.web(context), remainder)
+        return (.web(context), address.remainder)
     }
 
     /// What the field shows after leaving web mode. A keyword-completed
@@ -110,18 +97,14 @@ extension SearchMode {
     private static func exitFieldText(
         for context: WebContext,
         query: String,
-        engines: [KeywordEngine]
+        registry: KeywordEngineRegistry
     ) -> String {
         guard let typedKeyword = context.typedKeyword else { return query }
 
-        let spelling: String
-        if query == context.queryAtEntry {
-            spelling = typedKeyword
+        let spelling: String = if query == context.queryAtEntry {
+            typedKeyword
         } else {
-            let primary = engines
-                .first { $0.id == context.engineID }?
-                .keywords.first
-            spelling = primary ?? typedKeyword
+            registry.canonicalKeyword(for: context.engineID) ?? typedKeyword
         }
         return query.isEmpty ? spelling : "\(spelling) \(query)"
     }

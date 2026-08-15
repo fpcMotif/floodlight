@@ -15,8 +15,7 @@ func copy(_ item: SearchItem)
 func reveal(_ item: SearchItem)
 ```
 
-The performer directly coordinates existing deep owners: one shared `AssistantRunSession`, `RunningApplicationActivating`, `RecentStore`, and a narrow `@Sendable async` Source Selection Learning closure. It receives required main-actor callbacks for search dismissal and Settings presentation. The application shell wires those callbacks without giving the performer panel, window-controller, `AppDelegate`, or `SearchCoordinator` references.
-
+The performer directly coordinates existing deep owners: one shared `AssistantRunSession`, `RunningApplicationActivating`, `RecentStore`, and a narrow `@Sendable async` Source Selection Learning closure. It receives a required main-actor callback for search dismissal. The application shell wires that callback without giving the performer panel, window-controller, `AppDelegate`, or `SearchCoordinator` references.
 Mechanical AppKit operations sit behind one cohesive `SelectedResultActionEffects` seam. Its API follows the real framework guarantees: clipboard writing is synchronous and returns `Bool`, opening is `async throws`, and Finder reveal is a synchronous dispatched request without invented completion. The production adapter converts `NSWorkspace` completion handlers to checked continuations; scripted tests observe effects without changing the user clipboard, opening applications, or revealing files.
 
 ## Action policy
@@ -27,16 +26,14 @@ Mechanical AppKit operations sit behind one cohesive `SelectedResultActionEffect
 | Explicit Copy | Keep search open | None |
 | Activate an already-running application | Dismiss after synchronous activation succeeds | Record application recency and report Source Selection Learning |
 | Open an application, file, folder, or URL | Dismiss promptly; never reopen automatically after delayed failure | After confirmed completion, record application recency when applicable and report Source Selection Learning |
-| Show Floodlight Settings | Dismiss search, then request Settings presentation | None |
 | Start Assistant Run | Keep search open | `AssistantRunSession` publishes running, answered, or failed state |
 | Reveal a file URL in Finder | Dispatch reveal, then dismiss | None |
 | Reveal an unsupported result | Keep search open and do nothing | None |
-
 Each open activation is independent. A later activation does not cancel an earlier intentional open, and every asynchronous operation captures its own immutable item, URL, and originating query. Assistant Run remains latest-wins because its existing session deliberately publishes one replaceable run.
 
 `RecentStore` records only successful application activation because `ApplicationCatalog` is its only ranking consumer. Source Selection Learning is separate and query-specific: every successful `.open` activation is reported, then `SourceSearchEngine` uses its provenance to route or ignore the feedback. Failed opens produce neither signal.
 
-Explicit Copy derives one representation inside the performer: `.copy` uses its exact payload, file URLs use their path, other URLs use their absolute string, Floodlight Settings uses the row title, and an Assistant row uses its completed answer when available or its title otherwise. The effects adapter receives only the final exact string.
+Explicit Copy derives one representation inside the performer: `.copy` uses its exact payload, file URLs use their path, other URLs use their absolute string, and an Assistant row uses its completed answer when available or its title otherwise. The effects adapter receives only the final exact string.
 
 ## Failure policy
 

@@ -211,7 +211,6 @@ package struct SearchItemPage: Sendable {
 package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
     case open(URL)
-    case showFloodlightSettings
     /// Runs an installed CLI locally and reports its stdout back into the
     /// panel — `command` is a bare executable name and `arguments` are
     /// passed straight to it, never through a shell, so nothing in the
@@ -219,9 +218,25 @@ package enum SearchItemAction: Hashable, Sendable {
     case askAssistant(command: String, arguments: [String])
 }
 
+/// The brand tint behind a keyword engine's icon tile. Carried on the row
+/// itself — as a name, not a `Color`, so the engine module stays
+/// SwiftUI-free — because a tile's color is part of which engine the row
+/// opens, not something the view may re-derive by matching title strings.
+package enum SearchItemIconTint: String, Hashable, Sendable {
+    case blue
+    case cyan
+    case gray
+    case orange
+    case primary
+    case purple
+    case red
+}
+
 package enum SearchItemIconSource: Hashable, Sendable {
     case inferred
-    case floodlightApplication
+    /// A keyword-engine row's own glyph and brand tint, resolved by the
+    /// engine that built the row.
+    case engine(symbol: String, tint: SearchItemIconTint)
 }
 
 package struct SearchItem: Identifiable, Hashable, Sendable {

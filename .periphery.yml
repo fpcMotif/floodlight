@@ -28,5 +28,8 @@ index_exclude:
   - "**/.build/**"
   - "**/.tools/**"
   - "**/SourcePackages/checkouts/**"
+  # A regular SwiftPM target shared only by the two excluded test targets.
+  # Its declarations are test fixtures, not production dead code.
+  - "**/Tests/FloodlightTestSupport/**"
 
 strict: true

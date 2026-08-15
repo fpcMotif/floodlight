@@ -31,28 +31,33 @@ package enum FuzzyMatcher {
 
         var queryIndex = query.startIndex
         var score = 8_000
-        var lastMatch: String.Index?
+        var lastMatchOffset: Int?
         var consecutive = 0
 
-        for index in candidate.indices where queryIndex < query.endIndex {
+        // `String.distance(from:to:)` walks the grapheme collection. Keep the
+        // offset supplied by `enumerated()` instead so the fallback remains a
+        // single pass after the contiguous fast paths above.
+        for (candidateOffset, index) in candidate.indices.enumerated()
+            where queryIndex < query.endIndex
+        {
             guard candidate[index] == query[queryIndex] else {
                 score -= 3
                 continue
             }
 
-            if let lastMatch, candidate.index(after: lastMatch) == index {
+            if let lastMatchOffset, lastMatchOffset + 1 == candidateOffset {
                 consecutive += 1
                 score += 80 * consecutive
             } else {
                 consecutive = 0
-                score -= candidate.distance(from: candidate.startIndex, to: index)
+                score -= candidateOffset
             }
 
             if index == candidate.startIndex || isBoundary(candidate, at: index) {
                 score += 160
             }
 
-            lastMatch = index
+            lastMatchOffset = candidateOffset
             query.formIndex(after: &queryIndex)
         }
 

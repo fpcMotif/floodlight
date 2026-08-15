@@ -5,9 +5,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var model = SearchCoordinator(
         onDismiss: { [weak self] in
             self?.searchDidDismiss()
-        },
-        onShowSettings: { [weak self] in
-            self?.searchDidRequestConfiguration()
         }
     )
     private lazy var panelController = FloodlightPanelController(model: model)
@@ -55,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         presentation.showConfiguration(from: .statusMenu)
     }
 
-    @objc private func showSettingsFromSearch() {
+    @objc func showSettingsFromSearch() {
         presentation.showConfiguration(from: .search)
     }
 
@@ -70,10 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func searchDidDismiss() {
         presentation.hideSearch()
-    }
-
-    func searchDidRequestConfiguration() {
-        presentation.showConfiguration(from: .search)
     }
 
     private func ensureSearchStarted() {

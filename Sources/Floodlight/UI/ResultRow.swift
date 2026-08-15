@@ -43,11 +43,14 @@ struct ResultRow: View, Equatable {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(item.title)
-                        .font(isTopHit ? FloodlightMetrics.Typography
-                            .topHitTitle : FloodlightMetrics.Typography.rowTitle)
+                        .font(
+                            isTopHit
+                                ? FloodlightMetrics.Typography.topHitTitle
+                                : FloodlightMetrics.Typography.rowTitle
+                        )
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-
+                        .layoutPriority(1)
                     if !isTopHit {
                         Text(item.kind.label)
                             .font(FloodlightMetrics.Typography.badge)
@@ -111,7 +114,6 @@ struct ResultRow: View, Equatable {
         .modifier(
             FloodlightSelectionSurface(
                 isSelected: isSelected,
-                isHovered: isHovered,
                 fallbackColor: backgroundColor
             )
         )
@@ -172,33 +174,33 @@ private struct AssistantAnswerView: View {
 
 private struct ResultIcon: View {
     let item: SearchItem
-    var size: CGFloat = FloodlightMetrics.standardIconSize
+    let size: CGFloat
     @State private var fileIcon: NSImage?
+
+    init(item: SearchItem, size: CGFloat = FloodlightMetrics.standardIconSize) {
+        self.item = item
+        self.size = size
+        _fileIcon = State(
+            initialValue: item.fileURL.flatMap(FileIconCache.shared.cachedIcon)
+        )
+    }
 
     var body: some View {
         Group {
-            if item.iconSource == .floodlightApplication {
-                Image(nsImage: NSApplication.shared.applicationIconImage)
-                    .resizable()
-                    .scaledToFit()
-            } else if let fileIcon {
-                Image(nsImage: fileIcon)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                Image(systemName: FloodlightMetrics.iconSymbol(for: item))
-                    .resizable()
-                    .scaledToFit()
-                    .padding(size * 0.21)
-                    .foregroundStyle(FloodlightMetrics.iconTint(for: item))
-                    .background(
-                        FloodlightMetrics.iconTint(for: item)
-                            .opacity(FloodlightMetrics.iconTileTintOpacity),
-                        in: RoundedRectangle(
-                            cornerRadius: FloodlightMetrics.iconTileCornerRadius,
-                            style: .continuous
-                        )
+            switch item.iconSource {
+            case let .engine(symbol, tint):
+                symbolTile(symbol, tint: tint.color)
+            case .inferred:
+                if let fileIcon {
+                    Image(nsImage: fileIcon)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    symbolTile(
+                        item.kind.symbolName,
+                        tint: FloodlightMetrics.iconTint(for: item.kind)
                     )
+                }
             }
         }
         .frame(width: size, height: size)
@@ -210,8 +212,28 @@ private struct ResultIcon: View {
             if let cached = FileIconCache.shared.cachedIcon(for: url) {
                 fileIcon = cached
             } else {
-                fileIcon = await FileIconCache.shared.icon(for: url)
+                fileIcon = nil
+                let loadedIcon = await FileIconCache.shared.icon(for: url)
+                guard !Task.isCancelled else { return }
+                fileIcon = loadedIcon
             }
         }
+    }
+
+    /// An SF Symbol on a brand-tinted continuous-curve tile — the icon for
+    /// rows that have no real file/app icon: engines, calculator, settings.
+    private func symbolTile(_ symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .resizable()
+            .scaledToFit()
+            .padding(size * 0.21)
+            .foregroundStyle(tint)
+            .background(
+                tint.opacity(FloodlightMetrics.iconTileTintOpacity),
+                in: RoundedRectangle(
+                    cornerRadius: FloodlightMetrics.iconTileCornerRadius,
+                    style: .continuous
+                )
+            )
     }
 }

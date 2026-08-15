@@ -1,6 +1,6 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
-	test test-performance
+	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer
 
 debug:
 	swift build
@@ -49,6 +49,14 @@ run: debug
 
 test:
 	swift test
+
+test-address-sanitizer:
+	./scripts/test-address-sanitizer.sh
+
+test-thread-sanitizer:
+	./scripts/test-thread-sanitizer.sh
+
+test-sanitizers: test-address-sanitizer test-thread-sanitizer
 
 # The latency budgets, in release configuration — debug numbers are meaningless
 # for a search path. This is what CI runs as its own step.

@@ -7,6 +7,10 @@ import Foundation
 /// a URL-template engine mirrors PopClip's "Open URL %s" action, and an
 /// assistant engine mirrors its "Shell Script %s" action.
 package struct KeywordEngine: Sendable, Identifiable {
+    private static let urlQueryValueAllowed = CharacterSet.alphanumerics.union(
+        CharacterSet(charactersIn: "-._~")
+    )
+
     /// Where a matched query goes: a browser-opened URL, or an installed
     /// CLI run locally with the remainder of the query as its last argument.
     package enum Destination: Sendable {
@@ -20,7 +24,16 @@ package struct KeywordEngine: Sendable, Identifiable {
     }
 
     package let id: String
+    /// The verb phrase ("Search YouTube") used where the row's context
+    /// can't supply it: the field's mode token and the Tab-completion hint.
     package let title: String
+    /// The bare engine noun ("YouTube") — the row's title. Rows name the
+    /// destination rather than narrating it ("Search YouTube for …"): the
+    /// query they act on is already in the field, and a title that doesn't
+    /// change per keystroke doesn't reflow while typing.
+    package let name: String
+    /// The brand tint behind the engine's icon tile.
+    package let tint: SearchItemIconTint
     /// Case-insensitive first-word triggers, including any bang alias
     /// (`"x"`, `"twitter"`, `"!x"`). Matched against the query's first
     /// whitespace-delimited token only. Order is meaningful: the first
@@ -35,12 +48,16 @@ package struct KeywordEngine: Sendable, Identifiable {
     package init(
         id: String,
         title: String,
+        name: String,
+        tint: SearchItemIconTint,
         keywords: [String],
         kind: SearchItemKind,
         destination: Destination
     ) {
         self.id = id
         self.title = title
+        self.name = name
+        self.tint = tint
         self.keywords = keywords
         self.kind = kind
         self.destination = destination
@@ -49,14 +66,27 @@ package struct KeywordEngine: Sendable, Identifiable {
     package var symbolName: String {
         switch id {
         case "youtube": "play.rectangle.fill"
-        case "google": "magnifyingglass.circle.fill"
-        case "github": "code"
+        case "google": "magnifyingglass"
+        case "github": "chevron.left.forwardslash.chevron.right"
         case "twitter": "at"
         case "wikipedia": "book.closed.fill"
         case "stackoverflow": "bubble.left.and.bubble.right.fill"
         case "codex", "claude": "sparkles"
         default: kind.symbolName
         }
+    }
+
+    /// The destination's bare host ("youtube.com"), parsed out of the URL
+    /// template so the row's subtitle can never drift from where the row
+    /// actually goes. `nil` for an assistant engine or an unparseable
+    /// template.
+    package var host: String? {
+        guard case let .webSearch(urlTemplate) = destination else { return nil }
+        let placeholderFree = urlTemplate.replacingOccurrences(of: "{query}", with: "")
+        guard let host = URL(string: placeholderFree)?.host(), !host.isEmpty else {
+            return nil
+        }
+        return host.hasPrefix("www.") ? String(host.dropFirst("www.".count)) : host
     }
 
     /// The engine's results page for `query`, or `nil` for an assistant
@@ -67,7 +97,9 @@ package struct KeywordEngine: Sendable, Identifiable {
     package func searchURL(for query: String) -> URL? {
         guard case let .webSearch(urlTemplate) = destination else { return nil }
         guard
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+            let encoded = query.addingPercentEncoding(
+                withAllowedCharacters: Self.urlQueryValueAllowed
+            ),
             let url = URL(string: urlTemplate.replacingOccurrences(of: "{query}", with: encoded))
         else {
             return nil
@@ -75,14 +107,12 @@ package struct KeywordEngine: Sendable, Identifiable {
         return url
     }
 
-    /// The row title for a `.webSearch` engine's results page, or `nil` for
-    /// an assistant engine — `nil` `query` reads as "not typed yet" (web
-    /// mode's bare-keyword state) rather than "for empty string". Shares
-    /// one format across the keyword row, web mode, and the fallback row,
-    /// the same guarantee `searchURL(for:)` already gives the URL itself.
-    package func searchTitle(for query: String) -> String? {
+    /// The row subtitle for a `.webSearch` engine — the destination's host,
+    /// so every engine row reads differently and says where the search
+    /// goes. `nil` for an assistant engine, matching `searchURL(for:)`.
+    package var searchSubtitle: String? {
         guard case .webSearch = destination else { return nil }
-        return query.isEmpty ? title : "\(title) for “\(query)”"
+        return host ?? "Open in your default browser"
     }
 
     /// The row identifier a keyword match produces for this engine —
@@ -99,16 +129,17 @@ package struct KeywordEngine: Sendable, Identifiable {
         switch destination {
         case .webSearch:
             guard let url = searchURL(for: remainder),
-                  let title = searchTitle(for: remainder)
+                  let subtitle = searchSubtitle
             else {
                 return nil
             }
             return SearchItem(
                 id: rowID,
-                title: title,
-                subtitle: "Open in your default browser",
+                title: name,
+                subtitle: subtitle,
                 kind: kind,
                 action: .open(url),
+                iconSource: .engine(symbol: symbolName, tint: tint),
                 score: SearchItemRanking.keywordEngine
             )
         case let .assistant(command, baseArguments):
@@ -117,23 +148,217 @@ package struct KeywordEngine: Sendable, Identifiable {
                 title: "\(title): \(remainder)",
                 subtitle: "Press Return to ask",
                 kind: kind,
-                action: .askAssistant(command: command, arguments: baseArguments + [remainder]),
+                action: .askAssistant(
+                    command: command,
+                    arguments: baseArguments + ["--", remainder]
+                ),
                 score: SearchItemRanking.keywordEngine
             )
         }
     }
 }
 
-/// The fixed set of keyword engines and the pure parser that matches a
-/// query's first word against them — the explicit-address counterpart to
-/// `WebSearchIntent`'s auto-detected promotion of the default web row.
+/// The resolved destinations Keyword-Addressed Search may use right now.
+/// Callers ask this value domain questions instead of sharing its engine
+/// arrays and keyword lookup representation.
+package struct KeywordEngineRegistry: Sendable {
+    package struct WebModeAddress: Equatable, Sendable {
+        package let engineID: String
+        package let typedKeyword: String
+        package let remainder: String
+    }
+
+    private let keywordLookup: [String: KeywordEngine]
+    private let webKeywordLookup: [String: KeywordEngine]
+    private let webEngines: [KeywordEngine]
+    private let enginesByID: [String: KeywordEngine]
+    private let defaultWebEngine: KeywordEngine
+
+    package init(
+        engines: [KeywordEngine],
+        defaultWebEngineID: String
+    ) {
+        precondition(
+            Set(engines.map(\.id)).count == engines.count,
+            "Keyword engine IDs must be unique"
+        )
+        guard let defaultWebEngine = engines.first(where: { $0.id == defaultWebEngineID })
+        else {
+            preconditionFailure("The default web engine must belong to the registry")
+        }
+        guard case .webSearch = defaultWebEngine.destination else {
+            preconditionFailure("The default keyword engine must be a web destination")
+        }
+
+        var keywordLookup: [String: KeywordEngine] = [:]
+        var webKeywordLookup: [String: KeywordEngine] = [:]
+        keywordLookup.reserveCapacity(engines.reduce(into: 0) { count, engine in
+            count += engine.keywords.count
+        })
+        for engine in engines {
+            for keyword in engine.keywords {
+                let normalizedKeyword = keyword.lowercased()
+                if keywordLookup[normalizedKeyword] == nil {
+                    keywordLookup[normalizedKeyword] = engine
+                }
+                if case .webSearch = engine.destination,
+                   webKeywordLookup[normalizedKeyword] == nil
+                {
+                    webKeywordLookup[normalizedKeyword] = engine
+                }
+            }
+        }
+        self.keywordLookup = keywordLookup
+        self.webKeywordLookup = webKeywordLookup
+        webEngines = engines.filter {
+            if case .webSearch = $0.destination { return true }
+            return false
+        }
+        enginesByID = Dictionary(uniqueKeysWithValues: engines.map { ($0.id, $0) })
+        self.defaultWebEngine = defaultWebEngine
+    }
+
+    package var defaultWebEngineID: String {
+        defaultWebEngine.id
+    }
+
+    package func addressedResult(for query: String) -> SearchItem? {
+        guard let address = Self.parseAddress(query),
+              !address.remainder.isEmpty,
+              let engine = keywordLookup[address.typedKeyword.lowercased()]
+        else {
+            return nil
+        }
+        return engine.makeSearchItem(remainder: address.remainder)
+    }
+
+    package func webModeAddress(for query: String) -> WebModeAddress? {
+        guard let address = Self.parseAddress(query),
+              let engine = webKeywordLookup[address.typedKeyword.lowercased()]
+        else {
+            return nil
+        }
+        return WebModeAddress(
+            engineID: engine.id,
+            typedKeyword: address.typedKeyword,
+            remainder: address.remainder
+        )
+    }
+
+    package func defaultWebResult(for query: String, promoted: Bool) -> SearchItem? {
+        guard let url = defaultWebEngine.searchURL(for: query),
+              let subtitle = defaultWebEngine.searchSubtitle
+        else {
+            return nil
+        }
+        return SearchItem(
+            id: "web-search",
+            title: defaultWebEngine.name,
+            subtitle: subtitle,
+            kind: .web,
+            action: .open(url),
+            iconSource: .engine(
+                symbol: defaultWebEngine.symbolName,
+                tint: defaultWebEngine.tint
+            ),
+            score: promoted ? SearchItemRanking.webPromoted : SearchItemRanking.webFallback
+        )
+    }
+
+    package func webModeResults(
+        for query: String,
+        activeEngineID: String
+    ) -> [SearchItem] {
+        let ordered = webEngines.filter { $0.id == activeEngineID }
+            + webEngines.filter { $0.id != activeEngineID }
+        return ordered.enumerated().compactMap { position, engine in
+            guard let url = engine.searchURL(for: query),
+                  let subtitle = engine.searchSubtitle
+            else {
+                return nil
+            }
+            return SearchItem(
+                id: "web-mode:\(engine.id)",
+                title: engine.name,
+                subtitle: subtitle,
+                kind: .web,
+                action: .open(url),
+                iconSource: .engine(symbol: engine.symbolName, tint: engine.tint),
+                score: SearchItemRanking.keywordEngine - position
+            )
+        }
+    }
+
+    package func webEngine(id: String) -> KeywordEngine? {
+        guard let engine = enginesByID[id], case .webSearch = engine.destination else {
+            return nil
+        }
+        return engine
+    }
+
+    package func canonicalKeyword(for engineID: String) -> String? {
+        enginesByID[engineID]?.keywords.first
+    }
+
+    package func tabCompletionTitle(
+        for query: String,
+        resultID: SearchItem.ID
+    ) -> String? {
+        guard let address = Self.parseAddress(query),
+              !address.remainder.isEmpty,
+              let engine = webKeywordLookup[address.typedKeyword.lowercased()],
+              engine.rowID == resultID
+        else {
+            return nil
+        }
+        return engine.title
+    }
+
+    private static func parseAddress(_ query: String) -> (
+        typedKeyword: String,
+        remainder: String
+    )? {
+        let end = query.endIndex
+        var keywordStart = query.startIndex
+        while keywordStart < end, query[keywordStart].isWhitespace {
+            query.formIndex(after: &keywordStart)
+        }
+        guard keywordStart < end else { return nil }
+        guard let separator = query[keywordStart...].firstIndex(where: \.isWhitespace) else {
+            return (String(query[keywordStart..<end]), "")
+        }
+
+        var remainderStart = separator
+        while remainderStart < end, query[remainderStart].isWhitespace {
+            query.formIndex(after: &remainderStart)
+        }
+        guard remainderStart < end else {
+            return (String(query[keywordStart..<separator]), "")
+        }
+
+        var remainderEnd = end
+        while remainderEnd > remainderStart {
+            let previous = query.index(before: remainderEnd)
+            guard query[previous].isWhitespace else { break }
+            remainderEnd = previous
+        }
+        return (
+            typedKeyword: String(query[keywordStart..<separator]),
+            remainder: String(query[remainderStart..<remainderEnd])
+        )
+    }
+}
+
+/// The fixed destination presets and the startup availability resolver that
+/// publishes them as a `KeywordEngineRegistry`.
 package enum KeywordEngineCatalog {
-    /// The engine a web destination falls back to when nothing addresses one
-    /// explicitly. Exactly three consumers read this: the local-mode web
-    /// fallback row, plain-query Tab, and nothing else.
+    /// The engine a resolved registry uses when nothing explicitly addresses
+    /// another web destination.
     package static let defaultEngine = KeywordEngine(
         id: "google",
         title: "Search Google",
+        name: "Google",
+        tint: .blue,
         keywords: ["g", "google", "!g"],
         kind: .web,
         destination: .webSearch(urlTemplate: "https://www.google.com/search?q={query}")
@@ -144,6 +369,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "wikipedia",
             title: "Search Wikipedia",
+            name: "Wikipedia",
+            tint: .gray,
             // Deliberately no single-letter "w": its accidental first-word
             // hit rate in natural queries is too high.
             keywords: ["wiki", "wikipedia", "!wiki"],
@@ -155,6 +382,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "github",
             title: "Search GitHub",
+            name: "GitHub",
+            tint: .primary,
             keywords: ["gh", "github", "!gh"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://github.com/search?q={query}")
@@ -162,6 +391,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "stackoverflow",
             title: "Search Stack Overflow",
+            name: "Stack Overflow",
+            tint: .orange,
             keywords: ["so", "stackoverflow", "!so"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://stackoverflow.com/search?q={query}")
@@ -169,6 +400,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "twitter",
             title: "Search Twitter/X",
+            name: "Twitter/X",
+            tint: .cyan,
             keywords: ["x", "twitter", "!x"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://x.com/search?q={query}")
@@ -176,6 +409,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "youtube",
             title: "Search YouTube",
+            name: "YouTube",
+            tint: .red,
             keywords: ["yt", "youtube", "!yt"],
             kind: .web,
             destination: .webSearch(
@@ -185,6 +420,8 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "codex",
             title: "Ask Codex",
+            name: "Codex",
+            tint: .purple,
             keywords: ["codex", "!codex"],
             kind: .assistant,
             destination: .assistant(command: "codex", baseArguments: ["exec"])
@@ -192,85 +429,29 @@ package enum KeywordEngineCatalog {
         KeywordEngine(
             id: "claude",
             title: "Ask Claude",
+            name: "Claude",
+            tint: .purple,
             keywords: ["claude", "!claude"],
             kind: .assistant,
             destination: .assistant(command: "claude", baseArguments: ["-p"])
         ),
     ]
-    /// Builds a first-match-wins lookup for a stable engine list. The
-    /// coordinator keeps one of these for the available engines so query-time
-    /// matching does not rescan every keyword on every keystroke.
-    package static func makeLookup(
-        for engines: [KeywordEngine]
-    ) -> [String: KeywordEngine] {
-        var lookup: [String: KeywordEngine] = [:]
-        lookup.reserveCapacity(engines.reduce(into: 0) { count, engine in
-            count += engine.keywords.count
-        })
-        for engine in engines {
-            for keyword in engine.keywords where lookup[keyword] == nil {
-                lookup[keyword] = engine
-            }
-        }
-        return lookup
-    }
 
-    /// The URL-template preset engines in table order — the exact set web
-    /// mode shows one row per, and the order those rows keep after the
-    /// active engine is moved to the front.
-    package static var webSearchEngines: [KeywordEngine] {
-        all.filter { engine in
-            if case .webSearch = engine.destination { return true }
+    package static let initialRegistry = KeywordEngineRegistry(
+        engines: all.filter {
+            if case .webSearch = $0.destination { return true }
             return false
-        }
-    }
+        },
+        defaultWebEngineID: defaultEngine.id
+    )
 
-    /// Matches `query`'s first whitespace-delimited token against a prebuilt
-    /// lookup, case-insensitively. A bare keyword with nothing after it — or a
-    /// keyword that isn't in first position — is not a match, so a query still
-    /// being typed doesn't fire early and a keyword mid-sentence doesn't
-    /// hijack the row.
-    package static func match(
-        _ query: String,
-        lookup: [String: KeywordEngine]
-    ) -> (engine: KeywordEngine, remainder: String)? {
-        guard let parts = splitQuery(query) else { return nil }
-        let keyword = parts.keyword.lowercased()
-        guard let engine = lookup[keyword] else { return nil }
-        return (engine, String(parts.remainder))
-    }
-
-    private static func splitQuery(
-        _ query: String
-    ) -> (keyword: Substring, remainder: Substring)? {
-        let end = query.endIndex
-        var keywordStart = query.startIndex
-        while keywordStart < end, query[keywordStart].isWhitespace {
-            query.formIndex(after: &keywordStart)
-        }
-        guard keywordStart < end else { return nil }
-        guard let separator = query[keywordStart...].firstIndex(where: \.isWhitespace)
-        else {
-            return nil
-        }
-
-        var remainderStart = separator
-        while remainderStart < end, query[remainderStart].isWhitespace {
-            query.formIndex(after: &remainderStart)
-        }
-        guard remainderStart < end else { return nil }
-
-        var remainderEnd = end
-        while remainderEnd > remainderStart {
-            let previous = query.index(before: remainderEnd)
-            guard query[previous].isWhitespace else { break }
-            remainderEnd = previous
-        }
-        guard remainderStart < remainderEnd else { return nil }
-
-        return (
-            keyword: query[keywordStart..<separator],
-            remainder: query[remainderStart..<remainderEnd]
+    package static func availableRegistry(
+        runner: any AssistantProcessRunning
+    ) async -> KeywordEngineRegistry {
+        let engines = await availableEngines(runner: runner)
+        return KeywordEngineRegistry(
+            engines: engines,
+            defaultWebEngineID: defaultEngine.id
         )
     }
 
@@ -278,7 +459,7 @@ package enum KeywordEngineCatalog {
     /// engines are always available, and an assistant engine only survives
     /// if its CLI resolves on this machine — an unresolvable "Ask Codex" row
     /// would be guaranteed to fail every time it's selected.
-    package static func availableEngines(runner: any AssistantProcessRunning) async
+    private static func availableEngines(runner: any AssistantProcessRunning) async
         -> [KeywordEngine]
     {
         var available: [KeywordEngine] = []

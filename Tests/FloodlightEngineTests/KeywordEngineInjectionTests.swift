@@ -12,11 +12,16 @@ import XCTest
 /// byte*, no matter what it contains. The URL side is softer, and this file
 /// documents precisely how soft.
 final class KeywordEngineInjectionTests: XCTestCase {
-    private let catalogLookup = KeywordEngineCatalog.makeLookup(for: KeywordEngineCatalog.all)
+    private let catalogRegistry = KeywordEngineRegistry(
+        engines: KeywordEngineCatalog.all,
+        defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+    )
 
     private let assistantEngine = KeywordEngine(
         id: "claude",
         title: "Ask Claude",
+        name: "Claude",
+        tint: .purple,
         keywords: ["claude", "!claude"],
         kind: .assistant,
         destination: .assistant(command: "claude", baseArguments: ["-p"])
@@ -25,6 +30,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
     private let webEngine = KeywordEngine(
         id: "youtube",
         title: "Search YouTube",
+        name: "YouTube",
+        tint: .red,
         keywords: ["yt", "youtube", "!yt"],
         kind: .web,
         destination: .webSearch(urlTemplate: "https://www.youtube.com/results?search_query={query}")
@@ -40,26 +47,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         return url
     }
 
-    private func matchCatalog(
-        _ query: String
-    ) -> (engine: KeywordEngine, remainder: String)? {
-        KeywordEngineCatalog.match(query, lookup: catalogLookup)
-    }
-
     private func searchCatalog(_ query: String) -> [SearchItem] {
-        makeSearchItems(for: query, lookup: catalogLookup)
-    }
-
-    private func makeSearchItems(
-        for query: String,
-        lookup: [String: KeywordEngine]
-    ) -> [SearchItem] {
-        guard let match = KeywordEngineCatalog.match(query, lookup: lookup),
-              let item = match.engine.makeSearchItem(remainder: match.remainder)
-        else {
-            return []
-        }
-        return [item]
+        catalogRegistry.addressedResult(for: query).map { [$0] } ?? []
     }
 
     // MARK: - The subprocess boundary
@@ -79,7 +68,7 @@ final class KeywordEngineInjectionTests: XCTestCase {
             else {
                 return false
             }
-            return arguments == ["-p", remainder]
+            return arguments == ["-p", "--", remainder]
         }
     }
 
@@ -110,21 +99,19 @@ final class KeywordEngineInjectionTests: XCTestCase {
             let item = assistantEngine.makeSearchItem(remainder: payload)
             XCTAssertEqual(
                 assistantArguments(of: item ?? SearchFixtures.assistant()),
-                ["-p", payload],
+                ["-p", "--", payload],
                 String(reflecting: payload)
             )
         }
     }
 
     func testALeadingDashRemainderIsNotSeparatedFromItsCommand() {
-        // A remainder like "--help" is still one argument in the last
-        // position. It could be *interpreted* as a flag by the CLI itself,
-        // which is the CLI's business — what matters here is that the
-        // engine does not split it into several.
+        // The option terminator keeps a leading-dash query from changing the
+        // assistant CLI's permissions, configuration, or execution mode.
         let item = assistantEngine.makeSearchItem(remainder: "--dangerously-skip-permissions")
         XCTAssertEqual(
-            assistantArguments(of: item ?? SearchFixtures.assistant())?.count,
-            2
+            assistantArguments(of: item ?? SearchFixtures.assistant()),
+            ["-p", "--", "--dangerously-skip-permissions"]
         )
     }
 
@@ -234,40 +221,21 @@ final class KeywordEngineInjectionTests: XCTestCase {
         }
     }
 
-    func testARemainderContainingAmpersandsWidensTheQueryStringIntoExtraParameters() throws {
-        // A real, currently-live gap, pinned so it is a known one.
-        //
-        // The remainder is encoded with `.urlQueryAllowed`, which *permits*
-        // `&`, `=`, `+`, `?` and `/` — they are legal inside a query
-        // component. So a query like `yt lofi&list=PL123` does not search
-        // for the literal text "lofi&list=PL123"; it opens YouTube with a
-        // second parameter the user never intended.
-        //
-        // Blast radius is limited: the scheme, host, and path are fixed, so
-        // this can add or override parameters on a known site but cannot
-        // redirect anywhere. Fixing it means encoding with a stricter
-        // character set (`.alphanumerics` plus a small allowance), which is
-        // a product change, not a test change.
+    func testAQueryRemainderCannotInjectAdditionalURLParameters() throws {
         let item = try XCTUnwrap(webEngine.makeSearchItem(remainder: "lofi&list=PLABC&index=3"))
         let url = try XCTUnwrap(openedURL(of: item))
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
 
-        XCTAssertEqual(components.host, "www.youtube.com", "the host is still not injectable")
-        XCTAssertEqual(
-            components.queryItems?.map(\.name),
-            ["search_query", "list", "index"],
-            "delimiters in the remainder become additional query parameters"
-        )
-        XCTAssertEqual(components.queryItems?.first?.value, "lofi")
+        XCTAssertEqual(components.host, "www.youtube.com")
+        XCTAssertEqual(components.queryItems?.map(\.name), ["search_query"])
+        XCTAssertEqual(components.queryItems?.first?.value, "lofi&list=PLABC&index=3")
     }
 
-    func testAPlusSignInTheRemainderIsPreservedAndWillDecodeAsASpace() throws {
-        // The other half of the same gap: `+` survives encoding, and most
-        // servers read `+` in a query as a space.
+    func testAPlusSignInTheRemainderIsEncodedAsLiteralText() throws {
         let item = try XCTUnwrap(webEngine.makeSearchItem(remainder: "c++ tutorial"))
         let url = try XCTUnwrap(openedURL(of: item))
-        XCTAssertTrue(url.absoluteString.contains("c++"))
-        XCTAssertFalse(url.absoluteString.contains("c%2B%2B"))
+        XCTAssertFalse(url.absoluteString.contains("c++"))
+        XCTAssertTrue(url.absoluteString.contains("c%2B%2B"))
     }
 
     func testSpacesAndUnicodeArePercentEncoded() throws {
@@ -284,6 +252,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         let broken = KeywordEngine(
             id: "broken",
             title: "Broken",
+            name: "Broken",
+            tint: .blue,
             keywords: ["br"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://example.com/search")
@@ -298,6 +268,8 @@ final class KeywordEngineInjectionTests: XCTestCase {
         let broken = KeywordEngine(
             id: "broken",
             title: "Broken",
+            name: "Broken",
+            tint: .blue,
             keywords: ["br"],
             kind: .web,
             destination: .webSearch(urlTemplate: "ht tp://not a url/{query}")
@@ -318,17 +290,21 @@ final class KeywordEngineInjectionTests: XCTestCase {
             Gen<String>.lowercaseASCII.filter { !$0.isEmpty && !claimed.contains($0) },
             runs: 500
         ) { keyword, other in
-            self.matchCatalog("\(other) \(keyword) something") == nil
+            self.catalogRegistry.addressedResult(for: "\(other) \(keyword) something") == nil
         }
     }
 
-    func testASecondWordThatIsItselfAKeywordDoesNotHijackTheRow() {
+    func testASecondWordThatIsItselfAKeywordDoesNotHijackTheRow() throws {
         // The other side of the same coin: only the *first* word addresses
         // an engine, so "x yt lofi" is a Twitter search for "yt lofi", not
         // a YouTube search.
-        let match = matchCatalog("x yt lofi")
-        XCTAssertEqual(match?.engine.id, "twitter")
-        XCTAssertEqual(match?.remainder, "yt lofi")
+        let result = try XCTUnwrap(catalogRegistry.addressedResult(for: "x yt lofi"))
+        let url = try XCTUnwrap(openedURL(of: result))
+        XCTAssertEqual(result.id, "keyword-engine:twitter")
+        XCTAssertEqual(
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value,
+            "yt lofi"
+        )
     }
 
     func testKeywordMatchingIgnoresCaseInEveryForm() throws {
@@ -337,17 +313,26 @@ final class KeywordEngineInjectionTests: XCTestCase {
             Gen<String>.element(of: ["yt", "YT", "Yt", "yT", "YouTube", "YOUTUBE"]),
             runs: 200
         ) { keyword in
-            self.matchCatalog("\(keyword) lofi")?.engine.id == "youtube"
+            self.catalogRegistry.addressedResult(for: "\(keyword) lofi")?.id
+                == "keyword-engine:youtube"
         }
     }
 
-    func testAnyWhitespaceCharacterSeparatesTheKeywordFromItsRemainder() {
+    func testAnyWhitespaceCharacterSeparatesTheKeywordFromItsRemainder() throws {
         // `firstIndex(where: \.isWhitespace)` accepts more than a space, so
         // a pasted query with a tab or newline still addresses the engine.
         for separator in [" ", "\t", "\n", "\r\n", "  ", " \t "] {
-            let match = matchCatalog("yt\(separator)lofi hip hop")
-            XCTAssertEqual(match?.engine.id, "youtube", String(reflecting: separator))
-            XCTAssertEqual(match?.remainder, "lofi hip hop", String(reflecting: separator))
+            let result = try XCTUnwrap(
+                catalogRegistry.addressedResult(for: "yt\(separator)lofi hip hop"),
+                String(reflecting: separator)
+            )
+            let url = try XCTUnwrap(openedURL(of: result), String(reflecting: separator))
+            XCTAssertEqual(result.id, "keyword-engine:youtube", String(reflecting: separator))
+            XCTAssertEqual(
+                URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value,
+                "lofi hip hop",
+                String(reflecting: separator)
+            )
         }
     }
 
@@ -359,16 +344,22 @@ final class KeywordEngineInjectionTests: XCTestCase {
         ) { raw in
             let expected = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !expected.isEmpty else {
-                return self.matchCatalog("yt \(raw)") == nil
+                return self.catalogRegistry.addressedResult(for: "yt \(raw)") == nil
             }
-            return self.matchCatalog("yt \(raw)")?.remainder == expected
+            guard let result = self.catalogRegistry.addressedResult(for: "yt \(raw)"),
+                  let url = self.openedURL(of: result)
+            else {
+                return false
+            }
+            return URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first?.value == expected
         }
     }
 
     func testABareKeywordNeverMatchesSoTypingDoesNotFireEarly() {
         for query in ["yt", "yt ", " yt ", "yt\t", "claude", "  claude  ", "!yt"] {
             XCTAssertNil(
-                matchCatalog(query),
+                catalogRegistry.addressedResult(for: query),
                 "\(String(reflecting: query)) must not match while the user is still typing"
             )
         }
@@ -376,17 +367,18 @@ final class KeywordEngineInjectionTests: XCTestCase {
 
     func testAPrefixOfAKeywordIsNotAKeyword() {
         for query in ["y lofi", "yout lofi", "clau explain", "cod fix", "ytx lofi"] {
-            XCTAssertNil(matchCatalog(query), query)
+            XCTAssertNil(catalogRegistry.addressedResult(for: query), query)
         }
     }
 
     func testTheFirstEngineListedWinsAKeywordCollision() {
-        // `makeLookup` keeps the first engine for each keyword, so ordering is
-        // the tie-break. Pinned because it prevents a later engine from
-        // shadowing an earlier one.
+        // Registry construction keeps the first engine for each keyword, so
+        // ordering is the tie-break.
         let first = KeywordEngine(
             id: "first",
             title: "First",
+            name: "First",
+            tint: .blue,
             keywords: ["dup"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://first.example/{query}")
@@ -394,30 +386,37 @@ final class KeywordEngineInjectionTests: XCTestCase {
         let second = KeywordEngine(
             id: "second",
             title: "Second",
+            name: "Second",
+            tint: .blue,
             keywords: ["dup"],
             kind: .web,
             destination: .webSearch(urlTemplate: "https://second.example/{query}")
         )
-        let firstLookup = KeywordEngineCatalog.makeLookup(for: [first, second])
-        let secondLookup = KeywordEngineCatalog.makeLookup(for: [second, first])
-        XCTAssertEqual(
-            KeywordEngineCatalog.match("dup query", lookup: firstLookup)?.engine.id,
-            "first"
+        let firstRegistry = KeywordEngineRegistry(
+            engines: [first, second],
+            defaultWebEngineID: first.id
+        )
+        let secondRegistry = KeywordEngineRegistry(
+            engines: [second, first],
+            defaultWebEngineID: second.id
         )
         XCTAssertEqual(
-            KeywordEngineCatalog.match("dup query", lookup: secondLookup)?.engine.id,
-            "second"
+            firstRegistry.addressedResult(for: "dup query")?.id,
+            "keyword-engine:first"
+        )
+        XCTAssertEqual(
+            secondRegistry.addressedResult(for: "dup query")?.id,
+            "keyword-engine:second"
         )
     }
 
-    func testSearchingWithNoEnginesReturnsNothing() throws {
-        let lookup = KeywordEngineCatalog.makeLookup(for: [])
-        try checkProperty(
-            "an empty engine list produces no rows",
-            Gen<String>.element(of: AdversarialCorpus.searchQueries),
-            runs: 200
-        ) { query in
-            self.makeSearchItems(for: query, lookup: lookup).isEmpty
+    func testARegistryWithOnlyItsDefaultHasNoOptionalAddressedDestinations() {
+        let registry = KeywordEngineRegistry(
+            engines: [KeywordEngineCatalog.defaultEngine],
+            defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+        )
+        for query in ["yt lofi", "claude explain", "codex fix", "wiki floodlight"] {
+            XCTAssertNil(registry.addressedResult(for: query), query)
         }
     }
 
@@ -467,41 +466,66 @@ final class KeywordEngineInjectionTests: XCTestCase {
             XCTAssertEqual(item.score, SearchItemRanking.keywordEngine)
             XCTAssertFalse(item.title.isEmpty)
             XCTAssertFalse(item.subtitle.isEmpty)
-            XCTAssertTrue(
-                item.title.contains("test query"),
-                "the row should echo what was typed: \(item.title)"
-            )
+            switch engine.destination {
+            case .webSearch:
+                // A web row names its destination and echoes the query
+                // through the URL it opens, not through a title that
+                // reflows on every keystroke.
+                XCTAssertEqual(item.title, engine.name)
+                XCTAssertEqual(item.subtitle, engine.host)
+                XCTAssertEqual(
+                    item.iconSource,
+                    .engine(symbol: engine.symbolName, tint: engine.tint)
+                )
+                XCTAssertTrue(
+                    openedURL(of: item)?.absoluteString.contains("test%20query") == true,
+                    "the row's URL should carry what was typed: \(item.action)"
+                )
+            case .assistant:
+                XCTAssertTrue(
+                    item.title.contains("test query"),
+                    "the row should echo what was typed: \(item.title)"
+                )
+            }
         }
     }
 
     // MARK: - Availability
 
     func testWebEnginesAreAlwaysAvailableAndAssistantsAreGated() async {
-        let webEngineIDs: Set = [
-            "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
-        ]
-
         let none = ScriptedAssistantRunner(availableCommands: [])
-        let available = await KeywordEngineCatalog.availableEngines(runner: none)
-        XCTAssertEqual(Set(available.map(\.id)), webEngineIDs)
-        XCTAssertTrue(available.allSatisfy { $0.kind == .web })
+        let available = await KeywordEngineCatalog.availableRegistry(runner: none)
+        XCTAssertEqual(
+            available.webModeResults(for: "query", activeEngineID: "google").map(\.id),
+            [
+                "web-mode:google",
+                "web-mode:wikipedia",
+                "web-mode:github",
+                "web-mode:stackoverflow",
+                "web-mode:twitter",
+                "web-mode:youtube",
+            ]
+        )
+        XCTAssertNil(available.addressedResult(for: "claude query"))
+        XCTAssertNil(available.addressedResult(for: "codex query"))
 
         let both = ScriptedAssistantRunner(availableCommands: ["claude", "codex"])
-        let all = await KeywordEngineCatalog.availableEngines(runner: both)
-        XCTAssertEqual(Set(all.map(\.id)), webEngineIDs.union(["claude", "codex"]))
+        let all = await KeywordEngineCatalog.availableRegistry(runner: both)
+        XCTAssertNotNil(all.addressedResult(for: "claude query"))
+        XCTAssertNotNil(all.addressedResult(for: "codex query"))
     }
 
     func testOnlyInstalledAssistantsSurvive() async {
         let onlyClaude = ScriptedAssistantRunner(availableCommands: ["claude"])
-        let available = await KeywordEngineCatalog.availableEngines(runner: onlyClaude)
+        let available = await KeywordEngineCatalog.availableRegistry(runner: onlyClaude)
 
-        XCTAssertTrue(available.contains { $0.id == "claude" })
-        XCTAssertFalse(available.contains { $0.id == "codex" })
+        XCTAssertNotNil(available.addressedResult(for: "claude query"))
+        XCTAssertNil(available.addressedResult(for: "codex query"))
     }
 
     func testAvailabilityIsCheckedOncePerAssistantEngine() async {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude", "codex"])
-        _ = await KeywordEngineCatalog.availableEngines(runner: runner)
+        _ = await KeywordEngineCatalog.availableRegistry(runner: runner)
 
         let checked = await runner.checkedCommands
         XCTAssertEqual(checked.sorted(), ["claude", "codex"])
@@ -510,11 +534,5 @@ final class KeywordEngineInjectionTests: XCTestCase {
             Set(checked).count,
             "each CLI should only be probed once at startup"
         )
-    }
-
-    func testAvailabilityPreservesTheCatalogueOrder() async {
-        let runner = ScriptedAssistantRunner(availableCommands: ["claude", "codex"])
-        let available = await KeywordEngineCatalog.availableEngines(runner: runner)
-        XCTAssertEqual(available.map(\.id), KeywordEngineCatalog.all.map(\.id))
     }
 }

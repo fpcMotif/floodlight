@@ -31,7 +31,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             .local(.init(
                 query: "notes",
                 candidates: [file],
-                keywordLookup: [:],
+                keywordRegistry: KeywordEngineCatalog.initialRegistry,
                 selectedFilter: .all,
                 selection: nil,
                 progress: .settled
@@ -249,5 +249,37 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         )
         let ids = coordinator.results.map(\.id)
         XCTAssertEqual(ids.count, Set(ids).count)
+    }
+
+    func testANewKeystrokeKeepsTheSettledRowsUntilTheNextSnapshotLands() async throws {
+        // Stale-while-revalidate: while the new Search Execution runs, the
+        // rows already on screen stay exactly as they are. Clearing them
+        // collapsed the list to the synthetic rows for a frame or two per
+        // keystroke — the visible jump this guards against.
+        let applications = ScriptedCatalog(
+            .init(
+                immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)],
+                indexedDelay: .milliseconds(200)
+            )
+        )
+        let coordinator = try await makeCoordinator(applications: applications)
+        coordinator.query = "xcode"
+        try await settle(coordinator)
+        let settledIDs = coordinator.results.map(\.id)
+        let settledSelection = coordinator.selectedID
+        XCTAssertFalse(settledIDs.isEmpty)
+
+        coordinator.query = "xcode c"
+
+        // Synchronous — no snapshot for the new query can have landed yet.
+        XCTAssertEqual(
+            coordinator.results.map(\.id),
+            settledIDs,
+            "a keystroke must not reshuffle or collapse the visible rows"
+        )
+        XCTAssertEqual(coordinator.selectedID, settledSelection)
+        XCTAssertTrue(coordinator.isSearching)
+
+        try await settle(coordinator)
     }
 }
