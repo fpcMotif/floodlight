@@ -241,12 +241,23 @@ final class SelectedResultActionPerformerTests: XCTestCase {
             score: 1
         )
 
+        let app = SearchFixtures.application(name: "Ghostty")
+
         harness.performer.reveal(web)
         harness.performer.reveal(file)
+        harness.performer.reveal(app)
 
-        XCTAssertEqual(harness.effects.revealedURLs, [file.fileURL])
-        XCTAssertEqual(harness.presentation.events, [.dismiss])
-        XCTAssertEqual(harness.events.events, try [.revealed(XCTUnwrap(file.fileURL)), .dismiss])
+        XCTAssertEqual(harness.effects.revealedURLs, [file.fileURL, app.fileURL])
+        XCTAssertEqual(harness.presentation.events, [.dismiss, .dismiss])
+        XCTAssertEqual(
+            harness.events.events,
+            try [
+                .revealed(XCTUnwrap(file.fileURL)),
+                .dismiss,
+                .revealed(XCTUnwrap(app.fileURL)),
+                .dismiss,
+            ]
+        )
     }
 
     func testIndependentOpensKeepTheirOwnItemAndQuery() async throws {

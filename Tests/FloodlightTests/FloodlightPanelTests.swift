@@ -80,6 +80,14 @@ final class FloodlightPanelTests: XCTestCase {
             FloodlightPanelController.panelCommand(for: "y", shiftHeld: false),
             .togglePreview
         )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "\r", shiftHeld: false),
+            .revealSelection
+        )
+        XCTAssertEqual(
+            FloodlightPanelController.panelCommand(for: "\n", shiftHeld: false),
+            .revealSelection
+        )
     }
 
     func testShiftDistinguishesRebuildIndexFromRevealSelection() {

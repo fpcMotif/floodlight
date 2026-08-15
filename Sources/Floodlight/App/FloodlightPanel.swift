@@ -358,6 +358,8 @@ final class FloodlightPanelController {
             shiftHeld ? .rebuildIndex : .revealSelection
         case "y":
             .togglePreview
+        case "\r", "\n":
+            .revealSelection
         default:
             .unmatched
         }
