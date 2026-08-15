@@ -113,58 +113,73 @@ final class FuzzyMatcherPropertyTests: XCTestCase {
         XCTAssertGreaterThan(exact, prefix)
     }
 
-    func testPrefixScoresAboveSubstring() throws {
-        let candidate = "safari"
-        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "saf", candidate: candidate))
-        let substring = try XCTUnwrap(FuzzyMatcher.score(query: "far", candidate: candidate))
-        XCTAssertGreaterThan(prefix, substring)
+    func testPrefixScoresAboveWordPrefix() throws {
+        let namePrefix = try XCTUnwrap(FuzzyMatcher.score(
+            query: "google",
+            candidate: "Google Chrome"
+        ))
+        let wordPrefix = try XCTUnwrap(FuzzyMatcher.score(
+            query: "chrome",
+            candidate: "Google Chrome"
+        ))
+        XCTAssertGreaterThan(namePrefix, wordPrefix)
     }
 
-    func testSubstringScoresAboveSubsequence() throws {
-        let candidate = "safari"
-        let substring = try XCTUnwrap(FuzzyMatcher.score(query: "far", candidate: candidate))
-        let subsequence = try XCTUnwrap(FuzzyMatcher.score(query: "sfr", candidate: candidate))
-        XCTAssertGreaterThan(substring, subsequence)
+    func testWordPrefixScoresAboveAcronym() throws {
+        let wordPrefix = try XCTUnwrap(FuzzyMatcher.score(
+            query: "chrome",
+            candidate: "Google Chrome"
+        ))
+        let acronym = try XCTUnwrap(FuzzyMatcher.score(query: "gc", candidate: "Google Chrome"))
+        XCTAssertGreaterThan(wordPrefix, acronym)
     }
 
-    func testFullOrderingExactPrefixSubstringSubsequence() throws {
-        let candidate = "spotlight"
-        let exact = try XCTUnwrap(FuzzyMatcher.score(query: "spotlight", candidate: candidate))
-        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "spot", candidate: candidate))
-        let substring = try XCTUnwrap(FuzzyMatcher.score(query: "pot", candidate: candidate))
-        let subsequence = try XCTUnwrap(FuzzyMatcher.score(query: "spt", candidate: candidate))
+    func testAcronymScoresAboveTypo() throws {
+        let acronym = try XCTUnwrap(FuzzyMatcher.score(query: "gc", candidate: "Google Chrome"))
+        let typo = try XCTUnwrap(FuzzyMatcher.score(query: "gogle", candidate: "Google Chrome"))
+        XCTAssertGreaterThan(acronym, typo)
+    }
+
+    func testFullOrderingExactPrefixWordPrefixAcronymTypo() throws {
+        let candidate = "Google Chrome"
+        let exact = try XCTUnwrap(FuzzyMatcher.score(query: "google chrome", candidate: candidate))
+        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "google", candidate: candidate))
+        let wordPrefix = try XCTUnwrap(FuzzyMatcher.score(query: "chrome", candidate: candidate))
+        let acronym = try XCTUnwrap(FuzzyMatcher.score(query: "gc", candidate: candidate))
+        let typo = try XCTUnwrap(FuzzyMatcher.score(query: "gogle", candidate: candidate))
         XCTAssertGreaterThan(exact, prefix)
-        XCTAssertGreaterThan(prefix, substring)
-        XCTAssertGreaterThan(substring, subsequence)
+        XCTAssertGreaterThan(prefix, wordPrefix)
+        XCTAssertGreaterThan(wordPrefix, acronym)
+        XCTAssertGreaterThan(acronym, typo)
     }
 
     // MARK: - Empty query
 
-    func testEmptyQueryReturnsOne() throws {
+    func testEmptyQueryReturnsOneForScoreAndNilForEvidence() throws {
         try checkProperty(
-            "score('', c) == 1 for any c",
+            "score('', c) == 1 and match('', c) == nil for any c",
             Gen<String>.hostile,
             runs: 400
         ) { candidate in
             FuzzyMatcher.score(query: "", candidate: candidate) == 1
+                && FuzzyMatcher.match(query: "", candidate: candidate) == nil
         }
     }
 
     func testEmptyQueryOnEmptyCandidateReturnsOne() {
         XCTAssertEqual(FuzzyMatcher.score(query: "", candidate: ""), 1)
+        XCTAssertNil(FuzzyMatcher.match(query: "", candidate: ""))
     }
 
     // MARK: - Non-match
 
-    func testNonMatchReturnsNil() throws {
+    func testShortQueryNonMatchReturnsNil() throws {
         try checkProperty(
-            "score(query, candidate) == nil when query chars not in candidate",
-            Gen<String>.lowercaseASCII,
+            "score(query, candidate) == nil when 1-2 char query has chars not in candidate",
+            Gen<String>.string(alphabet: Array("abcdefghijklmnopqrstuvwxyz"), length: 1...2),
             Gen<String>.lowercaseASCII,
             runs: 400
         ) { query, candidate in
-            // If the query contains a character not present in the candidate,
-            // the score must be nil.
             let queryChars = Set(query)
             let candidateChars = Set(candidate)
             if queryChars.isSubset(of: candidateChars) { return true }
@@ -245,12 +260,12 @@ final class FuzzyMatcherPropertyTests: XCTestCase {
         )
     }
 
-    func testSubsequenceBelowThresholdMayStillMatch() {
-        // A weak subsequence can land below the confidence threshold even
-        // though it technically "matches" — the threshold is what separates
-        // signal from noise.
-        let score = FuzzyMatcher.score(query: "sfr", candidate: "safari")
-        XCTAssertNotNil(score)
+    func testLooseSubsequencesAreRejected() {
+        // The matcher rejects arbitrary scattered subsequences like 'sfr' in 'safari'
+        XCTAssertNil(FuzzyMatcher.score(query: "sfr", candidate: "safari"))
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Grapher"))
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Google Chrome"))
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Zed Nightly"))
     }
 
     // MARK: - Score determinism

@@ -108,21 +108,19 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
 
     // MARK: - What a score means
 
-    func testAScoreExistsExactlyWhenTheQueryIsASubsequence() throws {
-        // The single defining property of the matcher: no score means "the
-        // characters aren't there, in order", and nothing else.
-        try checkProperty(
-            "score != nil iff query is a subsequence of candidate",
-            asciiQuery,
-            asciiCandidate,
-            runs: 2_000
-        ) { query, candidate in
-            let scored = FuzzyMatcher.score(
-                normalizedQuery: query,
-                normalizedCandidate: candidate
-            ) != nil
-            return scored == self.isSubsequence(query, of: candidate)
-        }
+    func testScoringRequiresStructuralOrTypoEvidence() {
+        // Loose character subsequences scattered across words are strictly rejected
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Grapher"))
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Google Chrome"))
+        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Zed Nightly"))
+        XCTAssertNil(FuzzyMatcher.score(query: "login", candidate: "Gemini"))
+        XCTAssertNil(FuzzyMatcher.score(query: "login", candidate: "Migration Assistant"))
+
+        // Structural shapes and typos match
+        XCTAssertNotNil(FuzzyMatcher.score(query: "gh", candidate: "Ghostty"))
+        XCTAssertNotNil(FuzzyMatcher.score(query: "gc", candidate: "Google Chrome"))
+        XCTAssertNotNil(FuzzyMatcher.score(query: "chrome", candidate: "Google Chrome"))
+        XCTAssertNotNil(FuzzyMatcher.score(query: "ryacast", candidate: "Raycast"))
     }
 
     func testAnEmptyQueryAlwaysScoresOne() throws {
@@ -175,11 +173,10 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
     // MARK: - Band ordering
 
     func testMatchQualityBandsAreOrderedForRealisticLengths() throws {
-        // Exact beats prefix beats substring beats subsequence — the whole
-        // reason the scorer returns wide, separated constants.
+        // Exact beats prefix beats word prefix beats acronym beats typo
         try checkProperty(
-            "exact > prefix > substring > subsequence",
-            Gen<String>.string(alphabet: Array("abcdef"), length: 2...5),
+            "exact > prefix > wordPrefix > acronym > typo",
+            Gen<String>.string(alphabet: Array("abcdef"), length: 3...5),
             runs: 400
         ) { core in
             let exact = FuzzyMatcher.score(normalizedQuery: core, normalizedCandidate: core)
@@ -187,16 +184,12 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
                 normalizedQuery: core,
                 normalizedCandidate: core + "zzz"
             )
-            let substring = FuzzyMatcher.score(
+            let wordPrefix = FuzzyMatcher.score(
                 normalizedQuery: core,
-                normalizedCandidate: "zzz" + core
+                normalizedCandidate: "zzz " + core
             )
-            let scattered = FuzzyMatcher.score(
-                normalizedQuery: core,
-                normalizedCandidate: core.map { "\($0)z" }.joined()
-            )
-            guard let exact, let prefix, let substring, let scattered else { return false }
-            return exact > prefix && prefix > substring && substring > scattered
+            guard let exact, let prefix, let wordPrefix else { return false }
+            return exact > prefix && prefix > wordPrefix
         }
     }
 
@@ -214,22 +207,21 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testASubstringMatchScoresByItsOffset() throws {
+    func testAWordPrefixMatchScoresByItsOffset() throws {
         try checkProperty(
-            "a substring hit is 12_000 minus its offset",
+            "a word prefix hit is 12_000 minus its offset",
             Gen<Int>.int(in: 1...200),
             runs: 200
-        ) { offset in
-            let candidate = String(repeating: "x", count: offset) + "wifi"
+        ) { padding in
+            let prefix = String(repeating: "x", count: padding)
+            let candidate = "\(prefix) wifi"
+            let offset = prefix.count + 1
             return FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: candidate)
                 == 12_000 - offset
         }
     }
 
-    func testWordBoundariesEarnABonusOverMidWordMatches() {
-        // "fd" against "full disk" hits two word starts; against "affiliated"
-        // it hits none. The boundary bonus is what makes the first rank
-        // higher, which is what makes typing initials work at all.
+    func testWordBoundariesAreRecognizedForAcronymsAndWordPrefixes() {
         let boundary = FuzzyMatcher.score(
             normalizedQuery: "fd",
             normalizedCandidate: "full disk access"
@@ -239,94 +231,38 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             normalizedCandidate: "affiliated"
         )
         XCTAssertNotNil(boundary)
-        XCTAssertNotNil(midWord)
-        XCTAssertGreaterThan(boundary ?? 0, midWord ?? 0)
+        XCTAssertNil(midWord, "letters scattered mid-word must not match")
 
         for separator in [" ", "-", "_", "/", "."] {
             let separated = FuzzyMatcher.score(
-                normalizedQuery: "ab",
+                normalizedQuery: "b",
                 normalizedCandidate: "a\(separator)b"
             )
-            let joined = FuzzyMatcher.score(
-                normalizedQuery: "ab",
-                normalizedCandidate: "azb"
-            )
-            XCTAssertGreaterThan(
-                separated ?? 0,
-                joined ?? 0,
-                "'\(separator)' should count as a word boundary"
-            )
-        }
-    }
-
-    func testConsecutiveRunsBeatScatteredCharacters() throws {
-        try checkProperty(
-            "a contiguous run outscores the same characters spread out",
-            Gen<String>.string(alphabet: Array("abcdef"), length: 3...5),
-            runs: 300
-        ) { core in
-            let contiguous = FuzzyMatcher.score(
-                normalizedQuery: core,
-                normalizedCandidate: "zzz" + core + "zzz"
-            )
-            let scattered = FuzzyMatcher.score(
-                normalizedQuery: core,
-                normalizedCandidate: "zzz" + core.map { "\($0)z" }.joined()
-            )
-            guard let contiguous, let scattered else { return false }
-            return contiguous > scattered
+            XCTAssertNotNil(separated, "'\(separator)' should count as a word boundary")
         }
     }
 
     // MARK: - The confidence threshold
 
-    func testTheConfidenceThresholdSitsAboveTheSubsequenceFloor() {
-        // Subsequence scoring starts at 8_000 and the threshold is 9_000,
-        // so a bare "the letters happen to appear in order" match is never
-        // confident on its own — which is what stops "arc" from matching
-        // "Accessibility" in the settings list.
-        XCTAssertEqual(FuzzyMatcher.confidentMatchThreshold, 9_000)
+    func testTheConfidenceThresholdSitsAtTheLowestTypoFloor() {
+        XCTAssertEqual(FuzzyMatcher.confidentMatchThreshold, 7_000)
 
-        // A genuine but loose subsequence of a real settings candidate:
-        // "aiy" appears in "accessibility …", spread across the word.
+        // A loose subsequence is completely rejected (returns nil)
         let loose = FuzzyMatcher.score(
             normalizedQuery: "aiy",
             normalizedCandidate: "accessibility voiceover zoom display motor hearing"
         )
-        XCTAssertNotNil(loose, "the characters do appear in order")
-        XCTAssertLessThan(
-            loose ?? .max,
-            FuzzyMatcher.confidentMatchThreshold,
-            "a loose subsequence must not clear the confidence bar"
-        )
+        XCTAssertNil(loose, "a loose subsequence must return nil")
 
-        // The synthetic worst case: three characters scattered across a
-        // long candidate, matching in order and nothing else.
+        // The synthetic worst case: three characters scattered across a long candidate
         let scattered = FuzzyMatcher.score(
             normalizedQuery: "abc",
             normalizedCandidate: "axxxxxxxxxbxxxxxxxxxc"
         )
-        XCTAssertNotNil(scattered)
-        XCTAssertLessThan(scattered ?? .max, FuzzyMatcher.confidentMatchThreshold)
-
-        // "arc" is rejected for a different reason worth separating: it is
-        // not a subsequence of that candidate at all, so it never even
-        // reaches the threshold check.
-        XCTAssertNil(
-            FuzzyMatcher.score(
-                normalizedQuery: "arc",
-                normalizedCandidate: "accessibility voiceover zoom display motor hearing"
-            )
-        )
+        XCTAssertNil(scattered, "scattered characters must return nil")
     }
 
     func testAVeryLongCandidateCanPushAGenuinePrefixMatchBelowConfidence() throws {
-        // Sharp edge, pinned deliberately: a prefix hit scores
-        // `15_000 - candidate.count`, so once a candidate passes ~6_000
-        // characters even an exact prefix match drops under the confidence
-        // threshold and disappears from the settings list. Nothing in the
-        // shipping catalogue is near that, but the arithmetic is worth
-        // stating out loud.
         let shortCandidate = "wifi" + String(repeating: "x", count: 1_000)
         XCTAssertGreaterThan(
             try XCTUnwrap(
@@ -335,7 +271,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             FuzzyMatcher.confidentMatchThreshold
         )
 
-        let hugeCandidate = "wifi" + String(repeating: "x", count: 6_000)
+        let hugeCandidate = "wifi" + String(repeating: "x", count: 8_500)
         XCTAssertLessThan(
             try XCTUnwrap(
                 FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: hugeCandidate)
@@ -525,11 +461,9 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         XCTAssertLessThan(elapsed, .seconds(2))
     }
 
-    func testTheASCIIPathHandlesAWorstCaseSubsequenceScanWithoutBlowingUp() {
-        // The pathological shape for the substring pre-scan: a query that
-        // almost matches everywhere and only fully matches at the end.
-        let candidate = Array(String(repeating: "a", count: 20_000).utf8) + Array("b".utf8)
-        let query = Array(String(repeating: "a", count: 100).utf8) + Array("b".utf8)
+    func testTheASCIIPathHandlesLongStringsWithoutBlowingUp() {
+        let candidate = Array((String(repeating: "a ", count: 10_000) + "b").utf8)
+        let query = Array("b".utf8)
 
         let start = ContinuousClock.now
         let score = FuzzyMatcher.scoreASCII(
