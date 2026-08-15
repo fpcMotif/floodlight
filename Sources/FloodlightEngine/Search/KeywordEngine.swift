@@ -66,7 +66,7 @@ package struct KeywordEngine: Sendable, Identifiable {
     package var symbolName: String {
         switch id {
         case "youtube": "play.rectangle.fill"
-        case "google": "magnifyingglass"
+        case "google": "g.circle.fill"
         case "github": "chevron.left.forwardslash.chevron.right"
         case "twitter": "at"
         case "wikipedia": "book.closed.fill"

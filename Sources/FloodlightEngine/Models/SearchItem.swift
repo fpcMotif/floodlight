@@ -17,7 +17,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
         case .file: "File"
         case .folder: "Folder"
         case .systemSetting: "System Setting"
-        case .web: "Web Search"
+        case .web: "Web"
         }
     }
 

@@ -207,7 +207,7 @@ final class KeywordEngineTests: XCTestCase {
         XCTAssertEqual(fallback.subtitle, "google.com")
         XCTAssertEqual(
             fallback.iconSource,
-            SearchItemIconSource.engine(symbol: "magnifyingglass", tint: .blue)
+            SearchItemIconSource.engine(symbol: "g.circle.fill", tint: .blue)
         )
 
         let modeRows = catalogRegistry.webModeResults(for: "lofi", activeEngineID: "google")
