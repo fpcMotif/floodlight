@@ -24,18 +24,6 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         length: 0...24
     )
 
-    /// The definition the scorer implements: greedy left-to-right
-    /// subsequence matching over the candidate's characters.
-    private func isSubsequence(_ query: String, of candidate: String) -> Bool {
-        var index = query.startIndex
-        for character in candidate where index < query.endIndex {
-            if character == query[index] {
-                query.formIndex(after: &index)
-            }
-        }
-        return index == query.endIndex
-    }
-
     // MARK: - The two scorers must agree exactly
 
     func testTheASCIIFastPathReturnsTheSameScoreAsTheStringScorer() throws {
@@ -50,6 +38,25 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
                 normalizedCandidate: candidate
             )
             let fast = FuzzyMatcher.scoreASCII(
+                normalizedQuery: Array(query.utf8),
+                normalizedCandidate: Array(candidate.utf8)
+            )
+            return reference == fast
+        }
+    }
+
+    func testTheASCIIFastPathReturnsTheSameMatchEvidenceAsTheStringScorer() throws {
+        try checkProperty(
+            "matchASCII == match for ASCII inputs",
+            asciiQuery,
+            asciiCandidate,
+            runs: 3_000
+        ) { query, candidate in
+            let reference = FuzzyMatcher.match(
+                normalizedQuery: query,
+                normalizedCandidate: candidate
+            )
+            let fast = FuzzyMatcher.matchASCII(
                 normalizedQuery: Array(query.utf8),
                 normalizedCandidate: Array(candidate.utf8)
             )

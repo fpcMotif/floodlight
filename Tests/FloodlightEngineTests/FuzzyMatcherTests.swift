@@ -73,31 +73,37 @@ final class FuzzyMatcherTests: XCTestCase {
     }
 
     func testTypoToleranceAllowsOneEditForThreeToFiveCharacters() throws {
-        // Transposition (1 edit in Damerau-Levenshtein)
-        let raycast = try XCTUnwrap(match(query: "ryacast", candidate: "Raycast"))
-        XCTAssertEqual(raycast.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(raycast.score, 9_000 - 1_000)
-
-        // Missing letter in 3-5 char query (1 edit)
+        // Missing letter in 5-char query (1 edit)
         let safari = try XCTUnwrap(match(query: "safri", candidate: "Safari"))
         XCTAssertEqual(safari.shape, .typo(edits: 1, offset: 0))
         XCTAssertEqual(safari.score, 9_000 - 1_000)
 
+        // Missing letter in 5-char query (1 edit)
         let finder = try XCTUnwrap(match(query: "fnder", candidate: "Finder"))
         XCTAssertEqual(finder.shape, .typo(edits: 1, offset: 0))
         XCTAssertEqual(finder.score, 9_000 - 1_000)
 
-        // Extra letter in 3-5 char query (1 edit)
+        // Missing letter in 5-char query (1 edit)
+        let google = try XCTUnwrap(match(query: "gogle", candidate: "Google"))
+        XCTAssertEqual(google.shape, .typo(edits: 1, offset: 0))
+        XCTAssertEqual(google.score, 9_000 - 1_000)
+    }
+
+    func testTypoToleranceAllowsUpToTwoEditsForSixOrMoreCharacters() throws {
+        // 1 edit transposition on 7-char query
+        let raycast = try XCTUnwrap(match(query: "ryacast", candidate: "Raycast"))
+        XCTAssertEqual(raycast.shape, .typo(edits: 1, offset: 0))
+        XCTAssertEqual(raycast.score, 9_000 - 1_000)
+
+        // 1 edit deletion on 6-char query
         let ghostty = try XCTUnwrap(match(query: "ghosty", candidate: "Ghostty"))
         XCTAssertEqual(ghostty.shape, .typo(edits: 1, offset: 0))
         XCTAssertEqual(ghostty.score, 9_000 - 1_000)
-    }
 
-    func testTypoToleranceAllowsTwoEditsForSixOrMoreCharacters() throws {
-        // 2 edits on 6+ character query
-        let raycast = try XCTUnwrap(match(query: "raaycst", candidate: "Raycast"))
-        XCTAssertEqual(raycast.shape, .typo(edits: 2, offset: 0))
-        XCTAssertEqual(raycast.score, 9_000 - 2_000)
+        // 2 edits on 7-char query
+        let raycastTwoEdits = try XCTUnwrap(match(query: "raaycst", candidate: "Raycast"))
+        XCTAssertEqual(raycastTwoEdits.shape, .typo(edits: 2, offset: 0))
+        XCTAssertEqual(raycastTwoEdits.score, 9_000 - 2_000)
     }
 
     func testTypoToleranceRejectsMoreEditsThanBudget() {

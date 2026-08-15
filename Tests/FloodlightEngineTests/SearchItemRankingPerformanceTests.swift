@@ -64,6 +64,64 @@ final class SearchItemRankingPerformanceTests: XCTestCase {
         )
     }
 
+    func testFuzzyMatcherScoringBudget() {
+        let candidates = [
+            "Safari",
+            "Google Chrome",
+            "Visual Studio Code",
+            "Ghostty",
+            "Raycast",
+            "Login Items & Extensions",
+            "System Settings",
+            "Bluetooth",
+            "Wi-Fi",
+            "Terminal",
+            "Activity Monitor",
+            "ColorSync Utility",
+        ].map(FuzzyMatcher.normalized)
+
+        let queries = ["saf", "gc", "chrome", "ryacast", "gogle", "gh", "login", "zzz"]
+            .map(FuzzyMatcher.normalized)
+
+        // Warm up
+        for _ in 0..<5 {
+            for query in queries {
+                for candidate in candidates {
+                    _ = FuzzyMatcher.score(normalizedQuery: query, normalizedCandidate: candidate)
+                }
+            }
+        }
+
+        let sampleCount = _isDebugAssertConfiguration() ? 3 : 11
+        let iterations = _isDebugAssertConfiguration() ? 20 : 100
+
+        let samples = (0..<sampleCount).map { _ in
+            measureCPU(iterations: iterations) {
+                var matches = 0
+                for query in queries {
+                    for candidate in candidates
+                        where (FuzzyMatcher.score(
+                            normalizedQuery: query,
+                            normalizedCandidate: candidate
+                        ) ?? 0) > 0
+                    {
+                        matches += 1
+                    }
+                }
+                return matches
+            }
+        }
+
+        let microseconds = median(samples)
+        print(
+            "FLOODLIGHT_BENCH fuzzy_matcher_scoring_us="
+                + String(format: "%.3f", microseconds)
+                + " queries=\(queries.count) candidates=\(candidates.count)"
+        )
+
+        XCTAssertLessThan(microseconds, 5_000)
+    }
+
     private func makeCandidates(count: Int) -> [SearchItem] {
         (0..<count).map { index in
             let url = URL(fileURLWithPath: "/Applications/Fixture-\(index).app")
