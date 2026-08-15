@@ -82,7 +82,7 @@ private struct SearchBar: View {
 
             FloodlightTextField(
                 text: $model.query,
-                placeholder: "Floodlight search",
+                placeholder: "Floodlight",
                 focusGeneration: model.focusGeneration,
                 onSubmit: model.openSelection,
                 onCommandSubmit: model.revealSelection,
@@ -146,20 +146,13 @@ private struct WebModeToken: View {
     let engine: KeywordEngine
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: engine.symbolName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(engine.tint.color)
-            Text(engine.title)
-        }
-        .font(FloodlightMetrics.Typography.chip)
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .fixedSize()
-        .modifier(FloodlightChipSurface(isSelected: true))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Web search mode: \(engine.title)")
+        Image(systemName: engine.symbolName)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(engine.tint.color)
+            .frame(width: 26, height: 26)
+            .modifier(FloodlightChipSurface(isSelected: true))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(engine.name)
     }
 }
 
