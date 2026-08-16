@@ -141,6 +141,7 @@ final class SearchCoordinator {
             .appendingPathComponent("Downloads", isDirectory: true)
         let initialRoot = savedRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? defaultRoot
+        let fallbackStorage = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(
                 "Library/Application Support/Floodlight",
                 isDirectory: true
