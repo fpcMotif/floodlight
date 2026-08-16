@@ -60,6 +60,7 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("ServiceManagement"),
+                .unsafeFlags(["-Xlinker", "-dead_strip_dylibs"]),
             ]
         ),
         // Shared test scaffolding: a deterministic property-based testing
