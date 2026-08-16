@@ -129,34 +129,26 @@ package enum FuzzyMatcher {
         queryChars: [Character],
         in words: [(offset: Int, chars: [Character])]
     ) -> MatchEvidence? {
-        var bestOffset: Int?
         for word in words where word.offset > 0 && word.chars.starts(with: queryChars) {
-            if let current = bestOffset {
-                if word.offset < current {
-                    bestOffset = word.offset
-                }
-            } else {
-                bestOffset = word.offset
-            }
+            return MatchEvidence(
+                shape: .wordPrefix(offset: word.offset),
+                score: 12_000 - word.offset
+            )
         }
-        return bestOffset.map { MatchEvidence(shape: .wordPrefix(offset: $0), score: 12_000 - $0) }
+        return nil
     }
 
     private static func findWordPrefixASCII(
         query: [UInt8],
         in words: [(offset: Int, bytes: ArraySlice<UInt8>)]
     ) -> MatchEvidence? {
-        var bestOffset: Int?
         for word in words where word.offset > 0 && word.bytes.starts(with: query) {
-            if let current = bestOffset {
-                if word.offset < current {
-                    bestOffset = word.offset
-                }
-            } else {
-                bestOffset = word.offset
-            }
+            return MatchEvidence(
+                shape: .wordPrefix(offset: word.offset),
+                score: 12_000 - word.offset
+            )
         }
-        return bestOffset.map { MatchEvidence(shape: .wordPrefix(offset: $0), score: 12_000 - $0) }
+        return nil
     }
 
     private static func findAcronym(
