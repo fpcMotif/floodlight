@@ -1,4 +1,7 @@
 import AppKit
+
+// periphery:ignore - Module import required for FloodlightEngine types.
+import FloodlightEngine
 import SwiftUI
 
 private extension Color {
@@ -13,7 +16,7 @@ private extension Color {
 struct OnboardingView: View {
     let presentation: FloodlightConfigurationPresentation
     @Bindable var session: OnboardingSession
-    // Every callback carries its isolation. `onSetLaunchAtLogin` has to,
+    @State private var newExclusionName = ""
     // because it drives a `Binding`'s setter and SwiftUI now requires that
     // setter to be `@isolated(any) @Sendable`; the rest are annotated to match
     // rather than leaving one of six spelled differently for a reason that is
@@ -44,13 +47,17 @@ struct OnboardingView: View {
 
             Divider()
 
-            VStack(spacing: 14) {
-                shortcutSection
-                searchAccessSection
-                Spacer(minLength: 0)
+            ScrollView {
+                VStack(spacing: 14) {
+                    shortcutSection
+                    searchAccessSection
+                    if presentation == .settings {
+                        blocklistSection
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(20)
             }
-            .padding(20)
-
             Divider()
             footer
         }
@@ -214,6 +221,65 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, 12)
             }
+        }
+    }
+
+    private var blocklistSection: some View {
+        SetupSection(title: "Excluded search items") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    TextField("App name to exclude (e.g. Clash)", text: $newExclusionName)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Exclude") {
+                        let trimmed = newExclusionName
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        session.blockItem(name: trimmed)
+                        newExclusionName = ""
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.floodlightSetupAccent)
+                    .disabled(newExclusionName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .isEmpty)
+                }
+
+                if session.blocklistRules.isEmpty {
+                    Text("No excluded apps. Excluded applications will not appear in search.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(session.blocklistRules, id: \.self) { rule in
+                                HStack(spacing: 5) {
+                                    Text(ruleDisplayName(rule))
+                                        .font(.system(size: 12, weight: .medium))
+                                    Button {
+                                        session.unblockRule(rule)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.08), in: Capsule())
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func ruleDisplayName(_ rule: BlocklistRule) -> String {
+        switch rule {
+        case let .name(name): name
+        case let .id(id): id.replacingOccurrences(of: "application:", with: "")
         }
     }
 

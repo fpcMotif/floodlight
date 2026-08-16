@@ -376,6 +376,22 @@ private struct ResultList: View {
                 }
         )
         .id(item.id)
+        .contextMenu {
+            Button("Open") {
+                model.activate(item)
+            }
+            if item.fileURL != nil {
+                Button("Show in Finder") {
+                    model.revealSelection()
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                model.excludeFromSearch(item)
+            } label: {
+                Label("Exclude '\(item.title)' from Search", systemImage: "nosign")
+            }
+        }
         .onDrag {
             guard let url = item.fileURL else {
                 return NSItemProvider(object: item.title as NSString)

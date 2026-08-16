@@ -1,3 +1,5 @@
+// periphery:ignore - Module import required for FloodlightEngine types.
+import FloodlightEngine
 import Foundation
 import Observation
 
@@ -31,6 +33,12 @@ final class OnboardingSession {
     var launchAtLoginMessage: String?
     var rootURL: URL
     private(set) var hasFullDiskAccess: Bool
+    var blocklistVersion = 0
+
+    var blocklistRules: [BlocklistRule] {
+        _ = blocklistVersion
+        return blocklistStore.rules
+    }
 
     var offersSpotlightReplacement: Bool {
         activeShortcut != .commandSpace
@@ -40,12 +48,14 @@ final class OnboardingSession {
     private let defaults: UserDefaults
     @ObservationIgnored
     private let fullDiskAccessProvider: () -> Bool
-
+    @ObservationIgnored
+    private let blocklistStore: BlocklistStore
     init(
         activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
         defaults: UserDefaults = .standard,
+        blocklistStore: BlocklistStore = BlocklistStore(),
         fullDiskAccessProvider: @escaping () -> Bool = {
             FloodlightFullDiskAccess.isGranted()
         }
@@ -54,12 +64,28 @@ final class OnboardingSession {
         self.launchesAtLogin = launchesAtLogin
         self.rootURL = rootURL
         self.defaults = defaults
+        self.blocklistStore = blocklistStore
         self.fullDiskAccessProvider = fullDiskAccessProvider
         hasFullDiskAccess = fullDiskAccessProvider()
     }
 
     func refreshFullDiskAccess() {
         hasFullDiskAccess = fullDiskAccessProvider()
+    }
+
+    func blockItem(name: String) {
+        blocklistStore.block(name: name)
+        blocklistVersion += 1
+    }
+
+    func unblockRule(_ rule: BlocklistRule) {
+        switch rule {
+        case let .name(name):
+            blocklistStore.unblock(name: name)
+        case let .id(id):
+            blocklistStore.unblock(id: id)
+        }
+        blocklistVersion += 1
     }
 
     func complete() {

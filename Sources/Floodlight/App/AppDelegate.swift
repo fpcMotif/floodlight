@@ -160,7 +160,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         scope.target = self
         menu.addItem(scope)
-
         let rebuild = NSMenuItem(
             title: "Rebuild Index",
             action: #selector(rebuildIndex),
