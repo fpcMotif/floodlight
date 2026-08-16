@@ -126,6 +126,31 @@ struct CatalogTests {
                 .contains { $0.fileURL == dockAgentURL }))
     }
 
+    @Test func blocklistExcludesApplicationFromImmediateAndIndexedResults() throws {
+        let suiteName = "FloodlightBlocklistCatalogTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let blocklist = BlocklistStore(defaults: defaults)
+        blocklist.block(name: "Clash")
+
+        let discovery = ApplicationDiscoveryFixture([
+            (name: "Claude", url: URL(fileURLWithPath: "/Applications/Claude.app")),
+            (name: "Clash", url: URL(fileURLWithPath: "/Applications/Clash.app")),
+        ])
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: blocklist,
+            discoveryProvider: { discovery.snapshot() }
+        )
+
+        let immediate = catalog.immediatePage(for: "cl").items
+        #expect(immediate.contains { $0.title == "Claude" })
+        #expect(!immediate.contains { $0.title == "Clash" })
+        #expect(catalog.immediatePage(for: "clash").items.isEmpty)
+    }
+
     @Test func discoversSymlinkedSystemApplications() async throws {
         let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
         guard FileManager.default.fileExists(atPath: safariURL.path) else {

@@ -64,6 +64,7 @@ final class SearchCoordinator {
     }
 
     private let sourceSearch: any SourceSearching
+    package let blocklistStore: BlocklistStore
     private let assistantRunner: any AssistantProcessRunning
     private let assistantRunSession: AssistantRunSession
     private let actionPerformer: SelectedResultActionPerformer
@@ -82,6 +83,7 @@ final class SearchCoordinator {
     init(
         sourceSearch: any SourceSearching,
         recentStore: RecentStore,
+        blocklistStore: BlocklistStore = BlocklistStore(),
         rootURL: URL,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
         runningApplicationActivator: any RunningApplicationActivating =
@@ -90,6 +92,7 @@ final class SearchCoordinator {
         onDismiss: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
+        self.blocklistStore = blocklistStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
         self.onDismiss = onDismiss
@@ -155,6 +158,7 @@ final class SearchCoordinator {
             ?? fallbackStorage
         let environment = ProcessInfo.processInfo.environment
         let recentStore = RecentStore()
+        let blocklistStore = BlocklistStore()
         let fileIndexStorage = indexStorage.appendingPathComponent("FileIndex", isDirectory: true)
         try? fileManager.createDirectory(at: fileIndexStorage, withIntermediateDirectories: true)
 
@@ -164,6 +168,7 @@ final class SearchCoordinator {
                 storageURL: fileIndexStorage,
                 applications: ApplicationCatalog(
                     recentStore: recentStore,
+                    blocklistStore: blocklistStore,
                     deferDiscovery: true
                 ),
                 settings: SystemCatalog(),
@@ -171,6 +176,7 @@ final class SearchCoordinator {
                 logLevel: environment["FLOODLIGHT_FFF_LOG_LEVEL"] ?? "info"
             ),
             recentStore: recentStore,
+            blocklistStore: blocklistStore,
             rootURL: initialRoot,
             assistantRunner: assistantRunner,
             onDismiss: onDismiss
@@ -338,6 +344,20 @@ final class SearchCoordinator {
         actionPerformer.activate(item, query: query)
     }
 
+    func excludeFromSearch(_ item: SearchItem) {
+        blocklistStore.block(id: item.id)
+        blocklistStore.block(name: item.title)
+        let updatedCandidates = publication.sourceCandidates.filter {
+            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
+        }
+        publication = projectLocal(
+            candidates: updatedCandidates,
+            selectedFilter: selectedFilter,
+            selection: publication.selection?.id == item.id ? nil : publication.selection,
+            progress: publication.progress
+        )
+    }
+
     func revealSelection() {
         guard let selectedItem else { return }
         actionPerformer.reveal(selectedItem)
@@ -484,10 +504,14 @@ final class SearchCoordinator {
         progress: SearchResultProgress,
         filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
     ) -> SearchResultPublication {
-        SearchResultProjection.project(
+        let validCandidates = candidates.filter { !blocklistStore.isBlocked(
+            name: $0.title,
+            id: $0.id
+        ) }
+        return SearchResultProjection.project(
             .local(.init(
                 query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
-                candidates: candidates,
+                candidates: validCandidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,

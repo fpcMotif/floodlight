@@ -30,10 +30,12 @@ package final class ApplicationCatalog: Catalog {
     private let markerRoot: URL
     private let index: FFFIndex
     private let recentStore: RecentStore
+    private let blocklistStore: BlocklistStore
     private let discoveryProvider: @Sendable () -> [(name: String, url: URL)]
 
     package init(
         recentStore: RecentStore,
+        blocklistStore: BlocklistStore = BlocklistStore(),
         supportURL: URL? = nil,
         deferDiscovery: Bool = false,
         discoveryProvider: @escaping @Sendable () -> [(name: String, url: URL)] = {
@@ -41,6 +43,7 @@ package final class ApplicationCatalog: Catalog {
         }
     ) {
         self.recentStore = recentStore
+        self.blocklistStore = blocklistStore
         self.discoveryProvider = discoveryProvider
 
         let fileManager = FileManager.default
@@ -136,6 +139,9 @@ package final class ApplicationCatalog: Catalog {
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
+            if self.blocklistStore.isBlocked(name: application.name, id: application.id) {
+                return nil
+            }
             guard let score = Self.score(
                 of: application,
                 normalizedQuery: normalizedQuery,
@@ -174,6 +180,9 @@ package final class ApplicationCatalog: Catalog {
         matches.reserveCapacity(min(currentApps.count, 64))
 
         for application in currentApps {
+            if blocklistStore.isBlocked(name: application.name, id: application.id) {
+                continue
+            }
             guard application.characterMask & queryCharacterMask == queryCharacterMask else {
                 continue
             }

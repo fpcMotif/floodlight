@@ -25,15 +25,19 @@ class SearchCoordinatorIntegrationTestCase {
         applications: ScriptedCatalog = ScriptedCatalog(),
         settings: ScriptedCatalog = ScriptedCatalog(),
         runner: ScriptedAssistantRunner = ScriptedAssistantRunner(),
+        blocklist: BlocklistStore? = nil,
         onDismiss: @escaping @MainActor () -> Void = {}
     ) async throws -> SearchCoordinator {
-        try SearchCoordinator(
+        let isolated = try IsolatedDefaults()
+        let blocklistStore = blocklist ?? BlocklistStore(defaults: isolated.defaults)
+        return SearchCoordinator(
             sourceSearch: SourceSearchEngine(
                 files: ScriptedFileSource(),
                 applications: applications,
                 settings: settings
             ),
-            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
+            recentStore: RecentStore(defaults: isolated.defaults),
+            blocklistStore: blocklistStore,
             rootURL: tree.root,
             assistantRunner: runner,
             onDismiss: onDismiss
@@ -360,6 +364,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
             )
         )
         let coordinator = try await makeCoordinator(applications: applications)
+        coordinator.start()
 
         coordinator.query = "app"
         try await waitUntil("the immediate applications arrive", timeout: 10) {
@@ -396,6 +401,36 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await settle(coordinator)
 
         #expect(coordinator.selectedID == "app:late")
+    }
+
+    @Test func excludingAnItemRemovesItFromResultsAndPersistsToBlocklist() async throws {
+        let clash = SearchFixtures.application(id: "app:clash", name: "Clash", score: 120_000)
+        let claude = SearchFixtures.application(id: "app:claude", name: "Claude", score: 110_000)
+        let applications = ScriptedCatalog(immediate: [clash, claude])
+
+        let isolated = try IsolatedDefaults()
+        let blocklist = BlocklistStore(defaults: isolated.defaults)
+
+        let coordinator = try await makeCoordinator(
+            applications: applications,
+            blocklist: blocklist
+        )
+
+        coordinator.query = "cl"
+        try await waitUntil("both candidates appear") {
+            coordinator.results.contains { $0.id == clash.id }
+                && coordinator.results.contains { $0.id == claude.id }
+        }
+
+        coordinator.excludeFromSearch(clash)
+
+        try await waitUntil("clash is excluded from results") {
+            !coordinator.results.contains { $0.id == clash.id }
+                && coordinator.results.contains { $0.id == claude.id }
+        }
+
+        #expect(blocklist.isBlocked(name: clash.title, id: clash.id))
+        #expect(coordinator.results.first?.id == claude.id)
     }
 
     @Test func anExplicitlyChosenWebFallbackKeepsTheSelection() async throws {
