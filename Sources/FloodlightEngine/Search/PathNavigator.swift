@@ -111,23 +111,25 @@ package enum PathNavigator {
         let cleanDir = dirPart.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
         if let rootURL {
-            results.append((rootURL.appendingPathComponent(cleanDir), remainder))
             if let caseInsensitiveURL = findCaseInsensitiveMatch(
                 name: cleanDir,
                 under: rootURL,
                 fileManager: fileManager
             ) {
                 results.append((caseInsensitiveURL, remainder))
+            } else {
+                results.append((rootURL.appendingPathComponent(cleanDir), remainder))
             }
         }
 
-        results.append((homeURL.appendingPathComponent(cleanDir), remainder))
         if let caseInsensitiveHomeURL = findCaseInsensitiveMatch(
             name: cleanDir,
             under: homeURL,
             fileManager: fileManager
         ) {
             results.append((caseInsensitiveHomeURL, remainder))
+        } else {
+            results.append((homeURL.appendingPathComponent(cleanDir), remainder))
         }
 
         return results
