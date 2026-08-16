@@ -200,6 +200,35 @@ final class EndToEndSearchTests: XCTestCase {
         XCTAssertNil(row.fileSize)
     }
 
+    func testFolderContainingManyMatchingFilesIsStillRecalledAndFiltered() async throws {
+        for fileIndex in 0..<20 {
+            try tree.makeFile(
+                "Projects/project-\(fileIndex).txt",
+                contents: "project file \(fileIndex)"
+            )
+        }
+        let coordinator = try await makeCoordinator()
+
+        try await search(
+            coordinator,
+            "Projects",
+            forRowMatching: { $0.kind == .folder && $0.title.hasPrefix("Projects") },
+            description: "the Projects folder appears despite matching child files"
+        )
+
+        let folderRow = try XCTUnwrap(
+            coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Projects") }
+        )
+        XCTAssertEqual(folderRow.title, "Projects/")
+        XCTAssertEqual(folderRow.kind, .folder)
+
+        coordinator.selectFilter(.folders)
+        XCTAssertTrue(
+            coordinator.results.contains { $0.kind == .folder && $0.title.hasPrefix("Projects") },
+            "Projects folder must be visible under the folders filter"
+        )
+    }
+
     func testAccentedFileNamesAreFoundByTheirUnaccentedSpelling() async throws {
         // The whole reason `FuzzyMatcher.normalized` exists, proven against
         // a file that is really on disk.
