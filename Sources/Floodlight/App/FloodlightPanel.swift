@@ -28,13 +28,9 @@ final class FloodlightPanelController {
     private let model: SearchCoordinator
     private let quickLook = QuickLookController()
 
-    // Opaque observer tokens, handed back by AppKit as `Any` and
-    // `NSObjectProtocol` — neither of which is Sendable. They are written and
-    // read only on the main actor, plus once from `deinit`, which runs after
-    // the last reference is gone and so cannot race with anything.
-    private nonisolated(unsafe) var localKeyMonitor: Any?
-    private nonisolated(unsafe) var resignActiveObservation: NSObjectProtocol?
-    private nonisolated(unsafe) var accessibilityDisplayObservation: NSObjectProtocol?
+    private var localKeyMonitor: Any?
+    private var resignActiveObservation: NSObjectProtocol?
+    private var accessibilityDisplayObservation: NSObjectProtocol?
     private var appliedGlassSlabState: Bool?
 
     init(model: SearchCoordinator) {
@@ -83,6 +79,7 @@ final class FloodlightPanelController {
             object: NSApp,
             queue: .main
         ) { [weak self] _ in
+            // queue: .main is untyped; AppKit delivers this on the main thread.
             MainActor.assumeIsolated {
                 guard self?.panel.isVisible == true else { return }
                 self?.hide()
@@ -97,13 +94,14 @@ final class FloodlightPanelController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            // queue: .main is untyped; AppKit delivers this on the main thread.
             MainActor.assumeIsolated {
                 self?.applyGlassSlabState()
             }
         }
     }
 
-    deinit {
+    isolated deinit {
         if let localKeyMonitor {
             NSEvent.removeMonitor(localKeyMonitor)
         }

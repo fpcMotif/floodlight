@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// End to end: a real directory tree on disk, a real FFF index scanning it,
@@ -13,12 +13,12 @@ import XCTest
 /// place that answers "if a user typed this, would the file come back?",
 /// which is the question the whole application exists to answer.
 @MainActor
-final class EndToEndSearchTests: XCTestCase {
-    private nonisolated(unsafe) var tree: TemporaryTree!
-    private nonisolated(unsafe) var defaults: IsolatedDefaults!
-    private nonisolated(unsafe) var supportURL: URL!
+struct EndToEndSearchTests {
+    private let tree: TemporaryTree
+    private let defaults: IsolatedDefaults
+    private let supportURL: URL
 
-    override func setUpWithError() throws {
+    init() throws {
         tree = try TemporaryTree(label: "FloodlightE2E")
         defaults = try IsolatedDefaults(label: "FloodlightE2E")
         supportURL = tree.root.appendingPathComponent(".support", isDirectory: true)
@@ -35,12 +35,6 @@ final class EndToEndSearchTests: XCTestCase {
         try tree.makeFile("Archive/solitary-vault/placeholder.dat", contents: "x")
         try tree.makeFile("Downloads/swift-concurrency.epub", contents: "Swift Concurrency eBook")
         try tree.makeFile("Downloads/ghostty-manual.epub", contents: "Ghostty Manual")
-    }
-
-    override func tearDown() {
-        tree = nil
-        defaults = nil
-        supportURL = nil
     }
 
     private func makeCoordinator(
@@ -76,8 +70,7 @@ final class EndToEndSearchTests: XCTestCase {
     private func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -85,7 +78,7 @@ final class EndToEndSearchTests: XCTestCase {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     /// Types `query` and waits for the indexed pass to deliver a row that
@@ -95,18 +88,17 @@ final class EndToEndSearchTests: XCTestCase {
         _ query: String,
         forRowMatching predicate: @escaping (SearchItem) -> Bool,
         description: String,
-        file: StaticString = #filePath,
-        line: UInt = #line
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         coordinator.query = query
-        try await waitUntil(description, file: file, line: line) {
+        try await waitUntil(description, sourceLocation: sourceLocation) {
             coordinator.results.contains(where: predicate)
         }
     }
 
     // MARK: - Files come back
 
-    func testTypingAFileNameReturnsThatFile() async throws {
+    @Test func typingAFileNameReturnsThatFile() async throws {
         let coordinator = try await makeCoordinator()
 
         try await search(
@@ -116,16 +108,15 @@ final class EndToEndSearchTests: XCTestCase {
             description: "the quarterly report appears"
         )
 
-        let row = try XCTUnwrap(
-            coordinator.results.first { $0.title.contains("quarterly-report") }
-        )
-        XCTAssertEqual(row.kind, .file)
-        XCTAssertEqual(row.fileURL?.lastPathComponent, "quarterly-report.pdf")
-        XCTAssertTrue(row.isPreviewable)
-        XCTAssertEqual(row.action, try .open(XCTUnwrap(row.fileURL)))
+        let row = try #require(coordinator.results.first { $0.title.contains("quarterly-report") })
+        #expect(row.kind == .file)
+        #expect(row.fileURL?.lastPathComponent == "quarterly-report.pdf")
+        #expect(row.isPreviewable)
+        let quarterlyURL = try #require(row.fileURL)
+        #expect(row.action == .open(quarterlyURL))
     }
 
-    func testTypingAnEpubFileNameReturnsThatBookAndAppearsInDocumentsFilter() async throws {
+    @Test func typingAnEpubFileNameReturnsThatBookAndAppearsInDocumentsFilter() async throws {
         let coordinator = try await makeCoordinator()
 
         try await search(
@@ -135,29 +126,27 @@ final class EndToEndSearchTests: XCTestCase {
             description: "the swift concurrency epub appears"
         )
 
-        let row = try XCTUnwrap(
-            coordinator.results.first { $0.title.contains("swift-concurrency") }
-        )
-        XCTAssertEqual(row.kind, .file)
-        XCTAssertEqual(row.fileURL?.lastPathComponent, "swift-concurrency.epub")
-        XCTAssertTrue(row.isPreviewable)
-        XCTAssertEqual(row.action, try .open(XCTUnwrap(row.fileURL)))
+        let row = try #require(coordinator.results.first { $0.title.contains("swift-concurrency") })
+        #expect(row.kind == .file)
+        #expect(row.fileURL?.lastPathComponent == "swift-concurrency.epub")
+        #expect(row.isPreviewable)
+        let epubURL = try #require(row.fileURL)
+        #expect(row.action == .open(epubURL))
 
         coordinator.selectFilter(.documents)
-        XCTAssertTrue(
+        #expect(
             coordinator.results
                 .contains { $0.fileURL?.lastPathComponent == "swift-concurrency.epub" },
             "the epub book must appear under the documents filter"
         )
         let documentFilterOption = coordinator.filterOptions.first { $0.filter == .documents }
-        XCTAssertGreaterThanOrEqual(
-            documentFilterOption?.count ?? 0,
-            1,
+        #expect(
+            documentFilterOption?.count ?? 0 >= 1,
             "document filter count must include epub files"
         )
     }
 
-    func testApplicationOutranksEpubBookInDownloads() async throws {
+    @Test func applicationOutranksEpubBookInDownloads() async throws {
         let ghostty = (
             name: "Ghostty",
             url: URL(fileURLWithPath: "/Applications/Ghostty.app", isDirectory: true)
@@ -167,14 +156,14 @@ final class EndToEndSearchTests: XCTestCase {
         coordinator.query = "gh"
         try await waitUntil("the search settles for query gh") { !coordinator.isSearching }
 
-        let appIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .application })
-        XCTAssertEqual(appIndex, 0, "the application Ghostty must lead the results")
-        let firstResult = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(firstResult.kind, .application)
-        XCTAssertEqual(firstResult.title, "Ghostty")
+        let appIndex = try #require(coordinator.results.firstIndex { $0.kind == .application })
+        #expect(appIndex == 0, "the application Ghostty must lead the results")
+        let firstResult = try #require(coordinator.results.first)
+        #expect(firstResult.kind == .application)
+        #expect(firstResult.title == "Ghostty")
     }
 
-    func testTypingAFolderNameReturnsThatFolder() async throws {
+    @Test func typingAFolderNameReturnsThatFolder() async throws {
         let coordinator = try await makeCoordinator()
 
         // A childless folder with a name that appears nowhere else: a
@@ -188,19 +177,18 @@ final class EndToEndSearchTests: XCTestCase {
             description: "the solitary-vault folder appears"
         )
 
-        let row = try XCTUnwrap(
-            coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("solitary-vault") }
-        )
+        let row = try #require(coordinator.results
+            .first { $0.kind == .folder && $0.title.hasPrefix("solitary-vault") })
         // FFF names directories with a trailing slash and `makeSearchItem`
         // passes the name straight through, so that slash is what a user
         // sees in the panel. Pinned because it is a rendering decision
         // nothing in Floodlight makes explicitly.
-        XCTAssertEqual(row.title, "solitary-vault/")
-        XCTAssertFalse(row.isPreviewable, "a folder has nothing to QuickLook")
-        XCTAssertNil(row.fileSize)
+        #expect(row.title == "solitary-vault/")
+        #expect(!row.isPreviewable, "a folder has nothing to QuickLook")
+        #expect(row.fileSize == nil)
     }
 
-    func testFolderContainingManyMatchingFilesIsStillRecalledAndFiltered() async throws {
+    @Test func folderContainingManyMatchingFilesIsStillRecalledAndFiltered() async throws {
         for fileIndex in 0..<20 {
             try tree.makeFile(
                 "Projects/project-\(fileIndex).txt",
@@ -216,20 +204,19 @@ final class EndToEndSearchTests: XCTestCase {
             description: "the Projects folder appears despite matching child files"
         )
 
-        let folderRow = try XCTUnwrap(
-            coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Projects") }
-        )
-        XCTAssertEqual(folderRow.title, "Projects/")
-        XCTAssertEqual(folderRow.kind, .folder)
+        let folderRow = try #require(coordinator.results
+            .first { $0.kind == .folder && $0.title.hasPrefix("Projects") })
+        #expect(folderRow.title == "Projects/")
+        #expect(folderRow.kind == .folder)
 
         coordinator.selectFilter(.folders)
-        XCTAssertTrue(
+        #expect(
             coordinator.results.contains { $0.kind == .folder && $0.title.hasPrefix("Projects") },
             "Projects folder must be visible under the folders filter"
         )
     }
 
-    func testTypingDownloadsWithTrailingSlashReturnsDownloadsFolderAsTopHit() async throws {
+    @Test func typingDownloadsWithTrailingSlashReturnsDownloadsFolderAsTopHit() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "Downloads/"
@@ -238,12 +225,12 @@ final class EndToEndSearchTests: XCTestCase {
                 && coordinator.results.first?.title.hasPrefix("Downloads") == true
         }
 
-        let row = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(row.kind, .folder)
-        XCTAssertEqual(row.title, "Downloads/")
+        let row = try #require(coordinator.results.first)
+        #expect(row.kind == .folder)
+        #expect(row.title == "Downloads/")
     }
 
-    func testTildePathExpandsAndReturnsHomeOrDownloadsFolder() async throws {
+    @Test func tildePathExpandsAndReturnsHomeOrDownloadsFolder() async throws {
         let coordinator = try await makeCoordinator()
         let home = FileManager.default.homeDirectoryForCurrentUser
         let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
@@ -260,22 +247,21 @@ final class EndToEndSearchTests: XCTestCase {
                     $0.kind == .folder && $0.title.hasPrefix("Downloads")
                 }
             }
-            let downloadsRow = try XCTUnwrap(
-                coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Downloads") }
-            )
-            XCTAssertEqual(downloadsRow.kind, .folder)
-            XCTAssertEqual(downloadsRow.title, "Downloads/")
+            let downloadsRow = try #require(coordinator.results
+                .first { $0.kind == .folder && $0.title.hasPrefix("Downloads") })
+            #expect(downloadsRow.kind == .folder)
+            #expect(downloadsRow.title == "Downloads/")
         }
 
         coordinator.query = "~/"
         try await waitUntil("~/ expands to a folder row") {
             coordinator.results.contains { $0.kind == .folder }
         }
-        let homeRow = try XCTUnwrap(coordinator.results.first { $0.kind == .folder })
-        XCTAssertEqual(homeRow.kind, .folder)
+        let homeRow = try #require(coordinator.results.first { $0.kind == .folder })
+        #expect(homeRow.kind == .folder)
     }
 
-    func testAbsoluteApplicationsPathReturnsApplicationsFolder() async throws {
+    @Test func absoluteApplicationsPathReturnsApplicationsFolder() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "/Applications"
@@ -284,15 +270,14 @@ final class EndToEndSearchTests: XCTestCase {
                 .contains { $0.kind == .folder && $0.title.hasPrefix("Applications") }
         }
 
-        let row = try XCTUnwrap(
-            coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Applications") }
-        )
-        XCTAssertEqual(row.kind, .folder)
-        XCTAssertEqual(row.title, "Applications/")
-        XCTAssertEqual(row.fileURL?.standardizedFileURL.path, "/Applications")
+        let row = try #require(coordinator.results
+            .first { $0.kind == .folder && $0.title.hasPrefix("Applications") })
+        #expect(row.kind == .folder)
+        #expect(row.title == "Applications/")
+        #expect(row.fileURL?.standardizedFileURL.path == "/Applications")
     }
 
-    func testAccentedFileNamesAreFoundByTheirUnaccentedSpelling() async throws {
+    @Test func accentedFileNamesAreFoundByTheirUnaccentedSpelling() async throws {
         // The whole reason `FuzzyMatcher.normalized` exists, proven against
         // a file that is really on disk.
         let coordinator = try await makeCoordinator()
@@ -305,7 +290,7 @@ final class EndToEndSearchTests: XCTestCase {
         )
     }
 
-    func testDynamicFiltersNarrowRealResultsToTheirFileTypes() async throws {
+    @Test func dynamicFiltersNarrowRealResultsToTheirFileTypes() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "e"
@@ -314,37 +299,35 @@ final class EndToEndSearchTests: XCTestCase {
         }
 
         coordinator.selectFilter(.pdfs)
-        XCTAssertTrue(
+        #expect(
             coordinator.results.allSatisfy { $0.fileURL?.pathExtension.lowercased() == "pdf" },
             "the PDF filter admitted a non-PDF"
         )
 
         coordinator.selectFilter(.images)
-        XCTAssertTrue(
-            coordinator.results.allSatisfy {
-                ["png", "jpg", "jpeg", "heic"]
-                    .contains($0.fileURL?.pathExtension.lowercased() ?? "")
-            }
-        )
+        #expect(coordinator.results.allSatisfy {
+            ["png", "jpg", "jpeg", "heic"]
+                .contains($0.fileURL?.pathExtension.lowercased() ?? "")
+        })
 
         coordinator.selectFilter(.folders)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .folder })
+        #expect(coordinator.results.allSatisfy { $0.kind == .folder })
     }
 
-    func testTheWebFallbackIsAlwaysAvailableForANonsenseQuery() async throws {
+    @Test func theWebFallbackIsAlwaysAvailableForANonsenseQuery() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "zzzqqqxxx-nothing-matches-this"
         try await waitUntil("the search settles") { !coordinator.isSearching }
 
-        let web = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
-        XCTAssertEqual(web.kind, .web)
-        XCTAssertEqual(coordinator.selectedID, web.id, "the only row is the selected one")
+        let web = try #require(coordinator.results.first { $0.id == "web-search" })
+        #expect(web.kind == .web)
+        #expect(coordinator.selectedID == web.id, "the only row is the selected one")
     }
 
     // MARK: - Applications come back
 
-    func testADiscoveredApplicationIsFoundByName() async throws {
+    @Test func ADiscoveredApplicationIsFoundByName() async throws {
         let orbital = (
             name: "Orbital Launcher",
             url: URL(fileURLWithPath: "/Applications/Orbital Launcher.app", isDirectory: true)
@@ -356,14 +339,14 @@ final class EndToEndSearchTests: XCTestCase {
             coordinator.results.contains { $0.fileURL == orbital.url }
         }
 
-        let row = try XCTUnwrap(coordinator.results.first { $0.fileURL == orbital.url })
-        XCTAssertEqual(row.kind, .application)
-        XCTAssertEqual(row.title, "Orbital Launcher")
-        XCTAssertEqual(row.id, "application:\(orbital.url.path)")
-        XCTAssertGreaterThanOrEqual(row.score, SearchItemRanking.application)
+        let row = try #require(coordinator.results.first { $0.fileURL == orbital.url })
+        #expect(row.kind == .application)
+        #expect(row.title == "Orbital Launcher")
+        #expect(row.id == "application:\(orbital.url.path)")
+        #expect(row.score >= SearchItemRanking.application)
     }
 
-    func testAnApplicationOutranksAFileWithTheSameName() async throws {
+    @Test func anApplicationOutranksAFileWithTheSameName() async throws {
         // The band separation, proven end to end rather than by arithmetic:
         // a file named "orbital.txt" must never sit above the app.
         try tree.makeFile("Documents/orbital.txt", contents: "orbital notes")
@@ -379,12 +362,12 @@ final class EndToEndSearchTests: XCTestCase {
                 && coordinator.results.contains { $0.kind == .file }
         }
 
-        let appIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .application })
-        let fileIndex = try XCTUnwrap(coordinator.results.firstIndex { $0.kind == .file })
-        XCTAssertLessThan(appIndex, fileIndex)
+        let appIndex = try #require(coordinator.results.firstIndex { $0.kind == .application })
+        let fileIndex = try #require(coordinator.results.firstIndex { $0.kind == .file })
+        #expect(appIndex < fileIndex)
     }
 
-    func testGhQueryReturnsOnlyGhosttyInTopSlots() async throws {
+    @Test func ghQueryReturnsOnlyGhosttyInTopSlots() async throws {
         let ghostty = (
             name: "Ghostty",
             url: URL(fileURLWithPath: "/Applications/Ghostty.app", isDirectory: true)
@@ -412,17 +395,16 @@ final class EndToEndSearchTests: XCTestCase {
         try await waitUntil("the search settles for query gh") { !coordinator.isSearching }
 
         let appResults = coordinator.results.filter { $0.kind == .application }
-        XCTAssertEqual(
-            appResults.map(\.title),
-            ["Ghostty"],
+        #expect(
+            appResults.map(\.title) == ["Ghostty"],
             "Typing 'gh' must return only Ghostty among applications"
         )
-        let firstResult = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(firstResult.kind, .application)
-        XCTAssertEqual(firstResult.title, "Ghostty")
+        let firstResult = try #require(coordinator.results.first)
+        #expect(firstResult.kind == .application)
+        #expect(firstResult.title == "Ghostty")
     }
 
-    func testSafriQueryReturnsSafariViaTypoMatching() async throws {
+    @Test func safriQueryReturnsSafariViaTypoMatching() async throws {
         let safari = (
             name: "Safari",
             url: URL(fileURLWithPath: "/Applications/Safari.app", isDirectory: true)
@@ -432,12 +414,12 @@ final class EndToEndSearchTests: XCTestCase {
         coordinator.query = "safri"
         try await waitUntil("the search settles for query safri") { !coordinator.isSearching }
 
-        let firstResult = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(firstResult.kind, .application)
-        XCTAssertEqual(firstResult.title, "Safari")
+        let firstResult = try #require(coordinator.results.first)
+        #expect(firstResult.kind == .application)
+        #expect(firstResult.title == "Safari")
     }
 
-    func testLoginQueryReturnsZeroApplicationsAndSurfacesSystemSettingsAtTop() async throws {
+    @Test func loginQueryReturnsZeroApplicationsAndSurfacesSystemSettingsAtTop() async throws {
         let gemini = (
             name: "Gemini",
             url: URL(fileURLWithPath: "/Applications/Gemini.app", isDirectory: true)
@@ -462,37 +444,37 @@ final class EndToEndSearchTests: XCTestCase {
         try await waitUntil("the search settles for query login") { !coordinator.isSearching }
 
         let appResults = coordinator.results.filter { $0.kind == .application }
-        XCTAssertTrue(
+        #expect(
             appResults.isEmpty,
             "Typing 'login' must return 0 application results, but got: \(appResults.map(\.title))"
         )
-        let firstResult = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(firstResult.kind, .systemSetting)
-        XCTAssertEqual(firstResult.title, "Login Items & Extensions")
-        XCTAssertEqual(firstResult.subtitle, "System Settings")
+        let firstResult = try #require(coordinator.results.first)
+        #expect(firstResult.kind == .systemSetting)
+        #expect(firstResult.title == "Login Items & Extensions")
+        #expect(firstResult.subtitle == "System Settings")
 
         let settingResults = coordinator.results.filter { $0.kind == .systemSetting }
-        XCTAssertGreaterThanOrEqual(settingResults.count, 4)
+        #expect(settingResults.count >= 4)
         for keywordMatch in settingResults.dropFirst() {
-            XCTAssertEqual(keywordMatch.subtitle, "Matches: login")
+            #expect(keywordMatch.subtitle == "Matches: login")
         }
     }
 
     // MARK: - Cross-cutting rows
 
-    func testACalculatorRowLeadsAnArithmeticQueryOverRealResults() async throws {
+    @Test func ACalculatorRowLeadsAnArithmeticQueryOverRealResults() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "12 * 12"
         try await waitUntil("the search settles") { !coordinator.isSearching }
 
-        let first = try XCTUnwrap(coordinator.results.first)
-        XCTAssertEqual(first.id, "calculator")
-        XCTAssertEqual(first.title, "144")
-        XCTAssertEqual(first.action, .copy("144"))
+        let first = try #require(coordinator.results.first)
+        #expect(first.id == "calculator")
+        #expect(first.title == "144")
+        #expect(first.action == .copy("144"))
     }
 
-    func testAKeywordEngineRowLeadsAnAddressedQuery() async throws {
+    @Test func AKeywordEngineRowLeadsAnAddressedQuery() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "yt lofi hip hop"
@@ -500,13 +482,12 @@ final class EndToEndSearchTests: XCTestCase {
             coordinator.results.contains { $0.id == "keyword-engine:youtube" }
         }
 
-        let engineIndex = try XCTUnwrap(
-            coordinator.results.firstIndex { $0.id == "keyword-engine:youtube" }
-        )
-        XCTAssertEqual(engineIndex, 0, "an explicitly addressed engine leads the list")
+        let engineIndex = try #require(coordinator.results
+            .firstIndex { $0.id == "keyword-engine:youtube" })
+        #expect(engineIndex == 0, "an explicitly addressed engine leads the list")
     }
 
-    func testSettingsCommandsDoNotAppearInSearchResults() async throws {
+    @Test func settingsCommandsDoNotAppearInSearchResults() async throws {
         let coordinator = try await makeCoordinator()
 
         for query in [
@@ -522,11 +503,11 @@ final class EndToEndSearchTests: XCTestCase {
             try await waitUntil("the search settles for query \(query)") { !coordinator.isSearching
             }
 
-            XCTAssertFalse(
-                coordinator.results
+            #expect(
+                !(coordinator.results
                     .contains {
                         $0.id.hasPrefix("floodlight-command:") || $0.title == "Floodlight settings"
-                    },
+                    }),
                 "Floodlight settings command should never appear in search results for query '\(query)'"
             )
         }
@@ -534,7 +515,7 @@ final class EndToEndSearchTests: XCTestCase {
 
     // MARK: - Re-rooting and rescanning
 
-    func testChangingTheSearchScopeChangesWhatIsFound() async throws {
+    @Test func changingTheSearchScopeChangesWhatIsFound() async throws {
         let coordinator = try await makeCoordinator()
 
         try await search(
@@ -555,14 +536,14 @@ final class EndToEndSearchTests: XCTestCase {
         try await waitUntil("the search settles") { !coordinator.isSearching }
         try await Task.sleep(for: .milliseconds(400))
 
-        XCTAssertFalse(
-            coordinator.results
-                .contains { $0.kind == .file && $0.title.contains("quarterly-report") },
+        #expect(
+            !(coordinator.results
+                .contains { $0.kind == .file && $0.title.contains("quarterly-report") }),
             "a file outside the new scope should no longer be found"
         )
     }
 
-    func testAFileCreatedAfterStartupIsFoundAfterARescan() async throws {
+    @Test func AFileCreatedAfterStartupIsFoundAfterARescan() async throws {
         let coordinator = try await makeCoordinator()
 
         try tree.makeFile("Documents/freshly-added-artifact.txt", contents: "new")
@@ -578,7 +559,7 @@ final class EndToEndSearchTests: XCTestCase {
 
     // MARK: - Stress
 
-    func testTheFullPipelineSurvivesAFloodOfRealQueries() async throws {
+    @Test func theFullPipelineSurvivesAFloodOfRealQueries() async throws {
         // Every adversarial query, typed back to back against the real
         // index. Nothing may trap, hang, or leave the panel incoherent.
         let coordinator = try await makeCoordinator()
@@ -586,10 +567,10 @@ final class EndToEndSearchTests: XCTestCase {
         for query in AdversarialCorpus.searchQueries + AdversarialCorpus.strings {
             coordinator.query = query
             let ids = coordinator.results.map(\.id)
-            XCTAssertEqual(ids.count, Set(ids).count, String(reflecting: query))
-            XCTAssertLessThanOrEqual(coordinator.results.count, 80, String(reflecting: query))
+            #expect(ids.count == Set(ids).count, "\(String(reflecting: query))")
+            #expect(coordinator.results.count <= 80, "\(String(reflecting: query))")
             if !coordinator.results.isEmpty {
-                XCTAssertNotNil(coordinator.selectedID, String(reflecting: query))
+                #expect(coordinator.selectedID != nil, "\(String(reflecting: query))")
             }
         }
 
@@ -599,7 +580,7 @@ final class EndToEndSearchTests: XCTestCase {
         }
     }
 
-    func testAWideTreeIsIndexedAndSearchableWithinBudget() async throws {
+    @Test func AWideTreeIsIndexedAndSearchableWithinBudget() async throws {
         // Two thousand files is a small home directory, and the first
         // keystroke after startup still has to be answered promptly.
         for directory in 0..<20 {
@@ -615,9 +596,8 @@ final class EndToEndSearchTests: XCTestCase {
         let start = ContinuousClock.now
         coordinator.query = "bulk-file-7-42"
         let immediateElapsed = start.duration(to: .now)
-        XCTAssertLessThan(
-            immediateElapsed,
-            .milliseconds(250),
+        #expect(
+            immediateElapsed < .milliseconds(250),
             "the immediate pass must never block on the index"
         )
 
@@ -626,15 +606,15 @@ final class EndToEndSearchTests: XCTestCase {
         }
     }
 
-    func testRepeatedResetAndRetypeLeavesNoResidue() async throws {
+    @Test func repeatedResetAndRetypeLeavesNoResidue() async throws {
         let coordinator = try await makeCoordinator()
 
         for _ in 0..<25 {
             coordinator.query = "quarterly"
             coordinator.reset()
-            XCTAssertTrue(coordinator.results.isEmpty)
-            XCTAssertNil(coordinator.selectedID)
-            XCTAssertEqual(coordinator.selectedFilter, .all)
+            #expect(coordinator.results.isEmpty)
+            #expect(coordinator.selectedID == nil)
+            #expect(coordinator.selectedFilter == .all)
         }
 
         try await search(

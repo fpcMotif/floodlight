@@ -1,9 +1,11 @@
-import XCTest
+import AppKit
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class ApplicationPresentationCoordinatorTests: XCTestCase {
-    func testLaunchWithoutInitialSetupStartsSearchBeforePresentingIt() {
+@Suite(.serialized)
+struct ApplicationPresentationCoordinatorTests {
+    @Test func launchWithoutInitialSetupStartsSearchBeforePresentingIt() {
         var events: [Event] = []
         let effects = ScriptedEffects(events: { events.append($0) })
         let coordinator = ApplicationPresentationCoordinator(
@@ -13,21 +15,22 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         coordinator.launch(initialSetupRequired: false)
 
-        XCTAssertEqual(events, [.startSearch, .showSearch])
+        #expect(events == [.startSearch, .showSearch])
     }
 
-    func testLaunchWithInitialSetupPresentsConfigurationInsteadOfSearch() {
+    @Test func launchWithInitialSetupPresentsConfigurationInsteadOfSearch() {
         let harness = Harness()
 
         harness.coordinator.launch(initialSetupRequired: true)
 
-        XCTAssertEqual(
-            harness.events,
-            [.hideSearch, .makeConfiguration(.initialSetup), .showConfiguration]
-        )
+        #expect(harness.events == [
+            .hideSearch,
+            .makeConfiguration(.initialSetup),
+            .showConfiguration,
+        ])
     }
 
-    func testLaunchRechecksConfigurationPriorityAfterStartingSearch() {
+    @Test func launchRechecksConfigurationPriorityAfterStartingSearch() {
         let harness = Harness()
         harness.onStart = { [weak harness] in
             harness?.coordinator.showConfiguration(from: .statusMenu)
@@ -35,57 +38,51 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         harness.coordinator.launch(initialSetupRequired: false)
 
-        XCTAssertEqual(
-            harness.events,
-            [
-                .startSearch,
-                .hideSearch,
-                .makeConfiguration(.statusMenu),
-                .showConfiguration,
-                .showConfiguration,
-            ]
-        )
+        #expect(harness.events == [
+            .startSearch,
+            .hideSearch,
+            .makeConfiguration(.statusMenu),
+            .showConfiguration,
+            .showConfiguration,
+        ])
     }
 
-    func testSearchRequestsRouteToSearchWhenConfigurationIsInactive() {
+    @Test func searchRequestsRouteToSearchWhenConfigurationIsInactive() {
         let harness = Harness()
 
-        XCTAssertEqual(harness.coordinator.showSearch(), .searchPresented)
-        XCTAssertEqual(harness.coordinator.toggleSearch(), .searchPresented)
+        #expect(harness.coordinator.showSearch() == .searchPresented)
+        #expect(harness.coordinator.toggleSearch() == .searchPresented)
         harness.coordinator.hideSearch()
 
-        XCTAssertEqual(harness.events, [.showSearch, .toggleSearch, .hideSearch])
+        #expect(harness.events == [.showSearch, .toggleSearch, .hideSearch])
     }
 
-    func testSearchPresentationFocusesActiveConfiguration() {
+    @Test func searchPresentationFocusesActiveConfiguration() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .statusMenu)
         harness.events.removeAll()
 
-        XCTAssertEqual(harness.coordinator.showSearch(), .configurationFocused)
-        XCTAssertEqual(harness.coordinator.toggleSearch(), .configurationFocused)
+        #expect(harness.coordinator.showSearch() == .configurationFocused)
+        #expect(harness.coordinator.toggleSearch() == .configurationFocused)
 
-        XCTAssertEqual(harness.events, [.showConfiguration, .showConfiguration])
+        #expect(harness.events == [.showConfiguration, .showConfiguration])
     }
 
-    func testRepeatedConfigurationRequestFocusesExistingSession() {
+    @Test func repeatedConfigurationRequestFocusesExistingSession() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .statusMenu)
         harness.coordinator.showConfiguration(from: .search)
 
-        XCTAssertEqual(
-            harness.events,
-            [
-                .hideSearch,
-                .makeConfiguration(.statusMenu),
-                .showConfiguration,
-                .showConfiguration,
-            ]
-        )
-        XCTAssertEqual(harness.effects.presentations.count, 1)
+        #expect(harness.events == [
+            .hideSearch,
+            .makeConfiguration(.statusMenu),
+            .showConfiguration,
+            .showConfiguration,
+        ])
+        #expect(harness.effects.presentations.count == 1)
     }
 
-    func testConfigurationIsReservedBeforeTheEffectsFactoryCanReenter() {
+    @Test func configurationIsReservedBeforeTheEffectsFactoryCanReenter() {
         let harness = Harness()
         harness.effects.makeHook = { [weak harness] _, _ in
             harness?.coordinator.showConfiguration(from: .search)
@@ -93,32 +90,30 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         harness.coordinator.showConfiguration(from: .statusMenu)
 
-        XCTAssertEqual(
-            harness.events,
-            [.hideSearch, .makeConfiguration(.statusMenu), .showConfiguration]
-        )
-        XCTAssertEqual(harness.effects.presentations.count, 1)
+        #expect(harness.events == [
+            .hideSearch,
+            .makeConfiguration(.statusMenu),
+            .showConfiguration,
+        ])
+        #expect(harness.effects.presentations.count == 1)
     }
 
-    func testSynchronousFactoryCloseDoesNotLeaveAStaleActiveSession() {
+    @Test func synchronousFactoryCloseDoesNotLeaveAStaleActiveSession() {
         let harness = Harness()
         harness.effects.makeHook = { onFinished, _ in onFinished() }
 
         harness.coordinator.showConfiguration(from: .statusMenu)
-        XCTAssertEqual(harness.coordinator.showSearch(), .searchPresented)
+        #expect(harness.coordinator.showSearch() == .searchPresented)
 
-        XCTAssertEqual(
-            harness.events,
-            [
-                .hideSearch,
-                .makeConfiguration(.statusMenu),
-                .startSearch,
-                .showSearch,
-            ]
-        )
+        #expect(harness.events == [
+            .hideSearch,
+            .makeConfiguration(.statusMenu),
+            .startSearch,
+            .showSearch,
+        ])
     }
 
-    func testFirstStatusMenuOriginPreventsLaterSearchOriginFromRestoringSearch() {
+    @Test func firstStatusMenuOriginPreventsLaterSearchOriginFromRestoringSearch() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .statusMenu)
         harness.coordinator.showConfiguration(from: .search)
@@ -126,10 +121,10 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         harness.effects.presentations[0].close(.finished)
 
-        XCTAssertEqual(harness.events, [.startSearch])
+        #expect(harness.events == [.startSearch])
     }
 
-    func testFirstSearchOriginRestoresSearchDespiteLaterStatusMenuRequest() {
+    @Test func firstSearchOriginRestoresSearchDespiteLaterStatusMenuRequest() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .search)
         harness.coordinator.showConfiguration(from: .statusMenu)
@@ -137,10 +132,10 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         harness.effects.presentations[0].close(.finished)
 
-        XCTAssertEqual(harness.events, [.startSearch, .showSearch])
+        #expect(harness.events == [.startSearch, .showSearch])
     }
 
-    func testConfigurationRestorationFollowsItsOriginAndCloseOutcome() {
+    @Test func configurationRestorationFollowsItsOriginAndCloseOutcome() {
         let cases: [(ConfigurationOrigin, CloseOutcome, Bool)] = [
             (.initialSetup, .finished, true),
             (.initialSetup, .dismissed, false),
@@ -157,15 +152,15 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
             harness.effects.presentations[0].close(outcome)
 
-            XCTAssertEqual(
-                harness.events,
-                restoresSearch ? [.startSearch, .showSearch] : [.startSearch],
+            #expect(
+                harness.events
+                    == (restoresSearch ? [.startSearch, .showSearch] : [.startSearch]),
                 "Unexpected restoration for \(origin) after \(outcome)"
             )
         }
     }
 
-    func testRepeatedCloseCallbackIsIgnored() {
+    @Test func repeatedCloseCallbackIsIgnored() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .search)
         let presentation = harness.effects.presentations[0]
@@ -174,10 +169,10 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
         presentation.close(.finished)
         presentation.close(.dismissed)
 
-        XCTAssertEqual(harness.events, [.startSearch, .showSearch])
+        #expect(harness.events == [.startSearch, .showSearch])
     }
 
-    func testStaleCallbackCannotCloseNewerConfigurationSession() {
+    @Test func staleCallbackCannotCloseNewerConfigurationSession() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .statusMenu)
         let stalePresentation = harness.effects.presentations[0]
@@ -186,13 +181,13 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
         harness.events.removeAll()
 
         stalePresentation.close(.dismissed)
-        XCTAssertEqual(harness.coordinator.showSearch(), .configurationFocused)
+        #expect(harness.coordinator.showSearch() == .configurationFocused)
 
-        XCTAssertEqual(harness.events, [.showConfiguration])
-        XCTAssertEqual(harness.effects.presentations.count, 2)
+        #expect(harness.events == [.showConfiguration])
+        #expect(harness.effects.presentations.count == 2)
     }
 
-    func testCloseRetiresSessionBeforeStartingAndRestoringSearch() {
+    @Test func closeRetiresSessionBeforeStartingAndRestoringSearch() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .search)
         let closingPresentation = harness.effects.presentations[0]
@@ -203,19 +198,16 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         closingPresentation.close(.finished)
 
-        XCTAssertEqual(
-            harness.events,
-            [
-                .startSearch,
-                .hideSearch,
-                .makeConfiguration(.statusMenu),
-                .showConfiguration,
-                .showConfiguration,
-            ]
-        )
+        #expect(harness.events == [
+            .startSearch,
+            .hideSearch,
+            .makeConfiguration(.statusMenu),
+            .showConfiguration,
+            .showConfiguration,
+        ])
     }
 
-    func testCoordinatorRetainsOnlyTheActiveConfigurationPresentation() {
+    @Test func coordinatorRetainsOnlyTheActiveConfigurationPresentation() {
         let effects = WeakPresentationEffects()
         let coordinator = ApplicationPresentationCoordinator(
             effects: effects,
@@ -224,23 +216,23 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         coordinator.showConfiguration(from: .statusMenu)
         let firstPresentation = WeakBox(effects.latestPresentation)
-        XCTAssertNotNil(firstPresentation.value)
+        #expect(firstPresentation.value != nil)
 
         effects.callbacks[0].finished()
-        XCTAssertNil(firstPresentation.value)
+        #expect(firstPresentation.value == nil)
 
         coordinator.showConfiguration(from: .search)
         let replacementPresentation = WeakBox(effects.latestPresentation)
-        XCTAssertNotNil(replacementPresentation.value)
+        #expect(replacementPresentation.value != nil)
 
         effects.callbacks[0].dismissed()
-        XCTAssertNotNil(replacementPresentation.value)
+        #expect(replacementPresentation.value != nil)
 
         effects.callbacks[1].dismissed()
-        XCTAssertNil(replacementPresentation.value)
+        #expect(replacementPresentation.value == nil)
     }
 
-    func testConfigurationControllerFinishEmitsOnlyFinished() {
+    @Test func configurationControllerFinishEmitsOnlyFinished() {
         var finishedCount = 0
         var dismissedCount = 0
         let controller = makeConfigurationController(
@@ -250,11 +242,11 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
 
         controller.finish()
 
-        XCTAssertEqual(finishedCount, 1)
-        XCTAssertEqual(dismissedCount, 0)
+        #expect(finishedCount == 1)
+        #expect(dismissedCount == 0)
     }
 
-    func testConfigurationControllerWindowCloseEmitsOnlyDismissed() {
+    @Test func configurationControllerWindowCloseEmitsOnlyDismissed() {
         var finishedCount = 0
         var dismissedCount = 0
         let controller = makeConfigurationController(
@@ -265,11 +257,11 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
         controller.show()
         controller.close()
 
-        XCTAssertEqual(finishedCount, 0)
-        XCTAssertEqual(dismissedCount, 1)
+        #expect(finishedCount == 0)
+        #expect(dismissedCount == 1)
     }
 
-    func testAppDelegateFactoryBuildsTheSharedConfigurationController() {
+    @Test func appDelegateFactoryBuildsTheSharedConfigurationController() {
         let delegate = AppDelegate()
 
         let presentation = delegate.makeConfiguration(
@@ -278,42 +270,42 @@ final class ApplicationPresentationCoordinatorTests: XCTestCase {
             onDismissed: {}
         )
 
-        XCTAssertTrue(presentation is FloodlightConfigurationWindowController)
+        #expect(presentation is FloodlightConfigurationWindowController)
     }
 
-    func testAppDelegateStatusMenuDockAndHotKeyKeepConfigurationExclusive() throws {
+    @Test func appDelegateStatusMenuDockAndHotKeyKeepConfigurationExclusive() throws {
         let delegate = AppDelegate()
         let menu = delegate.makeStatusMenu()
-        let settingsItem = try XCTUnwrap(menu.items.first { $0.title == "Settings…" })
-        let settingsAction = try XCTUnwrap(settingsItem.action)
+        let settingsItem = try #require(menu.items.first { $0.title == "Settings…" })
+        let settingsAction = try #require(settingsItem.action)
 
-        XCTAssertTrue(NSApp.sendAction(settingsAction, to: settingsItem.target, from: settingsItem))
-        let controller = try XCTUnwrap(activeConfigurationController())
+        #expect(NSApp.sendAction(settingsAction, to: settingsItem.target, from: settingsItem))
+        let controller = try #require(activeConfigurationController())
         defer {
             controller.close()
             delegate.hideSearch()
         }
 
-        let showItem = try XCTUnwrap(menu.items.first { $0.title == "Show Floodlight" })
-        let showAction = try XCTUnwrap(showItem.action)
-        XCTAssertTrue(NSApp.sendAction(showAction, to: showItem.target, from: showItem))
-        XCTAssertTrue(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
+        let showItem = try #require(menu.items.first { $0.title == "Show Floodlight" })
+        let showAction = try #require(showItem.action)
+        #expect(NSApp.sendAction(showAction, to: showItem.target, from: showItem))
+        #expect(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
         delegate.globalHotKeyDidFire()
 
-        XCTAssertTrue(controller.window?.isVisible == true)
-        XCTAssertFalse(hasVisibleSearchPanel())
-        XCTAssertEqual(activeConfigurationControllers().count, 1)
+        #expect(controller.window?.isVisible == true)
+        #expect(!hasVisibleSearchPanel())
+        #expect(activeConfigurationControllers().count == 1)
     }
 
-    func testAppDelegateSearchConfigurationRestoresSearchAfterClosing() throws {
+    @Test func appDelegateSearchConfigurationRestoresSearchAfterClosing() throws {
         let delegate = AppDelegate()
         delegate.showSettingsFromSearch()
-        let controller = try XCTUnwrap(activeConfigurationController())
+        let controller = try #require(activeConfigurationController())
         defer { delegate.hideSearch() }
 
         controller.close()
 
-        XCTAssertTrue(hasVisibleSearchPanel())
+        #expect(hasVisibleSearchPanel())
     }
 }
 

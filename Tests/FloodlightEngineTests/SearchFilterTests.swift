@@ -1,23 +1,23 @@
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
-final class SearchFilterTests: XCTestCase {
-    func testPrimaryFiltersSeparateAppsFilesAndFolders() {
+struct SearchFilterTests {
+    @Test func primaryFiltersSeparateAppsFilesAndFolders() {
         let app = item(kind: .application, path: "/Applications/Preview.app")
         let file = item(kind: .file, path: "/Users/test/Notes.txt")
         let folder = item(kind: .folder, path: "/Users/test/Documents")
 
-        XCTAssertEqual(SearchResultFilter.primary, [.all, .applications, .files, .folders])
-        XCTAssertTrue(SearchResultFilter.all.includes(app))
-        XCTAssertTrue(SearchResultFilter.applications.includes(app))
-        XCTAssertFalse(SearchResultFilter.applications.includes(file))
-        XCTAssertTrue(SearchResultFilter.files.includes(file))
-        XCTAssertFalse(SearchResultFilter.files.includes(folder))
-        XCTAssertTrue(SearchResultFilter.folders.includes(folder))
+        #expect(SearchResultFilter.primary == [.all, .applications, .files, .folders])
+        #expect(SearchResultFilter.all.includes(app))
+        #expect(SearchResultFilter.applications.includes(app))
+        #expect(!(SearchResultFilter.applications.includes(file)))
+        #expect(SearchResultFilter.files.includes(file))
+        #expect(!(SearchResultFilter.files.includes(folder)))
+        #expect(SearchResultFilter.folders.includes(folder))
     }
 
-    func testDynamicFiltersUseFileTypeAndSettingsKind() throws {
+    @Test func dynamicFiltersUseFileTypeAndSettingsKind() throws {
         let pdf = item(kind: .file, path: "/Users/test/Report.PDF")
         let image = item(kind: .file, path: "/Users/test/Photo.heic")
         let document = item(kind: .file, path: "/Users/test/Notes.md")
@@ -26,47 +26,45 @@ final class SearchFilterTests: XCTestCase {
             subtitle: "System Settings",
             kind: .systemSetting,
             action: .open(
-                XCTUnwrap(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings"))
+                #require(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings"))
             ),
             score: 10
         )
 
-        XCTAssertTrue(SearchResultFilter.pdfs.includes(pdf))
-        XCTAssertTrue(SearchResultFilter.images.includes(image))
-        XCTAssertTrue(SearchResultFilter.documents.includes(document))
-        XCTAssertTrue(SearchResultFilter.settings.includes(setting))
-        XCTAssertFalse(SearchResultFilter.images.includes(pdf))
-        XCTAssertFalse(SearchResultFilter.documents.includes(pdf))
+        #expect(SearchResultFilter.pdfs.includes(pdf))
+        #expect(SearchResultFilter.images.includes(image))
+        #expect(SearchResultFilter.documents.includes(document))
+        #expect(SearchResultFilter.settings.includes(setting))
+        #expect(!(SearchResultFilter.images.includes(pdf)))
+        #expect(!(SearchResultFilter.documents.includes(pdf)))
     }
 
-    func testEBookAndPublicationFormatsAreIncludedInDocumentFilter() {
-        let ebookExtensions = ["epub", "mobi", "azw", "azw3", "djvu", "fb2", "cbr", "cbz"]
+    @Test(arguments: ["epub", "mobi", "azw", "azw3", "djvu", "fb2", "cbr", "cbz"])
+    func eBookAndPublicationFormatsAreIncludedInDocumentFilter(ext: String) {
+        let uppercaseFile = item(
+            kind: .file,
+            path: "/Users/test/Downloads/book.\(ext.uppercased())"
+        )
+        let lowercaseFile = item(kind: .file, path: "/Users/test/Downloads/book.\(ext)")
 
-        for ext in ebookExtensions {
-            let uppercaseFile = item(
-                kind: .file,
-                path: "/Users/test/Downloads/book.\(ext.uppercased())"
-            )
-            let lowercaseFile = item(kind: .file, path: "/Users/test/Downloads/book.\(ext)")
-
-            XCTAssertTrue(
-                SearchResultFilter.documents.includes(uppercaseFile),
-                "Expected .\(ext) to be included in documents"
-            )
-            XCTAssertTrue(
-                SearchResultFilter.documents.includes(lowercaseFile),
-                "Expected .\(ext) to be included in documents"
-            )
-            XCTAssertTrue(SearchResultFilter.files.includes(lowercaseFile))
-            XCTAssertTrue(SearchResultFilter.all.includes(lowercaseFile))
-            XCTAssertFalse(SearchResultFilter.images.includes(lowercaseFile))
-            XCTAssertFalse(SearchResultFilter.pdfs.includes(lowercaseFile))
-            XCTAssertFalse(SearchResultFilter.applications.includes(lowercaseFile))
-            XCTAssertFalse(SearchResultFilter.settings.includes(lowercaseFile))
-        }
+        #expect(
+            SearchResultFilter.documents.includes(uppercaseFile),
+            "Expected .\(ext) to be included in documents"
+        )
+        #expect(
+            SearchResultFilter.documents.includes(lowercaseFile),
+            "Expected .\(ext) to be included in documents"
+        )
+        #expect(SearchResultFilter.files.includes(lowercaseFile))
+        #expect(SearchResultFilter.all.includes(lowercaseFile))
+        #expect(!(SearchResultFilter.images.includes(lowercaseFile)))
+        #expect(!(SearchResultFilter.pdfs.includes(lowercaseFile)))
+        #expect(!(SearchResultFilter.applications.includes(lowercaseFile)))
+        #expect(!(SearchResultFilter.settings.includes(lowercaseFile)))
     }
 
-    func testSinglePassFilterCountsMatchFilterPredicates() {
+    @Test(arguments: SearchResultFilter.allCases)
+    func singlePassFilterCountsMatchFilterPredicates(filter: SearchResultFilter) {
         let items = [
             item(kind: .application, path: "/Applications/Floodlight.app"),
             item(kind: .folder, path: "/Users/test/Documents"),
@@ -81,13 +79,10 @@ final class SearchFilterTests: XCTestCase {
         ]
         let counts = SearchFilterCounts(items: items)
 
-        for filter in SearchResultFilter.allCases {
-            XCTAssertEqual(
-                counts[filter],
-                items.lazy.filter(filter.includes).count,
-                "Incorrect count for \(filter)"
-            )
-        }
+        #expect(
+            counts[filter] == items.lazy.filter(filter.includes).count,
+            "Incorrect count for \(filter)"
+        )
     }
 
     private func item(kind: SearchItemKind, path: String?) -> SearchItem {

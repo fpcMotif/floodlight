@@ -1,178 +1,176 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 
-final class PathNavigatorTests: XCTestCase {
-    private var fileManager: FileManager!
-    private var tree: TemporaryTree!
-    private var homeURL: URL!
-
-    override func setUpWithError() throws {
-        fileManager = .default
-        tree = try TemporaryTree(label: "PathNavigatorTests")
-        homeURL = tree.root
-
+struct PathNavigatorTests {
+    private func makeTree() throws -> TemporaryTree {
+        let tree = try TemporaryTree(label: "PathNavigatorTests")
         try tree.makeDirectory("Downloads")
         try tree.makeDirectory("Projects/floodlight")
         try tree.makeDirectory("Documents/Work")
         try tree.makeFile("Downloads/report.pdf")
+        return tree
     }
 
-    override func tearDown() {
-        tree = nil
-        fileManager = nil
-        homeURL = nil
-    }
-
-    func testTrailingSlashResolvesExistingDirectoryUnderRoot() {
+    @Test func trailingSlashResolvesExistingDirectoryUnderRoot() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "Downloads/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.kind, .folder)
-        XCTAssertEqual(result?.folderItem.title, "Downloads/")
-        XCTAssertEqual(result?.folderItem.score, SearchItemRanking.pathNavigation)
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            tree.root.appendingPathComponent("Downloads").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.kind == .folder)
+        #expect(result?.folderItem.title == "Downloads/")
+        #expect(result?.folderItem.score == SearchItemRanking.pathNavigation)
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Downloads").standardizedFileURL
         )
-        XCTAssertEqual(result?.remainder, "")
+        #expect(result?.remainder.isEmpty == true)
     }
 
-    func testTildePathExpandsToHomeDirectory() {
+    @Test func tildePathExpandsToHomeDirectory() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "~/Downloads",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.kind, .folder)
-        XCTAssertEqual(result?.folderItem.title, "Downloads/")
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            homeURL.appendingPathComponent("Downloads").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.kind == .folder)
+        #expect(result?.folderItem.title == "Downloads/")
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Downloads").standardizedFileURL
         )
     }
 
-    func testTildeWithTrailingSlashExpandsCorrectly() {
+    @Test func tildeWithTrailingSlashExpandsCorrectly() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "~/Downloads/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.title, "Downloads/")
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            homeURL.appendingPathComponent("Downloads").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.title == "Downloads/")
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Downloads").standardizedFileURL
         )
     }
 
-    func testBareTildeResolvesToHomeDirectory() {
+    @Test func bareTildeResolvesToHomeDirectory() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "~/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.kind, .folder)
-        XCTAssertEqual(result?.directoryURL.standardizedFileURL, homeURL.standardizedFileURL)
+        #expect(result != nil)
+        #expect(result?.folderItem.kind == .folder)
+        #expect(result?.directoryURL.standardizedFileURL == tree.root.standardizedFileURL)
     }
 
-    func testCaseInsensitiveTrailingSlashResolution() {
+    @Test func caseInsensitiveTrailingSlashResolution() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "downloads/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.title, "Downloads/")
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            tree.root.appendingPathComponent("Downloads").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.title == "Downloads/")
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Downloads").standardizedFileURL
         )
     }
 
-    func testAbsolutePosixPathResolution() {
+    @Test func absolutePosixPathResolution() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "/Applications",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.kind, .folder)
-        XCTAssertEqual(result?.folderItem.title, "Applications/")
-        XCTAssertEqual(result?.directoryURL.path, "/Applications")
+        #expect(result != nil)
+        #expect(result?.folderItem.kind == .folder)
+        #expect(result?.folderItem.title == "Applications/")
+        #expect(result?.directoryURL.path == "/Applications")
     }
 
-    func testPathWithRemainderExtractsDirectoryAndRemainder() {
+    @Test func pathWithRemainderExtractsDirectoryAndRemainder() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "Downloads/report",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.title, "Downloads/")
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            tree.root.appendingPathComponent("Downloads").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.title == "Downloads/")
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Downloads").standardizedFileURL
         )
-        XCTAssertEqual(result?.remainder, "report")
+        #expect(result?.remainder == "report")
     }
 
-    func testNestedPathResolvesCorrectly() {
+    @Test func nestedPathResolvesCorrectly() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "Projects/floodlight/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.folderItem.title, "floodlight/")
-        XCTAssertEqual(
-            result?.directoryURL.standardizedFileURL,
-            tree.root.appendingPathComponent("Projects/floodlight").standardizedFileURL
+        #expect(result != nil)
+        #expect(result?.folderItem.title == "floodlight/")
+        #expect(
+            result?.directoryURL.standardizedFileURL
+                == tree.root.appendingPathComponent("Projects/floodlight").standardizedFileURL
         )
-        XCTAssertEqual(result?.remainder, "")
+        #expect(result?.remainder.isEmpty == true)
     }
 
-    func testNonExistentPathReturnsNil() {
+    @Test func nonExistentPathReturnsNil() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "NonExistentDirectory/",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNil(result)
+        #expect(result == nil)
     }
 
-    func testNonPathQueryReturnsNil() {
+    @Test func nonPathQueryReturnsNil() throws {
+        let tree = try makeTree()
         let result = PathNavigator.resolve(
             query: "plain search query",
             rootURL: tree.root,
-            homeURL: homeURL,
-            fileManager: fileManager
+            homeURL: tree.root,
+            fileManager: .default
         )
 
-        XCTAssertNil(result)
+        #expect(result == nil)
     }
 }

@@ -1,11 +1,11 @@
 import Carbon
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class GlobalHotKeyRegistrationTests: XCTestCase {
-    func testStartPublishesTheSuccessfullyRegisteredPreferredShortcut() {
+final class GlobalHotKeyRegistrationTests {
+    @Test func startPublishesTheSuccessfullyRegisteredPreferredShortcut() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = GlobalHotKeyRegistration(
             system: system,
@@ -15,13 +15,13 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
 
         let active = registration.start(preferred: .commandSpace)
 
-        XCTAssertEqual(active, .commandSpace)
-        XCTAssertEqual(registration.activeShortcut, .commandSpace)
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace])
-        XCTAssertEqual(system.handlerInstallations, 1)
+        #expect(active == .commandSpace)
+        #expect(registration.activeShortcut == .commandSpace)
+        #expect(system.registeredShortcuts == [.commandSpace])
+        #expect(system.handlerInstallations == 1)
     }
 
-    func testStartFallsBackWhenThePreferredShortcutIsRefused() {
+    @Test func startFallsBackWhenThePreferredShortcutIsRefused() {
         let system = ScriptedGlobalHotKeySystem()
         let failure = GlobalHotKeyError.registrationFailed(
             shortcut: .commandSpace,
@@ -32,13 +32,13 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
 
         let active = registration.start(preferred: .commandSpace)
 
-        XCTAssertEqual(active, .optionSpace)
-        XCTAssertEqual(registration.activeShortcut, .optionSpace)
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace, .optionSpace])
-        XCTAssertEqual(registration.lastFailure, failure)
+        #expect(active == .optionSpace)
+        #expect(registration.activeShortcut == .optionSpace)
+        #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
+        #expect(registration.lastFailure == failure)
     }
 
-    func testStartPublishesNoShortcutWhenPreferredAndFallbackBothFail() {
+    @Test func startPublishesNoShortcutWhenPreferredAndFallbackBothFail() {
         let system = ScriptedGlobalHotKeySystem()
         system.failNextRegistration(
             of: .commandSpace,
@@ -51,28 +51,28 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         system.failNextRegistration(of: .optionSpace, with: fallbackFailure)
         let registration = makeRegistration(system: system)
 
-        XCTAssertNil(registration.start(preferred: .commandSpace))
-        XCTAssertNil(registration.activeShortcut)
-        XCTAssertEqual(registration.lastFailure, fallbackFailure)
+        #expect(registration.start(preferred: .commandSpace) == nil)
+        #expect(registration.activeShortcut == nil)
+        #expect(registration.lastFailure == fallbackFailure)
     }
 
-    func testHandlerInstallationFailurePreventsRegistration() {
+    @Test func handlerInstallationFailurePreventsRegistration() {
         let system = ScriptedGlobalHotKeySystem()
         let failure = GlobalHotKeyError.handlerInstallationFailed(status: -50)
         system.handlerFailure = failure
         let registration = makeRegistration(system: system)
 
-        XCTAssertNil(registration.start(preferred: .commandSpace))
-        XCTAssertTrue(system.registeredShortcuts.isEmpty)
-        XCTAssertEqual(registration.lastFailure, failure)
+        #expect(registration.start(preferred: .commandSpace) == nil)
+        #expect(system.registeredShortcuts.isEmpty)
+        #expect(registration.lastFailure == failure)
     }
 
-    func testMissingNativeReferencesRemainTypedFailures() {
+    @Test func missingNativeReferencesRemainTypedFailures() {
         let handlerSystem = ScriptedGlobalHotKeySystem()
         handlerSystem.handlerFailure = .missingHandlerReference
         let handlerRegistration = makeRegistration(system: handlerSystem)
-        XCTAssertNil(handlerRegistration.start(preferred: .commandSpace))
-        XCTAssertEqual(handlerRegistration.lastFailure, .missingHandlerReference)
+        #expect(handlerRegistration.start(preferred: .commandSpace) == nil)
+        #expect(handlerRegistration.lastFailure == .missingHandlerReference)
 
         let hotKeySystem = ScriptedGlobalHotKeySystem()
         hotKeySystem.failNextRegistration(
@@ -80,50 +80,38 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
             with: .missingRegistrationReference(shortcut: .commandSpace)
         )
         let hotKeyRegistration = makeRegistration(system: hotKeySystem)
-        XCTAssertEqual(hotKeyRegistration.start(preferred: .commandSpace), .optionSpace)
-        XCTAssertEqual(
-            hotKeyRegistration.lastFailure,
-            .missingRegistrationReference(shortcut: .commandSpace)
-        )
+        #expect(hotKeyRegistration.start(preferred: .commandSpace) == .optionSpace)
+        #expect(hotKeyRegistration
+            .lastFailure == .missingRegistrationReference(shortcut: .commandSpace))
     }
 
-    func testOnlyTheCurrentFloodlightPressedEventInvokesTheAction() throws {
+    @Test func onlyTheCurrentFloodlightPressedEventInvokesTheAction() throws {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
         let registration = makeRegistration(system: system) {
             invocationCount += 1
         }
         registration.start(preferred: .commandSpace)
-        let current = try XCTUnwrap(system.identifiers.last)
+        let current = try #require(system.identifiers.last)
 
-        XCTAssertEqual(
-            system.emit(identifier: current, kind: UInt32(kEventHotKeyPressed)),
-            noErr
-        )
-        XCTAssertEqual(invocationCount, 1)
-        XCTAssertEqual(
-            system.emit(
-                identifier: GlobalHotKeyIdentifier(signature: 0x4E4F_5045, id: current.id),
-                kind: UInt32(kEventHotKeyPressed)
-            ),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(
-            system.emit(identifier: current, kind: UInt32(kEventHotKeyReleased)),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(
-            system.emit(
-                identifier: current,
-                eventClass: OSType(kEventClassApplication),
-                kind: UInt32(kEventHotKeyPressed)
-            ),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(invocationCount, 1)
+        #expect(system.emit(identifier: current, kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(invocationCount == 1)
+        #expect(system.emit(
+            identifier: GlobalHotKeyIdentifier(signature: 0x4E4F_5045, id: current.id),
+            kind: UInt32(kEventHotKeyPressed)
+        ) == OSStatus(eventNotHandledErr))
+        #expect(system
+            .emit(identifier: current, kind: UInt32(kEventHotKeyReleased)) ==
+            OSStatus(eventNotHandledErr))
+        #expect(system.emit(
+            identifier: current,
+            eventClass: OSType(kEventClassApplication),
+            kind: UInt32(kEventHotKeyPressed)
+        ) == OSStatus(eventNotHandledErr))
+        #expect(invocationCount == 1)
     }
 
-    func testReplacementActivatesTheRequestedShortcutBeforeRetiringThePreviousOne() throws {
+    @Test func replacementActivatesTheRequestedShortcutBeforeRetiringThePreviousOne() throws {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
         var invocationCount = 0
@@ -133,33 +121,27 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
             onPressed: { invocationCount += 1 }
         )
         registration.start(preferred: .commandSpace)
-        let first = try XCTUnwrap(system.identifiers.last)
+        let first = try #require(system.identifiers.last)
 
         let outcome = registration.replace(with: .optionSpace)
-        let second = try XCTUnwrap(system.identifiers.last)
+        let second = try #require(system.identifiers.last)
 
-        XCTAssertEqual(outcome, .requestedShortcutActive(.optionSpace))
-        XCTAssertEqual(registration.activeShortcut, .optionSpace)
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace, .optionSpace])
-        XCTAssertEqual(system.invalidations, ["registration:1"])
-        XCTAssertEqual(
-            defaults.string(forKey: FloodlightShortcut.preferenceKey),
-            FloodlightShortcut.optionSpace.rawValue
-        )
-        XCTAssertEqual(first.id, 1)
-        XCTAssertEqual(second.id, 2)
-        XCTAssertEqual(
-            system.emit(identifier: first, kind: UInt32(kEventHotKeyPressed)),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(
-            system.emit(identifier: second, kind: UInt32(kEventHotKeyPressed)),
-            noErr
-        )
-        XCTAssertEqual(invocationCount, 1)
+        #expect(outcome == .requestedShortcutActive(.optionSpace))
+        #expect(registration.activeShortcut == .optionSpace)
+        #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
+        #expect(system.invalidations == ["registration:1"])
+        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
+            .optionSpace.rawValue)
+        #expect(first.id == 1)
+        #expect(second.id == 2)
+        #expect(system
+            .emit(identifier: first, kind: UInt32(kEventHotKeyPressed)) ==
+            OSStatus(eventNotHandledErr))
+        #expect(system.emit(identifier: second, kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(invocationCount == 1)
     }
 
-    func testRefusedReplacementPreservesThePreviousShortcutAndPreference() {
+    @Test func refusedReplacementPreservesThePreviousShortcutAndPreference() {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
         FloodlightShortcut.commandSpace.save(in: defaults)
@@ -175,23 +157,18 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         )
         system.failNextRegistration(of: .optionSpace, with: replacementFailure)
 
-        XCTAssertEqual(
-            registration.replace(with: .optionSpace),
-            .previousShortcutActive(.commandSpace)
-        )
+        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
 
-        XCTAssertEqual(registration.activeShortcut, .commandSpace)
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace, .optionSpace])
-        XCTAssertEqual(system.identifiers.map(\.id), [1, 2])
-        XCTAssertTrue(system.invalidations.isEmpty)
-        XCTAssertEqual(
-            defaults.string(forKey: FloodlightShortcut.preferenceKey),
-            FloodlightShortcut.commandSpace.rawValue
-        )
-        XCTAssertEqual(registration.lastFailure, replacementFailure)
+        #expect(registration.activeShortcut == .commandSpace)
+        #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
+        #expect(system.identifiers.map(\.id) == [1, 2])
+        #expect(system.invalidations.isEmpty)
+        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
+            .commandSpace.rawValue)
+        #expect(registration.lastFailure == replacementFailure)
     }
 
-    func testRefusedReplacementRestoresThePreviousShortcutWhenCoexistenceIsUnavailable() {
+    @Test func refusedReplacementRestoresThePreviousShortcutWhenCoexistenceIsUnavailable() {
         let system = ScriptedGlobalHotKeySystem()
         system.supportsConcurrentRegistrations = false
         let registration = makeRegistration(system: system)
@@ -201,18 +178,15 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
             with: .registrationFailed(shortcut: .optionSpace, status: -1)
         )
 
-        XCTAssertEqual(
-            registration.replace(with: .optionSpace),
-            .previousShortcutActive(.commandSpace)
-        )
+        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
 
-        XCTAssertEqual(registration.activeShortcut, .commandSpace)
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace, .optionSpace, .commandSpace])
-        XCTAssertEqual(system.identifiers.map(\.id), [1, 2, 3])
-        XCTAssertEqual(system.invalidations, ["registration:1"])
+        #expect(registration.activeShortcut == .commandSpace)
+        #expect(system.registeredShortcuts == [.commandSpace, .optionSpace, .commandSpace])
+        #expect(system.identifiers.map(\.id) == [1, 2, 3])
+        #expect(system.invalidations == ["registration:1"])
     }
 
-    func testFailedReplacementPublishesNoShortcutWhenRestorationAlsoFails() {
+    @Test func failedReplacementPublishesNoShortcutWhenRestorationAlsoFails() {
         let system = ScriptedGlobalHotKeySystem()
         system.supportsConcurrentRegistrations = false
         let defaults = makeDefaults()
@@ -233,17 +207,15 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         )
         system.failNextRegistration(of: .commandSpace, with: restorationFailure)
 
-        XCTAssertEqual(registration.replace(with: .optionSpace), .noShortcutActive)
+        #expect(registration.replace(with: .optionSpace) == .noShortcutActive)
 
-        XCTAssertNil(registration.activeShortcut)
-        XCTAssertEqual(registration.lastFailure, restorationFailure)
-        XCTAssertEqual(
-            defaults.string(forKey: FloodlightShortcut.preferenceKey),
-            FloodlightShortcut.commandSpace.rawValue
-        )
+        #expect(registration.activeShortcut == nil)
+        #expect(registration.lastFailure == restorationFailure)
+        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
+            .commandSpace.rawValue)
     }
 
-    func testRepeatedReplacementKeepsOnlyTheLatestRegistrationActive() {
+    @Test func repeatedReplacementKeepsOnlyTheLatestRegistrationActive() {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
         let registration = makeRegistration(system: system) {
@@ -251,57 +223,41 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         }
         registration.start(preferred: .commandSpace)
 
-        XCTAssertEqual(
-            registration.replace(with: .optionSpace),
-            .requestedShortcutActive(.optionSpace)
-        )
-        XCTAssertEqual(
-            registration.replace(with: .commandSpace),
-            .requestedShortcutActive(.commandSpace)
-        )
+        #expect(registration.replace(with: .optionSpace) == .requestedShortcutActive(.optionSpace))
+        #expect(registration
+            .replace(with: .commandSpace) == .requestedShortcutActive(.commandSpace))
 
         let identifiers = system.identifiers
-        XCTAssertEqual(identifiers.map(\.id), [1, 2, 3])
-        XCTAssertEqual(system.invalidations, ["registration:1", "registration:2"])
-        XCTAssertEqual(
-            system.emit(identifier: identifiers[1], kind: UInt32(kEventHotKeyPressed)),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(
-            system.emit(identifier: identifiers[2], kind: UInt32(kEventHotKeyPressed)),
-            noErr
-        )
-        XCTAssertEqual(invocationCount, 1)
+        #expect(identifiers.map(\.id) == [1, 2, 3])
+        #expect(system.invalidations == ["registration:1", "registration:2"])
+        #expect(system
+            .emit(identifier: identifiers[1], kind: UInt32(kEventHotKeyPressed)) ==
+            OSStatus(eventNotHandledErr))
+        #expect(system.emit(identifier: identifiers[2], kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(invocationCount == 1)
     }
 
-    func testImmediateReplacementThenStopRetiresBothRegistrationsAndRouting() throws {
+    @Test func immediateReplacementThenStopRetiresBothRegistrationsAndRouting() throws {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
         let registration = makeRegistration(system: system) {
             invocationCount += 1
         }
         registration.start(preferred: .commandSpace)
-        XCTAssertEqual(
-            registration.replace(with: .optionSpace),
-            .requestedShortcutActive(.optionSpace)
-        )
-        let activeIdentifier = try XCTUnwrap(system.identifiers.last)
+        #expect(registration.replace(with: .optionSpace) == .requestedShortcutActive(.optionSpace))
+        let activeIdentifier = try #require(system.identifiers.last)
 
         registration.stop()
 
-        XCTAssertNil(registration.activeShortcut)
-        XCTAssertEqual(
-            system.invalidations,
-            ["registration:1", "registration:2", "handler"]
-        )
-        XCTAssertEqual(
-            system.emit(identifier: activeIdentifier, kind: UInt32(kEventHotKeyPressed)),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(invocationCount, 0)
+        #expect(registration.activeShortcut == nil)
+        #expect(system.invalidations == ["registration:1", "registration:2", "handler"])
+        #expect(system
+            .emit(identifier: activeIdentifier, kind: UInt32(kEventHotKeyPressed)) ==
+            OSStatus(eventNotHandledErr))
+        #expect(invocationCount == 0)
     }
 
-    func testRetirementFailureKeepsThePreviousShortcutAndRetriesCleanupOnStop() throws {
+    @Test func retirementFailureKeepsThePreviousShortcutAndRetriesCleanupOnStop() throws {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
         FloodlightShortcut.commandSpace.save(in: defaults)
@@ -312,44 +268,33 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
             onPressed: { invocationCount += 1 }
         )
         registration.start(preferred: .commandSpace)
-        let previousIdentifier = try XCTUnwrap(system.identifiers.last)
+        let previousIdentifier = try #require(system.identifiers.last)
         system.registrationInvalidationFailure = .unregistrationFailed(status: -1)
 
-        XCTAssertEqual(
-            registration.replace(with: .optionSpace),
-            .previousShortcutActive(.commandSpace)
-        )
+        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
 
-        let requestedIdentifier = try XCTUnwrap(system.identifiers.last)
-        XCTAssertEqual(registration.activeShortcut, .commandSpace)
-        XCTAssertEqual(system.invalidations, ["registration:1", "registration:2"])
-        XCTAssertEqual(
-            defaults.string(forKey: FloodlightShortcut.preferenceKey),
-            FloodlightShortcut.commandSpace.rawValue
-        )
-        XCTAssertEqual(
-            system.emit(identifier: previousIdentifier, kind: UInt32(kEventHotKeyPressed)),
-            noErr
-        )
-        XCTAssertEqual(
-            system.emit(identifier: requestedIdentifier, kind: UInt32(kEventHotKeyPressed)),
-            OSStatus(eventNotHandledErr)
-        )
-        XCTAssertEqual(invocationCount, 1)
+        let requestedIdentifier = try #require(system.identifiers.last)
+        #expect(registration.activeShortcut == .commandSpace)
+        #expect(system.invalidations == ["registration:1", "registration:2"])
+        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
+            .commandSpace.rawValue)
+        #expect(system
+            .emit(identifier: previousIdentifier, kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(system
+            .emit(identifier: requestedIdentifier, kind: UInt32(kEventHotKeyPressed)) ==
+            OSStatus(eventNotHandledErr))
+        #expect(invocationCount == 1)
 
         system.registrationInvalidationFailure = nil
         registration.stop()
 
-        XCTAssertEqual(
-            system.invalidations,
-            [
-                "registration:1", "registration:2",
-                "registration:2", "registration:1", "handler",
-            ]
-        )
+        #expect(system.invalidations == [
+            "registration:1", "registration:2",
+            "registration:2", "registration:1", "handler",
+        ])
     }
 
-    func testFailedStopRetriesCleanupBeforeRestarting() {
+    @Test func failedStopRetriesCleanupBeforeRestarting() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
         registration.start(preferred: .commandSpace)
@@ -357,25 +302,27 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
 
         registration.stop()
 
-        XCTAssertNil(registration.activeShortcut)
-        XCTAssertEqual(system.invalidations, ["registration:1"])
-        XCTAssertEqual(system.handlerInstallations, 1)
+        #expect(registration.activeShortcut == nil)
+        #expect(system.invalidations == ["registration:1"])
+        #expect(system.handlerInstallations == 1)
 
         system.registrationInvalidationFailure = nil
-        XCTAssertEqual(registration.start(preferred: .commandSpace), .commandSpace)
+        #expect(registration.start(preferred: .commandSpace) == .commandSpace)
 
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace, .commandSpace])
-        XCTAssertEqual(system.invalidations, ["registration:1", "registration:1"])
-        XCTAssertEqual(system.handlerInstallations, 1)
+        #expect(system.registeredShortcuts == [.commandSpace, .commandSpace])
+        #expect(system.invalidations == ["registration:1", "registration:1"])
+        #expect(system.handlerInstallations == 1)
 
         registration.stop()
-        XCTAssertEqual(
-            system.invalidations,
-            ["registration:1", "registration:1", "registration:2", "handler"]
-        )
+        #expect(system.invalidations == [
+            "registration:1",
+            "registration:1",
+            "registration:2",
+            "handler",
+        ])
     }
 
-    func testIdentifierExhaustionIsExplicitAndDoesNotReuseTheMaximumID() {
+    @Test func identifierExhaustionIsExplicitAndDoesNotReuseTheMaximumID() {
         let system = ScriptedGlobalHotKeySystem()
         system.failNextRegistration(
             of: .commandSpace,
@@ -388,12 +335,12 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
             onPressed: {}
         )
 
-        XCTAssertNil(registration.start(preferred: .commandSpace))
-        XCTAssertEqual(system.identifiers.map(\.id), [UInt32.max])
-        XCTAssertEqual(registration.lastFailure, .identifierExhausted)
+        #expect(registration.start(preferred: .commandSpace) == nil)
+        #expect(system.identifiers.map(\.id) == [UInt32.max])
+        #expect(registration.lastFailure == .identifierExhausted)
     }
 
-    func testStopInvalidatesTheRegistrationBeforeTheHandlerAndIsIdempotent() {
+    @Test func stopInvalidatesTheRegistrationBeforeTheHandlerAndIsIdempotent() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
         registration.start(preferred: .commandSpace)
@@ -401,11 +348,11 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         registration.stop()
         registration.stop()
 
-        XCTAssertNil(registration.activeShortcut)
-        XCTAssertEqual(system.invalidations, ["registration:1", "handler"])
+        #expect(registration.activeShortcut == nil)
+        #expect(system.invalidations == ["registration:1", "handler"])
     }
 
-    func testImmediateStartStopAndRestartAreSafe() {
+    @Test func immediateStartStopAndRestartAreSafe() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
 
@@ -414,41 +361,38 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         registration.start(preferred: .commandSpace)
         registration.stop()
 
-        XCTAssertEqual(system.handlerInstallations, 2)
-        XCTAssertEqual(system.identifiers.map(\.id), [1, 2])
-        XCTAssertEqual(
-            system.invalidations,
-            ["registration:1", "handler", "registration:2", "handler"]
-        )
+        #expect(system.handlerInstallations == 2)
+        #expect(system.identifiers.map(\.id) == [1, 2])
+        #expect(system.invalidations == ["registration:1", "handler", "registration:2", "handler"])
     }
 
-    func testCleanupFailuresRemainTypedDiagnostics() {
+    @Test func cleanupFailuresRemainTypedDiagnostics() {
         let registrationSystem = ScriptedGlobalHotKeySystem()
         registrationSystem.registrationInvalidationFailure = .unregistrationFailed(status: -1)
         let registration = makeRegistration(system: registrationSystem)
         registration.start(preferred: .commandSpace)
         registration.stop()
-        XCTAssertEqual(registration.lastFailure, .unregistrationFailed(status: -1))
+        #expect(registration.lastFailure == .unregistrationFailed(status: -1))
 
         let handlerSystem = ScriptedGlobalHotKeySystem()
         handlerSystem.handlerInvalidationFailure = .handlerRemovalFailed(status: -2)
         let handlerRegistration = makeRegistration(system: handlerSystem)
         handlerRegistration.start(preferred: .commandSpace)
         handlerRegistration.stop()
-        XCTAssertEqual(handlerRegistration.lastFailure, .handlerRemovalFailed(status: -2))
+        #expect(handlerRegistration.lastFailure == .handlerRemovalFailed(status: -2))
     }
 
-    func testDeinitializationInvalidatesTheRegistrationBeforeTheHandler() {
+    @Test func deinitializationInvalidatesTheRegistrationBeforeTheHandler() {
         let system = ScriptedGlobalHotKeySystem()
         var registration: GlobalHotKeyRegistration? = makeRegistration(system: system)
         registration?.start(preferred: .commandSpace)
 
         registration = nil
 
-        XCTAssertEqual(system.invalidations, ["registration:1", "handler"])
+        #expect(system.invalidations == ["registration:1", "handler"])
     }
 
-    func testSelectingTheActiveShortcutPersistsWithoutReregistering() {
+    @Test func selectingTheActiveShortcutPersistsWithoutReregistering() {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
         let registration = GlobalHotKeyRegistration(
@@ -458,16 +402,12 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         )
         registration.start(preferred: .commandSpace)
 
-        XCTAssertEqual(
-            registration.replace(with: .commandSpace),
-            .requestedShortcutActive(.commandSpace)
-        )
+        #expect(registration
+            .replace(with: .commandSpace) == .requestedShortcutActive(.commandSpace))
 
-        XCTAssertEqual(system.registeredShortcuts, [.commandSpace])
-        XCTAssertEqual(
-            defaults.string(forKey: FloodlightShortcut.preferenceKey),
-            FloodlightShortcut.commandSpace.rawValue
-        )
+        #expect(system.registeredShortcuts == [.commandSpace])
+        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
+            .commandSpace.rawValue)
     }
 
     private func makeRegistration(
@@ -481,13 +421,12 @@ final class GlobalHotKeyRegistrationTests: XCTestCase {
         )
     }
 
+    private var retainedDefaults: [RetainedDefaults] = []
+
     private func makeDefaults() -> UserDefaults {
-        let suiteName = "GlobalHotKeyRegistrationTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-        return defaults
+        let isolated = RetainedDefaults(prefix: "GlobalHotKeyRegistrationTests")
+        retainedDefaults.append(isolated)
+        return isolated.defaults
     }
 }
 
@@ -577,5 +516,19 @@ private final class ScriptedToken: GlobalHotKeyHandlerToken, GlobalHotKeyRegistr
         }
         self.onInvalidate = nil
         return nil
+    }
+}
+
+private final class RetainedDefaults {
+    let defaults: UserDefaults
+    let suiteName: String
+
+    init(prefix: String) {
+        suiteName = "\(prefix)-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+    }
+
+    deinit {
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }

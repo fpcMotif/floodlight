@@ -1,161 +1,161 @@
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
-final class FuzzyMatcherTests: XCTestCase {
+struct FuzzyMatcherTests {
     // MARK: - 1. Exact Match
 
-    func testExactMatchProducesExactEvidenceAndScore() throws {
-        let evidence = try XCTUnwrap(match(query: "safari", candidate: "Safari"))
-        XCTAssertEqual(evidence.shape, .exact)
-        XCTAssertEqual(evidence.score, 20_000)
+    @Test func exactMatchProducesExactEvidenceAndScore() throws {
+        let evidence = try #require(match(query: "safari", candidate: "Safari"))
+        #expect(evidence.shape == .exact)
+        #expect(evidence.score == 20_000)
     }
 
     // MARK: - 2. Name Prefix
 
-    func testNamePrefixProducesNamePrefixEvidenceAndScore() throws {
+    @Test func namePrefixProducesNamePrefixEvidenceAndScore() throws {
         let candidate = "Safari"
-        let evidence = try XCTUnwrap(match(query: "saf", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .namePrefix)
-        XCTAssertEqual(evidence.score, 15_000 - candidate.count)
+        let evidence = try #require(match(query: "saf", candidate: candidate))
+        #expect(evidence.shape == .namePrefix)
+        #expect(evidence.score == 15_000 - candidate.count)
     }
 
     // MARK: - 3. Word Prefix
 
-    func testWordPrefixMatchesMiddleWordAndScoresByOffset() throws {
+    @Test func wordPrefixMatchesMiddleWordAndScoresByOffset() throws {
         let candidate = "Google Chrome"
-        let evidence = try XCTUnwrap(match(query: "chrome", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .wordPrefix(offset: 7))
-        XCTAssertEqual(evidence.score, 12_000 - 7)
+        let evidence = try #require(match(query: "chrome", candidate: candidate))
+        #expect(evidence.shape == .wordPrefix(offset: 7))
+        #expect(evidence.score == 12_000 - 7)
     }
 
-    func testWordPrefixAfterPunctuationBoundary() throws {
+    @Test func wordPrefixAfterPunctuationBoundary() throws {
         let candidate = "wi-fi network"
-        let evidence = try XCTUnwrap(match(query: "fi", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .wordPrefix(offset: 3))
-        XCTAssertEqual(evidence.score, 12_000 - 3)
+        let evidence = try #require(match(query: "fi", candidate: candidate))
+        #expect(evidence.shape == .wordPrefix(offset: 3))
+        #expect(evidence.score == 12_000 - 3)
     }
 
     // MARK: - 4. Acronym
 
-    func testAcronymMatchesInitialsAtStart() throws {
+    @Test func acronymMatchesInitialsAtStart() throws {
         let candidate = "Google Chrome"
-        let evidence = try XCTUnwrap(match(query: "gc", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .acronym(offset: 0))
-        XCTAssertEqual(evidence.score, 10_000)
+        let evidence = try #require(match(query: "gc", candidate: candidate))
+        #expect(evidence.shape == .acronym(offset: 0))
+        #expect(evidence.score == 10_000)
     }
 
-    func testAcronymMatchesThreeWordInitials() throws {
+    @Test func acronymMatchesThreeWordInitials() throws {
         let candidate = "Visual Studio Code"
-        let evidence = try XCTUnwrap(match(query: "vsc", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .acronym(offset: 0))
-        XCTAssertEqual(evidence.score, 10_000)
+        let evidence = try #require(match(query: "vsc", candidate: candidate))
+        #expect(evidence.shape == .acronym(offset: 0))
+        #expect(evidence.score == 10_000)
     }
 
-    func testAcronymMatchesSubsequenceOfInitialsWithOffset() throws {
+    @Test func acronymMatchesSubsequenceOfInitialsWithOffset() throws {
         let candidate = "Visual Studio Code"
-        let evidence = try XCTUnwrap(match(query: "sc", candidate: candidate))
-        XCTAssertEqual(evidence.shape, .acronym(offset: 1))
-        XCTAssertEqual(evidence.score, 10_000 - 1)
+        let evidence = try #require(match(query: "sc", candidate: candidate))
+        #expect(evidence.shape == .acronym(offset: 1))
+        #expect(evidence.score == 10_000 - 1)
     }
 
     // MARK: - 5. Typos (Damerau-Levenshtein)
 
-    func testTypoToleranceRejectsTwoLetterQueries() {
+    @Test func typoToleranceRejectsTwoLetterQueries() {
         // Two-letter queries get 0 edit budget: precision over recall
-        XCTAssertNil(match(query: "gh", candidate: "Grapher"))
-        XCTAssertNil(match(query: "gh", candidate: "Google Chrome"))
-        XCTAssertNil(match(query: "gh", candidate: "Zed Nightly"))
-        XCTAssertNil(match(query: "go", candidate: "Ghostty"))
+        #expect(match(query: "gh", candidate: "Grapher") == nil)
+        #expect(match(query: "gh", candidate: "Google Chrome") == nil)
+        #expect(match(query: "gh", candidate: "Zed Nightly") == nil)
+        #expect(match(query: "go", candidate: "Ghostty") == nil)
 
         // But exact / prefix on 2 letters still matches
         let ghosttyEvidence = match(query: "gh", candidate: "Ghostty")
-        XCTAssertEqual(ghosttyEvidence?.shape, .namePrefix)
+        #expect(ghosttyEvidence?.shape == .namePrefix)
     }
 
-    func testTypoToleranceAllowsOneEditForThreeToFiveCharacters() throws {
+    @Test func typoToleranceAllowsOneEditForThreeToFiveCharacters() throws {
         // Missing letter in 5-char query (1 edit)
-        let safari = try XCTUnwrap(match(query: "safri", candidate: "Safari"))
-        XCTAssertEqual(safari.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(safari.score, 9_000 - 1_000)
+        let safari = try #require(match(query: "safri", candidate: "Safari"))
+        #expect(safari.shape == .typo(edits: 1, offset: 0))
+        #expect(safari.score == 9_000 - 1_000)
 
         // Missing letter in 5-char query (1 edit)
-        let finder = try XCTUnwrap(match(query: "fnder", candidate: "Finder"))
-        XCTAssertEqual(finder.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(finder.score, 9_000 - 1_000)
+        let finder = try #require(match(query: "fnder", candidate: "Finder"))
+        #expect(finder.shape == .typo(edits: 1, offset: 0))
+        #expect(finder.score == 9_000 - 1_000)
 
         // Missing letter in 5-char query (1 edit)
-        let google = try XCTUnwrap(match(query: "gogle", candidate: "Google"))
-        XCTAssertEqual(google.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(google.score, 9_000 - 1_000)
+        let google = try #require(match(query: "gogle", candidate: "Google"))
+        #expect(google.shape == .typo(edits: 1, offset: 0))
+        #expect(google.score == 9_000 - 1_000)
     }
 
-    func testTypoToleranceAllowsUpToTwoEditsForSixOrMoreCharacters() throws {
+    @Test func typoToleranceAllowsUpToTwoEditsForSixOrMoreCharacters() throws {
         // 1 edit transposition on 7-char query
-        let raycast = try XCTUnwrap(match(query: "ryacast", candidate: "Raycast"))
-        XCTAssertEqual(raycast.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(raycast.score, 9_000 - 1_000)
+        let raycast = try #require(match(query: "ryacast", candidate: "Raycast"))
+        #expect(raycast.shape == .typo(edits: 1, offset: 0))
+        #expect(raycast.score == 9_000 - 1_000)
 
         // 1 edit deletion on 6-char query
-        let ghostty = try XCTUnwrap(match(query: "ghosty", candidate: "Ghostty"))
-        XCTAssertEqual(ghostty.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(ghostty.score, 9_000 - 1_000)
+        let ghostty = try #require(match(query: "ghosty", candidate: "Ghostty"))
+        #expect(ghostty.shape == .typo(edits: 1, offset: 0))
+        #expect(ghostty.score == 9_000 - 1_000)
 
         // 2 edits on 7-char query
-        let raycastTwoEdits = try XCTUnwrap(match(query: "raaycst", candidate: "Raycast"))
-        XCTAssertEqual(raycastTwoEdits.shape, .typo(edits: 2, offset: 0))
-        XCTAssertEqual(raycastTwoEdits.score, 9_000 - 2_000)
+        let raycastTwoEdits = try #require(match(query: "raaycst", candidate: "Raycast"))
+        #expect(raycastTwoEdits.shape == .typo(edits: 2, offset: 0))
+        #expect(raycastTwoEdits.score == 9_000 - 2_000)
     }
 
-    func testTypoToleranceRejectsMoreEditsThanBudget() {
+    @Test func typoToleranceRejectsMoreEditsThanBudget() {
         // 3-5 char query with 2 edits -> rejected (budget is 1)
-        XCTAssertNil(match(query: "sfri", candidate: "Safari")) // 2 deletions: 'a', 'a'
+        #expect(match(query: "sfri", candidate: "Safari") == nil) // 2 deletions: 'a', 'a'
         // 6+ char query with 3 edits -> rejected (budget is 2)
-        XCTAssertNil(match(query: "rcst", candidate: "Raycast")) // 3 deletions: 'a', 'y', 'a'
+        #expect(match(query: "rcst", candidate: "Raycast") == nil) // 3 deletions: 'a', 'y', 'a'
     }
 
-    func testTypoToleranceAnchorsFirstCharacter() {
+    @Test func typoToleranceAnchorsFirstCharacter() {
         // First letter mismatch is rejected even within edit budget
-        XCTAssertNil(match(query: "chrome", candidate: "Home"))
-        XCTAssertNil(match(query: "afari", candidate: "Safari"))
+        #expect(match(query: "chrome", candidate: "Home") == nil)
+        #expect(match(query: "afari", candidate: "Safari") == nil)
     }
 
-    func testTypoMatchesAgainstIndividualWordsInCandidate() throws {
+    @Test func typoMatchesAgainstIndividualWordsInCandidate() throws {
         // 'gogle' matches 'Google' in 'Google Chrome'
-        let google = try XCTUnwrap(match(query: "gogle", candidate: "Google Chrome"))
-        XCTAssertEqual(google.shape, .typo(edits: 1, offset: 0))
-        XCTAssertEqual(google.score, 9_000 - 1_000)
+        let google = try #require(match(query: "gogle", candidate: "Google Chrome"))
+        #expect(google.shape == .typo(edits: 1, offset: 0))
+        #expect(google.score == 9_000 - 1_000)
 
         // 'chrom' (prefix) vs 'chrme' (typo) in 'Google Chrome'
-        let chromeTypo = try XCTUnwrap(match(query: "chrme", candidate: "Google Chrome"))
-        XCTAssertEqual(chromeTypo.shape, .typo(edits: 1, offset: 7))
-        XCTAssertEqual(chromeTypo.score, 9_000 - 1_000 - 7)
+        let chromeTypo = try #require(match(query: "chrme", candidate: "Google Chrome"))
+        #expect(chromeTypo.shape == .typo(edits: 1, offset: 7))
+        #expect(chromeTypo.score == 9_000 - 1_000 - 7)
     }
 
     // MARK: - Ranking Order Between Shapes
 
-    func testStructuralShapesStrictlyOutrankTypoMatches() throws {
-        let exact = try XCTUnwrap(match(query: "safari", candidate: "Safari")?.score)
-        let prefix = try XCTUnwrap(match(query: "saf", candidate: "Safari")?.score)
-        let wordPrefix = try XCTUnwrap(match(query: "chrome", candidate: "Google Chrome")?.score)
-        let acronym = try XCTUnwrap(match(query: "gc", candidate: "Google Chrome")?.score)
-        let typo = try XCTUnwrap(match(query: "safri", candidate: "Safari")?.score)
+    @Test func structuralShapesStrictlyOutrankTypoMatches() throws {
+        let exact = try #require(match(query: "safari", candidate: "Safari")?.score)
+        let prefix = try #require(match(query: "saf", candidate: "Safari")?.score)
+        let wordPrefix = try #require(match(query: "chrome", candidate: "Google Chrome")?.score)
+        let acronym = try #require(match(query: "gc", candidate: "Google Chrome")?.score)
+        let typo = try #require(match(query: "safri", candidate: "Safari")?.score)
 
-        XCTAssertGreaterThan(exact, prefix)
-        XCTAssertGreaterThan(prefix, wordPrefix)
-        XCTAssertGreaterThan(wordPrefix, acronym)
-        XCTAssertGreaterThan(acronym, typo)
+        #expect(exact > prefix)
+        #expect(prefix > wordPrefix)
+        #expect(wordPrefix > acronym)
+        #expect(acronym > typo)
     }
 
     // MARK: - Unicode / Diacritics
 
-    func testDiacriticsAndCaseAreNormalized() throws {
-        let match = try XCTUnwrap(match(query: "unicode", candidate: "Ünïcodé-café.jpg"))
-        XCTAssertEqual(match.shape, .namePrefix)
+    @Test func diacriticsAndCaseAreNormalized() throws {
+        let match = try #require(match(query: "unicode", candidate: "Ünïcodé-café.jpg"))
+        #expect(match.shape == .namePrefix)
     }
 
     // MARK: - ASCII Fast Path Equivalence
 
-    func testASCIIFastPathMatchesUnicodePath() {
+    @Test func aSCIIFastPathMatchesUnicodePath() {
         let queries = [
             "", "a", "gh", "gc", "vsc", "saf", "safari", "safri", "chrome", "chrme",
             "ryacast", "gogle", "login", "wifi", "bluetooth", "zzz",
@@ -190,9 +190,8 @@ final class FuzzyMatcherTests: XCTestCase {
                     normalizedCandidate: candBytes
                 )
 
-                XCTAssertEqual(
-                    unicodeEvidence,
-                    asciiEvidence,
+                #expect(
+                    unicodeEvidence == asciiEvidence,
                     "Mismatch for query '\(query)' in candidate '\(candidate)'"
                 )
 
@@ -205,9 +204,8 @@ final class FuzzyMatcherTests: XCTestCase {
                     normalizedCandidate: candBytes
                 )
 
-                XCTAssertEqual(
-                    unicodeScore,
-                    asciiScore,
+                #expect(
+                    unicodeScore == asciiScore,
                     "Score mismatch for query '\(query)' in candidate '\(candidate)'"
                 )
             }

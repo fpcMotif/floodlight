@@ -2,7 +2,7 @@ import FFFKit
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 
 /// Invariants of the search model: identity, filtering, counting, and the
 /// one published ordering.
@@ -13,10 +13,10 @@ import XCTest
 /// a list of nine. Rather than assert that on a handful of fixtures, the
 /// properties below assert it for every combination the generators can
 /// reach.
-final class SearchModelInvariantTests: XCTestCase {
+struct SearchModelInvariantTests {
     // MARK: - Identity
 
-    func testGeneratedIdentifiersEncodeKindTitleAndSubtitle() throws {
+    @Test func generatedIdentifiersEncodeKindTitleAndSubtitle() throws {
         try checkProperty(
             "a nil id falls back to kind:title:subtitle",
             Gen<String>.hostile,
@@ -34,7 +34,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testExplicitIdentifiersAreUsedVerbatim() throws {
+    @Test func explicitIdentifiersAreUsedVerbatim() throws {
         try checkProperty(
             "an explicit id is never rewritten",
             Gen<String>.hostile,
@@ -51,7 +51,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testHashingAgreesWithEquality() throws {
+    @Test func hashingAgreesWithEquality() throws {
         // `SearchItem` is `Hashable` and lands in a `Set` inside
         // `buildResults`' de-duplication, so a hash that disagreed with
         // equality would silently drop rows.
@@ -77,17 +77,17 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testItemsDifferingOnlyByScoreAreNotEqual() {
+    @Test func itemsDifferingOnlyByScoreAreNotEqual() {
         let base = SearchFixtures.file(name: "notes.txt", score: 10)
         let other = SearchFixtures.file(name: "notes.txt", score: 11)
-        XCTAssertNotEqual(base, other)
-        XCTAssertEqual(base.id, other.id, "the id deliberately ignores score")
-        XCTAssertEqual(Set([base, other]).count, 2)
+        #expect(base != other)
+        #expect(base.id == other.id, "the id deliberately ignores score")
+        #expect(Set([base, other]).count == 2)
     }
 
     // MARK: - Previewability
 
-    func testOnlyFilesWithAURLArePreviewable() throws {
+    @Test func onlyFilesWithAURLArePreviewable() throws {
         try checkProperty(
             "isPreviewable == (kind == .file && fileURL != nil)",
             SearchGenerators.kind,
@@ -109,7 +109,7 @@ final class SearchModelInvariantTests: XCTestCase {
 
     // MARK: - Filters
 
-    func testFilterCountsAlwaysMatchTheFilterPredicates() throws {
+    @Test func filterCountsAlwaysMatchTheFilterPredicates() throws {
         // The single most load-bearing invariant in the model: the chip
         // count is computed in one pass over the items, the list is
         // computed by re-filtering, and they must never disagree.
@@ -125,7 +125,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testTheAllFilterCountsEveryItem() throws {
+    @Test func theAllFilterCountsEveryItem() throws {
         try checkProperty(
             ".all includes everything",
             SearchGenerators.items(count: 0...40),
@@ -136,7 +136,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testPrimaryKindFiltersArePairwiseDisjoint() throws {
+    @Test func primaryKindFiltersArePairwiseDisjoint() throws {
         // Apps, files, folders, and settings partition by `kind`, so no
         // item may satisfy two of them — otherwise the chips would total
         // more than the list.
@@ -150,7 +150,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testDynamicFileFiltersArePairwiseDisjoint() throws {
+    @Test func dynamicFileFiltersArePairwiseDisjoint() throws {
         // PDFs, images, and documents are extension buckets. They must not
         // overlap, or a single file would be counted twice.
         let extensionFilters: [SearchResultFilter] = [.pdfs, .images, .documents]
@@ -163,7 +163,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testEveryExtensionFilterImpliesTheFilesFilter() throws {
+    @Test func everyExtensionFilterImpliesTheFilesFilter() throws {
         try checkProperty(
             "pdfs/images/documents are subsets of files",
             SearchGenerators.item(),
@@ -176,19 +176,16 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testFileExtensionMatchingIsCaseInsensitive() {
+    @Test func fileExtensionMatchingIsCaseInsensitive() {
         for name in ["report.PDF", "report.Pdf", "report.pdf"] {
             let item = SearchFixtures.file(name: name)
-            XCTAssertTrue(
-                SearchResultFilter.pdfs.includes(item),
-                "\(name) should be classified as a PDF"
-            )
+            #expect(SearchResultFilter.pdfs.includes(item), "\(name) should be classified as a PDF")
         }
-        XCTAssertTrue(SearchResultFilter.images.includes(SearchFixtures.file(name: "shot.HEIC")))
-        XCTAssertTrue(SearchResultFilter.documents.includes(SearchFixtures.file(name: "plan.DOCX")))
+        #expect(SearchResultFilter.images.includes(SearchFixtures.file(name: "shot.HEIC")))
+        #expect(SearchResultFilter.documents.includes(SearchFixtures.file(name: "plan.DOCX")))
     }
 
-    func testExtensionFiltersIgnoreNonFileKinds() {
+    @Test func extensionFiltersIgnoreNonFileKinds() {
         // A folder called "archive.pdf" is still a folder. The extension
         // buckets gate on `kind == .file` first, and this pins that down.
         let folder = SearchItem(
@@ -200,12 +197,12 @@ final class SearchModelInvariantTests: XCTestCase {
             score: 0,
             fileURL: URL(fileURLWithPath: "/tmp/archive.pdf", isDirectory: true)
         )
-        XCTAssertFalse(SearchResultFilter.pdfs.includes(folder))
-        XCTAssertFalse(SearchResultFilter.files.includes(folder))
-        XCTAssertTrue(SearchResultFilter.folders.includes(folder))
+        #expect(!(SearchResultFilter.pdfs.includes(folder)))
+        #expect(!(SearchResultFilter.files.includes(folder)))
+        #expect(SearchResultFilter.folders.includes(folder))
     }
 
-    func testAFileWithNoURLIsNeverInAnExtensionBucket() {
+    @Test func aFileWithNoURLIsNeverInAnExtensionBucket() {
         let item = SearchItem(
             id: "file:none",
             title: "mystery",
@@ -215,39 +212,39 @@ final class SearchModelInvariantTests: XCTestCase {
             score: 0,
             fileURL: nil
         )
-        XCTAssertTrue(SearchResultFilter.files.includes(item))
+        #expect(SearchResultFilter.files.includes(item))
         for filter in [SearchResultFilter.pdfs, .images, .documents] {
-            XCTAssertFalse(filter.includes(item))
+            #expect(!(filter.includes(item)))
         }
     }
 
-    func testEmptyCountsAreZeroForEveryFilter() {
+    @Test func emptyCountsAreZeroForEveryFilter() {
         let empty = SearchFilterCounts()
         for filter in SearchResultFilter.allCases {
-            XCTAssertEqual(empty[filter], 0, filter.rawValue)
+            #expect(empty[filter] == 0, "\(filter.rawValue)")
         }
-        XCTAssertEqual(empty, SearchFilterCounts(items: []))
+        #expect(empty == SearchFilterCounts(items: []))
     }
 
-    func testFilterCatalogueIsExhaustiveAndNonOverlapping() {
+    @Test func filterCatalogueIsExhaustiveAndNonOverlapping() {
         // `primary` and `dynamic` are what the chip bar renders. If a case
         // were added to the enum and forgotten in both lists it would
         // become unreachable in the UI, so the union is checked against
         // `allCases` rather than assumed.
         let listed = SearchResultFilter.primary + SearchResultFilter.dynamic
-        XCTAssertEqual(Set(listed), Set(SearchResultFilter.allCases))
-        XCTAssertEqual(listed.count, Set(listed).count, "a filter is listed twice")
-        XCTAssertTrue(SearchResultFilter.dynamic.allSatisfy(\.isDynamic))
-        XCTAssertTrue(SearchResultFilter.primary.allSatisfy { !$0.isDynamic })
-        XCTAssertEqual(
-            SearchResultFilter.allCases.map(\.id),
-            SearchResultFilter.allCases.map(\.rawValue)
-        )
+        #expect(Set(listed) == Set(SearchResultFilter.allCases))
+        #expect(listed.count == Set(listed).count, "a filter is listed twice")
+        let allDynamic = SearchResultFilter.dynamic.allSatisfy(\.isDynamic)
+        #expect(allDynamic)
+        let nonePrimaryDynamic = SearchResultFilter.primary.allSatisfy { !$0.isDynamic }
+        #expect(nonePrimaryDynamic)
+        #expect(SearchResultFilter.allCases.map(\.id) == SearchResultFilter.allCases
+            .map(\.rawValue))
     }
 
-    func testEveryFilterAndKindHasANonEmptyLabel() {
+    @Test func everyFilterAndKindHasANonEmptyLabel() {
         for filter in SearchResultFilter.allCases {
-            XCTAssertFalse(filter.title.isEmpty, filter.rawValue)
+            #expect(!(filter.title.isEmpty), "\(filter.rawValue)")
         }
         for kind in [
             SearchItemKind.application,
@@ -258,8 +255,8 @@ final class SearchModelInvariantTests: XCTestCase {
             .systemSetting,
             .web,
         ] {
-            XCTAssertFalse(kind.label.isEmpty, kind.rawValue)
-            XCTAssertFalse(kind.symbolName.isEmpty, kind.rawValue)
+            #expect(!(kind.label.isEmpty), "\(kind.rawValue)")
+            #expect(!(kind.symbolName.isEmpty), "\(kind.rawValue)")
         }
         // Labels and symbols are what distinguishes rows at a glance, so
         // two kinds sharing either would be a UI bug.
@@ -272,13 +269,13 @@ final class SearchModelInvariantTests: XCTestCase {
             .systemSetting,
             .web,
         ]
-        XCTAssertEqual(Set(kinds.map(\.label)).count, kinds.count)
-        XCTAssertEqual(Set(kinds.map(\.symbolName)).count, kinds.count)
+        #expect(Set(kinds.map(\.label)).count == kinds.count)
+        #expect(Set(kinds.map(\.symbolName)).count == kinds.count)
     }
 
     // MARK: - Ranking
 
-    func testRanksBeforeIsIrreflexive() throws {
+    @Test func ranksBeforeIsIrreflexive() throws {
         try checkProperty(
             "no item ranks before itself",
             SearchGenerators.item(),
@@ -288,7 +285,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testRanksBeforeIsAsymmetric() throws {
+    @Test func ranksBeforeIsAsymmetric() throws {
         try checkProperty(
             "a < b implies not b < a",
             SearchGenerators.item(),
@@ -299,7 +296,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testRanksBeforeIsTransitive() throws {
+    @Test func ranksBeforeIsTransitive() throws {
         // A comparator that is not a strict weak ordering makes
         // `sorted(by:)` undefined — in a debug build it can trap outright.
         try checkProperty(
@@ -318,7 +315,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testHigherScoresAlwaysRankFirst() throws {
+    @Test func higherScoresAlwaysRankFirst() throws {
         try checkProperty(
             "score dominates title",
             SearchGenerators.score,
@@ -332,7 +329,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testRankingIsStableAcrossRepeatedSorts() throws {
+    @Test func rankingIsStableAcrossRepeatedSorts() throws {
         try checkProperty(
             "ranking is idempotent",
             SearchGenerators.items(count: 0...50),
@@ -344,7 +341,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testRankingPreservesEveryItem() throws {
+    @Test func rankingPreservesEveryItem() throws {
         try checkProperty(
             "ranking is a permutation",
             SearchGenerators.items(count: 0...50),
@@ -356,7 +353,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testRankedOutputIsSortedByScoreDescending() throws {
+    @Test func rankedOutputIsSortedByScoreDescending() throws {
         try checkProperty(
             "adjacent ranked items are non-increasing in score",
             SearchGenerators.items(count: 2...50),
@@ -367,7 +364,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testPageNeverReportsFewerMatchesThanItReturns() throws {
+    @Test func pageNeverReportsFewerMatchesThanItReturns() throws {
         try checkProperty(
             "totalMatched >= items.count and items.count <= limit",
             SearchGenerators.items(count: 0...60),
@@ -381,7 +378,7 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testPageReturnsTheHighestRankedPrefix() throws {
+    @Test func pageReturnsTheHighestRankedPrefix() throws {
         try checkProperty(
             "page(limit:) matches a full-sort prefix",
             SearchGenerators.items(count: 0...40),
@@ -398,7 +395,7 @@ final class SearchModelInvariantTests: XCTestCase {
         items.sorted(by: SearchItemRanking.ranksBefore)
     }
 
-    func testRankingBandsAreSeparatedByMoreThanAnyAchievableMatchScore() throws {
+    @Test func rankingBandsAreSeparatedByMoreThanAnyAchievableMatchScore() throws {
         struct Tier: Sendable {
             let name: String
             let baseScore: Int
@@ -423,17 +420,15 @@ final class SearchModelInvariantTests: XCTestCase {
         for (higher, lower) in zip(tiers, tiers.dropFirst()) {
             let pairKey = "\(higher.name)-\(lower.name)"
             if declaredExemptions.contains(pairKey) {
-                XCTAssertEqual(
-                    higher.baseScore,
-                    lower.baseScore,
+                #expect(
+                    higher.baseScore == lower.baseScore,
                     "Exempt pair \(pairKey) must be explicitly tied"
                 )
                 continue
             }
 
-            XCTAssertGreaterThan(
-                higher.baseScore - lower.baseScore,
-                maxAchievableMatchScore,
+            #expect(
+                higher.baseScore - lower.baseScore > maxAchievableMatchScore,
                 "Band gap between \(higher.name) (\(higher.baseScore)) and \(lower.name) (\(lower.baseScore)) must exceed max match score \(maxAchievableMatchScore)"
             )
 
@@ -486,32 +481,32 @@ final class SearchModelInvariantTests: XCTestCase {
         )
     }
 
-    func testAnApplicationBundleBecomesAnApplicationRowWithoutItsExtension() {
+    @Test func anApplicationBundleBecomesAnApplicationRowWithoutItsExtension() {
         let item = indexedResult(
             name: "Xcode.app",
             relativePath: "Applications/Xcode.app",
             isDirectory: true
         ).makeSearchItem()
 
-        XCTAssertEqual(item.kind, .application)
-        XCTAssertEqual(item.title, "Xcode", "the .app extension is stripped from the display title")
-        XCTAssertEqual(item.subtitle, "Applications/Xcode.app")
-        XCTAssertNil(item.fileSize, "a bundle reports no size")
+        #expect(item.kind == .application)
+        #expect(item.title == "Xcode", "the .app extension is stripped from the display title")
+        #expect(item.subtitle == "Applications/Xcode.app")
+        #expect(item.fileSize == nil, "a bundle reports no size")
     }
 
-    func testApplicationBundleDetectionIsCaseInsensitive() {
+    @Test func applicationBundleDetectionIsCaseInsensitive() {
         for name in ["Thing.APP", "Thing.App", "Thing.app"] {
             let item = indexedResult(
                 name: name,
                 relativePath: "Applications/\(name)",
                 isDirectory: true
             ).makeSearchItem()
-            XCTAssertEqual(item.kind, .application, name)
-            XCTAssertEqual(item.title, "Thing", name)
+            #expect(item.kind == .application, "\(name)")
+            #expect(item.title == "Thing", "\(name)")
         }
     }
 
-    func testANonDirectoryEndingInAppIsAFileNotAnApplication() {
+    @Test func aNonDirectoryEndingInAppIsAFileNotAnApplication() {
         // The bundle check requires `isDirectory`, so a stray file called
         // "notes.app" stays a file — otherwise it would open as an app.
         let item = indexedResult(
@@ -519,22 +514,22 @@ final class SearchModelInvariantTests: XCTestCase {
             relativePath: "code/notes.app",
             isDirectory: false
         ).makeSearchItem()
-        XCTAssertEqual(item.kind, .file)
-        XCTAssertEqual(item.title, "notes.app")
+        #expect(item.kind == .file)
+        #expect(item.title == "notes.app")
     }
 
-    func testDirectoriesBecomeFoldersAndCarryNoSize() {
+    @Test func directoriesBecomeFoldersAndCarryNoSize() {
         let item = indexedResult(
             name: "code",
             relativePath: "Users/example/code",
             isDirectory: true,
             size: 4_096
         ).makeSearchItem()
-        XCTAssertEqual(item.kind, .folder)
-        XCTAssertNil(item.fileSize)
+        #expect(item.kind == .folder)
+        #expect(item.fileSize == nil)
     }
 
-    func testAZeroModificationStampBecomesNoDateRatherThanTheUnixEpoch() throws {
+    @Test func aZeroModificationStampBecomesNoDateRatherThanTheUnixEpoch() throws {
         // FFF reports `0` when it has no modification time. Mapping that
         // straight through would render every such row as "1 Jan 1970".
         let undated = indexedResult(
@@ -543,7 +538,7 @@ final class SearchModelInvariantTests: XCTestCase {
             isDirectory: false,
             modified: 0
         ).makeSearchItem()
-        XCTAssertNil(undated.modifiedAt)
+        #expect(undated.modifiedAt == nil)
 
         let dated = indexedResult(
             name: "b.txt",
@@ -551,20 +546,17 @@ final class SearchModelInvariantTests: XCTestCase {
             isDirectory: false,
             modified: 1_700_000_000
         ).makeSearchItem()
-        XCTAssertEqual(
-            try XCTUnwrap(dated.modifiedAt),
-            Date(timeIntervalSince1970: 1_700_000_000)
-        )
+        #expect(try #require(dated.modifiedAt) == Date(timeIntervalSince1970: 1_700_000_000))
     }
 
-    func testMappedIdentifiersAreUniquePerPathAndKind() throws {
+    @Test func mappedIdentifiersAreUniquePerPathAndKind() throws {
         try checkProperty(
             "mapped ids are stable and path-derived",
             Gen<String>.lowercaseASCII.filter { !$0.isEmpty },
             Gen<Bool>.bool,
             runs: 300
         ) { name, isDirectory in
-            let result = self.indexedResult(
+            let result = indexedResult(
                 name: name,
                 relativePath: "dir/\(name)",
                 isDirectory: isDirectory
@@ -576,14 +568,14 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testMappedItemsAlwaysCarryTheirURLAndOpenAction() throws {
+    @Test func mappedItemsAlwaysCarryTheirURLAndOpenAction() throws {
         try checkProperty(
             "every mapped item opens its own URL",
             Gen<String>.lowercaseASCII.filter { !$0.isEmpty },
             Gen<Bool>.bool,
             runs: 300
         ) { name, isDirectory in
-            let result = self.indexedResult(
+            let result = indexedResult(
                 name: name,
                 relativePath: name,
                 isDirectory: isDirectory
@@ -595,7 +587,7 @@ final class SearchModelInvariantTests: XCTestCase {
 
     // MARK: - Actions
 
-    func testActionEqualityDistinguishesEveryCase() {
+    @Test func actionEqualityDistinguishesEveryCase() {
         let url = URL(fileURLWithPath: "/tmp/x")
         let cases: [SearchItemAction] = [
             .copy("a"),
@@ -606,10 +598,10 @@ final class SearchModelInvariantTests: XCTestCase {
             .askAssistant(command: "claude", arguments: ["-p", "bye"]),
             .askAssistant(command: "codex", arguments: ["-p", "hi"]),
         ]
-        XCTAssertEqual(Set(cases).count, cases.count, "two distinct actions compare equal")
+        #expect(Set(cases).count == cases.count, "two distinct actions compare equal")
     }
 
-    func testAssistantAnswerStatesAreDistinctByPayload() {
+    @Test func assistantAnswerStatesAreDistinctByPayload() {
         let states: [AssistantAnswerState] = [
             .running,
             .answered(""),
@@ -617,15 +609,15 @@ final class SearchModelInvariantTests: XCTestCase {
             .failed(""),
             .failed("a"),
         ]
-        XCTAssertEqual(Set(states.map(String.init(describing:))).count, states.count)
-        XCTAssertNotEqual(AssistantAnswerState.answered("a"), .failed("a"))
+        #expect(Set(states.map(String.init(describing:))).count == states.count)
+        #expect(AssistantAnswerState.answered("a") != .failed("a"))
 
         let run = AssistantRun(itemID: "x", state: .running)
-        XCTAssertEqual(run, AssistantRun(itemID: "x", state: .running))
-        XCTAssertNotEqual(run, AssistantRun(itemID: "y", state: .running))
+        #expect(run == AssistantRun(itemID: "x", state: .running))
+        #expect(run != AssistantRun(itemID: "y", state: .running))
     }
 
-    func testSearchItemPagePreservesWhatItIsGiven() throws {
+    @Test func searchItemPagePreservesWhatItIsGiven() throws {
         try checkProperty(
             "SearchItemPage is a transparent container",
             SearchGenerators.items(count: 0...20),
@@ -637,18 +629,12 @@ final class SearchModelInvariantTests: XCTestCase {
         }
     }
 
-    func testFilterOptionIdentityFollowsItsFilter() {
+    @Test func filterOptionIdentityFollowsItsFilter() {
         for filter in SearchResultFilter.allCases {
             let option = SearchFilterOption(filter: filter, count: 3, isLoading: false)
-            XCTAssertEqual(option.id, filter)
-            XCTAssertEqual(
-                option,
-                SearchFilterOption(filter: filter, count: 3, isLoading: false)
-            )
-            XCTAssertNotEqual(
-                option,
-                SearchFilterOption(filter: filter, count: 3, isLoading: true)
-            )
+            #expect(option.id == filter)
+            #expect(option == SearchFilterOption(filter: filter, count: 3, isLoading: false))
+            #expect(option != SearchFilterOption(filter: filter, count: 3, isLoading: true))
         }
     }
 }

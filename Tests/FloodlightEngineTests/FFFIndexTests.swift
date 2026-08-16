@@ -1,10 +1,10 @@
 import Darwin
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
-final class FFFIndexTests: XCTestCase {
-    func testFileSourceStartReturnsWithASearchableInitialSnapshot() async throws {
+struct FFFIndexTests {
+    @Test func fileSourceStartReturnsWithASearchableInitialSnapshot() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent("FloodlightReadySourceTests-\(UUID().uuidString)")
@@ -29,10 +29,10 @@ final class FFFIndexTests: XCTestCase {
         try await source.start()
 
         let results = try await source.indexedItems(for: "ready-source-sentinel", limit: 12)
-        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+        #expect(results.contains { $0.fileURL == sentinel })
     }
 
-    func testFileSourceScopeChangeReturnsWithTheNewSnapshotSearchable() async throws {
+    @Test func fileSourceScopeChangeReturnsWithTheNewSnapshotSearchable() async throws {
         let fileManager = FileManager.default
         let parent = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent("FloodlightReadyScopeTests-\(UUID().uuidString)")
@@ -61,10 +61,10 @@ final class FFFIndexTests: XCTestCase {
         try await source.changeScope(to: selectedRoot)
 
         let results = try await source.indexedItems(for: "ready-scope-sentinel", limit: 12)
-        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+        #expect(results.contains { $0.fileURL == sentinel })
     }
 
-    func testFileSourceRebuildReturnsWithTheUpdatedSnapshotSearchable() async throws {
+    @Test func fileSourceRebuildReturnsWithTheUpdatedSnapshotSearchable() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent("FloodlightReadyRebuildTests-\(UUID().uuidString)")
@@ -90,10 +90,10 @@ final class FFFIndexTests: XCTestCase {
         try await source.rebuild()
 
         let results = try await source.indexedItems(for: "ready-rebuild-sentinel", limit: 12)
-        XCTAssertTrue(results.contains { $0.fileURL == sentinel })
+        #expect(results.contains { $0.fileURL == sentinel })
     }
 
-    func testCanChooseScopeBeforeInitialIndexStarts() async throws {
+    @Test func canChooseScopeBeforeInitialIndexStarts() async throws {
         let fileManager = FileManager.default
         let parent = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent("FloodlightPreflightScopeTests-\(UUID().uuidString)")
@@ -116,7 +116,7 @@ final class FFFIndexTests: XCTestCase {
         }
     }
 
-    func testIndexesAndSearchesFilesAndFolders() async throws {
+    @Test func indexesAndSearchesFilesAndFolders() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent("FloodlightTests-\(UUID().uuidString)", isDirectory: true)
@@ -168,51 +168,51 @@ final class FFFIndexTests: XCTestCase {
         }
 
         let fileResults = try await index.search("needle")
-        XCTAssertTrue(fileResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
+        #expect(fileResults.contains { $0.url.lastPathComponent == file.lastPathComponent })
         let fileOnlyResults = try await index.searchFiles("needle")
-        XCTAssertTrue(fileOnlyResults
+        #expect(fileOnlyResults
             .contains { $0.url.lastPathComponent == file.lastPathComponent })
-        XCTAssertFalse(fileOnlyResults.contains(where: \.isDirectory))
+        let hasDirectory = fileOnlyResults.contains(where: \.isDirectory)
+        #expect(!hasDirectory)
 
         let downloadResults = try await index.searchFiles("download-guide")
-        XCTAssertTrue(downloadResults.contains { $0.url == pdf })
+        #expect(downloadResults.contains { $0.url == pdf })
         let desktopResults = try await index.searchFiles("vacation-snapshot")
-        XCTAssertTrue(desktopResults.contains { $0.url == image })
+        #expect(desktopResults.contains { $0.url == image })
         let documentResults = try await index.searchFiles("meeting-brief")
-        XCTAssertTrue(documentResults.contains { $0.url == document })
+        #expect(documentResults.contains { $0.url == document })
 
         let applicationResults = try await index.search("Sample Launcher")
-        let application = try XCTUnwrap(
-            applicationResults.first { sameFileURL($0.url, downloadedApplication) }
-        )
+        let application = try #require(applicationResults.first { sameFileURL(
+            $0.url,
+            downloadedApplication
+        ) })
         let applicationSearchItem = application.makeSearchItem()
-        XCTAssertTrue(application.isApplicationBundle)
-        XCTAssertEqual(applicationSearchItem.kind, .application)
-        XCTAssertEqual(applicationSearchItem.title, "Sample Launcher")
-        XCTAssertEqual(applicationSearchItem.id, "application:\(downloadedApplication.path)")
+        #expect(application.isApplicationBundle)
+        #expect(applicationSearchItem.kind == .application)
+        #expect(applicationSearchItem.title == "Sample Launcher")
+        #expect(applicationSearchItem.id == "application:\(downloadedApplication.path)")
 
         let ancestorResults = try await index.searchDirectories("Reference")
-        XCTAssertTrue(ancestorResults.contains { sameFileURL($0.url, ancestorOnlyFolder) })
+        #expect(ancestorResults.contains { sameFileURL($0.url, ancestorOnlyFolder) })
 
         let folderResults = try await index.search("Projects")
-        XCTAssertTrue(folderResults
+        #expect(folderResults
             .contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
         let directoryOnlyResults = try await index.searchDirectories("Projects")
-        XCTAssertTrue(
-            directoryOnlyResults.contains {
-                $0.isDirectory && $0.url.lastPathComponent == "Projects"
-            }
-        )
+        #expect(directoryOnlyResults.contains {
+            $0.isDirectory && $0.url.lastPathComponent == "Projects"
+        })
 
         let contentResults = try await index.searchContent(
             "integration test",
             timeBudgetMilliseconds: 500
         )
-        XCTAssertTrue(contentResults
+        #expect(contentResults
             .contains { $0.url.lastPathComponent == file.lastPathComponent })
     }
 
-    func testExactAndTildePathsKeepDirectoriesVisibleInMixedResults() async throws {
+    @Test func exactAndTildePathsKeepDirectoriesVisibleInMixedResults() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent(
@@ -240,18 +240,19 @@ final class FFFIndexTests: XCTestCase {
         }
 
         let relativeResults = try await index.search("code/minion", limit: 12)
-        XCTAssertEqual(relativeResults.first?.url.standardizedFileURL, minion.standardizedFileURL)
-        XCTAssertEqual(relativeResults.first?.isDirectory, true)
+        #expect(relativeResults.first?.url.standardizedFileURL == minion.standardizedFileURL)
+        #expect(relativeResults.first?.isDirectory == true)
 
         let homeResults = try await index.search("~/code", limit: 12)
-        XCTAssertEqual(homeResults.first?.url.standardizedFileURL, code.standardizedFileURL)
-        XCTAssertEqual(homeResults.first?.isDirectory, true)
+        #expect(homeResults.first?.url.standardizedFileURL == code.standardizedFileURL)
+        #expect(homeResults.first?.isDirectory == true)
 
         let directoryOnlyResults = try await index.search("code/minion/", limit: 12)
-        XCTAssertTrue(directoryOnlyResults.allSatisfy(\.isDirectory))
+        let allDirectories = directoryOnlyResults.allSatisfy(\.isDirectory)
+        #expect(allDirectories)
     }
 
-    func testLiveWatcherUpdatesFilesAndFolders() async throws {
+    @Test func liveWatcherUpdatesFilesAndFolders() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent(
@@ -331,7 +332,7 @@ final class FFFIndexTests: XCTestCase {
         }
     }
 
-    func testLiveWatcherUpdatesFileContent() async throws {
+    @Test func liveWatcherUpdatesFileContent() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent(
@@ -416,7 +417,7 @@ final class FFFIndexTests: XCTestCase {
         }
     }
 
-    func testLiveWatcherUpdatesApplicationBundlesInsideTheSearchScope() async throws {
+    @Test func liveWatcherUpdatesApplicationBundlesInsideTheSearchScope() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent(
@@ -476,7 +477,7 @@ final class FFFIndexTests: XCTestCase {
         }
     }
 
-    func testLiveWatcherMovesInitiallyIndexedFolderWithoutCorruptingOtherEntries() async throws {
+    @Test func liveWatcherMovesInitiallyIndexedFolderWithoutCorruptingOtherEntries() async throws {
         let fileManager = FileManager.default
         let root = canonicalFileURL(fileManager.temporaryDirectory)
             .appendingPathComponent(
@@ -538,12 +539,11 @@ final class FFFIndexTests: XCTestCase {
     private func assertEventually(
         _ message: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
         let succeeded = try await eventually(timeout: timeout, condition)
-        XCTAssertTrue(succeeded, message, file: file, line: line)
+        #expect(succeeded, "\(message)", sourceLocation: sourceLocation)
     }
 
     private func createFixtureFiles(

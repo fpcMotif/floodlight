@@ -1,35 +1,31 @@
+import CoreGraphics
 import FloodlightEngine
-import XCTest
+import Testing
 @testable import Floodlight
 
-final class FloodlightMetricsTests: XCTestCase {
-    func testExpandedPanelReservesFilterBarWithoutReducingVisibleRows() {
-        XCTAssertEqual(
-            FloodlightMetrics.expandedPanelHeight,
-            FloodlightMetrics.searchHeight
-                + 1
-                + FloodlightMetrics.filterBarHeight
-                + FloodlightMetrics.resultPadding * 2
-                + CGFloat(FloodlightMetrics.maximumVisibleResults)
-                * FloodlightMetrics.resultRowHeight
-        )
+struct FloodlightMetricsTests {
+    @Test func expandedPanelReservesFilterBarWithoutReducingVisibleRows() {
+        #expect(FloodlightMetrics.expandedPanelHeight == FloodlightMetrics.searchHeight
+            + 1
+            + FloodlightMetrics.filterBarHeight
+            + FloodlightMetrics.resultPadding * 2
+            + CGFloat(FloodlightMetrics.maximumVisibleResults)
+            * FloodlightMetrics.resultRowHeight)
     }
 
-    func testIconTileCornerRadiusIsConcentricWithTheRowRadius() {
-        XCTAssertEqual(
-            FloodlightMetrics.iconTileCornerRadius,
-            FloodlightMetrics.resultRowCornerRadius - FloodlightMetrics.iconTileInset
-        )
-        XCTAssertEqual(FloodlightMetrics.iconTileCornerRadius, 9)
+    @Test func iconTileCornerRadiusIsConcentricWithTheRowRadius() {
+        #expect(FloodlightMetrics.iconTileCornerRadius == FloodlightMetrics
+            .resultRowCornerRadius - FloodlightMetrics.iconTileInset)
+        #expect(FloodlightMetrics.iconTileCornerRadius == 9)
     }
 
-    func testIconTintAssignsEachSymbolRowItsOwnColorAndFileishRowsShareTheAccent() {
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .calculator), .orange)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .systemSetting), .gray)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .web), .blue)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .assistant), .purple)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .application), .accentColor)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .file), .accentColor)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .folder), .accentColor)
+    @Test func iconTintAssignsEachSymbolRowItsOwnColorAndFileishRowsShareTheAccent() {
+        #expect(FloodlightMetrics.iconTint(for: .calculator) == .orange)
+        #expect(FloodlightMetrics.iconTint(for: .systemSetting) == .gray)
+        #expect(FloodlightMetrics.iconTint(for: .web) == .blue)
+        #expect(FloodlightMetrics.iconTint(for: .assistant) == .purple)
+        #expect(FloodlightMetrics.iconTint(for: .application) == .accentColor)
+        #expect(FloodlightMetrics.iconTint(for: .file) == .accentColor)
+        #expect(FloodlightMetrics.iconTint(for: .folder) == .accentColor)
     }
 }

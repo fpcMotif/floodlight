@@ -1,30 +1,30 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class SelectedResultActionPerformerTests: XCTestCase {
-    func testCopyActivationDismissesOnlyAfterSuccessfulWrite() {
+struct SelectedResultActionPerformerTests {
+    @Test func copyActivationDismissesOnlyAfterSuccessfulWrite() {
         let successful = makeHarness()
         let item = copyItem(value: "42")
 
         successful.performer.activate(item, query: "6 * 7")
 
-        XCTAssertEqual(successful.effects.clipboardValues, ["42"])
-        XCTAssertEqual(successful.presentation.events, [.dismiss])
-        XCTAssertEqual(successful.events.events, [.clipboard("42"), .dismiss])
+        #expect(successful.effects.clipboardValues == ["42"])
+        #expect(successful.presentation.events == [.dismiss])
+        #expect(successful.events.events == [.clipboard("42"), .dismiss])
 
         let failed = makeHarness(clipboardSucceeds: false)
         failed.performer.activate(item, query: "6 * 7")
 
-        XCTAssertEqual(failed.effects.clipboardValues, ["42"])
-        XCTAssertTrue(failed.presentation.events.isEmpty)
-        XCTAssertEqual(failed.events.events, [.clipboard("42")])
+        #expect(failed.effects.clipboardValues == ["42"])
+        #expect(failed.presentation.events.isEmpty)
+        #expect(failed.events.events == [.clipboard("42")])
     }
 
-    func testExplicitCopyUsesTheResultRepresentationAndKeepsSearchOpen() throws {
+    @Test func explicitCopyUsesTheResultRepresentationAndKeepsSearchOpen() throws {
         let harness = makeHarness()
         let fileURL = URL(fileURLWithPath: "/tmp/Annual Report.pdf")
         let file = SearchItem(
@@ -36,7 +36,7 @@ final class SelectedResultActionPerformerTests: XCTestCase {
             score: 1,
             fileURL: fileURL
         )
-        let webURL = try XCTUnwrap(URL(string: "https://example.com/report"))
+        let webURL = try #require(URL(string: "https://example.com/report"))
         let web = SearchItem(
             id: "web:report",
             title: "Report",
@@ -49,21 +49,21 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         harness.performer.copy(file)
         harness.performer.copy(web)
 
-        XCTAssertEqual(harness.effects.clipboardValues, [fileURL.path, webURL.absoluteString])
-        XCTAssertTrue(harness.presentation.events.isEmpty)
+        #expect(harness.effects.clipboardValues == [fileURL.path, webURL.absoluteString])
+        #expect(harness.presentation.events.isEmpty)
     }
 
-    func testExplicitCopyUsesAssistantTitleBeforeAnAnswerExists() {
+    @Test func explicitCopyUsesAssistantTitleBeforeAnAnswerExists() {
         let harness = makeHarness()
         let item = assistantItem()
 
         harness.performer.copy(item)
 
-        XCTAssertEqual(harness.effects.clipboardValues, [item.title])
-        XCTAssertTrue(harness.presentation.events.isEmpty)
+        #expect(harness.effects.clipboardValues == [item.title])
+        #expect(harness.presentation.events.isEmpty)
     }
 
-    func testExplicitCopyUsesAssistantTitleAfterTheRunFails() async throws {
+    @Test func explicitCopyUsesAssistantTitleAfterTheRunFails() async throws {
         let runner = ScriptedAssistantRunner(mode: .immediate(.failure(TestFailure.openFailed)))
         let harness = makeHarness(assistantRunner: runner)
         let item = assistantItem()
@@ -77,11 +77,11 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         }
         harness.performer.copy(item)
 
-        XCTAssertEqual(harness.effects.clipboardValues, [item.title])
-        XCTAssertTrue(harness.presentation.events.isEmpty)
+        #expect(harness.effects.clipboardValues == [item.title])
+        #expect(harness.presentation.events.isEmpty)
     }
 
-    func testExplicitCopyUsesACompletedAssistantAnswer() async throws {
+    @Test func explicitCopyUsesACompletedAssistantAnswer() async throws {
         let runner = ScriptedAssistantRunner(mode: .immediate(.success("The answer.")))
         let harness = makeHarness(assistantRunner: runner)
         let item = assistantItem()
@@ -92,14 +92,14 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         }
         harness.performer.copy(item)
 
-        XCTAssertEqual(harness.effects.clipboardValues, ["The answer."])
-        XCTAssertTrue(harness.presentation.events.isEmpty)
+        #expect(harness.effects.clipboardValues == ["The answer."])
+        #expect(harness.presentation.events.isEmpty)
     }
 
-    func testRunningApplicationSuccessRecordsRecencyAndLearningWithoutOpening() async throws {
+    @Test func runningApplicationSuccessRecordsRecencyAndLearningWithoutOpening() async throws {
         let harness = makeHarness(activatesRunningApplication: true)
         let item = SearchFixtures.application(name: "Calendar")
-        let url = try XCTUnwrap(item.fileURL)
+        let url = try #require(item.fileURL)
 
         harness.performer.activate(item, query: "cal")
 
@@ -107,129 +107,108 @@ final class SelectedResultActionPerformerTests: XCTestCase {
             await harness.learning.count == 1
                 && harness.recentStore.boost(for: item.id) > 0
         }
-        XCTAssertEqual(harness.activator.requestedURLs, [url])
-        XCTAssertTrue(harness.effects.openRequests.isEmpty)
-        XCTAssertEqual(harness.presentation.events, [.dismiss])
+        #expect(harness.activator.requestedURLs == [url])
+        #expect(harness.effects.openRequests.isEmpty)
+        #expect(harness.presentation.events == [.dismiss])
         let learned = await harness.learning.snapshot()
-        XCTAssertEqual(
-            learned,
-            [.init(itemID: item.id, url: url, query: "cal")]
-        )
+        #expect(learned == [.init(itemID: item.id, url: url, query: "cal")])
     }
 
-    func testSuccessfulFileOpenLearnsWithoutApplicationRecency() async throws {
+    @Test func successfulFileOpenLearnsWithoutApplicationRecency() async throws {
         let harness = makeHarness()
         let item = SearchFixtures.file(name: "report.pdf")
-        let url = try XCTUnwrap(item.fileURL)
+        let url = try #require(item.fileURL)
 
         harness.performer.activate(item, query: "rep")
 
         try await waitUntil { await harness.learning.count == 1 }
-        XCTAssertEqual(harness.effects.openRequests, [.init(url: url, asApplication: false)])
-        XCTAssertEqual(harness.recentStore.boost(for: item.id), 0)
-        XCTAssertEqual(harness.presentation.events, [.dismiss])
+        #expect(harness.effects.openRequests == [.init(url: url, asApplication: false)])
+        #expect(harness.recentStore.boost(for: item.id) == 0)
+        #expect(harness.presentation.events == [.dismiss])
         let learned = await harness.learning.snapshot()
-        XCTAssertEqual(
-            learned,
-            [.init(itemID: item.id, url: url, query: "rep")]
-        )
+        #expect(learned == [.init(itemID: item.id, url: url, query: "rep")])
     }
 
-    func testSuccessfulApplicationFallbackRecordsRecencyAndLearningAfterOpen() async throws {
+    @Test func successfulApplicationFallbackRecordsRecencyAndLearningAfterOpen() async throws {
         let openGate = OpenGate()
         let harness = makeHarness(openGate: openGate)
         let item = SearchFixtures.application(name: "Calendar")
-        let url = try XCTUnwrap(item.fileURL)
+        let url = try #require(item.fileURL)
 
         harness.performer.activate(item, query: "cal")
 
-        XCTAssertEqual(harness.presentation.events, [.dismiss])
+        #expect(harness.presentation.events == [.dismiss])
         try await waitUntil { harness.effects.openRequests.count == 1 }
-        XCTAssertEqual(harness.recentStore.boost(for: item.id), 0)
+        #expect(harness.recentStore.boost(for: item.id) == 0)
         let learningBeforeCompletion = await harness.learning.snapshot()
-        XCTAssertTrue(learningBeforeCompletion.isEmpty)
-        XCTAssertEqual(
-            harness.events.events,
-            [
-                .runningApplicationActivationRequested(url),
-                .dismiss,
-                .openRequested(url, asApplication: true),
-            ]
-        )
+        #expect(learningBeforeCompletion.isEmpty)
+        #expect(harness.events.events == [
+            .runningApplicationActivationRequested(url),
+            .dismiss,
+            .openRequested(url, asApplication: true),
+        ])
 
         await openGate.resume()
         try await waitUntil {
             await harness.learning.count == 1
                 && harness.recentStore.boost(for: item.id) > 0
         }
-        XCTAssertEqual(harness.effects.openRequests, [.init(url: url, asApplication: true)])
-        XCTAssertEqual(
-            harness.events.events,
-            [
-                .runningApplicationActivationRequested(url),
-                .dismiss,
-                .openRequested(url, asApplication: true),
-                .openSucceeded(url),
-                .learned(item.id, url, "cal"),
-            ]
-        )
+        #expect(harness.effects.openRequests == [.init(url: url, asApplication: true)])
+        #expect(harness.events.events == [
+            .runningApplicationActivationRequested(url),
+            .dismiss,
+            .openRequested(url, asApplication: true),
+            .openSucceeded(url),
+            .learned(item.id, url, "cal"),
+        ])
         let learned = await harness.learning.snapshot()
-        XCTAssertEqual(
-            learned,
-            [.init(itemID: item.id, url: url, query: "cal")]
-        )
+        #expect(learned == [.init(itemID: item.id, url: url, query: "cal")])
     }
 
-    func testFailedApplicationOpenDoesNotRecordOrLearn() async throws {
+    @Test func failedApplicationOpenDoesNotRecordOrLearn() async throws {
         let openGate = OpenGate()
         let harness = makeHarness(openError: TestFailure.openFailed, openGate: openGate)
         let item = SearchFixtures.application(name: "Calendar")
-        let url = try XCTUnwrap(item.fileURL)
+        let url = try #require(item.fileURL)
 
         harness.performer.activate(item, query: "cal")
 
         try await waitUntil { harness.effects.openRequests.count == 1 }
-        XCTAssertEqual(harness.recentStore.boost(for: item.id), 0)
+        #expect(harness.recentStore.boost(for: item.id) == 0)
         let learningBeforeCompletion = await harness.learning.snapshot()
-        XCTAssertTrue(learningBeforeCompletion.isEmpty)
-        XCTAssertEqual(
-            harness.events.events,
-            [
-                .runningApplicationActivationRequested(url),
-                .dismiss,
-                .openRequested(url, asApplication: true),
-            ]
-        )
+        #expect(learningBeforeCompletion.isEmpty)
+        #expect(harness.events.events == [
+            .runningApplicationActivationRequested(url),
+            .dismiss,
+            .openRequested(url, asApplication: true),
+        ])
 
         await openGate.resume()
         try await waitUntil { harness.effects.completedOpenCount == 1 }
         await Task.yield()
-        XCTAssertEqual(harness.recentStore.boost(for: item.id), 0)
+        #expect(harness.recentStore.boost(for: item.id) == 0)
         let learned = await harness.learning.snapshot()
-        XCTAssertTrue(learned.isEmpty)
-        XCTAssertEqual(harness.presentation.events, [.dismiss])
-        XCTAssertEqual(
-            harness.events.events,
-            [
-                .runningApplicationActivationRequested(url),
-                .dismiss,
-                .openRequested(url, asApplication: true),
-                .openFailed(url),
-            ]
-        )
+        #expect(learned.isEmpty)
+        #expect(harness.presentation.events == [.dismiss])
+        #expect(harness.events.events == [
+            .runningApplicationActivationRequested(url),
+            .dismiss,
+            .openRequested(url, asApplication: true),
+            .openFailed(url),
+        ])
     }
 
-    func testAssistantRunKeepsSearchOpen() {
+    @Test func assistantRunKeepsSearchOpen() {
         let harness = makeHarness()
         let item = assistantItem()
 
         harness.performer.activate(item, query: "claude explain")
 
-        XCTAssertEqual(harness.assistantRunSession.state(for: item.id), .running)
-        XCTAssertTrue(harness.presentation.events.isEmpty)
+        #expect(harness.assistantRunSession.state(for: item.id) == .running)
+        #expect(harness.presentation.events.isEmpty)
     }
 
-    func testRevealRequiresAFileURLAndDismissesOnlyWhenDispatched() throws {
+    @Test func revealRequiresAFileURLAndDismissesOnlyWhenDispatched() throws {
         let harness = makeHarness()
         let file = SearchFixtures.file(name: "report.pdf")
         let web = try SearchItem(
@@ -237,7 +216,7 @@ final class SelectedResultActionPerformerTests: XCTestCase {
             title: "Web",
             subtitle: "",
             kind: .web,
-            action: .open(XCTUnwrap(URL(string: "https://example.com"))),
+            action: .open(#require(URL(string: "https://example.com"))),
             score: 1
         )
 
@@ -247,20 +226,19 @@ final class SelectedResultActionPerformerTests: XCTestCase {
         harness.performer.reveal(file)
         harness.performer.reveal(app)
 
-        XCTAssertEqual(harness.effects.revealedURLs, [file.fileURL, app.fileURL])
-        XCTAssertEqual(harness.presentation.events, [.dismiss, .dismiss])
-        XCTAssertEqual(
-            harness.events.events,
-            try [
-                .revealed(XCTUnwrap(file.fileURL)),
-                .dismiss,
-                .revealed(XCTUnwrap(app.fileURL)),
-                .dismiss,
-            ]
-        )
+        #expect(harness.effects.revealedURLs == [file.fileURL, app.fileURL])
+        #expect(harness.presentation.events == [.dismiss, .dismiss])
+        let fileURL = try #require(file.fileURL)
+        let appURL = try #require(app.fileURL)
+        #expect(harness.events.events == [
+            .revealed(fileURL),
+            .dismiss,
+            .revealed(appURL),
+            .dismiss,
+        ])
     }
 
-    func testIndependentOpensKeepTheirOwnItemAndQuery() async throws {
+    @Test func independentOpensKeepTheirOwnItemAndQuery() async throws {
         let harness = makeHarness()
         let first = SearchFixtures.file(name: "first.txt")
         let second = SearchFixtures.file(name: "second.txt")
@@ -270,15 +248,12 @@ final class SelectedResultActionPerformerTests: XCTestCase {
 
         try await waitUntil { await harness.learning.count == 2 }
         let learned = await harness.learning.snapshot()
-        let firstURL = try XCTUnwrap(first.fileURL)
-        let secondURL = try XCTUnwrap(second.fileURL)
-        XCTAssertEqual(
-            Set(learned),
-            Set([
-                .init(itemID: first.id, url: firstURL, query: "first query"),
-                .init(itemID: second.id, url: secondURL, query: "second query"),
-            ])
-        )
+        let firstURL = try #require(first.fileURL)
+        let secondURL = try #require(second.fileURL)
+        #expect(Set(learned) == Set([
+            .init(itemID: first.id, url: firstURL, query: "first query"),
+            .init(itemID: second.id, url: secondURL, query: "second query"),
+        ]))
     }
 
     private func makeHarness(
@@ -328,7 +303,7 @@ final class SelectedResultActionPerformerTests: XCTestCase {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("condition was never satisfied within \(timeout)s")
+        Issue.record("condition was never satisfied within \(timeout)s")
     }
 }
 

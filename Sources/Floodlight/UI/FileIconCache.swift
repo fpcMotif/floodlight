@@ -1,15 +1,11 @@
 import AppKit
 import Foundation
 
-final class FileIconCache: @unchecked Sendable {
+@MainActor
+final class FileIconCache {
     static let shared = FileIconCache()
 
     private let cache = NSCache<NSString, NSImage>()
-    private let queue = DispatchQueue(
-        label: "com.floodlight.file-icons",
-        qos: .userInitiated,
-        attributes: .concurrent
-    )
 
     private init() {
         cache.countLimit = 256
@@ -25,20 +21,18 @@ final class FileIconCache: @unchecked Sendable {
             return cached
         }
 
-        return await withCheckedContinuation { continuation in
-            queue.async { [self, path] in
-                let key = path as NSString
-                if let cached = cache.object(forKey: key) {
-                    continuation.resume(returning: cached)
-                    return
-                }
-
-                let icon = NSWorkspace.shared.icon(forFiles: [path])
-                if let icon {
-                    cache.setObject(icon, forKey: key)
-                }
-                continuation.resume(returning: icon)
-            }
+        let icon = await Self.loadWorkspaceIcon(for: path)
+        if let icon {
+            cache.setObject(icon, forKey: path as NSString)
         }
+        return icon
+    }
+
+    /// `@concurrent` is deliberate. Under approachable concurrency a plain
+    /// nonisolated async method inherits the caller's actor; icon lookup can
+    /// hit disk and must leave the panel free to type.
+    @concurrent
+    private nonisolated static func loadWorkspaceIcon(for path: String) async -> NSImage? {
+        NSWorkspace.shared.icon(forFiles: [path])
     }
 }

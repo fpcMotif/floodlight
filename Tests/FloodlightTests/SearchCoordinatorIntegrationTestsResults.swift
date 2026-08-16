@@ -1,14 +1,14 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
 final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrationTestCase {
     // MARK: - Preview results
 
-    func testOnlyAPreviewableFileSelectionExposesAURL() async throws {
+    @Test func onlyAPreviewableFileSelectionExposesAURL() async throws {
         let file = SearchFixtures.file(name: "notes.txt", score: 5_000)
         let folder = SearchFixtures.folder(name: "code", score: 6_000)
         let applications = ScriptedCatalog(immediate: [folder, file])
@@ -19,13 +19,13 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         }
 
         coordinator.select(folder)
-        XCTAssertNil(coordinator.previewableSelectionURL, "a folder is not previewable")
+        #expect(coordinator.previewableSelectionURL == nil, "a folder is not previewable")
 
         coordinator.select(file)
-        XCTAssertEqual(coordinator.previewableSelectionURL, file.fileURL)
+        #expect(coordinator.previewableSelectionURL == file.fileURL)
     }
 
-    func testProjectionSelectsTheFirstRowWhenThereIsNoSelectionAnchor() {
+    @Test func projectionSelectsTheFirstRowWhenThereIsNoSelectionAnchor() {
         let file = SearchFixtures.file(name: "notes.txt", score: 5_000)
         let publication = SearchResultProjection.project(
             .local(.init(
@@ -38,13 +38,13 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             ))
         )
 
-        XCTAssertEqual(publication.selection?.id, file.id)
-        XCTAssertEqual(publication.selection?.origin, .automatic)
+        #expect(publication.selection?.id == file.id)
+        #expect(publication.selection?.origin == .automatic)
     }
 
     // MARK: - Publication transitions
 
-    func testFilterInducedWebSelectionStillYieldsToARealResult() async throws {
+    @Test func filterInducedWebSelectionStillYieldsToARealResult() async throws {
         let applications = ScriptedCatalog(.init(
             immediate: [],
             indexed: [SearchFixtures.application(id: "app:late", name: "Late", score: 120_000)],
@@ -58,19 +58,21 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
 
         coordinator.selectFilter(.files)
         coordinator.selectFilter(.all)
-        XCTAssertEqual(coordinator.selectedID, "web-search")
+        #expect(coordinator.selectedID == "web-search")
 
         try await settle(coordinator)
 
-        XCTAssertEqual(coordinator.selectedID, "app:late")
+        #expect(coordinator.selectedID == "app:late")
     }
 
-    func testAnEmptiedDynamicFilterFallsBackToAllOnceLoadingFinishes() async throws {
+    @Test func anEmptiedDynamicFilterFallsBackToAllOnceLoadingFinishes() async throws {
         // Standing on "PDFs" while the results change out from under you
         // must not strand the panel on an empty chip.
-        let applications = ScriptedCatalog(
-            immediate: [SearchFixtures.application(name: "Xcode")]
-        )
+        let applications = ScriptedCatalog(.init(
+            immediate: [SearchFixtures.application(name: "Xcode")],
+            indexed: [SearchFixtures.application(name: "Xcode")],
+            indexedDelay: .milliseconds(120)
+        ))
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.start()
         try await waitUntil("startup completes") {
@@ -83,19 +85,18 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
                 && coordinator.results.contains { $0.kind == .application }
         }
         coordinator.selectFilter(.pdfs)
-        XCTAssertEqual(coordinator.selectedFilter, .pdfs)
-        XCTAssertTrue(coordinator.filterOptions.contains { $0.filter == .pdfs })
+        #expect(coordinator.selectedFilter == .pdfs)
+        #expect(coordinator.filterOptions.contains { $0.filter == .pdfs })
 
         try await settle(coordinator)
 
-        XCTAssertEqual(
-            coordinator.selectedFilter,
-            .all,
+        #expect(
+            coordinator.selectedFilter == .all,
             "an empty dynamic filter should hand back to All once the search settles"
         )
     }
 
-    func testWarmUpCompletingDuringAnActiveQueryPublishesOneCoherentResult() async throws {
+    @Test func warmUpCompletingDuringAnActiveQueryPublishesOneCoherentResult() async throws {
         let application = SearchFixtures.application(name: "Xcode", score: 120_000)
         let applications = ScriptedCatalog(.init(
             immediate: [],
@@ -112,10 +113,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             coordinator.isSearching
                 && coordinator.results.contains { $0.id == application.id }
         }
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .applications }?.isLoading,
-            true
-        )
+        #expect(coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == true)
 
         try await waitUntil("warm-up and the active query settle") {
             !coordinator.isSearching
@@ -123,17 +121,14 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
                 && coordinator.filterOptions.first { $0.filter == .applications }?.count == 37
         }
 
-        XCTAssertEqual(coordinator.selectedFilter, .all)
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .applications }?.isLoading,
-            false
-        )
+        #expect(coordinator.selectedFilter == .all)
+        #expect(coordinator.selectedID == coordinator.results.first?.id)
+        #expect(coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false)
     }
 
     // MARK: - Result building
 
-    func testMergedResultsAreAlwaysDeduplicatedRankedAndCapped() throws {
+    @Test func mergedResultsAreAlwaysDeduplicatedRankedAndCapped() throws {
         try checkProperty(
             "Result Projection de-duplicates, ranks, and caps at 80",
             SearchGenerators.items(count: 0...40),
@@ -156,7 +151,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         }
     }
 
-    func testMergedResultsAreDeterministic() throws {
+    @Test func mergedResultsAreDeterministic() throws {
         try checkProperty(
             "the same inputs always produce the same merged list",
             SearchGenerators.items(count: 0...30),
@@ -173,7 +168,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         }
     }
 
-    func testAWebRowExistsForEveryNonEmptyQueryAndNeverForAnEmptyOne() throws {
+    @Test func AWebRowExistsForEveryNonEmptyQueryAndNeverForAnEmptyOne() throws {
         try checkProperty(
             "the web fallback tracks query emptiness",
             Gen<String>.hostile,
@@ -192,7 +187,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         }
     }
 
-    func testBuildingResultsNeverTrapsOnHostileQueries() {
+    @Test func buildingResultsNeverTrapsOnHostileQueries() {
         for query in AdversarialCorpus.strings + AdversarialCorpus.searchQueries {
             let results = projectResults(
                 query: query,
@@ -200,16 +195,12 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
                 apps: [SearchFixtures.application(name: "Xcode")],
                 system: [SearchFixtures.setting(title: "Keyboard")]
             )
-            XCTAssertLessThanOrEqual(results.count, 80, String(reflecting: query))
-            XCTAssertEqual(
-                results.count,
-                Set(results.map(\.id)).count,
-                String(reflecting: query)
-            )
+            #expect(results.count <= 80, "\(String(reflecting: query))")
+            #expect(results.count == Set(results.map(\.id)).count, "\(String(reflecting: query))")
         }
     }
 
-    func testTheCoordinatorSurvivesAFloodOfQueriesWithoutLosingCoherence() async throws {
+    @Test func theCoordinatorSurvivesAFloodOfQueriesWithoutLosingCoherence() async throws {
         // A stress pass over the whole observer → search → publish loop:
         // hundreds of query mutations back to back, then a check that the
         // final state matches the final query and nothing was left behind.
@@ -242,18 +233,15 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         try await settle(coordinator)
         try await Task.sleep(for: .milliseconds(300))
 
-        XCTAssertTrue(coordinator.results.contains { $0.id == "app:199" })
-        XCTAssertTrue(
-            coordinator.results.allSatisfy { item in
-                !item.id.hasPrefix("app:") || item.id == "app:199"
-            },
-            "results from abandoned queries survived the flood"
-        )
+        #expect(coordinator.results.contains { $0.id == "app:199" })
+        #expect(coordinator.results.allSatisfy { item in
+            !item.id.hasPrefix("app:") || item.id == "app:199"
+        }, "results from abandoned queries survived the flood")
         let ids = coordinator.results.map(\.id)
-        XCTAssertEqual(ids.count, Set(ids).count)
+        #expect(ids.count == Set(ids).count)
     }
 
-    func testANewKeystrokeKeepsTheSettledRowsUntilTheNextSnapshotLands() async throws {
+    @Test func ANewKeystrokeKeepsTheSettledRowsUntilTheNextSnapshotLands() async throws {
         // Stale-while-revalidate: while the new Search Execution runs, the
         // rows already on screen stay exactly as they are. Clearing them
         // collapsed the list to the synthetic rows for a frame or two per
@@ -269,18 +257,17 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         try await settle(coordinator)
         let settledIDs = coordinator.results.map(\.id)
         let settledSelection = coordinator.selectedID
-        XCTAssertFalse(settledIDs.isEmpty)
+        #expect(!settledIDs.isEmpty)
 
         coordinator.query = "xcode c"
 
         // Synchronous — no snapshot for the new query can have landed yet.
-        XCTAssertEqual(
-            coordinator.results.map(\.id),
-            settledIDs,
+        #expect(
+            coordinator.results.map(\.id) == settledIDs,
             "a keystroke must not reshuffle or collapse the visible rows"
         )
-        XCTAssertEqual(coordinator.selectedID, settledSelection)
-        XCTAssertTrue(coordinator.isSearching)
+        #expect(coordinator.selectedID == settledSelection)
+        #expect(coordinator.isSearching)
 
         try await settle(coordinator)
     }

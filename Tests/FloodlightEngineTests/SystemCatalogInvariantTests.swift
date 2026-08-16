@@ -1,6 +1,6 @@
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 private actor SystemCatalogCallingActor {
@@ -53,7 +53,7 @@ private final class SystemCatalogTestSignal: @unchecked Sendable {
 /// mask and asserts the catalog returns exactly the same rows for
 /// thousands of generated queries. Any false negative the bit-twiddling
 /// introduces shows up as a divergence.
-final class SystemCatalogInvariantTests: XCTestCase {
+struct SystemCatalogInvariantTests {
     private static let fixtures: [SystemCatalog.DiscoveredSetting] = [
         .init(name: "Aurora Controls", keywords: "brightness glow ambient", pane: "test.aurora"),
         .init(name: "Nebula Network", keywords: "wifi ethernet vpn", pane: "test.nebula"),
@@ -108,7 +108,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
     // MARK: - The mask must never reject a real match
 
-    func testTheCharacterMaskNeverRejectsAMatchTheScorerWouldAccept() async throws {
+    @Test func theCharacterMaskNeverRejectsAMatchTheScorerWouldAccept() async throws {
         let catalog = await makeCatalog(Self.fixtures)
         let alphabet = Array("abcdeimnopqrstuvwxyz ")
 
@@ -117,8 +117,8 @@ final class SystemCatalogInvariantTests: XCTestCase {
             Gen<String>.string(alphabet: alphabet, length: 1...10),
             runs: 3_000
         ) { query in
-            self.fixtureMatches(from: catalog, query: query)
-                == self.referenceMatches(query: query, in: Self.fixtures)
+            fixtureMatches(from: catalog, query: query)
+                == referenceMatches(query: query, in: Self.fixtures)
         }
     }
 
@@ -135,7 +135,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
         )
     }
 
-    func testTheMaskAgreesWithTheReferenceOnRealSettingsVocabulary() async {
+    @Test func theMaskAgreesWithTheReferenceOnRealSettingsVocabulary() async {
         let catalog = await makeCatalog(Self.fixtures)
         let queries = [
             "aurora", "nebula", "quasar", "pulsar", "meteor", "zenith",
@@ -146,9 +146,11 @@ final class SystemCatalogInvariantTests: XCTestCase {
         ]
 
         for query in queries {
-            XCTAssertEqual(
-                fixtureMatches(from: catalog, query: query),
-                referenceMatches(query: query, in: Self.fixtures),
+            #expect(
+                fixtureMatches(from: catalog, query: query) == referenceMatches(
+                    query: query,
+                    in: Self.fixtures
+                ),
                 "query: \(String(reflecting: query))"
             )
         }
@@ -156,7 +158,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
     // MARK: - Shape of every result
 
-    func testEveryResultIsAWellFormedSettingsRow() async throws {
+    @Test func everyResultIsAWellFormedSettingsRow() async throws {
         let catalog = await makeCatalog(Self.fixtures)
 
         try checkProperty(
@@ -176,7 +178,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
         }
     }
 
-    func testResultsAreRankedAndPagedConsistently() async throws {
+    @Test func resultsAreRankedAndPagedConsistently() async throws {
         let catalog = await makeCatalog(Self.fixtures)
 
         try checkProperty(
@@ -194,7 +196,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
         }
     }
 
-    func testResultIdentifiersAreAlwaysUnique() async throws {
+    @Test func resultIdentifiersAreAlwaysUnique() async throws {
         let catalog = await makeCatalog(Self.fixtures)
 
         try checkProperty(
@@ -209,57 +211,53 @@ final class SystemCatalogInvariantTests: XCTestCase {
 
     // MARK: - Empty and hostile queries
 
-    func testBlankQueriesReturnNothing() async {
+    @Test func blankQueriesReturnNothing() async {
         let catalog = await makeCatalog(Self.fixtures)
         for query in ["", " ", "\t", "\n", "   \n\t  ", "\u{00A0}"] {
             let page = catalog.immediatePage(for: query, limit: 24)
-            XCTAssertTrue(page.items.isEmpty, String(reflecting: query))
-            XCTAssertEqual(page.totalMatched, 0, String(reflecting: query))
+            #expect(page.items.isEmpty, "\(String(reflecting: query))")
+            #expect(page.totalMatched == 0, "\(String(reflecting: query))")
         }
     }
 
-    func testHostileQueriesNeverTrapAndNeverReturnJunk() async {
+    @Test func hostileQueriesNeverTrapAndNeverReturnJunk() async {
         let catalog = await makeCatalog(Self.fixtures)
         for query in AdversarialCorpus.strings {
             let page = catalog.immediatePage(for: query, limit: 24)
-            XCTAssertLessThanOrEqual(page.items.count, 24, String(reflecting: query))
-            XCTAssertGreaterThanOrEqual(page.totalMatched, page.items.count)
-            XCTAssertTrue(page.items.allSatisfy { $0.kind == .systemSetting })
+            #expect(page.items.count <= 24, "\(String(reflecting: query))")
+            #expect(page.totalMatched >= page.items.count)
+            #expect(page.items.allSatisfy { $0.kind == .systemSetting })
         }
     }
 
-    func testAVeryLongQueryIsRejectedRatherThanMatchingEverything() async {
+    @Test func aVeryLongQueryIsRejectedRatherThanMatchingEverything() async {
         let catalog = await makeCatalog(Self.fixtures)
         let page = catalog.immediatePage(for: String(repeating: "a", count: 50_000), limit: 24)
-        XCTAssertTrue(page.items.isEmpty)
+        #expect(page.items.isEmpty)
     }
 
     // MARK: - The short-query word-prefix rule
 
-    func testShortQueriesMustPrefixAWordRatherThanScatterAcrossOne() async {
+    @Test func shortQueriesMustPrefixAWordRatherThanScatterAcrossOne() async {
         let catalog = await makeCatalog(Self.fixtures)
 
         // "neb" prefixes "nebula", so it matches.
-        XCTAssertTrue(
-            catalog.immediatePage(for: "neb", limit: 50).items
-                .contains { $0.id == "setting:test.nebula" }
-        )
+        #expect(catalog.immediatePage(for: "neb", limit: 50).items
+            .contains { $0.id == "setting:test.nebula" })
         // "nbl" is a subsequence of "nebula" but prefixes no word, so a
         // three-character query must not surface it. This rule is what
         // keeps the settings list quiet while a user is still typing.
-        XCTAssertFalse(
-            catalog.immediatePage(for: "nbl", limit: 50).items
-                .contains { $0.id == "setting:test.nebula" }
-        )
+        #expect(!(catalog.immediatePage(for: "nbl", limit: 50).items
+                .contains { $0.id == "setting:test.nebula" }))
         // At four characters the rule lifts.
-        XCTAssertEqual(
-            catalog.immediatePage(for: "nbla", limit: 50).items
-                .contains { $0.id == "setting:test.nebula" },
-            referenceMatches(query: "nbla", in: Self.fixtures).contains("setting:test.nebula")
-        )
+        #expect(catalog.immediatePage(for: "nbla", limit: 50).items
+            .contains { $0.id == "setting:test.nebula" } == referenceMatches(
+                query: "nbla",
+                in: Self.fixtures
+            ).contains("setting:test.nebula"))
     }
 
-    func testTheWordPrefixRuleAppliesAtExactlyThreeCharacters() async throws {
+    @Test func theWordPrefixRuleAppliesAtExactlyThreeCharacters() async throws {
         let catalog = await makeCatalog(Self.fixtures)
 
         try checkProperty(
@@ -268,7 +266,7 @@ final class SystemCatalogInvariantTests: XCTestCase {
             runs: 800
         ) { query in
             let normalized = FuzzyMatcher.normalized(query)
-            let returned = self.fixtureMatches(from: catalog, query: query)
+            let returned = fixtureMatches(from: catalog, query: query)
             return returned.allSatisfy { id in
                 guard let setting = Self.fixtures.first(where: { id == "setting:\($0.pane)" })
                 else {
@@ -282,21 +280,21 @@ final class SystemCatalogInvariantTests: XCTestCase {
         }
     }
 
-    func testMatchingIsCaseAndDiacriticInsensitive() async {
+    @Test func matchingIsCaseAndDiacriticInsensitive() async {
         let catalog = await makeCatalog([
             .init(name: "Éclair Settings", keywords: "pâtisserie", pane: "test.eclair"),
         ])
 
         for query in ["eclair", "ECLAIR", "Éclair", "éclair", "ÉCLAIR"] {
-            XCTAssertTrue(
+            #expect(
                 catalog.immediatePage(for: query, limit: 50).items
                     .contains { $0.id == "setting:test.eclair" },
-                query
+                "\(query)"
             )
         }
     }
 
-    func testNonASCIICandidatesFallBackToTheStringScorerAndStillMatch() async {
+    @Test func nonASCIICandidatesFallBackToTheStringScorerAndStillMatch() async {
         // The ASCII fast path is skipped for any candidate with a byte
         // above 0x7F. That fallback has to produce the same behaviour, or
         // a localized settings pane would silently stop being findable.
@@ -304,19 +302,15 @@ final class SystemCatalogInvariantTests: XCTestCase {
             .init(name: "日本語 Settings", keywords: "language 言語", pane: "test.japanese"),
         ])
 
-        XCTAssertTrue(
-            catalog.immediatePage(for: "日本語", limit: 50).items
-                .contains { $0.id == "setting:test.japanese" }
-        )
-        XCTAssertTrue(
-            catalog.immediatePage(for: "language", limit: 50).items
-                .contains { $0.id == "setting:test.japanese" }
-        )
+        #expect(catalog.immediatePage(for: "日本語", limit: 50).items
+            .contains { $0.id == "setting:test.japanese" })
+        #expect(catalog.immediatePage(for: "language", limit: 50).items
+            .contains { $0.id == "setting:test.japanese" })
     }
 
     // MARK: - Discovery, refresh, and de-duplication
 
-    func testARowExistsExactlyWhenItsPaneFormsAURL() async {
+    @Test func aRowExistsExactlyWhenItsPaneFormsAURL() async {
         // The pane identifier goes straight into
         // `x-apple.systempreferences:<pane>`, and a row is only emitted if
         // that parses. Asserted differentially against `URL(string:)`
@@ -343,30 +337,28 @@ final class SystemCatalogInvariantTests: XCTestCase {
             let parses = URL(string: "x-apple.systempreferences:\(pane)") != nil
             let found = catalog.immediatePage(for: "Probe \(index)", limit: 50).items
                 .contains { $0.id == "setting:\(pane)" }
-            XCTAssertEqual(
-                found,
-                parses,
+            #expect(
+                found == parses,
                 "pane \(String(reflecting: pane)) parses=\(parses) but found=\(found)"
             )
         }
     }
 
-    func testAnOpenableSettingCarriesTheSystemPreferencesScheme() async throws {
+    @Test func anOpenableSettingCarriesTheSystemPreferencesScheme() async throws {
         let catalog = await makeCatalog([
             .init(name: "Working Pane", keywords: "openable", pane: "test.working"),
         ])
-        let item = try XCTUnwrap(
-            catalog.immediatePage(for: "Working Pane", limit: 50).items
-                .first { $0.id == "setting:test.working" }
-        )
+        let item = try #require(catalog.immediatePage(for: "Working Pane", limit: 50).items
+            .first { $0.id == "setting:test.working" })
         guard case let .open(url) = item.action else {
-            return XCTFail("a settings row must open a URL")
+            Issue.record("a settings row must open a URL")
+            return
         }
-        XCTAssertEqual(url.scheme, "x-apple.systempreferences")
-        XCTAssertEqual(url.absoluteString, "x-apple.systempreferences:test.working")
+        #expect(url.scheme == "x-apple.systempreferences")
+        #expect(url.absoluteString == "x-apple.systempreferences:test.working")
     }
 
-    func testDuplicatePanesCollapseWithTheBuiltInWinning() async {
+    @Test func duplicatePanesCollapseWithTheBuiltInWinning() async {
         // Discovery walks several directories and can find the same pane
         // twice; built-ins are listed first, so they win the de-duplication.
         let catalog = await makeCatalog([
@@ -380,24 +372,16 @@ final class SystemCatalogInvariantTests: XCTestCase {
         ])
 
         let bluetooth = catalog.immediatePage(for: "bluetooth", limit: 50).items
-        XCTAssertEqual(
-            bluetooth.filter { $0.id == "setting:com.apple.BluetoothSettings" }.count,
-            1
-        )
-        XCTAssertEqual(bluetooth.first?.title, "Bluetooth", "the built-in name wins")
+        #expect(bluetooth.filter { $0.id == "setting:com.apple.BluetoothSettings" }.count == 1)
+        #expect(bluetooth.first?.title == "Bluetooth", "the built-in name wins")
 
-        XCTAssertFalse(
-            catalog.immediatePage(for: "Impostor", limit: 50).items
-                .contains { $0.id == "setting:com.apple.BluetoothSettings" }
-        )
-        XCTAssertEqual(
-            catalog.immediatePage(for: "Duplicate", limit: 50).items
-                .filter { $0.id == "setting:test.duplicate" }.count,
-            1
-        )
+        #expect(!(catalog.immediatePage(for: "Impostor", limit: 50).items
+                .contains { $0.id == "setting:com.apple.BluetoothSettings" }))
+        #expect(catalog.immediatePage(for: "Duplicate", limit: 50).items
+            .filter { $0.id == "setting:test.duplicate" }.count == 1)
     }
 
-    func testStartingTwiceOnlyDiscoversOnce() async throws {
+    @Test func startingTwiceOnlyDiscoversOnce() async throws {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
 
@@ -406,32 +390,32 @@ final class SystemCatalogInvariantTests: XCTestCase {
         try await catalog.start()
         try await catalog.start()
 
-        XCTAssertEqual(discovery.reads, afterFirst, "start() must be idempotent")
-        XCTAssertGreaterThan(afterFirst, 0)
+        #expect(discovery.reads == afterFirst, "start() must be idempotent")
+        #expect(afterFirst > 0)
     }
 
-    func testRefreshReportsChangeOnlyWhenTheSnapshotActuallyChanges() async {
+    @Test func refreshReportsChangeOnlyWhenTheSnapshotActuallyChanges() async {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
 
         let firstRefresh = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(firstRefresh)
+        #expect(firstRefresh)
         let unchangedRefresh = await catalog.refreshIfNeeded(
             minimumInterval: 0,
             forceDiscovery: true
         )
-        XCTAssertFalse(unchangedRefresh, "an unchanged snapshot must not report a change")
+        #expect(!unchangedRefresh, "an unchanged snapshot must not report a change")
 
         discovery.replace(with: Self.fixtures + [
             .init(name: "Comet Clock", keywords: "time", pane: "test.comet"),
         ])
         let afterAdding = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(afterAdding)
+        #expect(afterAdding)
         let afterSettling = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertFalse(afterSettling)
+        #expect(!afterSettling)
     }
 
-    func testARenameWithTheSamePaneIsDetectedAsAChange() async {
+    @Test func aRenameWithTheSamePaneIsDetectedAsAChange() async {
         // Only the pane is the identity, so a pure rename has to be caught
         // by comparing names too — otherwise a renamed pane keeps its old
         // title forever.
@@ -445,18 +429,14 @@ final class SystemCatalogInvariantTests: XCTestCase {
             .init(name: "After", keywords: "same", pane: "test.rename"),
         ])
         let didChange = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didChange)
-        XCTAssertTrue(
-            catalog.immediatePage(for: "After", limit: 50).items
-                .contains { $0.id == "setting:test.rename" }
-        )
-        XCTAssertFalse(
-            catalog.immediatePage(for: "Before", limit: 50).items
-                .contains { $0.id == "setting:test.rename" }
-        )
+        #expect(didChange)
+        #expect(catalog.immediatePage(for: "After", limit: 50).items
+            .contains { $0.id == "setting:test.rename" })
+        #expect(!(catalog.immediatePage(for: "Before", limit: 50).items
+                .contains { $0.id == "setting:test.rename" }))
     }
 
-    func testAKeywordOnlyChangeIsDetected() async {
+    @Test func aKeywordOnlyChangeIsDetected() async {
         let discovery = MutableDiscovery([
             SystemCatalog.DiscoveredSetting(
                 name: "Steady",
@@ -471,31 +451,29 @@ final class SystemCatalogInvariantTests: XCTestCase {
             .init(name: "Steady", keywords: "omega", pane: "test.keywords"),
         ])
         let didChange = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didChange)
-        XCTAssertTrue(
-            catalog.immediatePage(for: "omega", limit: 50).items
-                .contains { $0.id == "setting:test.keywords" }
-        )
+        #expect(didChange)
+        #expect(catalog.immediatePage(for: "omega", limit: 50).items
+            .contains { $0.id == "setting:test.keywords" })
     }
 
-    func testARemovalDropsTheRowButKeepsTheBuiltIns() async {
+    @Test func aRemovalDropsTheRowButKeepsTheBuiltIns() async {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertFalse(catalog.immediatePage(for: "aurora", limit: 50).items.isEmpty)
+        #expect(!(catalog.immediatePage(for: "aurora", limit: 50).items.isEmpty))
 
         discovery.replace(with: [])
         let didChange = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didChange)
+        #expect(didChange)
 
-        XCTAssertTrue(catalog.immediatePage(for: "aurora", limit: 50).items.isEmpty)
-        XCTAssertFalse(
-            catalog.immediatePage(for: "bluetooth", limit: 50).items.isEmpty,
+        #expect(catalog.immediatePage(for: "aurora", limit: 50).items.isEmpty)
+        #expect(
+            !(catalog.immediatePage(for: "bluetooth", limit: 50).items.isEmpty),
             "built-in settings survive an empty discovery"
         )
     }
 
-    func testTheRefreshGuardRateLimitsBackToBackRefreshes() async {
+    @Test func theRefreshGuardRateLimitsBackToBackRefreshes() async {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
@@ -507,23 +485,23 @@ final class SystemCatalogInvariantTests: XCTestCase {
         // The interval has not elapsed, so this refresh is skipped entirely
         // — no discovery, no change.
         let throttled = await catalog.refreshIfNeeded(minimumInterval: 3_600, forceDiscovery: true)
-        XCTAssertFalse(throttled)
-        XCTAssertTrue(catalog.immediatePage(for: "Rate Limited", limit: 50).items.isEmpty)
+        #expect(!throttled)
+        #expect(catalog.immediatePage(for: "Rate Limited", limit: 50).items.isEmpty)
 
         let allowed = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(allowed)
-        XCTAssertFalse(catalog.immediatePage(for: "Rate Limited", limit: 50).items.isEmpty)
+        #expect(allowed)
+        #expect(!(catalog.immediatePage(for: "Rate Limited", limit: 50).items.isEmpty))
     }
 
-    func testAnEmptyDiscoveryStillLeavesTheCatalogUsable() async {
+    @Test func anEmptyDiscoveryStillLeavesTheCatalogUsable() async {
         let catalog = await makeCatalog([])
-        XCTAssertFalse(catalog.immediatePage(for: "bluetooth", limit: 24).items.isEmpty)
-        XCTAssertFalse(catalog.immediatePage(for: "wifi", limit: 24).items.isEmpty)
+        #expect(!(catalog.immediatePage(for: "bluetooth", limit: 24).items.isEmpty))
+        #expect(!(catalog.immediatePage(for: "wifi", limit: 24).items.isEmpty))
     }
 
     // MARK: - Scale and concurrency
 
-    func testRefreshDiscoveryDoesNotOccupyTheCallingActor() async {
+    @Test func refreshDiscoveryDoesNotOccupyTheCallingActor() async {
         let discovery = BlockingSystemCatalogDiscovery()
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         let caller = SystemCatalogCallingActor()
@@ -535,7 +513,8 @@ final class SystemCatalogInvariantTests: XCTestCase {
         guard didStart else {
             discovery.resume()
             _ = await refresh.value
-            return XCTFail("discovery did not start")
+            Issue.record("discovery did not start")
+            return
         }
 
         let pinged = SystemCatalogTestSignal()
@@ -551,13 +530,13 @@ final class SystemCatalogInvariantTests: XCTestCase {
         _ = await refresh.value
         _ = await ping.value
 
-        XCTAssertTrue(
+        #expect(
             actorStayedResponsive,
             "filesystem discovery must leave its caller actor free to accept newer work"
         )
     }
 
-    func testAHugeDiscoveredCatalogStaysSearchableAndFast() async {
+    @Test func aHugeDiscoveredCatalogStaysSearchableAndFast() async {
         // Nothing bounds how many panes a Mac has installed. Ten thousand
         // is far past realistic, and the per-keystroke budget still has to
         // hold.
@@ -575,12 +554,12 @@ final class SystemCatalogInvariantTests: XCTestCase {
         let page = catalog.immediatePage(for: "generated", limit: 24)
         let elapsed = start.duration(to: .now)
 
-        XCTAssertEqual(page.items.count, 24)
-        XCTAssertGreaterThan(page.totalMatched, 9_000)
-        XCTAssertLessThan(elapsed, .milliseconds(500), "per-keystroke search budget")
+        #expect(page.items.count == 24)
+        #expect(page.totalMatched > 9_000)
+        #expect(elapsed < .milliseconds(500), "per-keystroke search budget")
     }
 
-    func testConcurrentSearchesAndRefreshesAgreeAndNeverTrap() async {
+    @Test func concurrentSearchesAndRefreshesAgreeAndNeverTrap() async {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
@@ -593,10 +572,10 @@ final class SystemCatalogInvariantTests: XCTestCase {
             counts.append(catalog.immediatePage(for: "aurora", limit: 24).items.count)
         }
 
-        XCTAssertEqual(Set(counts.values).count, 1, "concurrent searches disagreed")
+        #expect(Set(counts.values).count == 1, "concurrent searches disagreed")
     }
 
-    func testSearchingWhileTheCatalogIsBeingReplacedNeverReturnsAMixedSnapshot() async {
+    @Test func searchingWhileTheCatalogIsBeingReplacedNeverReturnsAMixedSnapshot() async {
         let discovery = MutableDiscovery(Self.fixtures)
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
         _ = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
@@ -616,6 +595,6 @@ final class SystemCatalogInvariantTests: XCTestCase {
         }
         await refresher.value
 
-        XCTAssertTrue(observed.values.allSatisfy { $0 })
+        #expect(observed.values.allSatisfy { $0 })
     }
 }

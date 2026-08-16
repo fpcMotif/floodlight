@@ -1,63 +1,51 @@
 import FloodlightEngine
 import Foundation
 import Observation
-import XCTest
+import os
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class SearchCoordinatorTests: XCTestCase {
-    func testPublicationReplacementInvalidatesAllResultFacingObservationsTogether() async {
+struct SearchCoordinatorTests {
+    @Test func publicationReplacementInvalidatesAllResultFacingObservationsTogether() async {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
-        let resultsChanged = expectation(description: "results changed")
-        withObservationTracking {
-            _ = coordinator.results
-        } onChange: {
-            resultsChanged.fulfill()
-        }
-        let filtersChanged = expectation(description: "filter options changed")
-        withObservationTracking {
-            _ = coordinator.filterOptions
-        } onChange: {
-            filtersChanged.fulfill()
-        }
-        let selectedFilterChanged = expectation(description: "selected filter changed")
-        withObservationTracking {
-            _ = coordinator.selectedFilter
-        } onChange: {
-            selectedFilterChanged.fulfill()
-        }
-        let selectionChanged = expectation(description: "selection changed")
-        withObservationTracking {
-            _ = coordinator.selectedID
-        } onChange: {
-            selectionChanged.fulfill()
-        }
-        let progressChanged = expectation(description: "progress changed")
-        withObservationTracking {
-            _ = coordinator.isSearching
-        } onChange: {
-            progressChanged.fulfill()
+        await confirmation(expectedCount: 5) { confirm in
+            withObservationTracking {
+                _ = coordinator.results
+            } onChange: {
+                confirm()
+            }
+            withObservationTracking {
+                _ = coordinator.filterOptions
+            } onChange: {
+                confirm()
+            }
+            withObservationTracking {
+                _ = coordinator.selectedFilter
+            } onChange: {
+                confirm()
+            }
+            withObservationTracking {
+                _ = coordinator.selectedID
+            } onChange: {
+                confirm()
+            }
+            withObservationTracking {
+                _ = coordinator.isSearching
+            } onChange: {
+                confirm()
+            }
+
+            coordinator.query = "shortcut"
         }
 
-        coordinator.query = "shortcut"
-        await fulfillment(
-            of: [
-                resultsChanged,
-                filtersChanged,
-                selectedFilterChanged,
-                selectionChanged,
-                progressChanged,
-            ],
-            timeout: 1
-        )
-
-        XCTAssertFalse(coordinator.results.isEmpty)
-        XCTAssertEqual(coordinator.selectedFilter, .all)
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
-        XCTAssertTrue(coordinator.isSearching)
+        #expect(!coordinator.results.isEmpty)
+        #expect(coordinator.selectedFilter == .all)
+        #expect(coordinator.selectedID == coordinator.results.first?.id)
+        #expect(coordinator.isSearching)
     }
 
-    func testProjectionPromotesARealResultOverAnAutomaticWebFallbackSelection() {
+    @Test func projectionPromotesARealResultOverAnAutomaticWebFallbackSelection() {
         let folder = makeFolder()
 
         let publication = SearchResultProjection.project(
@@ -73,11 +61,11 @@ final class SearchCoordinatorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(publication.selection?.id, folder.id)
-        XCTAssertEqual(publication.selection?.origin, .automatic)
+        #expect(publication.selection?.id == folder.id)
+        #expect(publication.selection?.origin == .automatic)
     }
 
-    func testProjectionPreservesAUserSelectedWebFallback() {
+    @Test func projectionPreservesAUserSelectedWebFallback() {
         let folder = makeFolder()
         let web = makeWebResult()
 
@@ -92,10 +80,10 @@ final class SearchCoordinatorTests: XCTestCase {
             ))
         )
 
-        XCTAssertEqual(publication.selection, .init(id: web.id, origin: .user))
+        #expect(publication.selection == .init(id: web.id, origin: .user))
     }
 
-    func testProjectionPreservesAnEmptyDynamicFilterUntilSettlementReconciliation() {
+    @Test func projectionPreservesAnEmptyDynamicFilterUntilSettlementReconciliation() {
         let publication = SearchResultProjection.project(
             .local(.init(
                 query: "notes",
@@ -108,12 +96,12 @@ final class SearchCoordinatorTests: XCTestCase {
             ))
         )
 
-        XCTAssertEqual(publication.selectedFilter, .pdfs)
-        XCTAssertTrue(publication.visibleRows.isEmpty)
-        XCTAssertTrue(publication.filterOptions.contains { $0.filter == .pdfs })
+        #expect(publication.selectedFilter == .pdfs)
+        #expect(publication.visibleRows.isEmpty)
+        #expect(publication.filterOptions.contains { $0.filter == .pdfs })
     }
 
-    func testProjectionReconcilesAnEmptyDynamicFilterWhenSearchSettles() {
+    @Test func projectionReconcilesAnEmptyDynamicFilterWhenSearchSettles() {
         let publication = SearchResultProjection.project(
             .local(.init(
                 query: "notes",
@@ -126,11 +114,11 @@ final class SearchCoordinatorTests: XCTestCase {
             ))
         )
 
-        XCTAssertEqual(publication.selectedFilter, .all)
-        XCTAssertFalse(publication.filterOptions.contains { $0.filter == .pdfs })
+        #expect(publication.selectedFilter == .all)
+        #expect(!publication.filterOptions.contains { $0.filter == .pdfs })
     }
 
-    func testCalculatorAnswerLeadsResultsForAnExpression() throws {
+    @Test func calculatorAnswerLeadsResultsForAnExpression() throws {
         let results = projectResults(
             query: "12 * 12",
             indexed: [makeIndexedFile(name: "budget.numbers", score: 5_000)],
@@ -138,14 +126,14 @@ final class SearchCoordinatorTests: XCTestCase {
             system: [makeSetting(title: "Keyboard", score: 11_000)]
         )
 
-        let answer = try XCTUnwrap(results.first)
-        XCTAssertEqual(answer.id, "calculator")
-        XCTAssertEqual(answer.kind, .calculator)
-        XCTAssertEqual(answer.title, "144")
-        XCTAssertEqual(answer.action, .copy("144"))
+        let answer = try #require(results.first)
+        #expect(answer.id == "calculator")
+        #expect(answer.kind == .calculator)
+        #expect(answer.title == "144")
+        #expect(answer.action == .copy("144"))
     }
 
-    func testQueriesThatAreNotExpressionsSkipTheCalculator() {
+    @Test func queriesThatAreNotExpressionsSkipTheCalculator() {
         let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
@@ -153,10 +141,10 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertFalse(results.contains { $0.kind == .calculator })
+        #expect(!results.contains { $0.kind == .calculator })
     }
 
-    func testEverySourceContributesToTheMergedResults() {
+    @Test func everySourceContributesToTheMergedResults() {
         let app = makeApplication(name: "Shortcuts", score: 100_000)
         let setting = makeSetting(title: "Keyboard Shortcuts", score: 11_000)
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
@@ -169,13 +157,13 @@ final class SearchCoordinatorTests: XCTestCase {
         )
 
         let ids = Set(results.map(\.id))
-        XCTAssertTrue(ids.contains(app.id))
-        XCTAssertTrue(ids.contains(setting.id))
-        XCTAssertTrue(ids.contains(file.id))
-        XCTAssertTrue(ids.contains("web-search"))
+        #expect(ids.contains(app.id))
+        #expect(ids.contains(setting.id))
+        #expect(ids.contains(file.id))
+        #expect(ids.contains("web-search"))
     }
 
-    func testEarlierSourcesWinWhenIdentifiersCollide() throws {
+    @Test func earlierSourcesWinWhenIdentifiersCollide() throws {
         let appsVersusSystemID = "collision:apps-versus-system"
         let systemVersusIndexedID = "collision:system-versus-indexed"
 
@@ -197,18 +185,18 @@ final class SearchCoordinatorTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(results.count, Set(results.map(\.id)).count)
+        #expect(results.count == Set(results.map(\.id)).count)
 
-        let appsWin = try XCTUnwrap(results.first { $0.id == appsVersusSystemID })
-        XCTAssertEqual(appsWin.title, "From apps")
-        XCTAssertEqual(appsWin.score, 10)
+        let appsWin = try #require(results.first { $0.id == appsVersusSystemID })
+        #expect(appsWin.title == "From apps")
+        #expect(appsWin.score == 10)
 
-        let systemWin = try XCTUnwrap(results.first { $0.id == systemVersusIndexedID })
-        XCTAssertEqual(systemWin.title, "From system")
-        XCTAssertEqual(systemWin.score, 20)
+        let systemWin = try #require(results.first { $0.id == systemVersusIndexedID })
+        #expect(systemWin.title == "From system")
+        #expect(systemWin.score == 20)
     }
 
-    func testResultsSortByScoreThenNaturalTitleOrder() {
+    @Test func resultsSortByScoreThenNaturalTitleOrder() {
         let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [
@@ -221,13 +209,10 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertEqual(
-            results.prefix(4).map(\.title),
-            ["Alpha", "Result 2", "Result 9", "Result 10"]
-        )
+        #expect(results.prefix(4).map(\.title) == ["Alpha", "Result 2", "Result 9", "Result 10"])
     }
 
-    func testWebFallbackAppearsLastForNonEmptyQueriesWithLocalMatches() throws {
+    @Test func webFallbackAppearsLastForNonEmptyQueriesWithLocalMatches() throws {
         let results = projectResults(
             query: "shortcut",
             indexed: [
@@ -239,16 +224,14 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        let fallback = try XCTUnwrap(results.last)
-        XCTAssertEqual(fallback.id, "web-search")
-        XCTAssertEqual(fallback.kind, .web)
-        XCTAssertEqual(
-            fallback.action,
-            try .open(XCTUnwrap(URL(string: "https://www.google.com/search?q=shortcut")))
-        )
+        let fallback = try #require(results.last)
+        #expect(fallback.id == "web-search")
+        #expect(fallback.kind == .web)
+        let fallbackURL = try #require(URL(string: "https://www.google.com/search?q=shortcut"))
+        #expect(fallback.action == .open(fallbackURL))
     }
 
-    func testWebFallbackIsPositionedAfterWeakLocalMatches() {
+    @Test func webFallbackIsPositionedAfterWeakLocalMatches() {
         let file = makeIndexedFile(name: "shortcut-notes.txt", score: 500)
 
         let results = projectResults(
@@ -258,12 +241,12 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertEqual(results.count, 2)
-        XCTAssertEqual(results.first?.id, file.id)
-        XCTAssertEqual(results.last?.id, "web-search")
+        #expect(results.count == 2)
+        #expect(results.first?.id == file.id)
+        #expect(results.last?.id == "web-search")
     }
 
-    func testWebFallbackIsPositionedAfterLocalMatchesForQuestionShapedQuery() {
+    @Test func webFallbackIsPositionedAfterLocalMatchesForQuestionShapedQuery() {
         let file = makeIndexedFile(name: "password-notes.txt", score: 500)
         let results = projectResults(
             query: "how do I reset my password",
@@ -272,11 +255,11 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertEqual(results.first?.id, file.id)
-        XCTAssertEqual(results.last?.id, "web-search")
+        #expect(results.first?.id == file.id)
+        #expect(results.last?.id == "web-search")
     }
 
-    func testWebFallbackIsPositionedAfterLocalMatchesForURLShapedQuery() {
+    @Test func webFallbackIsPositionedAfterLocalMatchesForURLShapedQuery() {
         let file = makeIndexedFile(name: "github-notes.txt", score: 500)
         let results = projectResults(
             query: "github.com",
@@ -285,11 +268,11 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertEqual(results.first?.id, file.id)
-        XCTAssertEqual(results.last?.id, "web-search")
+        #expect(results.first?.id == file.id)
+        #expect(results.last?.id == "web-search")
     }
 
-    func testEmptyQueryOmitsTheWebFallback() {
+    @Test func emptyQueryOmitsTheWebFallback() {
         let results = projectResults(
             query: "",
             indexed: [makeIndexedFile(name: "notes.txt", score: 10)],
@@ -297,10 +280,10 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertFalse(results.contains { $0.kind == .web })
+        #expect(!results.contains { $0.kind == .web })
     }
 
-    func testMergedResultsTruncateToEightyRows() {
+    @Test func mergedResultsTruncateToEightyRows() {
         let indexed = (0..<100).map { index in
             makeIndexedFile(name: "file-\(index).txt", score: 1_000 - index)
         }
@@ -312,15 +295,15 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertEqual(results.count, 80)
-        XCTAssertEqual(results.first?.score, 1_000)
-        XCTAssertEqual(results.dropLast().last?.score, 922)
-        XCTAssertEqual(results.last?.id, "web-search")
+        #expect(results.count == 80)
+        #expect(results.first?.score == 1_000)
+        #expect(results.dropLast().last?.score == 922)
+        #expect(results.last?.id == "web-search")
     }
 
     // MARK: - Keyword engines
 
-    func testKeywordEngineRowOutranksApplicationAndCalculatorMatches() throws {
+    @Test func keywordEngineRowOutranksApplicationAndCalculatorMatches() throws {
         let app = makeApplication(name: "Xcode", score: 100_000)
 
         let results = projectResults(
@@ -330,12 +313,12 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        let engineIndex = try XCTUnwrap(results.firstIndex { $0.id == "keyword-engine:youtube" })
-        let appIndex = try XCTUnwrap(results.firstIndex { $0.id == app.id })
-        XCTAssertLessThan(engineIndex, appIndex)
+        let engineIndex = try #require(results.firstIndex { $0.id == "keyword-engine:youtube" })
+        let appIndex = try #require(results.firstIndex { $0.id == app.id })
+        #expect(engineIndex < appIndex)
     }
 
-    func testUnmatchedQueryProducesNoKeywordEngineRow() {
+    @Test func unmatchedQueryProducesNoKeywordEngineRow() {
         let results = projectResults(
             query: Self.unmatchedQuery,
             indexed: [],
@@ -343,10 +326,10 @@ final class SearchCoordinatorTests: XCTestCase {
             system: []
         )
 
-        XCTAssertFalse(results.contains { $0.id.hasPrefix("keyword-engine:") })
+        #expect(!results.contains { $0.id.hasPrefix("keyword-engine:") })
     }
 
-    func testKeywordEnginesRespectTheSuppliedAvailabilityList() {
+    @Test func keywordEnginesRespectTheSuppliedAvailabilityList() {
         let results = projectResults(
             query: "claude explain this",
             indexed: [],
@@ -358,12 +341,12 @@ final class SearchCoordinatorTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(results.contains { $0.id == "keyword-engine:claude" })
+        #expect(!results.contains { $0.id == "keyword-engine:claude" })
     }
 
     // MARK: - Ask Codex / Ask Claude lifecycle
 
-    func testActivatingAnAssistantRowDoesNotDismissThePanel() throws {
+    @Test func activatingAnAssistantRowDoesNotDismissThePanel() throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         var dismissed = false
         let coordinator = SearchCoordinator(
@@ -374,11 +357,11 @@ final class SearchCoordinatorTests: XCTestCase {
         let item = try makeClaudeAskItem(coordinator)
         coordinator.activate(item)
 
-        XCTAssertFalse(dismissed)
-        XCTAssertEqual(coordinator.assistantRun, AssistantRun(itemID: item.id, state: .running))
+        #expect(!dismissed)
+        #expect(coordinator.assistantRun == AssistantRun(itemID: item.id, state: .running))
     }
 
-    func testAssistantRunTransitionsToAnsweredOnSuccess() async throws {
+    @Test func assistantRunTransitionsToAnsweredOnSuccess() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
@@ -394,24 +377,31 @@ final class SearchCoordinatorTests: XCTestCase {
         }
     }
 
-    func testAssistantAnswerStateParticipatesInObservation() async throws {
+    @Test func assistantAnswerStateParticipatesInObservation() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
         coordinator.activate(item)
-        let changed = expectation(description: "assistant answer state changed")
 
+        let didObserveChange = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking {
-            _ = coordinator.assistantAnswerState(for: item)
+            _ = coordinator.assistantRun
         } onChange: {
-            changed.fulfill()
+            didObserveChange.withLock { $0 = true }
         }
 
         await runner.complete(with: .success("Observed answer."))
-        await fulfillment(of: [changed], timeout: 2)
+        try await waitUntil {
+            coordinator.assistantAnswerState(for: item) == .answered("Observed answer.")
+        }
+        #expect(coordinator.assistantAnswerState(for: item) == .answered("Observed answer."))
+        #expect(
+            didObserveChange.withLock { $0 },
+            "assistant run changes must invalidate Observation tracking"
+        )
     }
 
-    func testAssistantRunTransitionsToFailedOnError() async throws {
+    @Test func assistantRunTransitionsToFailedOnError() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
@@ -430,21 +420,21 @@ final class SearchCoordinatorTests: XCTestCase {
         }
     }
 
-    func testEditingTheQueryCancelsAndClearsAnInFlightAssistantRun() async throws {
+    @Test func editingTheQueryCancelsAndClearsAnInFlightAssistantRun() async throws {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         let coordinator = makeSearchCoordinatorWithInertPresentation(assistantRunner: runner)
         let item = try makeClaudeAskItem(coordinator)
 
         coordinator.query = "claude explain this function"
         coordinator.activate(item)
-        XCTAssertNotNil(coordinator.assistantRun)
+        #expect(coordinator.assistantRun != nil)
         try await waitUntil { await runner.hasPendingRun }
 
         coordinator.query = "claude explain this function differently"
 
         // Cancellation clears the published state synchronously — no
         // stale answer should ever render under the new query.
-        XCTAssertNil(coordinator.assistantRun)
+        #expect(coordinator.assistantRun == nil)
         try await waitUntil { await runner.cancelledCount == 1 }
     }
 
@@ -463,7 +453,7 @@ final class SearchCoordinatorTests: XCTestCase {
                 defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
             )
         )
-        return try XCTUnwrap(results.first { $0.id == "keyword-engine:claude" })
+        return try #require(results.first { $0.id == "keyword-engine:claude" })
     }
 
     /// Polls `condition` on a short interval, matching the polling style
@@ -477,7 +467,7 @@ final class SearchCoordinatorTests: XCTestCase {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("condition was never satisfied within \(timeout)s")
+        Issue.record("condition was never satisfied within \(timeout)s")
     }
 
     /// A query the calculator cannot evaluate and whose characters never appear

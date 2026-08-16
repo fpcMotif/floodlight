@@ -1,16 +1,17 @@
 import FloodlightTestSupport
-import XCTest
+import Foundation
+import Testing
 @testable import FloodlightEngine
 
 @MainActor
-final class AssistantRunSessionTests: XCTestCase {
-    func testStartPublishesRunningThenTheAnswer() async throws {
+struct AssistantRunSessionTests {
+    @Test func startPublishesRunningThenTheAnswer() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
         let request = makeRequest()
 
         session.start(request)
-        XCTAssertEqual(session.run, AssistantRun(itemID: request.itemID, state: .running))
+        #expect(session.run == AssistantRun(itemID: request.itemID, state: .running))
 
         try await runner.resolveNext(with: .success("Because it sums the list."))
         try await waitUntil("answer publication") {
@@ -21,7 +22,7 @@ final class AssistantRunSessionTests: XCTestCase {
         }
     }
 
-    func testStartingAnotherRequestCancelsAndReplacesTheFirst() async throws {
+    @Test func startingAnotherRequestCancelsAndReplacesTheFirst() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
         let first = makeRequest(itemID: "assistant:first", arguments: ["first"])
@@ -42,10 +43,10 @@ final class AssistantRunSessionTests: XCTestCase {
             )
         }
         let replacementCancellations = await runner.cancellations
-        XCTAssertGreaterThanOrEqual(replacementCancellations, 1)
+        #expect(replacementCancellations >= 1)
     }
 
-    func testStartingTheSameRequestStillRejectsTheSupersededCompletion() async throws {
+    @Test func startingTheSameRequestStillRejectsTheSupersededCompletion() async throws {
         let runner = NonCooperativeAssistantRunner()
         let session = AssistantRunSession(runner: runner)
         let request = makeRequest()
@@ -61,7 +62,7 @@ final class AssistantRunSessionTests: XCTestCase {
 
         await runner.resolve(call: 0, with: "stale answer")
         await Task.yield()
-        XCTAssertEqual(session.run, AssistantRun(itemID: request.itemID, state: .running))
+        #expect(session.run == AssistantRun(itemID: request.itemID, state: .running))
 
         await runner.resolve(call: 1, with: "surviving answer")
 
@@ -73,7 +74,7 @@ final class AssistantRunSessionTests: XCTestCase {
         }
     }
 
-    func testImmediateCancelPreventsTheRunnerFromStarting() async {
+    @Test func immediateCancelPreventsTheRunnerFromStarting() async {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
 
@@ -82,11 +83,11 @@ final class AssistantRunSessionTests: XCTestCase {
         await Task.yield()
 
         let recordedRuns = await runner.runs
-        XCTAssertTrue(recordedRuns.isEmpty)
-        XCTAssertNil(session.run)
+        #expect(recordedRuns.isEmpty)
+        #expect(session.run == nil)
     }
 
-    func testCancelSynchronouslyClearsTheRunAndCancelsTheProcess() async throws {
+    @Test func cancelSynchronouslyClearsTheRunAndCancelsTheProcess() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
 
@@ -94,13 +95,13 @@ final class AssistantRunSessionTests: XCTestCase {
         try await runner.waitForPendingRun()
         session.cancel()
 
-        XCTAssertNil(session.run)
+        #expect(session.run == nil)
         try await waitUntil("process cancellation") {
             await runner.cancellations == 1
         }
     }
 
-    func testFailuresBecomeStableDisplayStates() async throws {
+    @Test func failuresBecomeStableDisplayStates() async throws {
         let cases: [(any Error, String)] = [
             (AssistantProcessError.executableNotFound("claude"), "claude isn't installed."),
             (AssistantProcessError.timedOut, "That ask took too long and was stopped."),
@@ -128,7 +129,7 @@ final class AssistantRunSessionTests: XCTestCase {
         }
     }
 
-    func testStateAndAnswerTextAreScopedToTheOriginatingRow() async throws {
+    @Test func stateAndAnswerTextAreScopedToTheOriginatingRow() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
         let request = makeRequest()
@@ -139,10 +140,10 @@ final class AssistantRunSessionTests: XCTestCase {
             session.run?.state == .answered("answer")
         }
 
-        XCTAssertEqual(session.state(for: request.itemID), .answered("answer"))
-        XCTAssertEqual(session.answeredText(for: request.itemID), "answer")
-        XCTAssertNil(session.state(for: "assistant:other"))
-        XCTAssertNil(session.answeredText(for: "assistant:other"))
+        #expect(session.state(for: request.itemID) == .answered("answer"))
+        #expect(session.answeredText(for: request.itemID) == "answer")
+        #expect(session.state(for: "assistant:other") == nil)
+        #expect(session.answeredText(for: "assistant:other") == nil)
     }
 
     private func makeRequest(
@@ -162,7 +163,7 @@ final class AssistantRunSessionTests: XCTestCase {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("never became true: \(description)")
+        Issue.record("never became true: \(description)")
     }
 }
 

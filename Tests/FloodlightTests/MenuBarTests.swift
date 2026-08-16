@@ -1,45 +1,43 @@
 import AppKit
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class MenuBarTests: XCTestCase {
-    func testStatusMenuExposesSettingsAndLauncherControls() throws {
+struct MenuBarTests {
+    @Test func statusMenuExposesSettingsAndLauncherControls() throws {
         let menu = AppDelegate().makeStatusMenu()
 
-        XCTAssertEqual(
-            menu.items.map(\.title),
-            [
-                "Show Floodlight",
-                "",
-                "Settings…",
-                "Choose Search Scope…",
-                "Rebuild Index",
-                "Launch at Login",
-                "",
-                "Quit Floodlight",
-            ]
-        )
-        let settings = try XCTUnwrap(menu.items.first { $0.title == "Settings…" })
-        XCTAssertEqual(settings.action.map(NSStringFromSelector), "showSettings")
+        #expect(menu.items.map(\.title) == [
+            "Show Floodlight",
+            "",
+            "Settings…",
+            "Choose Search Scope…",
+            "Rebuild Index",
+            "Launch at Login",
+            "",
+            "Quit Floodlight",
+        ])
+        let settings = try #require(menu.items.first { $0.title == "Settings…" })
+        #expect(settings.action.map(NSStringFromSelector) == "showSettings")
     }
 
-    func testMainMenuExposesStandardTextEditingCommands() throws {
+    @Test func mainMenuExposesStandardTextEditingCommands() throws {
         let mainMenu = AppDelegate().makeMainMenu()
-        let editMenu = try XCTUnwrap(
-            mainMenu.items.compactMap(\.submenu).first { $0.title == "Edit" }
-        )
+        let editMenu = try #require(mainMenu.items.compactMap(\.submenu)
+            .first { $0.title == "Edit" })
 
-        XCTAssertEqual(
-            editMenu.items.map(\.title),
-            ["Undo", "Redo", "", "Cut", "Copy", "Paste", "Select All"]
-        )
-        XCTAssertEqual(
-            editMenu.items.compactMap { item in
-                item.action.map(NSStringFromSelector)
-            },
-            ["undo:", "redo:", "cut:", "copy:", "paste:", "selectAll:"]
-        )
-        XCTAssertTrue(editMenu.items.allSatisfy { $0.target == nil })
+        #expect(editMenu.items.map(\.title) == [
+            "Undo",
+            "Redo",
+            "",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Select All",
+        ])
+        #expect(editMenu.items.compactMap { item in
+            item.action.map(NSStringFromSelector)
+        } == ["undo:", "redo:", "cut:", "copy:", "paste:", "selectAll:"])
+        #expect(editMenu.items.allSatisfy { $0.target == nil })
     }
 }

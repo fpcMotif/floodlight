@@ -1,16 +1,17 @@
 import AppKit
 import Foundation
 import SwiftUI
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class OnboardingTests: XCTestCase {
-    func testOnboardingRemainsPendingUntilCompleted() throws {
+@Suite(.serialized)
+final class OnboardingTests {
+    @Test func onboardingRemainsPendingUntilCompleted() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertTrue(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
+        #expect(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
 
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
@@ -20,14 +21,12 @@ final class OnboardingTests: XCTestCase {
         )
         session.complete()
 
-        XCTAssertFalse(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
-        XCTAssertEqual(
-            defaults.integer(forKey: OnboardingSession.completedVersionKey),
-            OnboardingSession.currentVersion
-        )
+        #expect(!(OnboardingSession.shouldPresent(defaults: defaults, environment: [:])))
+        #expect(defaults.integer(forKey: OnboardingSession.completedVersionKey) == OnboardingSession
+            .currentVersion)
     }
 
-    func testForcedOnboardingOverridesCompletedVersion() throws {
+    @Test func forcedOnboardingOverridesCompletedVersion() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(
@@ -35,26 +34,24 @@ final class OnboardingTests: XCTestCase {
             forKey: OnboardingSession.completedVersionKey
         )
 
-        XCTAssertTrue(
-            OnboardingSession.shouldPresent(
-                defaults: defaults,
-                environment: ["FLOODLIGHT_FORCE_ONBOARDING": "1"]
-            )
-        )
+        #expect(OnboardingSession.shouldPresent(
+            defaults: defaults,
+            environment: ["FLOODLIGHT_FORCE_ONBOARDING": "1"]
+        ))
     }
 
-    func testShortcutPreferenceAndFallbackAreStable() throws {
+    @Test func shortcutPreferenceAndFallbackAreStable() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertEqual(FloodlightShortcut.preferred(in: defaults), .commandSpace)
+        #expect(FloodlightShortcut.preferred(in: defaults) == .commandSpace)
         FloodlightShortcut.optionSpace.save(in: defaults)
-        XCTAssertEqual(FloodlightShortcut.preferred(in: defaults), .optionSpace)
-        XCTAssertEqual(FloodlightShortcut.optionSpace.fallback, .commandSpace)
-        XCTAssertEqual(FloodlightShortcut.commandSpace.fallback, .optionSpace)
+        #expect(FloodlightShortcut.preferred(in: defaults) == .optionSpace)
+        #expect(FloodlightShortcut.optionSpace.fallback == .commandSpace)
+        #expect(FloodlightShortcut.commandSpace.fallback == .optionSpace)
     }
 
-    func testSpotlightReplacementIsOfferedForTheFallbackShortcut() throws {
+    @Test func spotlightReplacementIsOfferedForTheFallbackShortcut() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let session = OnboardingSession(
@@ -64,26 +61,24 @@ final class OnboardingTests: XCTestCase {
             defaults: defaults
         )
 
-        XCTAssertTrue(session.offersSpotlightReplacement)
+        #expect(session.offersSpotlightReplacement)
         session.activeShortcut = .commandSpace
-        XCTAssertFalse(session.offersSpotlightReplacement)
+        #expect(!session.offersSpotlightReplacement)
     }
 
-    func testFullDiskAccessProbeReflectsReadability() throws {
+    @Test func fullDiskAccessProbeReflectsReadability() throws {
         let readableProbe = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloodlightFullDiskAccess-\(UUID().uuidString)")
         try Data("probe".utf8).write(to: readableProbe)
         defer { try? FileManager.default.removeItem(at: readableProbe) }
 
-        XCTAssertTrue(FloodlightFullDiskAccess.isGranted(probeURL: readableProbe))
-        XCTAssertFalse(
-            FloodlightFullDiskAccess.isGranted(
-                probeURL: readableProbe.appendingPathExtension("missing")
-            )
-        )
+        #expect(FloodlightFullDiskAccess.isGranted(probeURL: readableProbe))
+        #expect(!(FloodlightFullDiskAccess.isGranted(
+            probeURL: readableProbe.appendingPathExtension("missing")
+        )))
     }
 
-    func testOnboardingViewRendersAtTheWindowSize() throws {
+    @Test func onboardingViewRendersAtTheWindowSize() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let session = OnboardingSession(
@@ -99,9 +94,9 @@ final class OnboardingTests: XCTestCase {
         let renderer = ImageRenderer(content: makeView(session: session))
         renderer.proposedSize = ProposedViewSize(width: 760, height: 530)
         renderer.scale = 1
-        let image = try XCTUnwrap(renderer.cgImage)
-        XCTAssertEqual(image.width, 760)
-        XCTAssertEqual(image.height, 530)
+        let image = try #require(renderer.cgImage)
+        #expect(image.width == 760)
+        #expect(image.height == 530)
 
         if let snapshotDirectory = ProcessInfo.processInfo.environment[
             "FLOODLIGHT_ONBOARDING_SNAPSHOT_DIR"
@@ -141,7 +136,7 @@ final class OnboardingTests: XCTestCase {
         }
     }
 
-    func testSettingsPresentationUsesConfigurationWindowDesign() throws {
+    @Test func settingsPresentationUsesConfigurationWindowDesign() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let session = OnboardingSession(
@@ -157,60 +152,57 @@ final class OnboardingTests: XCTestCase {
         renderer.proposedSize = ProposedViewSize(width: 760, height: 530)
         renderer.scale = 1
 
-        let image = try XCTUnwrap(renderer.cgImage)
-        XCTAssertEqual(image.width, 760)
-        XCTAssertEqual(image.height, 530)
-        XCTAssertEqual(FloodlightConfigurationPresentation.settings.title, "Settings")
+        let image = try #require(renderer.cgImage)
+        #expect(image.width == 760)
+        #expect(image.height == 530)
+        #expect(FloodlightConfigurationPresentation.settings.title == "Settings")
     }
 
-    func testSelectingTheActiveShortcutClearsTheMessageWithoutReregistering() throws {
+    @Test func selectingTheActiveShortcutClearsTheMessageWithoutReregistering() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         session.shortcutMessage = "stale"
         spy.selectOutcome = .requestedShortcutActive(.optionSpace)
 
         flow.handleShortcutSelection(.optionSpace)
 
-        XCTAssertNil(session.shortcutMessage)
-        XCTAssertEqual(session.activeShortcut, .optionSpace)
-        XCTAssertEqual(spy.selectedShortcuts, [.optionSpace])
+        #expect(session.shortcutMessage == nil)
+        #expect(session.activeShortcut == .optionSpace)
+        #expect(spy.selectedShortcuts == [.optionSpace])
     }
 
-    func testSelectingAnAvailableShortcutAdoptsIt() throws {
+    @Test func selectingAnAvailableShortcutAdoptsIt() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         spy.selectOutcome = .requestedShortcutActive(.commandSpace)
 
         flow.handleShortcutSelection(.commandSpace)
 
-        XCTAssertEqual(session.activeShortcut, .commandSpace)
-        XCTAssertNil(session.shortcutMessage)
-        XCTAssertEqual(spy.selectedShortcuts, [.commandSpace])
+        #expect(session.activeShortcut == .commandSpace)
+        #expect(session.shortcutMessage == nil)
+        #expect(spy.selectedShortcuts == [.commandSpace])
     }
 
-    func testRefusedCommandSpaceReportsSpotlightOwnership() throws {
+    @Test func refusedCommandSpaceReportsSpotlightOwnership() throws {
         let (flow, session, _) = try makeFlow(activeShortcut: .optionSpace)
 
         flow.handleShortcutSelection(.commandSpace)
 
-        XCTAssertEqual(session.activeShortcut, .optionSpace)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "Spotlight or another app still owns ⌘ Space. Floodlight kept ⌥ Space active."
-        )
+        #expect(session.activeShortcut == .optionSpace)
+        #expect(session
+            .shortcutMessage ==
+            "Spotlight or another app still owns ⌘ Space. Floodlight kept ⌥ Space active.")
     }
 
-    func testRefusedOptionSpaceReportsARegistrationFailure() throws {
+    @Test func refusedOptionSpaceReportsARegistrationFailure() throws {
         let (flow, session, _) = try makeFlow(activeShortcut: .commandSpace)
 
         flow.handleShortcutSelection(.optionSpace)
 
-        XCTAssertEqual(session.activeShortcut, .commandSpace)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "macOS could not register ⌥ Space. Floodlight kept ⌘ Space active."
-        )
+        #expect(session.activeShortcut == .commandSpace)
+        #expect(session
+            .shortcutMessage == "macOS could not register ⌥ Space. Floodlight kept ⌘ Space active.")
     }
 
-    func testSelectionReportsWhenNoShortcutRemainsActive() throws {
+    @Test func selectionReportsWhenNoShortcutRemainsActive() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let session = OnboardingSession(
@@ -228,112 +220,107 @@ final class OnboardingTests: XCTestCase {
 
         flow.handleShortcutSelection(.commandSpace)
 
-        XCTAssertNil(session.activeShortcut)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it."
-        )
+        #expect(session.activeShortcut == nil)
+        #expect(session
+            .shortcutMessage ==
+            "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it.")
     }
 
-    func testBeginningSpotlightReplacementQueuesCommandSpaceAndOpensSettings() throws {
+    @Test func beginningSpotlightReplacementQueuesCommandSpaceAndOpensSettings() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
 
         flow.beginSpotlightReplacement()
 
-        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "Turn off “Show Spotlight search” in the pane that opens, then return here."
-        )
-        XCTAssertEqual(spy.spotlightSettingsOpenCount, 1)
-        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+        #expect(flow.pendingShortcut == .commandSpace)
+        #expect(session
+            .shortcutMessage ==
+            "Turn off “Show Spotlight search” in the pane that opens, then return here.")
+        #expect(spy.spotlightSettingsOpenCount == 1)
+        #expect(spy.selectedShortcuts.isEmpty)
     }
 
-    func testRetryingWithoutAPendingShortcutDoesNothing() throws {
+    @Test func retryingWithoutAPendingShortcutDoesNothing() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
 
         flow.retryPendingShortcut()
 
-        XCTAssertNil(session.shortcutMessage)
-        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+        #expect(session.shortcutMessage == nil)
+        #expect(spy.selectedShortcuts.isEmpty)
     }
 
-    func testRetryingAdoptsCommandSpaceOnceSpotlightReleasesIt() throws {
+    @Test func retryingAdoptsCommandSpaceOnceSpotlightReleasesIt() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
         spy.selectOutcome = .requestedShortcutActive(.commandSpace)
 
         flow.retryPendingShortcut()
 
-        XCTAssertEqual(session.activeShortcut, .commandSpace)
-        XCTAssertEqual(session.shortcutMessage, "⌘ Space is ready.")
-        XCTAssertNil(flow.pendingShortcut)
-        XCTAssertEqual(spy.selectedShortcuts, [.commandSpace])
+        #expect(session.activeShortcut == .commandSpace)
+        #expect(session.shortcutMessage == "⌘ Space is ready.")
+        #expect(flow.pendingShortcut == nil)
+        #expect(spy.selectedShortcuts == [.commandSpace])
     }
 
-    func testRetryingKeepsWaitingWhileSpotlightStillOwnsCommandSpace() throws {
+    @Test func retryingKeepsWaitingWhileSpotlightStillOwnsCommandSpace() throws {
         let (flow, session, _) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
 
         flow.retryPendingShortcut()
 
-        XCTAssertEqual(session.activeShortcut, .optionSpace)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here."
-        )
-        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
+        #expect(session.activeShortcut == .optionSpace)
+        #expect(session
+            .shortcutMessage ==
+            "Spotlight still owns ⌘ Space. Turn off “Show Spotlight search” and return here.")
+        #expect(flow.pendingShortcut == .commandSpace)
     }
 
-    func testRetryingReportsWhenNoShortcutRemainsActive() throws {
+    @Test func retryingReportsWhenNoShortcutRemainsActive() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
         spy.selectOutcome = .noShortcutActive
 
         flow.retryPendingShortcut()
 
-        XCTAssertNil(session.activeShortcut)
-        XCTAssertEqual(
-            session.shortcutMessage,
-            "Spotlight still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space or update Spotlight and try again."
-        )
-        XCTAssertEqual(flow.pendingShortcut, .commandSpace)
+        #expect(session.activeShortcut == nil)
+        #expect(session
+            .shortcutMessage ==
+            "Spotlight still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space or update Spotlight and try again.")
+        #expect(flow.pendingShortcut == .commandSpace)
     }
 
-    func testRetryingDropsAPendingShortcutThatIsAlreadyActive() throws {
+    @Test func retryingDropsAPendingShortcutThatIsAlreadyActive() throws {
         let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
         session.activeShortcut = .commandSpace
 
         flow.retryPendingShortcut()
 
-        XCTAssertNil(flow.pendingShortcut)
-        XCTAssertTrue(spy.selectedShortcuts.isEmpty)
+        #expect(flow.pendingShortcut == nil)
+        #expect(spy.selectedShortcuts.isEmpty)
     }
 
-    func testSelectingAShortcutCancelsThePendingRetry() throws {
+    @Test func selectingAShortcutCancelsThePendingRetry() throws {
         let (flow, _, _) = try makeFlow(activeShortcut: .optionSpace)
         flow.beginSpotlightReplacement()
 
         flow.handleShortcutSelection(.optionSpace)
 
-        XCTAssertNil(flow.pendingShortcut)
+        #expect(flow.pendingShortcut == nil)
     }
 
-    func testFinishingIsRecordedSoDismissalIsNotReported() throws {
+    @Test func finishingIsRecordedSoDismissalIsNotReported() throws {
         let (flow, _, _) = try makeFlow(activeShortcut: .optionSpace)
-        XCTAssertFalse(flow.didFinish)
+        #expect(!flow.didFinish)
 
         flow.markFinished()
 
-        XCTAssertTrue(flow.didFinish)
+        #expect(flow.didFinish)
     }
 
     private func makeFlow(
         activeShortcut: FloodlightShortcut
     ) throws -> (flow: OnboardingFlowState, session: OnboardingSession, spy: OnboardingFlowSpy) {
-        let (defaults, suiteName) = try makeDefaults()
-        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let (defaults, _) = try makeDefaults()
 
         let session = OnboardingSession(
             activeShortcut: activeShortcut,
@@ -368,23 +355,23 @@ final class OnboardingTests: XCTestCase {
         )
     }
 
+    private var retainedDefaults: [RetainedDefaults] = []
+
     private func makeDefaults() throws -> (UserDefaults, String) {
-        let suiteName = "FloodlightOnboardingTests-\(UUID().uuidString)"
-        return try (XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
+        let isolated = RetainedDefaults(prefix: "FloodlightOnboardingTests")
+        retainedDefaults.append(isolated)
+        return (isolated.defaults, isolated.suiteName)
     }
 
     private func writeSnapshot(_ view: OnboardingView, to url: URL) throws {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(x: 0, y: 0, width: 760, height: 530)
         hostingView.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(
-            hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
-        )
+        let representation = try #require(hostingView
+            .bitmapImageRepForCachingDisplay(in: hostingView.bounds))
         representation.size = NSSize(width: 760, height: 530)
         hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
-        let data = try XCTUnwrap(
-            representation.representation(using: .png, properties: [:])
-        )
+        let data = try #require(representation.representation(using: .png, properties: [:]))
         try data.write(to: url)
     }
 }
@@ -402,5 +389,19 @@ private final class OnboardingFlowSpy {
 
     func openSpotlightSettings() {
         spotlightSettingsOpenCount += 1
+    }
+}
+
+private final class RetainedDefaults {
+    let defaults: UserDefaults
+    let suiteName: String
+
+    init(prefix: String) {
+        suiteName = "\(prefix)-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+    }
+
+    deinit {
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }

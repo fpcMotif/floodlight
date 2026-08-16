@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// Drives the Tab↔Esc web mode through `SearchCoordinator`'s published
@@ -9,19 +9,15 @@ import XCTest
 /// scripted catalogs in, assertions on `results`, `mode`, `selectedID`,
 /// and `filterOptions` out. Never on internal call order.
 @MainActor
-final class SearchCoordinatorWebModeTests: XCTestCase {
-    private nonisolated(unsafe) var tree: TemporaryTree!
+struct SearchCoordinatorWebModeTests {
+    private let tree: TemporaryTree
 
     private static let presetOrder = [
         "google", "wikipedia", "github", "stackoverflow", "twitter", "youtube",
     ]
 
-    override func setUpWithError() throws {
+    init() throws {
         tree = try TemporaryTree(label: "CoordinatorWebMode")
-    }
-
-    override func tearDown() {
-        tree = nil
     }
 
     private func makeCoordinator(
@@ -50,8 +46,7 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
     private func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -59,42 +54,37 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     // MARK: - Entering web mode
 
-    func testTabPublishesOnePresetEngineRowEachWithTheDefaultEngineFirst() async throws {
+    @Test func tabPublishesOnePresetEngineRowEachWithTheDefaultEngineFirst() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "swift concurrency"
 
         coordinator.handleTab()
 
-        XCTAssertEqual(
-            coordinator.results.map(\.id),
-            Self.presetOrder.map { "web-mode:\($0)" }
-        )
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .web })
-        XCTAssertEqual(coordinator.selectedID, "web-mode:google")
+        #expect(coordinator.results.map(\.id) == Self.presetOrder.map { "web-mode:\($0)" })
+        #expect(coordinator.results.allSatisfy { $0.kind == .web })
+        #expect(coordinator.selectedID == "web-mode:google")
     }
 
-    func testKeywordTabPutsThatEngineFirstAndTheRestInTableOrder() async throws {
+    @Test func keywordTabPutsThatEngineFirstAndTheRestInTableOrder() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "yt lofi"
 
         coordinator.handleTab()
 
-        XCTAssertEqual(coordinator.query, "lofi", "the keyword is absorbed into the token")
-        XCTAssertEqual(
-            coordinator.results.map(\.id),
-            ["web-mode:youtube"] + Self.presetOrder.dropLast().map { "web-mode:\($0)" }
-        )
-        XCTAssertEqual(coordinator.selectedID, "web-mode:youtube")
-        XCTAssertEqual(coordinator.results.first?.title, "YouTube")
-        XCTAssertEqual(coordinator.results.first?.subtitle, "youtube.com")
+        #expect(coordinator.query == "lofi", "the keyword is absorbed into the token")
+        #expect(coordinator.results.map(\.id) == ["web-mode:youtube"] + Self.presetOrder.dropLast()
+            .map { "web-mode:\($0)" })
+        #expect(coordinator.selectedID == "web-mode:youtube")
+        #expect(coordinator.results.first?.title == "YouTube")
+        #expect(coordinator.results.first?.subtitle == "youtube.com")
     }
 
-    func testWebModeRowTitlesStayStableWhileURLsTrackTheLiveQuery() async throws {
+    @Test func webModeRowTitlesStayStableWhileURLsTrackTheLiveQuery() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "lofi"
         coordinator.handleTab()
@@ -105,43 +95,38 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         // The title names the destination, so it must not reflow per
         // keystroke; the live query rides in the URL the row opens.
         let first = coordinator.results.first
-        XCTAssertEqual(first?.title, "Google")
-        XCTAssertEqual(first?.title, titleBefore)
-        XCTAssertEqual(
-            openedURL(of: first)?.absoluteString,
-            "https://www.google.com/search?q=lofi%20beats"
-        )
+        #expect(first?.title == "Google")
+        #expect(first?.title == titleBefore)
+        #expect(openedURL(of: first)?
+            .absoluteString == "https://www.google.com/search?q=lofi%20beats")
     }
 
-    func testWebModeRowsCarryThePercentEncodedEngineURL() async throws {
+    @Test func webModeRowsCarryThePercentEncodedEngineURL() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "yt lofi hip hop"
 
         coordinator.handleTab()
 
-        XCTAssertEqual(
-            openedURL(of: coordinator.results.first)?.absoluteString,
-            "https://www.youtube.com/results?search_query=lofi%20hip%20hop"
-        )
+        #expect(openedURL(of: coordinator.results.first)?
+            .absoluteString == "https://www.youtube.com/results?search_query=lofi%20hip%20hop")
     }
 
-    func testArrowSelectionSwitchesEngineAndSurvivesFurtherTyping() async throws {
+    @Test func arrowSelectionSwitchesEngineAndSurvivesFurtherTyping() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "swift"
         coordinator.handleTab()
 
         coordinator.moveSelection(by: 1)
-        XCTAssertEqual(coordinator.selectedID, "web-mode:wikipedia")
+        #expect(coordinator.selectedID == "web-mode:wikipedia")
 
         coordinator.query = "swift actors"
-        XCTAssertEqual(
-            coordinator.selectedID,
-            "web-mode:wikipedia",
+        #expect(
+            coordinator.selectedID == "web-mode:wikipedia",
             "typing must not steal the engine the user arrowed to"
         )
     }
 
-    func testTabWhileInWebModeChangesNothing() async throws {
+    @Test func tabWhileInWebModeChangesNothing() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "swift"
         coordinator.handleTab()
@@ -149,14 +134,14 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
 
         coordinator.handleTab()
 
-        XCTAssertEqual(coordinator.mode, before.0)
-        XCTAssertEqual(coordinator.query, before.1)
-        XCTAssertEqual(coordinator.results.map(\.id), before.2)
+        #expect(coordinator.mode == before.0)
+        #expect(coordinator.query == before.1)
+        #expect(coordinator.results.map(\.id) == before.2)
     }
 
     // MARK: - The local passes pause
 
-    func testTypingInWebModeNeverTouchesTheLocalCatalogs() async throws {
+    @Test func typingInWebModeNeverTouchesTheLocalCatalogs() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -168,15 +153,14 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         coordinator.query = "xcode concurrency"
         coordinator.query = "xcode concurrency crash"
 
-        XCTAssertEqual(
-            applications.queries.count,
-            queriesBefore,
+        #expect(
+            applications.queries.count == queriesBefore,
             "the immediate and indexed passes pause while web mode is active"
         )
-        XCTAssertFalse(coordinator.isSearching)
+        #expect(!coordinator.isSearching)
     }
 
-    func testAnInFlightLocalSnapshotCannotOverwriteWebModeRows() async throws {
+    @Test func anInFlightLocalSnapshotCannotOverwriteWebModeRows() async throws {
         let applications = ScriptedCatalog(.init(
             immediate: [SearchFixtures.application(id: "app:immediate", name: "Immediate")],
             indexed: [SearchFixtures.application(id: "app:late", name: "Late")],
@@ -191,11 +175,11 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         coordinator.handleTab()
         try await Task.sleep(for: .milliseconds(250))
 
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.id.hasPrefix("web-mode:") })
-        XCTAssertFalse(coordinator.results.contains { $0.id == "app:late" })
+        #expect(coordinator.results.allSatisfy { $0.id.hasPrefix("web-mode:") })
+        #expect(!coordinator.results.contains { $0.id == "app:late" })
     }
 
-    func testOldLocalStreamTerminationCannotCancelTheRestoredLocalExecution() async throws {
+    @Test func oldLocalStreamTerminationCannotCancelTheRestoredLocalExecution() async throws {
         let applications = ScriptedCatalog()
         applications.setBehavior(
             .init(
@@ -222,40 +206,40 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(250))
 
-        XCTAssertTrue(coordinator.results.contains { $0.id == "app:new" })
-        XCTAssertFalse(coordinator.results.contains { $0.id == "app:old" })
+        #expect(coordinator.results.contains { $0.id == "app:new" })
+        #expect(!coordinator.results.contains { $0.id == "app:old" })
     }
 
     // MARK: - Return semantics
 
-    func testReturnOnAnEmptyWebModeQueryDoesNothing() async throws {
+    @Test func returnOnAnEmptyWebModeQueryDoesNothing() async throws {
         var dismissed = false
         let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
 
         coordinator.handleTab()
-        XCTAssertEqual(coordinator.results.first?.title, "Google")
+        #expect(coordinator.results.first?.title == "Google")
 
         coordinator.openSelection()
 
-        XCTAssertFalse(dismissed, "an empty web-mode query must never fire a search")
+        #expect(!dismissed, "an empty web-mode query must never fire a search")
     }
 
-    func testClickingARowWithAnEmptyQueryAlsoDoesNothing() async throws {
+    @Test func clickingARowWithAnEmptyQueryAlsoDoesNothing() async throws {
         var dismissed = false
         let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
 
         coordinator.handleTab()
-        let row = try XCTUnwrap(coordinator.results.last)
+        let row = try #require(coordinator.results.last)
 
         coordinator.activate(row)
 
-        XCTAssertFalse(dismissed)
-        XCTAssertEqual(coordinator.selectedID, row.id, "the click still selects the row")
+        #expect(!dismissed)
+        #expect(coordinator.selectedID == row.id, "the click still selects the row")
     }
 
     // MARK: - Exiting web mode
 
-    func testEscapeRestoresLocalResultsForTheReconstructedQuery() async throws {
+    @Test func escapeRestoresLocalResultsForTheReconstructedQuery() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -265,52 +249,52 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
 
         coordinator.handleEscape()
 
-        XCTAssertEqual(coordinator.mode, .local)
-        XCTAssertEqual(coordinator.query, "yt lofi")
+        #expect(coordinator.mode == .local)
+        #expect(coordinator.query == "yt lofi")
         try await waitUntil("the reconstructed local results arrive") {
             coordinator.results.contains { $0.id == "keyword-engine:youtube" }
         }
-        XCTAssertTrue(
+        #expect(
             coordinator.results.contains { $0.id == "keyword-engine:youtube" },
             "the reconstructed query addresses the same engine's ranked row"
         )
-        XCTAssertFalse(coordinator.results.contains { $0.id.hasPrefix("web-mode:") })
+        #expect(!coordinator.results.contains { $0.id.hasPrefix("web-mode:") })
     }
 
-    func testEscapeInWebModeDoesNotDismissButASecondEscapeDoes() async throws {
+    @Test func escapeInWebModeDoesNotDismissButASecondEscapeDoes() async throws {
         var dismissed = false
         let coordinator = try await makeCoordinator(onDismiss: { dismissed = true })
         coordinator.query = "swift"
         coordinator.handleTab()
 
         coordinator.handleEscape()
-        XCTAssertFalse(dismissed, "the first Esc only exits the mode")
-        XCTAssertEqual(coordinator.mode, .local)
+        #expect(!dismissed, "the first Esc only exits the mode")
+        #expect(coordinator.mode == .local)
 
         coordinator.handleEscape()
-        XCTAssertTrue(dismissed, "the second Esc dismisses the panel as today")
+        #expect(dismissed, "the second Esc dismisses the panel as today")
     }
 
-    func testShiftTabAndBackspaceOnEmptyQueryExitTheMode() async throws {
+    @Test func shiftTabAndBackspaceOnEmptyQueryExitTheMode() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "yt lofi"
         coordinator.handleTab()
         coordinator.handleShiftTab()
-        XCTAssertEqual(coordinator.mode, .local)
-        XCTAssertEqual(coordinator.query, "yt lofi")
+        #expect(coordinator.mode == .local)
+        #expect(coordinator.query == "yt lofi")
 
         coordinator.query = "yt"
         coordinator.handleTab()
-        XCTAssertEqual(coordinator.query, "")
+        #expect(coordinator.query.isEmpty)
         coordinator.handleBackspaceOnEmptyQuery()
-        XCTAssertEqual(coordinator.mode, .local)
-        XCTAssertEqual(coordinator.query, "yt", "the bare keyword round-trips back into the field")
+        #expect(coordinator.mode == .local)
+        #expect(coordinator.query == "yt", "the bare keyword round-trips back into the field")
     }
 
     // MARK: - Filter chips
 
-    func testNonDefaultFilterIsSuppressedInWebModeAndRestoredOnExit() async throws {
+    @Test func nonDefaultFilterIsSuppressedInWebModeAndRestoredOnExit() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -320,11 +304,11 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
             coordinator.results.contains { $0.kind == .application }
         }
         coordinator.selectFilter(.applications)
-        XCTAssertEqual(coordinator.selectedFilter, .applications)
+        #expect(coordinator.selectedFilter == .applications)
 
         coordinator.handleTab()
         coordinator.query = "xcode editor"
-        XCTAssertTrue(
+        #expect(
             coordinator.filterOptions.isEmpty,
             "local-only controls must not suggest they filter web engines"
         )
@@ -333,64 +317,62 @@ final class SearchCoordinatorWebModeTests: XCTestCase {
         try await waitUntil("filtered local results return") {
             !coordinator.results.isEmpty && !coordinator.isSearching
         }
-        XCTAssertEqual(coordinator.selectedFilter, .applications)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .application })
+        #expect(coordinator.selectedFilter == .applications)
+        #expect(coordinator.results.allSatisfy { $0.kind == .application })
     }
 
     // MARK: - Reset
 
-    func testResetReturnsTheModeToLocalAlongsideTheQuery() async throws {
+    @Test func resetReturnsTheModeToLocalAlongsideTheQuery() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "yt lofi"
         coordinator.handleTab()
 
         coordinator.reset()
 
-        XCTAssertEqual(coordinator.mode, .local)
-        XCTAssertEqual(coordinator.query, "")
-        XCTAssertTrue(coordinator.results.isEmpty)
+        #expect(coordinator.mode == .local)
+        #expect(coordinator.query.isEmpty)
+        #expect(coordinator.results.isEmpty)
     }
 
     // MARK: - The keyword row's Tab affordance
 
-    func testTheKeywordRowAdvertisesTabCompletionForURLEngines() async throws {
+    @Test func theKeywordRowAdvertisesTabCompletionForURLEngines() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "yt lofi"
 
         try await waitUntil("the addressed-search row arrives") {
             coordinator.results.contains { $0.id == "keyword-engine:youtube" }
         }
-        let row = try XCTUnwrap(coordinator.results.first { $0.id == "keyword-engine:youtube" })
-        XCTAssertEqual(coordinator.tabCompletionHint(for: row), "Search YouTube")
+        let row = try #require(coordinator.results.first { $0.id == "keyword-engine:youtube" })
+        #expect(coordinator.tabCompletionHint(for: row) == "Search YouTube")
 
-        let other = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
-        XCTAssertNil(coordinator.tabCompletionHint(for: other))
+        let other = try #require(coordinator.results.first { $0.id == "web-search" })
+        #expect(coordinator.tabCompletionHint(for: other) == nil)
     }
 
-    func testNoTabAffordanceWithoutAKeywordMatch() async throws {
+    @Test func noTabAffordanceWithoutAKeywordMatch() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "budget report"
 
         for row in coordinator.results {
-            XCTAssertNil(coordinator.tabCompletionHint(for: row), row.id)
+            #expect(coordinator.tabCompletionHint(for: row) == nil, "\(row.id)")
         }
     }
 
     // MARK: - The fallback row sources the table
 
-    func testTheFallbackRowDerivesTitleAndURLFromTheDefaultEngine() async throws {
+    @Test func theFallbackRowDerivesTitleAndURLFromTheDefaultEngine() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "quaternion slerp"
 
         try await waitUntil("the web fallback arrives") {
             coordinator.results.contains { $0.id == "web-search" }
         }
-        let fallback = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
-        XCTAssertEqual(fallback.title, "Google")
-        XCTAssertEqual(fallback.subtitle, "google.com")
-        XCTAssertEqual(
-            openedURL(of: fallback)?.absoluteString,
-            "https://www.google.com/search?q=quaternion%20slerp"
-        )
+        let fallback = try #require(coordinator.results.first { $0.id == "web-search" })
+        #expect(fallback.title == "Google")
+        #expect(fallback.subtitle == "google.com")
+        #expect(openedURL(of: fallback)?
+            .absoluteString == "https://www.google.com/search?q=quaternion%20slerp")
     }
 }

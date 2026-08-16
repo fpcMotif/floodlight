@@ -1,5 +1,5 @@
 import AppKit
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// The search field's command-selector routing as a pure map — the same
@@ -7,7 +7,7 @@ import XCTest
 /// delegate consumes is exactly what maps to a command; anything unmapped
 /// falls through to the field editor untouched.
 @MainActor
-final class SearchFieldKeymapTests: XCTestCase {
+struct SearchFieldKeymapTests {
     private func command(
         _ selector: Selector,
         commandKeyIsDown: Bool = false,
@@ -20,60 +20,47 @@ final class SearchFieldKeymapTests: XCTestCase {
         )
     }
 
-    func testReturnMapsToSubmitAndCommandReturnToCommandSubmit() {
-        XCTAssertEqual(command(#selector(NSResponder.insertNewline(_:))), .submit)
-        XCTAssertEqual(
-            command(#selector(NSResponder.insertNewline(_:)), commandKeyIsDown: true),
-            .commandSubmit
-        )
-        XCTAssertEqual(
-            command(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))),
-            .submit
-        )
+    @Test func returnMapsToSubmitAndCommandReturnToCommandSubmit() {
+        #expect(command(#selector(NSResponder.insertNewline(_:))) == .submit)
+        #expect(command(#selector(NSResponder.insertNewline(_:)), commandKeyIsDown: true) ==
+            .commandSubmit)
+        #expect(command(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))) == .submit)
     }
 
-    func testEscapeMapsToCancel() {
-        XCTAssertEqual(command(#selector(NSResponder.cancelOperation(_:))), .cancel)
+    @Test func escapeMapsToCancel() {
+        #expect(command(#selector(NSResponder.cancelOperation(_:))) == .cancel)
     }
 
-    func testTabAlwaysMapsToTabSoFocusNeverTraverses() {
+    @Test func tabAlwaysMapsToTabSoFocusNeverTraverses() {
         // Consumed with or without text — insert-tab must never reach the
         // field editor's default focus traversal.
-        XCTAssertEqual(command(#selector(NSResponder.insertTab(_:))), .tab)
-        XCTAssertEqual(
-            command(#selector(NSResponder.insertTab(_:)), textIsEmpty: true),
-            .tab
-        )
+        #expect(command(#selector(NSResponder.insertTab(_:))) == .tab)
+        #expect(command(#selector(NSResponder.insertTab(_:)), textIsEmpty: true) == .tab)
     }
 
-    func testShiftTabMapsToShiftTab() {
-        XCTAssertEqual(command(#selector(NSResponder.insertBacktab(_:))), .shiftTab)
-        XCTAssertEqual(
-            command(#selector(NSResponder.insertBacktab(_:)), textIsEmpty: true),
-            .shiftTab
-        )
+    @Test func shiftTabMapsToShiftTab() {
+        #expect(command(#selector(NSResponder.insertBacktab(_:))) == .shiftTab)
+        #expect(command(#selector(NSResponder.insertBacktab(_:)), textIsEmpty: true) == .shiftTab)
     }
 
-    func testBackspaceIsOnlyClaimedWhenTheFieldIsEmpty() {
-        XCTAssertEqual(
-            command(#selector(NSResponder.deleteBackward(_:)), textIsEmpty: true),
-            .backspaceOnEmptyText
-        )
-        XCTAssertNil(
-            command(#selector(NSResponder.deleteBackward(_:)), textIsEmpty: false),
+    @Test func backspaceIsOnlyClaimedWhenTheFieldIsEmpty() {
+        #expect(command(#selector(NSResponder.deleteBackward(_:)), textIsEmpty: true) ==
+            .backspaceOnEmptyText)
+        #expect(
+            command(#selector(NSResponder.deleteBackward(_:)), textIsEmpty: false) == nil,
             "backspace with text present is ordinary editing, never a mode event"
         )
     }
 
-    func testUnrelatedSelectorsFallThroughToTheFieldEditor() {
+    @Test func unrelatedSelectorsFallThroughToTheFieldEditor() {
         for selector in [
             #selector(NSResponder.moveDown(_:)),
             #selector(NSResponder.moveUp(_:)),
             #selector(NSResponder.deleteForward(_:)),
             #selector(NSResponder.insertText(_:)),
         ] {
-            XCTAssertNil(command(selector), String(describing: selector))
-            XCTAssertNil(command(selector, textIsEmpty: true), String(describing: selector))
+            #expect(command(selector) == nil, "\(String(describing: selector))")
+            #expect(command(selector, textIsEmpty: true) == nil, "\(String(describing: selector))")
         }
     }
 }

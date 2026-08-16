@@ -428,7 +428,7 @@ final class SearchCoordinator {
             ),
             filterContinuity: .preserve
         )
-        searchTask = Task { [weak self] in
+        searchTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { return }
             let snapshots = await sourceSearch.search(requestQuery, immediate: immediate)

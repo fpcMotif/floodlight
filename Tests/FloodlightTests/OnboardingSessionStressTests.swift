@@ -1,13 +1,13 @@
 import AppKit
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class OnboardingSessionStressTests: XCTestCase {
+struct OnboardingSessionStressTests {
     // MARK: - session initialization
 
-    func testSessionInitializationSetsProperties() throws {
+    @Test func sessionInitializationSetsProperties() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -19,15 +19,15 @@ final class OnboardingSessionStressTests: XCTestCase {
             fullDiskAccessProvider: { true }
         )
 
-        XCTAssertEqual(session.activeShortcut, .optionSpace)
-        XCTAssertTrue(session.launchesAtLogin)
-        XCTAssertEqual(session.rootURL, URL(fileURLWithPath: "/Users/example", isDirectory: true))
-        XCTAssertTrue(session.hasFullDiskAccess)
+        #expect(session.activeShortcut == .optionSpace)
+        #expect(session.launchesAtLogin)
+        #expect(session.rootURL == URL(fileURLWithPath: "/Users/example", isDirectory: true))
+        #expect(session.hasFullDiskAccess)
     }
 
     // MARK: - fullDiskAccess
 
-    func testFullDiskAccessTrueWhenProviderReturnsTrue() throws {
+    @Test func fullDiskAccessTrueWhenProviderReturnsTrue() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -38,10 +38,10 @@ final class OnboardingSessionStressTests: XCTestCase {
             defaults: defaults,
             fullDiskAccessProvider: { true }
         )
-        XCTAssertTrue(session.hasFullDiskAccess)
+        #expect(session.hasFullDiskAccess)
     }
 
-    func testFullDiskAccessFalseWhenProviderReturnsFalse() throws {
+    @Test func fullDiskAccessFalseWhenProviderReturnsFalse() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -52,12 +52,12 @@ final class OnboardingSessionStressTests: XCTestCase {
             defaults: defaults,
             fullDiskAccessProvider: { false }
         )
-        XCTAssertFalse(session.hasFullDiskAccess)
+        #expect(!session.hasFullDiskAccess)
     }
 
     // MARK: - offersSpotlightReplacement
 
-    func testOffersSpotlightReplacementForOptionSpace() throws {
+    @Test func offersSpotlightReplacementForOptionSpace() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -67,10 +67,10 @@ final class OnboardingSessionStressTests: XCTestCase {
             rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
             defaults: defaults
         )
-        XCTAssertTrue(session.offersSpotlightReplacement)
+        #expect(session.offersSpotlightReplacement)
     }
 
-    func testDoesNotOfferSpotlightReplacementForCommandSpace() throws {
+    @Test func doesNotOfferSpotlightReplacementForCommandSpace() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -80,10 +80,10 @@ final class OnboardingSessionStressTests: XCTestCase {
             rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
             defaults: defaults
         )
-        XCTAssertFalse(session.offersSpotlightReplacement)
+        #expect(!session.offersSpotlightReplacement)
     }
 
-    func testOffersSpotlightReplacementChangesWhenShortcutChanges() throws {
+    @Test func offersSpotlightReplacementChangesWhenShortcutChanges() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -93,18 +93,18 @@ final class OnboardingSessionStressTests: XCTestCase {
             rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
             defaults: defaults
         )
-        XCTAssertFalse(session.offersSpotlightReplacement)
+        #expect(!session.offersSpotlightReplacement)
 
         session.activeShortcut = .optionSpace
-        XCTAssertTrue(session.offersSpotlightReplacement)
+        #expect(session.offersSpotlightReplacement)
 
         session.activeShortcut = .commandSpace
-        XCTAssertFalse(session.offersSpotlightReplacement)
+        #expect(!session.offersSpotlightReplacement)
     }
 
     // MARK: - refreshFullDiskAccess
 
-    func testRefreshFullDiskAccessUpdatesState() throws {
+    @Test func refreshFullDiskAccessUpdatesState() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -116,20 +116,20 @@ final class OnboardingSessionStressTests: XCTestCase {
             defaults: defaults,
             fullDiskAccessProvider: { providerValue }
         )
-        XCTAssertFalse(session.hasFullDiskAccess)
+        #expect(!session.hasFullDiskAccess)
 
         providerValue = true
         session.refreshFullDiskAccess()
-        XCTAssertTrue(session.hasFullDiskAccess)
+        #expect(session.hasFullDiskAccess)
 
         providerValue = false
         session.refreshFullDiskAccess()
-        XCTAssertFalse(session.hasFullDiskAccess)
+        #expect(!session.hasFullDiskAccess)
     }
 
     // MARK: - complete
 
-    func testCompleteSetsVersion() throws {
+    @Test func completeSetsVersion() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -141,13 +141,11 @@ final class OnboardingSessionStressTests: XCTestCase {
         )
         session.complete()
 
-        XCTAssertEqual(
-            defaults.integer(forKey: OnboardingSession.completedVersionKey),
-            OnboardingSession.currentVersion
-        )
+        #expect(defaults.integer(forKey: OnboardingSession.completedVersionKey) == OnboardingSession
+            .currentVersion)
     }
 
-    func testCompleteIsIdempotent() throws {
+    @Test func completeIsIdempotent() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -163,20 +161,20 @@ final class OnboardingSessionStressTests: XCTestCase {
         session.complete()
         let secondVersion = defaults.integer(forKey: OnboardingSession.completedVersionKey)
 
-        XCTAssertEqual(firstVersion, secondVersion)
-        XCTAssertEqual(firstVersion, OnboardingSession.currentVersion)
+        #expect(firstVersion == secondVersion)
+        #expect(firstVersion == OnboardingSession.currentVersion)
     }
 
     // MARK: - shouldPresent
 
-    func testShouldPresentTrueForFreshDefaults() throws {
+    @Test func shouldPresentTrueForFreshDefaults() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertTrue(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
+        #expect(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
     }
 
-    func testShouldPresentFalseAfterComplete() throws {
+    @Test func shouldPresentFalseAfterComplete() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -185,10 +183,10 @@ final class OnboardingSessionStressTests: XCTestCase {
             forKey: OnboardingSession.completedVersionKey
         )
 
-        XCTAssertFalse(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
+        #expect(!(OnboardingSession.shouldPresent(defaults: defaults, environment: [:])))
     }
 
-    func testShouldPresentTrueForOlderVersion() throws {
+    @Test func shouldPresentTrueForOlderVersion() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -197,10 +195,10 @@ final class OnboardingSessionStressTests: XCTestCase {
             forKey: OnboardingSession.completedVersionKey
         )
 
-        XCTAssertTrue(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
+        #expect(OnboardingSession.shouldPresent(defaults: defaults, environment: [:]))
     }
 
-    func testShouldPresentTrueWhenForceOnboarding() throws {
+    @Test func shouldPresentTrueWhenForceOnboarding() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -209,15 +207,13 @@ final class OnboardingSessionStressTests: XCTestCase {
             forKey: OnboardingSession.completedVersionKey
         )
 
-        XCTAssertTrue(
-            OnboardingSession.shouldPresent(
-                defaults: defaults,
-                environment: ["FLOODLIGHT_FORCE_ONBOARDING": "1"]
-            )
-        )
+        #expect(OnboardingSession.shouldPresent(
+            defaults: defaults,
+            environment: ["FLOODLIGHT_FORCE_ONBOARDING": "1"]
+        ))
     }
 
-    func testShouldPresentFalseWhenForceNotOne() throws {
+    @Test func shouldPresentFalseWhenForceNotOne() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -226,70 +222,58 @@ final class OnboardingSessionStressTests: XCTestCase {
             forKey: OnboardingSession.completedVersionKey
         )
 
-        XCTAssertFalse(
-            OnboardingSession.shouldPresent(
-                defaults: defaults,
-                environment: ["FLOODLIGHT_FORCE_ONBOARDING": "0"]
-            )
-        )
-        XCTAssertFalse(
-            OnboardingSession.shouldPresent(
-                defaults: defaults,
-                environment: ["FLOODLIGHT_FORCE_ONBOARDING": "yes"]
-            )
-        )
+        #expect(!(OnboardingSession.shouldPresent(
+            defaults: defaults,
+            environment: ["FLOODLIGHT_FORCE_ONBOARDING": "0"]
+        )))
+        #expect(!(OnboardingSession.shouldPresent(
+            defaults: defaults,
+            environment: ["FLOODLIGHT_FORCE_ONBOARDING": "yes"]
+        )))
     }
 
     // MARK: - FloodlightFullDiskAccess
 
-    func testFullDiskAccessGrantedForReadableFile() throws {
+    @Test func fullDiskAccessGrantedForReadableFile() throws {
         let probe = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloodlightFDA-\(UUID().uuidString)")
         try Data("probe".utf8).write(to: probe)
         defer { try? FileManager.default.removeItem(at: probe) }
 
-        XCTAssertTrue(FloodlightFullDiskAccess.isGranted(probeURL: probe))
+        #expect(FloodlightFullDiskAccess.isGranted(probeURL: probe))
     }
 
-    func testFullDiskAccessDeniedForNonexistentFile() {
+    @Test func fullDiskAccessDeniedForNonexistentFile() {
         let probe = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloodlightFDA-missing-\(UUID().uuidString)")
-        XCTAssertFalse(FloodlightFullDiskAccess.isGranted(probeURL: probe))
+        #expect(!FloodlightFullDiskAccess.isGranted(probeURL: probe))
     }
 
     // MARK: - FloodlightConfigurationPresentation
 
-    func testOnboardingPresentationTitlesAndSubtitles() {
-        XCTAssertEqual(FloodlightConfigurationPresentation.onboarding.title, "Set up Floodlight")
-        XCTAssertEqual(
-            FloodlightConfigurationPresentation.onboarding.subtitle,
-            "Choose a shortcut and give Floodlight search access."
-        )
+    @Test func onboardingPresentationTitlesAndSubtitles() {
+        #expect(FloodlightConfigurationPresentation.onboarding.title == "Set up Floodlight")
+        #expect(FloodlightConfigurationPresentation.onboarding
+            .subtitle == "Choose a shortcut and give Floodlight search access.")
     }
 
-    func testSettingsPresentationTitlesAndSubtitles() {
-        XCTAssertEqual(FloodlightConfigurationPresentation.settings.title, "Settings")
-        XCTAssertEqual(
-            FloodlightConfigurationPresentation.settings.subtitle,
-            "Manage your shortcut, startup behavior, and search access."
-        )
+    @Test func settingsPresentationTitlesAndSubtitles() {
+        #expect(FloodlightConfigurationPresentation.settings.title == "Settings")
+        #expect(FloodlightConfigurationPresentation.settings
+            .subtitle == "Manage your shortcut, startup behavior, and search access.")
     }
 
-    func testOnboardingAndSettingsTitlesDiffer() {
-        XCTAssertNotEqual(
-            FloodlightConfigurationPresentation.onboarding.title,
-            FloodlightConfigurationPresentation.settings.title
-        )
-        XCTAssertNotEqual(
-            FloodlightConfigurationPresentation.onboarding.subtitle,
-            FloodlightConfigurationPresentation.settings.subtitle
-        )
+    @Test func onboardingAndSettingsTitlesDiffer() {
+        #expect(FloodlightConfigurationPresentation.onboarding
+            .title != FloodlightConfigurationPresentation.settings.title)
+        #expect(FloodlightConfigurationPresentation.onboarding
+            .subtitle != FloodlightConfigurationPresentation.settings.subtitle)
     }
 
     // MARK: - Helpers
 
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suiteName = "OnboardingSessionStressTests-\(UUID().uuidString)"
-        return try (XCTUnwrap(UserDefaults(suiteName: suiteName)), suiteName)
+        return try (#require(UserDefaults(suiteName: suiteName)), suiteName)
     }
 }

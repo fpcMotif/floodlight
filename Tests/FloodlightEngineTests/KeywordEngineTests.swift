@@ -1,28 +1,29 @@
-import XCTest
+import Foundation
+import Testing
 @testable import FloodlightEngine
 
-final class KeywordEngineTests: XCTestCase {
+struct KeywordEngineTests {
     private let catalogRegistry = KeywordEngineRegistry(
         engines: KeywordEngineCatalog.all,
         defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
     )
 
-    func testRegistryBuildsTheAddressedResultWithoutExposingLookupStorage() throws {
+    @Test func registryBuildsTheAddressedResultWithoutExposingLookupStorage() throws {
         let registry = KeywordEngineRegistry(
             engines: KeywordEngineCatalog.all,
             defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
         )
 
-        let shortAlias = try XCTUnwrap(registry.addressedResult(for: "YT lofi hip hop"))
-        let bangAlias = try XCTUnwrap(registry.addressedResult(for: "!yt lofi hip hop"))
+        let shortAlias = try #require(registry.addressedResult(for: "YT lofi hip hop"))
+        let bangAlias = try #require(registry.addressedResult(for: "!yt lofi hip hop"))
 
-        XCTAssertEqual(shortAlias.id, "keyword-engine:youtube")
-        XCTAssertEqual(bangAlias, shortAlias)
-        XCTAssertNil(registry.addressedResult(for: "yt"))
-        XCTAssertNil(registry.addressedResult(for: "lofi yt"))
+        #expect(shortAlias.id == "keyword-engine:youtube")
+        #expect(bangAlias == shortAlias)
+        #expect(registry.addressedResult(for: "yt") == nil)
+        #expect(registry.addressedResult(for: "lofi yt") == nil)
     }
 
-    func testRegistryKeepsTheFirstDestinationForACollidingKeyword() throws {
+    @Test func registryKeepsTheFirstDestinationForACollidingKeyword() throws {
         let first = KeywordEngine(
             id: "first",
             title: "First",
@@ -46,11 +47,11 @@ final class KeywordEngineTests: XCTestCase {
             defaultWebEngineID: first.id
         )
 
-        let result = try XCTUnwrap(registry.addressedResult(for: "DUP value"))
-        XCTAssertEqual(result.id, "keyword-engine:first")
+        let result = try #require(registry.addressedResult(for: "DUP value"))
+        #expect(result.id == "keyword-engine:first")
     }
 
-    func testWebModeCollisionResolutionConsidersOnlyWebDestinations() throws {
+    @Test func webModeCollisionResolutionConsidersOnlyWebDestinations() throws {
         let assistant = KeywordEngine(
             id: "assistant",
             title: "Ask Assistant",
@@ -74,29 +75,29 @@ final class KeywordEngineTests: XCTestCase {
             defaultWebEngineID: web.id
         )
 
-        XCTAssertEqual(registry.addressedResult(for: "go query")?.id, "keyword-engine:assistant")
-        XCTAssertEqual(try XCTUnwrap(registry.webModeAddress(for: "go query")).engineID, "web")
+        #expect(registry.addressedResult(for: "go query")?.id == "keyword-engine:assistant")
+        #expect(try #require(registry.webModeAddress(for: "go query")).engineID == "web")
     }
 
-    func testRegistryResolvesWebModeEntryButNeverCompletesAnAssistantKeyword() throws {
+    @Test func registryResolvesWebModeEntryButNeverCompletesAnAssistantKeyword() throws {
         let registry = KeywordEngineRegistry(
             engines: KeywordEngineCatalog.all,
             defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
         )
 
-        let addressed = try XCTUnwrap(registry.webModeAddress(for: "YouTube  lofi "))
-        XCTAssertEqual(addressed.engineID, "youtube")
-        XCTAssertEqual(addressed.typedKeyword, "YouTube")
-        XCTAssertEqual(addressed.remainder, "lofi")
+        let addressed = try #require(registry.webModeAddress(for: "YouTube  lofi "))
+        #expect(addressed.engineID == "youtube")
+        #expect(addressed.typedKeyword == "YouTube")
+        #expect(addressed.remainder == "lofi")
 
-        let bare = try XCTUnwrap(registry.webModeAddress(for: "!yt"))
-        XCTAssertEqual(bare.engineID, "youtube")
-        XCTAssertEqual(bare.remainder, "")
+        let bare = try #require(registry.webModeAddress(for: "!yt"))
+        #expect(bare.engineID == "youtube")
+        #expect(bare.remainder.isEmpty)
 
-        XCTAssertNil(registry.webModeAddress(for: "claude explain this"))
+        #expect(registry.webModeAddress(for: "claude explain this") == nil)
     }
 
-    func testRegistryBuildsTheConfiguredDefaultWebResult() throws {
+    @Test func registryBuildsTheConfiguredDefaultWebResult() throws {
         let example = KeywordEngine(
             id: "example",
             title: "Search Example",
@@ -108,18 +109,14 @@ final class KeywordEngineTests: XCTestCase {
         )
         let registry = KeywordEngineRegistry(engines: [example], defaultWebEngineID: example.id)
 
-        let result = try XCTUnwrap(
-            registry.defaultWebResult(for: "swift concurrency")
-        )
-        XCTAssertEqual(result.id, "web-search")
-        XCTAssertEqual(
-            result.action,
-            try SearchItemAction
-                .open(XCTUnwrap(URL(string: "https://example.com/?q=swift%20concurrency")))
-        )
+        let result = try #require(registry.defaultWebResult(for: "swift concurrency"))
+        #expect(result.id == "web-search")
+        #expect(try result.action == .open(
+            #require(URL(string: "https://example.com/?q=swift%20concurrency"))
+        ))
     }
 
-    func testRegistryBuildsActiveFirstWebModeRowsInCatalogueOrder() {
+    @Test func registryBuildsActiveFirstWebModeRowsInCatalogueOrder() {
         let registry = KeywordEngineRegistry(
             engines: KeywordEngineCatalog.all,
             defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
@@ -127,10 +124,10 @@ final class KeywordEngineTests: XCTestCase {
 
         let rows = registry.webModeResults(for: "swift", activeEngineID: "youtube")
 
-        XCTAssertEqual(rows.first?.id, "web-mode:youtube")
-        XCTAssertEqual(rows.count, 6)
-        XCTAssertFalse(rows.contains { $0.kind == .assistant })
-        XCTAssertEqual(rows.dropFirst().map(\.id), [
+        #expect(rows.first?.id == "web-mode:youtube")
+        #expect(rows.count == 6)
+        #expect(!(rows.contains { $0.kind == .assistant }))
+        #expect(rows.dropFirst().map(\.id) == [
             "web-mode:google",
             "web-mode:wikipedia",
             "web-mode:github",
@@ -139,40 +136,38 @@ final class KeywordEngineTests: XCTestCase {
         ])
     }
 
-    func testRegistryAnswersModeAndTabPresentationQuestions() throws {
+    @Test func registryAnswersModeAndTabPresentationQuestions() throws {
         let registry = KeywordEngineRegistry(
             engines: KeywordEngineCatalog.all,
             defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
         )
-        let addressedResult = try XCTUnwrap(registry.addressedResult(for: "yt lofi"))
+        let addressedResult = try #require(registry.addressedResult(for: "yt lofi"))
 
-        XCTAssertEqual(registry.defaultWebEngineID, "google")
-        XCTAssertEqual(registry.webEngine(id: "youtube")?.title, "Search YouTube")
-        XCTAssertNil(registry.webEngine(id: "claude"))
-        XCTAssertEqual(registry.canonicalKeyword(for: "youtube"), "yt")
-        XCTAssertEqual(
-            registry.tabCompletionTitle(for: "yt lofi", resultID: addressedResult.id),
-            "Search YouTube"
-        )
-        XCTAssertNil(registry.tabCompletionTitle(
+        #expect(registry.defaultWebEngineID == "google")
+        #expect(registry.webEngine(id: "youtube")?.title == "Search YouTube")
+        #expect(registry.webEngine(id: "claude") == nil)
+        #expect(registry.canonicalKeyword(for: "youtube") == "yt")
+        #expect(registry
+            .tabCompletionTitle(for: "yt lofi", resultID: addressedResult.id) == "Search YouTube")
+        #expect(registry.tabCompletionTitle(
             for: "claude explain",
             resultID: "keyword-engine:claude"
-        ))
-        XCTAssertNil(registry.tabCompletionTitle(for: "yt lofi", resultID: "some-other-row"))
+        ) == nil)
+        #expect(registry.tabCompletionTitle(for: "yt lofi", resultID: "some-other-row") == nil)
     }
 
-    func testCatalogPublishesOnlyUsableDestinationsInResolvedRegistry() async {
+    @Test func catalogPublishesOnlyUsableDestinationsInResolvedRegistry() async {
         let initial = KeywordEngineCatalog.initialRegistry
-        XCTAssertNil(initial.addressedResult(for: "claude explain this"))
-        XCTAssertNotNil(initial.addressedResult(for: "yt lofi"))
+        #expect(initial.addressedResult(for: "claude explain this") == nil)
+        #expect(initial.addressedResult(for: "yt lofi") != nil)
 
         let runner = StubAssistantProcessRunner(availableCommands: ["claude"])
         let resolved = await KeywordEngineCatalog.availableRegistry(runner: runner)
-        XCTAssertNotNil(resolved.addressedResult(for: "claude explain this"))
-        XCTAssertNil(resolved.addressedResult(for: "codex explain this"))
+        #expect(resolved.addressedResult(for: "claude explain this") != nil)
+        #expect(resolved.addressedResult(for: "codex explain this") == nil)
     }
 
-    func testEveryShippingEngineDerivesItsHostFromItsURLTemplate() {
+    @Test func everyShippingEngineDerivesItsHostFromItsURLTemplate() {
         let expected: [String: String] = [
             "google": "google.com",
             "youtube": "youtube.com",
@@ -184,41 +179,36 @@ final class KeywordEngineTests: XCTestCase {
         for engine in KeywordEngineCatalog.all {
             switch engine.destination {
             case .webSearch:
-                XCTAssertEqual(engine.host, expected[engine.id], engine.id)
+                #expect(engine.host == expected[engine.id], "\(engine.id)")
             case .assistant:
-                XCTAssertNil(engine.host, "\(engine.id): an assistant has no host to name")
+                #expect(engine.host == nil, "\(engine.id): an assistant has no host to name")
             }
         }
     }
 
-    func testWebRowsNameTheDestinationAndCarryItsIconAndHost() throws {
-        let addressed = try XCTUnwrap(catalogRegistry.addressedResult(for: "yt lofi"))
-        XCTAssertEqual(addressed.title, "YouTube")
-        XCTAssertEqual(addressed.subtitle, "youtube.com")
-        XCTAssertEqual(
-            addressed.iconSource,
-            .engine(symbol: "play.rectangle.fill", tint: .red)
-        )
+    @Test func webRowsNameTheDestinationAndCarryItsIconAndHost() throws {
+        let addressed = try #require(catalogRegistry.addressedResult(for: "yt lofi"))
+        #expect(addressed.title == "YouTube")
+        #expect(addressed.subtitle == "youtube.com")
+        #expect(addressed.iconSource == .engine(symbol: "play.rectangle.fill", tint: .red))
 
-        let fallback = try XCTUnwrap(
-            catalogRegistry.defaultWebResult(for: "lofi")
-        )
-        XCTAssertEqual(fallback.title, "Google")
-        XCTAssertEqual(fallback.subtitle, "google.com")
-        XCTAssertEqual(
-            fallback.iconSource,
-            SearchItemIconSource.engine(symbol: "g.circle.fill", tint: .blue)
-        )
+        let fallback = try #require(catalogRegistry.defaultWebResult(for: "lofi"))
+        #expect(fallback.title == "Google")
+        #expect(fallback.subtitle == "google.com")
+        #expect(fallback.iconSource == SearchItemIconSource.engine(
+            symbol: "g.circle.fill",
+            tint: .blue
+        ))
 
         let modeRows = catalogRegistry.webModeResults(for: "lofi", activeEngineID: "google")
-        XCTAssertEqual(modeRows.map(\.title), [
+        #expect(modeRows.map(\.title) == [
             "Google", "Wikipedia", "GitHub", "Stack Overflow", "Twitter/X", "YouTube",
         ])
-        XCTAssertEqual(modeRows.map(\.subtitle), [
+        #expect(modeRows.map(\.subtitle) == [
             "google.com", "en.wikipedia.org", "github.com", "stackoverflow.com", "x.com",
             "youtube.com",
         ])
-        XCTAssertTrue(modeRows.allSatisfy {
+        #expect(modeRows.allSatisfy {
             if case .engine = $0.iconSource { true } else { false }
         })
     }
@@ -227,150 +217,148 @@ final class KeywordEngineTests: XCTestCase {
         catalogRegistry.addressedResult(for: query).map { [$0] } ?? []
     }
 
-    func testKeywordMustBeTheFirstWord() {
-        XCTAssertNotNil(catalogRegistry.addressedResult(for: "yt lofi"))
-        XCTAssertNil(catalogRegistry.addressedResult(for: "lofi yt"))
+    @Test func keywordMustBeTheFirstWord() {
+        #expect(catalogRegistry.addressedResult(for: "yt lofi") != nil)
+        #expect(catalogRegistry.addressedResult(for: "lofi yt") == nil)
     }
 
-    func testKeywordMatchingIsCaseInsensitive() {
-        XCTAssertNotNil(catalogRegistry.addressedResult(for: "YT lofi"))
-        XCTAssertNotNil(catalogRegistry.addressedResult(for: "Yt Lofi"))
+    @Test func keywordMatchingIsCaseInsensitive() {
+        #expect(catalogRegistry.addressedResult(for: "YT lofi") != nil)
+        #expect(catalogRegistry.addressedResult(for: "Yt Lofi") != nil)
     }
 
-    func testBangAliasesMatchTheSameEngineAsTheWordKeyword() throws {
-        let word = try XCTUnwrap(catalogRegistry.addressedResult(for: "yt lofi"))
-        let bang = try XCTUnwrap(catalogRegistry.addressedResult(for: "!yt lofi"))
-        XCTAssertEqual(word.id, bang.id)
+    @Test func bangAliasesMatchTheSameEngineAsTheWordKeyword() throws {
+        let word = try #require(catalogRegistry.addressedResult(for: "yt lofi"))
+        let bang = try #require(catalogRegistry.addressedResult(for: "!yt lofi"))
+        #expect(word.id == bang.id)
     }
 
-    func testFullWordAliasMatchesTheSameEngineAsTheShortKeyword() throws {
-        let short = try XCTUnwrap(catalogRegistry.addressedResult(for: "x election"))
-        let long = try XCTUnwrap(catalogRegistry.addressedResult(for: "twitter election"))
-        XCTAssertEqual(short.id, long.id)
+    @Test func fullWordAliasMatchesTheSameEngineAsTheShortKeyword() throws {
+        let short = try #require(catalogRegistry.addressedResult(for: "x election"))
+        let long = try #require(catalogRegistry.addressedResult(for: "twitter election"))
+        #expect(short.id == long.id)
     }
 
-    func testKeywordIsAWholeWordNotAPrefix() {
-        XCTAssertNil(catalogRegistry.addressedResult(for: "ytlofi lofi"))
+    @Test func keywordIsAWholeWordNotAPrefix() {
+        #expect(catalogRegistry.addressedResult(for: "ytlofi lofi") == nil)
     }
 
-    func testBareKeywordWithNoRemainderDoesNotMatch() {
-        XCTAssertNil(catalogRegistry.addressedResult(for: "yt"))
-        XCTAssertNil(catalogRegistry.addressedResult(for: "yt   "))
+    @Test func bareKeywordWithNoRemainderDoesNotMatch() {
+        #expect(catalogRegistry.addressedResult(for: "yt") == nil)
+        #expect(catalogRegistry.addressedResult(for: "yt   ") == nil)
     }
 
-    func testUnknownKeywordDoesNotMatch() {
-        XCTAssertNil(catalogRegistry.addressedResult(for: "zz lofi"))
+    @Test func unknownKeywordDoesNotMatch() {
+        #expect(catalogRegistry.addressedResult(for: "zz lofi") == nil)
     }
 
-    func testRemainderIsTrimmedAndPreservesInternalSpacing() throws {
-        let result = try XCTUnwrap(catalogRegistry.addressedResult(for: "yt   lofi hip hop  "))
+    @Test func remainderIsTrimmedAndPreservesInternalSpacing() throws {
+        let result = try #require(catalogRegistry.addressedResult(for: "yt   lofi hip hop  "))
         guard case let .open(url) = result.action else {
-            return XCTFail("expected an .open action")
+            Issue.record("expected an .open action")
+            return
         }
-        XCTAssertEqual(url.query, "search_query=lofi%20hip%20hop")
+        #expect(url.query == "search_query=lofi%20hip%20hop")
     }
 
-    func testSearchBuildsAWebSearchItemForTwitter() throws {
+    @Test func searchBuildsAWebSearchItemForTwitter() throws {
         let items = searchCatalog("x floodlight app")
-        let item = try XCTUnwrap(items.first)
+        let item = try #require(items.first)
 
-        XCTAssertEqual(item.kind, .web)
-        XCTAssertEqual(item.score, SearchItemRanking.keywordEngine)
+        #expect(item.kind == .web)
+        #expect(item.score == SearchItemRanking.keywordEngine)
         guard case let .open(url) = item.action else {
-            return XCTFail("expected an .open action")
+            Issue.record("expected an .open action")
+            return
         }
-        XCTAssertEqual(url.absoluteString, "https://x.com/search?q=floodlight%20app")
+        #expect(url.absoluteString == "https://x.com/search?q=floodlight%20app")
     }
 
-    func testSearchBuildsAWebSearchItemForYouTube() throws {
+    @Test func searchBuildsAWebSearchItemForYouTube() throws {
         let items = searchCatalog("yt lofi hip hop")
-        let item = try XCTUnwrap(items.first)
+        let item = try #require(items.first)
 
         guard case let .open(url) = item.action else {
-            return XCTFail("expected an .open action")
+            Issue.record("expected an .open action")
+            return
         }
-        XCTAssertEqual(
-            url.absoluteString,
-            "https://www.youtube.com/results?search_query=lofi%20hip%20hop"
-        )
+        #expect(url
+            .absoluteString == "https://www.youtube.com/results?search_query=lofi%20hip%20hop")
     }
 
-    func testSearchBuildsAnAssistantSearchItemForClaude() throws {
+    @Test func searchBuildsAnAssistantSearchItemForClaude() throws {
         let items = searchCatalog("claude explain this function")
-        let item = try XCTUnwrap(items.first)
+        let item = try #require(items.first)
 
-        XCTAssertEqual(item.kind, .assistant)
-        XCTAssertEqual(item.score, SearchItemRanking.keywordEngine)
-        XCTAssertEqual(
-            item.action,
-            .askAssistant(command: "claude", arguments: ["-p", "--", "explain this function"])
-        )
+        #expect(item.kind == .assistant)
+        #expect(item.score == SearchItemRanking.keywordEngine)
+        #expect(item.action == .askAssistant(
+            command: "claude",
+            arguments: ["-p", "--", "explain this function"]
+        ))
     }
 
-    func testSearchBuildsAnAssistantSearchItemForCodex() throws {
+    @Test func searchBuildsAnAssistantSearchItemForCodex() throws {
         let items = searchCatalog("codex fix the flaky test")
-        let item = try XCTUnwrap(items.first)
+        let item = try #require(items.first)
 
-        XCTAssertEqual(
-            item.action,
-            .askAssistant(command: "codex", arguments: ["exec", "--", "fix the flaky test"])
-        )
+        #expect(item.action == .askAssistant(
+            command: "codex",
+            arguments: ["exec", "--", "fix the flaky test"]
+        ))
     }
 
-    func testSearchReturnsNothingForAnUnmatchedQuery() {
-        XCTAssertTrue(searchCatalog("budget report").isEmpty)
+    @Test func searchReturnsNothingForAnUnmatchedQuery() {
+        #expect(searchCatalog("budget report").isEmpty)
     }
 
     /// The query text always travels to the CLI as a single, discrete
     /// argument — never folded into a shell string — so quotes and shell
     /// metacharacters in the query can't do anything unexpected.
-    func testQueryTextTravelsAsAPlainArgumentRegardlessOfShellMetacharacters() throws {
+    @Test func queryTextTravelsAsAPlainArgumentRegardlessOfShellMetacharacters() throws {
         let items = searchCatalog("claude `rm -rf ~` && echo pwned")
-        let item = try XCTUnwrap(items.first)
-        XCTAssertEqual(
-            item.action,
-            .askAssistant(
-                command: "claude",
-                arguments: ["-p", "--", "`rm -rf ~` && echo pwned"]
-            )
-        )
+        let item = try #require(items.first)
+        #expect(item.action == .askAssistant(
+            command: "claude",
+            arguments: ["-p", "--", "`rm -rf ~` && echo pwned"]
+        ))
     }
 
-    func testSearchRespectsTheSuppliedEngineList() {
+    @Test func searchRespectsTheSuppliedEngineList() {
         let registry = KeywordEngineRegistry(
             engines: [KeywordEngineCatalog.defaultEngine],
             defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
         )
-        XCTAssertNil(registry.addressedResult(for: "yt lofi"))
+        #expect(registry.addressedResult(for: "yt lofi") == nil)
     }
 
-    func testAvailableEnginesAlwaysIncludesWebSearchEngines() async {
+    @Test func availableEnginesAlwaysIncludesWebSearchEngines() async {
         let runner = StubAssistantProcessRunner(availableCommands: [])
         let available = await KeywordEngineCatalog.availableRegistry(runner: runner)
 
-        XCTAssertNotNil(available.addressedResult(for: "twitter floodlight"))
-        XCTAssertNotNil(available.addressedResult(for: "youtube floodlight"))
+        #expect(available.addressedResult(for: "twitter floodlight") != nil)
+        #expect(available.addressedResult(for: "youtube floodlight") != nil)
     }
 
-    func testAvailableEnginesDropsAssistantEnginesWithNoInstalledBinary() async {
+    @Test func availableEnginesDropsAssistantEnginesWithNoInstalledBinary() async {
         let runner = StubAssistantProcessRunner(availableCommands: ["claude"])
         let available = await KeywordEngineCatalog.availableRegistry(runner: runner)
 
-        XCTAssertNotNil(available.addressedResult(for: "claude explain this"))
-        XCTAssertNil(available.addressedResult(for: "codex explain this"))
+        #expect(available.addressedResult(for: "claude explain this") != nil)
+        #expect(available.addressedResult(for: "codex explain this") == nil)
     }
 
-    func testAvailableEnginesIsEmptyOfAssistantsWhenNothingIsInstalled() async {
+    @Test func availableEnginesIsEmptyOfAssistantsWhenNothingIsInstalled() async {
         let runner = StubAssistantProcessRunner(availableCommands: [])
         let available = await KeywordEngineCatalog.availableRegistry(runner: runner)
 
-        XCTAssertNil(available.addressedResult(for: "claude explain this"))
-        XCTAssertNil(available.addressedResult(for: "codex explain this"))
+        #expect(available.addressedResult(for: "claude explain this") == nil)
+        #expect(available.addressedResult(for: "codex explain this") == nil)
     }
 
     // MARK: - Preset web engines (#29)
 
-    func testEveryPresetEngineBuildsItsExpectedSearchURL() throws {
+    @Test func everyPresetEngineBuildsItsExpectedSearchURL() throws {
         let expectations: [(query: String, url: String)] = [
             ("g swift concurrency", "https://www.google.com/search?q=swift%20concurrency"),
             (
@@ -382,16 +370,17 @@ final class KeywordEngineTests: XCTestCase {
         ]
 
         for (query, expected) in expectations {
-            let item = try XCTUnwrap(searchCatalog(query).first, query)
-            XCTAssertEqual(item.kind, .web, query)
+            let item = try #require(searchCatalog(query).first, "\(query)")
+            #expect(item.kind == .web, "\(query)")
             guard case let .open(url) = item.action else {
-                return XCTFail("expected an .open action for \(query)")
+                Issue.record("expected an .open action for \(query)")
+                return
             }
-            XCTAssertEqual(url.absoluteString, expected, query)
+            #expect(url.absoluteString == expected, "\(query)")
         }
     }
 
-    func testEveryPresetKeywordSpellingAddressesItsEngine() {
+    @Test func everyPresetKeywordSpellingAddressesItsEngine() {
         let spellings: [(keyword: String, engineID: String)] = [
             ("g", "google"), ("google", "google"), ("!g", "google"),
             ("wiki", "wikipedia"), ("wikipedia", "wikipedia"), ("!wiki", "wikipedia"),
@@ -400,48 +389,43 @@ final class KeywordEngineTests: XCTestCase {
         ]
 
         for (keyword, engineID) in spellings {
-            XCTAssertEqual(
-                catalogRegistry.addressedResult(for: "\(keyword) anything")?.id,
-                "keyword-engine:\(engineID)",
-                keyword
+            #expect(
+                catalogRegistry.addressedResult(for: "\(keyword) anything")?
+                    .id == "keyword-engine:\(engineID)",
+                "\(keyword)"
             )
         }
     }
 
-    func testThereIsDeliberatelyNoSingleLetterWikipediaKeyword() {
+    @Test func thereIsDeliberatelyNoSingleLetterWikipediaKeyword() {
         // Rejected during grilling for its accidental first-word hit rate.
-        XCTAssertNil(catalogRegistry.addressedResult(for: "w hidden files"))
+        #expect(catalogRegistry.addressedResult(for: "w hidden files") == nil)
     }
 
-    func testTheDefaultEngineIsGoogleAndComesFromTheTable() {
-        XCTAssertEqual(KeywordEngineCatalog.defaultEngine.id, "google")
-        XCTAssertTrue(KeywordEngineCatalog.all
+    @Test func theDefaultEngineIsGoogleAndComesFromTheTable() {
+        #expect(KeywordEngineCatalog.defaultEngine.id == "google")
+        #expect(KeywordEngineCatalog.all
             .contains { $0.id == KeywordEngineCatalog.defaultEngine.id })
     }
 
-    func testWebSearchEnginesListsOnlyURLEnginesInTableOrder() {
+    @Test func webSearchEnginesListsOnlyURLEnginesInTableOrder() {
         let rows = catalogRegistry.webModeResults(for: "query", activeEngineID: "google")
-        XCTAssertEqual(
-            rows.map(\.id),
-            [
-                "web-mode:google",
-                "web-mode:wikipedia",
-                "web-mode:github",
-                "web-mode:stackoverflow",
-                "web-mode:twitter",
-                "web-mode:youtube",
-            ]
-        )
-        XCTAssertTrue(rows.allSatisfy { $0.kind == .web })
+        #expect(rows.map(\.id) == [
+            "web-mode:google",
+            "web-mode:wikipedia",
+            "web-mode:github",
+            "web-mode:stackoverflow",
+            "web-mode:twitter",
+            "web-mode:youtube",
+        ])
+        #expect(rows.allSatisfy { $0.kind == .web })
     }
 
-    func testSearchURLPercentEncodesSpacesAndReservedCharacters() throws {
-        let url = try XCTUnwrap(
-            KeywordEngineCatalog.defaultEngine.searchURL(for: "café & crème #1")
-        )
-        XCTAssertEqual(url.host, "www.google.com")
-        XCTAssertFalse(url.absoluteString.contains(" "))
-        XCTAssertNil(url.fragment, "a '#' in the query must never become a fragment")
+    @Test func searchURLPercentEncodesSpacesAndReservedCharacters() throws {
+        let url = try #require(KeywordEngineCatalog.defaultEngine.searchURL(for: "café & crème #1"))
+        #expect(url.host == "www.google.com")
+        #expect(!(url.absoluteString.contains(" ")))
+        #expect(url.fragment == nil, "a '#' in the query must never become a fragment")
     }
 
     /// The table-integrity requirement from the spec's Testing Decisions —
@@ -449,19 +433,19 @@ final class KeywordEngineTests: XCTestCase {
     /// spaces and reserved characters" — for every URL engine, not just the
     /// default one `testSearchURLPercentEncodesSpacesAndReservedCharacters`
     /// already covers.
-    func testEveryURLEngineProducesAWellFormedURLForSpacesAndReservedCharacters() throws {
+    @Test func everyURLEngineProducesAWellFormedURLForSpacesAndReservedCharacters() throws {
         let query = "café & crème #1/2?"
         for engine in KeywordEngineCatalog.all where engine.kind == .web {
-            let url = try XCTUnwrap(engine.searchURL(for: query), engine.id)
-            XCTAssertFalse(url.absoluteString.contains(" "), engine.id)
-            XCTAssertNil(url.fragment, "'#' must never become a fragment: \(engine.id)")
-            XCTAssertNotNil(url.host, engine.id)
+            let url = try #require(engine.searchURL(for: query), "\(engine.id)")
+            #expect(!(url.absoluteString.contains(" ")), "\(engine.id)")
+            #expect(url.fragment == nil, "'#' must never become a fragment: \(engine.id)")
+            #expect(url.host != nil, "\(engine.id)")
         }
     }
 
-    func testSearchURLForAnAssistantEngineIsNil() throws {
-        let claude = try XCTUnwrap(KeywordEngineCatalog.all.first { $0.id == "claude" })
-        XCTAssertNil(claude.searchURL(for: "anything"))
+    @Test func searchURLForAnAssistantEngineIsNil() throws {
+        let claude = try #require(KeywordEngineCatalog.all.first { $0.id == "claude" })
+        #expect(claude.searchURL(for: "anything") == nil)
     }
 }
 

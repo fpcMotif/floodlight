@@ -5,8 +5,8 @@ import os
 package typealias FFFIndex = FFFKit.FFFIndex
 package typealias IndexedSearchItem = FFFKit.FFFSearchResult
 
-final class FFFFileSource: FileSource, @unchecked Sendable {
-    private struct State {
+final class FFFFileSource: FileSource {
+    private struct State: Sendable {
         var rootURL: URL
         var hasStartedIndex = false
     }

@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 
 /// Differential and adversarial tests for `Calculator`.
 ///
@@ -17,7 +17,7 @@ import XCTest
 /// school arithmetic: unary minus binds tighter than `^` (`-2^2 == 4`),
 /// `^` is right-associative, and division or modulo by exactly zero fails
 /// the whole expression instead of producing infinity.
-final class CalculatorDifferentialTests: XCTestCase {
+struct CalculatorDifferentialTests {
     // MARK: - The reference interpreter
 
     /// A node of the grammar the parser implements. Numbers carry their
@@ -219,7 +219,7 @@ final class CalculatorDifferentialTests: XCTestCase {
 
     // MARK: - Differential properties
 
-    func testParserAgreesWithAReferenceInterpreterOnGeneratedExpressions() throws {
+    @Test func parserAgreesWithAReferenceInterpreterOnGeneratedExpressions() throws {
         try checkProperty(
             "Calculator.evaluate matches the reference interpreter",
             expressionGen(),
@@ -236,7 +236,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testWhitespaceBetweenTokensNeverChangesTheResult() throws {
+    @Test func whitespaceBetweenTokensNeverChangesTheResult() throws {
         try checkProperty(
             "whitespace is insignificant between tokens",
             expressionGen(whitespace: false),
@@ -249,7 +249,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testRedundantParenthesesNeverChangeTheResult() throws {
+    @Test func redundantParenthesesNeverChangeTheResult() throws {
         try checkProperty(
             "wrapping a whole expression in parentheses is a no-op",
             expressionGen(),
@@ -259,7 +259,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testSurroundingWhitespaceIsTrimmed() throws {
+    @Test func surroundingWhitespaceIsTrimmed() throws {
         try checkProperty(
             "leading and trailing whitespace is trimmed before parsing",
             expressionGen(),
@@ -270,7 +270,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testEvaluationIsDeterministic() throws {
+    @Test func evaluationIsDeterministic() throws {
         try checkProperty(
             "evaluate is a pure function of its input",
             expressionGen(),
@@ -284,12 +284,12 @@ final class CalculatorDifferentialTests: XCTestCase {
 
     // MARK: - Precedence and associativity, pinned exactly
 
-    func testUnaryMinusBindsTighterThanExponentiation() throws {
+    @Test func unaryMinusBindsTighterThanExponentiation() throws {
         // `-2 ^ 2` is 4, not -4: `parsePower` reads a full unary operand
         // before it looks for `^`. A deliberate divergence from most
         // calculators, so it gets pinned down rather than assumed.
-        XCTAssertEqual(Calculator.evaluate("-2 ^ 2"), 4)
-        XCTAssertEqual(Calculator.evaluate("0 - 2 ^ 2"), -4)
+        #expect(Calculator.evaluate("-2 ^ 2") == 4)
+        #expect(Calculator.evaluate("0 - 2 ^ 2") == -4)
 
         try checkProperty(
             "-a ^ 2 == (-a) ^ 2",
@@ -300,7 +300,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testSubtractionIsLeftAssociative() throws {
+    @Test func subtractionIsLeftAssociative() throws {
         let operand = Gen<Int>.int(in: -999...999)
         try checkProperty(
             "a - b - c parses as (a - b) - c",
@@ -314,7 +314,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testDivisionIsLeftAssociative() throws {
+    @Test func divisionIsLeftAssociative() throws {
         let operand = Gen<Int>.int(in: 1...999)
         try checkProperty(
             "a / b / c parses as (a / b) / c",
@@ -328,7 +328,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testExponentiationIsRightAssociative() throws {
+    @Test func exponentiationIsRightAssociative() throws {
         let operand = Gen<Int>.int(in: 1...3)
         try checkProperty(
             "a ^ b ^ c parses as a ^ (b ^ c)",
@@ -342,7 +342,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testMultiplicationBindsTighterThanAddition() throws {
+    @Test func multiplicationBindsTighterThanAddition() throws {
         let operand = Gen<Int>.int(in: -99...99)
         try checkProperty(
             "a + b * c parses as a + (b * c)",
@@ -356,7 +356,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testModuloSharesPrecedenceWithMultiplication() throws {
+    @Test func moduloSharesPrecedenceWithMultiplication() throws {
         let operand = Gen<Int>.int(in: 1...99)
         try checkProperty(
             "a % b * c parses as (a % b) * c",
@@ -370,7 +370,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testGroupingCommasAreStrippedFromNumbers() throws {
+    @Test func groupingCommasAreStrippedFromNumbers() throws {
         try checkProperty(
             "thousands separators do not change a number's value",
             Gen<Int>.int(in: 1_000...999_999),
@@ -398,7 +398,7 @@ final class CalculatorDifferentialTests: XCTestCase {
 
     // MARK: - Rejection properties
 
-    func testDivisionAndModuloByZeroAlwaysFailTheWholeExpression() throws {
+    @Test func divisionAndModuloByZeroAlwaysFailTheWholeExpression() throws {
         try checkProperty(
             "any zero divisor rejects the expression",
             Gen<Int>.int(in: -999...999),
@@ -412,7 +412,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testUnbalancedParenthesesAreAlwaysRejected() throws {
+    @Test func unbalancedParenthesesAreAlwaysRejected() throws {
         try checkProperty(
             "an unmatched parenthesis rejects the expression",
             expressionGen(maxDepth: 2),
@@ -423,7 +423,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testTrailingOperatorsAreAlwaysRejected() throws {
+    @Test func trailingOperatorsAreAlwaysRejected() throws {
         try checkProperty(
             "a dangling binary operator rejects the expression",
             expressionGen(maxDepth: 2),
@@ -434,7 +434,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testAnyOutOfAlphabetCharacterRejectsTheInput() throws {
+    @Test func anyOutOfAlphabetCharacterRejectsTheInput() throws {
         // `looksLikeExpression` allows only digits, whitespace, and
         // `.,+-*/%^()`. Everything else bails out before the parser runs —
         // this is what stops "yt lofi" from becoming a calculator row.
@@ -457,7 +457,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testABareNonNegativeNumberIsNeverACalculatorResult() throws {
+    @Test func aBareNonNegativeNumberIsNeverACalculatorResult() throws {
         // Without an operator character there is no expression — otherwise
         // typing a file named "2024" would surface a calculator row.
         try checkProperty(
@@ -469,7 +469,7 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testALeadingSignTurnsABareNumberIntoAnExpression() throws {
+    @Test func aLeadingSignTurnsABareNumberIntoAnExpression() throws {
         // The flip side of the rule above, and the reason it is stated for
         // *non-negative* numbers only: `-` and `+` are operator characters,
         // so `looksLikeExpression` accepts a signed literal and the unary
@@ -484,67 +484,66 @@ final class CalculatorDifferentialTests: XCTestCase {
         }
     }
 
-    func testEveryCuratedRejectionCaseIsRejected() {
+    @Test func everyCuratedRejectionCaseIsRejected() {
         for source in AdversarialCorpus.rejectedExpressions {
-            XCTAssertNil(
-                Calculator.evaluate(source),
+            #expect(
+                Calculator.evaluate(source) == nil,
                 "expected \(String(reflecting: source)) to be rejected"
             )
         }
     }
 
-    func testSurprisinglyAcceptedExpressionsKeepEvaluating() {
+    @Test func surprisinglyAcceptedExpressionsKeepEvaluating() {
         for (source, expected) in AdversarialCorpus.surprisinglyAcceptedExpressions {
-            XCTAssertEqual(
-                Calculator.evaluate(source),
-                expected,
+            #expect(
+                Calculator.evaluate(source) == expected,
                 "expected \(String(reflecting: source)) to evaluate to \(expected)"
             )
         }
     }
 
-    func testFoundationAndSwiftDisagreeAboutTheZeroWidthSpace() {
+    @Test func foundationAndSwiftDisagreeAboutTheZeroWidthSpace() {
         // Two definitions of whitespace meet in `evaluate`, and they
         // disagree. `trimmingCharacters(in: .whitespacesAndNewlines)` uses
         // Foundation's `CharacterSet`, which still counts U+200B; the
         // `looksLikeExpression` scan uses Swift's `Character.isWhitespace`,
         // which does not. So a zero-width space is invisible at the edges
         // of a query and fatal in the middle of one.
-        XCTAssertEqual(Calculator.evaluate("1 + 1\u{200B}"), 2)
-        XCTAssertNil(Calculator.evaluate("1\u{200B}+\u{200B}1"))
-        XCTAssertFalse(Character("\u{200B}").isWhitespace)
-        XCTAssertTrue(CharacterSet.whitespacesAndNewlines.contains("\u{200B}"))
+        #expect(Calculator.evaluate("1 + 1\u{200B}") == 2)
+        #expect(Calculator.evaluate("1\u{200B}+\u{200B}1") == nil)
+        #expect(!(Character("\u{200B}").isWhitespace))
+        #expect(CharacterSet.whitespacesAndNewlines.contains("\u{200B}"))
 
         for source in AdversarialCorpus.interiorInvisibleRejections {
-            XCTAssertNil(
-                Calculator.evaluate(source),
+            #expect(
+                Calculator.evaluate(source) == nil,
                 "expected \(String(reflecting: source)) to be rejected"
             )
         }
     }
 
-    func testUnicodeOperatorsAreNormalizedBeforeParsing() {
-        XCTAssertEqual(Calculator.evaluate("6 × 7"), 42)
-        XCTAssertEqual(Calculator.evaluate("84 ÷ 2"), 42)
-        XCTAssertEqual(Calculator.evaluate("50 − 8"), 42)
-        XCTAssertEqual(Calculator.evaluate("6 × 7 ÷ 2 − 1"), 20)
+    @Test func unicodeOperatorsAreNormalizedBeforeParsing() {
+        #expect(Calculator.evaluate("6 × 7") == 42)
+        #expect(Calculator.evaluate("84 ÷ 2") == 42)
+        #expect(Calculator.evaluate("50 − 8") == 42)
+        #expect(Calculator.evaluate("6 × 7 ÷ 2 − 1") == 20)
         // Only those three substitutions exist — a lookalike that isn't in
         // the table must still be rejected rather than silently coerced.
-        XCTAssertNil(Calculator.evaluate("6 ∗ 7"))
-        XCTAssertNil(Calculator.evaluate("6 ⨯ 7"))
-        XCTAssertNil(Calculator.evaluate("50 – 8")) // en dash, not minus sign
+        #expect(Calculator.evaluate("6 ∗ 7") == nil)
+        #expect(Calculator.evaluate("6 ⨯ 7") == nil)
+        #expect(Calculator.evaluate("50 – 8") == nil) // en dash, not minus sign
     }
 
     // MARK: - Non-finite results
 
-    func testResultsThatOverflowToInfinityAreRejected() {
-        XCTAssertNil(Calculator.evaluate("9\(String(repeating: "9", count: 400)) * 10"))
-        XCTAssertNil(Calculator.evaluate("(10 ^ 308) * 10 ^ 10"))
-        XCTAssertNil(Calculator.evaluate("0 ^ -1"))
-        XCTAssertNil(Calculator.evaluate("(0 - 1) ^ 0.5"))
+    @Test func resultsThatOverflowToInfinityAreRejected() {
+        #expect(Calculator.evaluate("9\(String(repeating: "9", count: 400)) * 10") == nil)
+        #expect(Calculator.evaluate("(10 ^ 308) * 10 ^ 10") == nil)
+        #expect(Calculator.evaluate("0 ^ -1") == nil)
+        #expect(Calculator.evaluate("(0 - 1) ^ 0.5") == nil)
     }
 
-    func testDeeplyNestedExpressionsDoNotOverflowTheStack() throws {
+    @Test func deeplyNestedExpressionsDoNotOverflowTheStack() throws {
         // The parser is recursive descent with five frames per parenthesis
         // level, so nesting is the one input shape that can take the whole
         // process down. This runs on a thread with a generous stack and
@@ -558,20 +557,20 @@ final class CalculatorDifferentialTests: XCTestCase {
         let outcome = try Self.runOnDedicatedStack(bytes: 64 << 20) {
             Calculator.evaluate(source)
         }
-        XCTAssertEqual(outcome, 2)
+        #expect(outcome == 2)
     }
 
-    func testDeeplyNestedUnaryOperatorsDoNotOverflowTheStack() throws {
+    @Test func deeplyNestedUnaryOperatorsDoNotOverflowTheStack() throws {
         let depth = 5_000
         let source = String(repeating: "-", count: depth) + "7 + 0"
         let outcome = try Self.runOnDedicatedStack(bytes: 64 << 20) {
             Calculator.evaluate(source)
         }
         // An even number of negations cancels out.
-        XCTAssertEqual(outcome, 7)
+        #expect(outcome == 7)
     }
 
-    func testAVeryLongFlatExpressionStaysLinearAndCorrect() {
+    @Test func aVeryLongFlatExpressionStaysLinearAndCorrect() {
         // 20k terms, no nesting: this exercises the iterative loops rather
         // than the recursion, and must not take pathological time.
         let terms = 20_000
@@ -580,21 +579,21 @@ final class CalculatorDifferentialTests: XCTestCase {
         let value = Calculator.evaluate(source)
         let elapsed = start.duration(to: .now)
 
-        XCTAssertEqual(value, Double(terms))
-        XCTAssertLessThan(elapsed, .seconds(2), "flat expression parsing should stay linear")
+        #expect(value == Double(terms))
+        #expect(elapsed < .seconds(2), "flat expression parsing should stay linear")
     }
 
-    func testEveryAdversarialStringIsHandledWithoutCrashing() {
+    @Test func everyAdversarialStringIsHandledWithoutCrashing() {
         // Total-function check: no input may trap, hang, or throw. The
         // result itself is unconstrained — only that one comes back.
         for source in AdversarialCorpus.strings + AdversarialCorpus.searchQueries {
             let value = Calculator.evaluate(source)
             if let value {
-                XCTAssertTrue(
+                #expect(
                     value.isFinite,
                     "evaluate returned a non-finite value for \(String(reflecting: source))"
                 )
-                XCTAssertFalse(Calculator.format(value).isEmpty)
+                #expect(!(Calculator.format(value).isEmpty))
             }
         }
     }

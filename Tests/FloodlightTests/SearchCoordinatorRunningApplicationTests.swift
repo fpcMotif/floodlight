@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// Covers the fast path added by ADR 0004: activating an already-running
@@ -9,15 +9,11 @@ import XCTest
 /// `NSWorkspace.openApplication`, and only application rows may ever
 /// consult it.
 @MainActor
-final class SearchCoordinatorRunningApplicationTests: XCTestCase {
-    private nonisolated(unsafe) var tree: TemporaryTree!
+struct SearchCoordinatorRunningApplicationTests {
+    private let tree: TemporaryTree
 
-    override func setUpWithError() throws {
+    init() throws {
         tree = try TemporaryTree(label: "CoordinatorRunningApplication")
-    }
-
-    override func tearDown() {
-        tree = nil
     }
 
     private func makeCoordinator(
@@ -39,7 +35,7 @@ final class SearchCoordinatorRunningApplicationTests: XCTestCase {
         )
     }
 
-    func testActivatingAnAlreadyRunningApplicationUsesTheFastPathAndDismisses() throws {
+    @Test func activatingAnAlreadyRunningApplicationUsesTheFastPathAndDismisses() throws {
         let activator = ScriptedRunningApplicationActivator(activatesEverything: true)
         var dismissed = false
         let coordinator = try makeCoordinator(
@@ -50,11 +46,11 @@ final class SearchCoordinatorRunningApplicationTests: XCTestCase {
 
         coordinator.activate(item)
 
-        XCTAssertEqual(activator.requestedBundleURLs, [item.fileURL])
-        XCTAssertTrue(dismissed)
+        #expect(activator.requestedBundleURLs == [item.fileURL])
+        #expect(dismissed)
     }
 
-    func testActivatingAFileOrFolderNeverConsultsTheActivator() throws {
+    @Test func activatingAFileOrFolderNeverConsultsTheActivator() throws {
         let activator = ScriptedRunningApplicationActivator(activatesEverything: true)
         var dismissedCount = 0
         let coordinator = try makeCoordinator(
@@ -64,11 +60,11 @@ final class SearchCoordinatorRunningApplicationTests: XCTestCase {
 
         coordinator.activate(SearchFixtures.folder(name: "Documents"))
 
-        XCTAssertTrue(
+        #expect(
             activator.requestedBundleURLs.isEmpty,
             "only application rows should ever ask whether they're already running"
         )
-        XCTAssertEqual(dismissedCount, 1)
+        #expect(dismissedCount == 1)
     }
 }
 

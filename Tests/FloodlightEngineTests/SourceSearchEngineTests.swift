@@ -1,11 +1,12 @@
 import FloodlightEngine
 import FloodlightTestSupport
-import XCTest
+import Foundation
+import Testing
 
-final class SourceSearchEngineTests: XCTestCase {
+struct SourceSearchEngineTests {
     private enum Failure: Error { case expected }
 
-    func testImmediateThenSettledSnapshotsAreComplete() async throws {
+    @Test func immediateThenSettledSnapshotsAreComplete() async throws {
         let app = SearchFixtures.application(name: "Notes")
         let file = SearchFixtures.file(name: "notes.txt")
         let engine = SourceSearchEngine(
@@ -15,22 +16,22 @@ final class SourceSearchEngineTests: XCTestCase {
         )
         var iterator = await engine.search("notes", immediate: true).makeAsyncIterator()
         let first = await iterator.next()
-        let immediate = try XCTUnwrap(first)
-        XCTAssertEqual(immediate.candidates, [app])
-        XCTAssertFalse(immediate.isSettled)
+        let immediate = try #require(first)
+        #expect(immediate.candidates == [app])
+        #expect(!(immediate.isSettled))
         var nextSnapshot = await awaitNext(&iterator)
-        var settled = try XCTUnwrap(nextSnapshot)
+        var settled = try #require(nextSnapshot)
         while !settled.isSettled {
             nextSnapshot = await awaitNext(&iterator)
-            settled = try XCTUnwrap(nextSnapshot)
+            settled = try #require(nextSnapshot)
         }
-        XCTAssertTrue(settled.isSettled)
-        XCTAssertEqual(Set(settled.candidates), Set([app, file]))
-        XCTAssertEqual(settled.totalMatches[.application], 1)
-        XCTAssertEqual(settled.totalMatches[.file], 1)
+        #expect(settled.isSettled)
+        #expect(Set(settled.candidates) == Set([app, file]))
+        #expect(settled.totalMatches[.application] == 1)
+        #expect(settled.totalMatches[.file] == 1)
     }
 
-    func testNewerQueryFinishesAndSuppressesOlderExecution() async {
+    @Test func newerQueryFinishesAndSuppressesOlderExecution() async {
         let files = ScriptedFileSource(
             indexed: [SearchFixtures.file(name: "old")],
             indexedDelay: .seconds(1)
@@ -44,10 +45,10 @@ final class SourceSearchEngineTests: XCTestCase {
         _ = await old.next()
         _ = await engine.search("new", immediate: true)
         let oldEnd = await old.next()
-        XCTAssertNil(oldEnd)
+        #expect(oldEnd == nil)
     }
 
-    func testCancelledCallerCannotSupersedeCurrentExecution() async throws {
+    @Test func cancelledCallerCannotSupersedeCurrentExecution() async throws {
         let file = SearchFixtures.file(name: "current.txt")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(indexed: [file], indexedDelay: .milliseconds(50)),
@@ -65,10 +66,10 @@ final class SourceSearchEngineTests: XCTestCase {
 
         let settled = try await nextSettled(&current)
 
-        XCTAssertEqual(settled.candidates, [file])
+        #expect(settled.candidates == [file])
     }
 
-    func testIndexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
+    @Test func indexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
         let app = SearchFixtures.application(name: "Finder")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(indexedError: Failure.expected),
@@ -78,13 +79,13 @@ final class SourceSearchEngineTests: XCTestCase {
         var iterator = await engine.search("fi", immediate: true).makeAsyncIterator()
         _ = await iterator.next()
         let next = await iterator.next()
-        let settled = try XCTUnwrap(next)
-        XCTAssertEqual(settled.candidates, [app])
-        XCTAssertTrue(settled.isDegraded)
-        XCTAssertTrue(settled.isSettled)
+        let settled = try #require(next)
+        #expect(settled.candidates == [app])
+        #expect(settled.isDegraded)
+        #expect(settled.isSettled)
     }
 
-    func testCancelFinishesStream() async {
+    @Test func cancelFinishesStream() async {
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(),
             applications: ScriptedCatalog(),
@@ -97,10 +98,10 @@ final class SourceSearchEngineTests: XCTestCase {
         while end != nil {
             end = await iterator.next()
         }
-        XCTAssertNil(end)
+        #expect(end == nil)
     }
 
-    func testSelectionLearningUsesRetainedProvenance() async throws {
+    @Test func selectionLearningUsesRetainedProvenance() async throws {
         let file = SearchFixtures.file(name: "report.txt")
         let app = SearchFixtures.application(name: "Preview")
         let files = ScriptedFileSource(indexed: [file])
@@ -117,15 +118,15 @@ final class SourceSearchEngineTests: XCTestCase {
         _ = await engine.search("different query", immediate: true)
         try await engine.trackSelection(
             of: file.id,
-            selectedURL: XCTUnwrap(file.fileURL),
+            selectedURL: #require(file.fileURL),
             for: "rep"
         )
-        try await engine.trackSelection(of: app.id, selectedURL: XCTUnwrap(app.fileURL), for: "rep")
-        XCTAssertEqual(files.tracked.map(\.query), ["rep"])
-        XCTAssertEqual(applications.tracked.map(\.query), ["rep"])
+        try await engine.trackSelection(of: app.id, selectedURL: #require(app.fileURL), for: "rep")
+        #expect(files.tracked.map(\.query) == ["rep"])
+        #expect(applications.tracked.map(\.query) == ["rep"])
     }
 
-    func testSelectionLearningUsesProvenanceFromSelectedQuery() async throws {
+    @Test func selectionLearningUsesProvenanceFromSelectedQuery() async throws {
         let application = SearchFixtures.application(name: "Shared")
         let fileURL = URL(fileURLWithPath: "/tmp/shared")
         let file = SearchItem(
@@ -150,15 +151,15 @@ final class SourceSearchEngineTests: XCTestCase {
 
         try await engine.trackSelection(
             of: application.id,
-            selectedURL: XCTUnwrap(application.fileURL),
+            selectedURL: #require(application.fileURL),
             for: "old"
         )
 
-        XCTAssertEqual(applications.tracked.map(\.query), ["old"])
-        XCTAssertTrue(files.tracked.isEmpty)
+        #expect(applications.tracked.map(\.query) == ["old"])
+        #expect(files.tracked.isEmpty)
     }
 
-    func testSettledSnapshotIncludesCatalogResultsLoadedByStart() async throws {
+    @Test func settledSnapshotIncludesCatalogResultsLoadedByStart() async throws {
         let app = SearchFixtures.application(name: "Calendar")
         let setting = SearchFixtures.setting(title: "Calendar Settings")
         let engine = SourceSearchEngine(
@@ -169,11 +170,11 @@ final class SourceSearchEngineTests: XCTestCase {
 
         let settled = try await settledSnapshot(from: engine, query: "cal")
 
-        XCTAssertEqual(Set(settled.candidates), Set([app, setting]))
-        XCTAssertFalse(settled.pendingKinds.contains(.systemSetting))
+        #expect(Set(settled.candidates) == Set([app, setting]))
+        #expect(!(settled.pendingKinds.contains(.systemSetting)))
     }
 
-    func testRefreshChangeAppearsInCurrentSnapshot() async throws {
+    @Test func refreshChangeAppearsInCurrentSnapshot() async throws {
         let app = SearchFixtures.application(name: "Fresh App")
         let applications = ScriptedCatalog(.init(
             refreshReportsChange: true,
@@ -187,11 +188,11 @@ final class SourceSearchEngineTests: XCTestCase {
 
         let settled = try await settledSnapshot(from: engine, query: "fresh")
 
-        XCTAssertEqual(settled.candidates, [app])
-        XCTAssertEqual(applications.refreshes, 1)
+        #expect(settled.candidates == [app])
+        #expect(applications.refreshes == 1)
     }
 
-    func testWarmUpRefreshUpdatesSettledLiveStream() async throws {
+    @Test func warmUpRefreshUpdatesSettledLiveStream() async throws {
         let original = SearchFixtures.application(name: "Original")
         let refreshed = SearchFixtures.application(name: "Refreshed")
         let applications = ScriptedCatalog(immediate: [original])
@@ -211,10 +212,10 @@ final class SourceSearchEngineTests: XCTestCase {
         await engine.warmUp()
         let updated = try await nextSettled(&iterator)
 
-        XCTAssertEqual(updated.candidates, [refreshed])
+        #expect(updated.candidates == [refreshed])
     }
 
-    func testWarmUpRefreshFailureUpdatesLiveStreamDegradation() async throws {
+    @Test func warmUpRefreshFailureUpdatesLiveStreamDegradation() async throws {
         let app = SearchFixtures.application(name: "Healthy")
         let applications = ScriptedCatalog(immediate: [app])
         let engine = SourceSearchEngine(
@@ -232,11 +233,11 @@ final class SourceSearchEngineTests: XCTestCase {
         await engine.warmUp()
         let updated = try await nextSettled(&iterator)
 
-        XCTAssertEqual(updated.candidates, [app])
-        XCTAssertTrue(updated.isDegraded)
+        #expect(updated.candidates == [app])
+        #expect(updated.isDegraded)
     }
 
-    func testWarmUpStartupRecoveryUpdatesSettledLiveStream() async throws {
+    @Test func warmUpStartupRecoveryUpdatesSettledLiveStream() async throws {
         let app = SearchFixtures.application(name: "Recovered")
         let applications = ScriptedCatalog(.init(
             startError: Failure.expected,
@@ -250,16 +251,16 @@ final class SourceSearchEngineTests: XCTestCase {
         )
         var iterator = await engine.search("recovered", immediate: true).makeAsyncIterator()
         let degraded = try await nextSettled(&iterator)
-        XCTAssertTrue(degraded.isDegraded)
+        #expect(degraded.isDegraded)
 
         await engine.warmUp()
         let recovered = try await nextSettled(&iterator)
 
-        XCTAssertEqual(recovered.candidates, [app])
-        XCTAssertFalse(recovered.isDegraded)
+        #expect(recovered.candidates == [app])
+        #expect(!(recovered.isDegraded))
     }
 
-    func testFailedScopeChangeResumesActiveQueryOnSameStream() async throws {
+    @Test func failedScopeChangeResumesActiveQueryOnSameStream() async throws {
         let file = SearchFixtures.file(name: "report.txt")
         let files = ScriptedFileSource(indexed: [file], changeScopeError: Failure.expected)
         let engine = SourceSearchEngine(
@@ -272,17 +273,17 @@ final class SourceSearchEngineTests: XCTestCase {
 
         do {
             try await engine.changeScope(to: URL(fileURLWithPath: "/unavailable"))
-            XCTFail("Expected scope change to fail")
+            Issue.record("Expected scope change to fail")
         } catch Failure.expected {}
 
         let next = await iterator.next()
-        let invalidated = try XCTUnwrap(next)
-        XCTAssertTrue(invalidated.candidates.isEmpty)
+        let invalidated = try #require(next)
+        #expect(invalidated.candidates.isEmpty)
         let resumed = try await nextSettled(&iterator)
-        XCTAssertEqual(resumed.candidates, [file])
+        #expect(resumed.candidates == [file])
     }
 
-    func testNewQueryDuringScopeChangeRemainsCurrent() async throws {
+    @Test func newQueryDuringScopeChangeRemainsCurrent() async throws {
         let file = SearchFixtures.file(name: "result.txt")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(
@@ -304,15 +305,15 @@ final class SourceSearchEngineTests: XCTestCase {
         var current = await newStream.value.makeAsyncIterator()
         let settled = try await nextSettled(&current)
 
-        XCTAssertEqual(settled.candidates, [file])
+        #expect(settled.candidates == [file])
         var oldEnd = await old.next()
         while oldEnd != nil {
             oldEnd = await old.next()
         }
-        XCTAssertNil(oldEnd)
+        #expect(oldEnd == nil)
     }
 
-    func testLatestOfTwoQueriesWaitingOnScopeChangeWins() async throws {
+    @Test func latestOfTwoQueriesWaitingOnScopeChangeWins() async throws {
         let first = SearchFixtures.application(name: "First")
         let second = SearchFixtures.application(name: "Second")
         let applications = ScriptedCatalog()
@@ -337,11 +338,11 @@ final class SourceSearchEngineTests: XCTestCase {
         let firstEnd = await firstIterator.next()
         let settled = try await nextSettled(&secondIterator)
 
-        XCTAssertNil(firstEnd)
-        XCTAssertEqual(settled.candidates, [second])
+        #expect(firstEnd == nil)
+        #expect(settled.candidates == [second])
     }
 
-    func testCancelledQueryWaitingOnScopeChangeDoesNotSuppressActiveQuery() async throws {
+    @Test func cancelledQueryWaitingOnScopeChangeDoesNotSuppressActiveQuery() async throws {
         let original = SearchFixtures.application(name: "Original")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(changeScopeDelay: .milliseconds(100)),
@@ -362,10 +363,10 @@ final class SourceSearchEngineTests: XCTestCase {
         _ = await cancelled.value
         let resumed = try await nextSettled(&active)
 
-        XCTAssertEqual(resumed.candidates, [original])
+        #expect(resumed.candidates == [original])
     }
 
-    func testFailedStartupIsRetriedByLaterSearch() async throws {
+    @Test func failedStartupIsRetriedByLaterSearch() async throws {
         let app = SearchFixtures.application(name: "Retry App")
         let applications = ScriptedCatalog(.init(
             startError: Failure.expected,
@@ -379,15 +380,15 @@ final class SourceSearchEngineTests: XCTestCase {
         )
 
         let first = try await settledSnapshot(from: engine, query: "retry")
-        XCTAssertTrue(first.isDegraded)
+        #expect(first.isDegraded)
         let second = try await settledSnapshot(from: engine, query: "retry")
 
-        XCTAssertFalse(second.isDegraded)
-        XCTAssertEqual(second.candidates, [app])
-        XCTAssertEqual(applications.starts, 2)
+        #expect(!(second.isDegraded))
+        #expect(second.candidates == [app])
+        #expect(applications.starts == 2)
     }
 
-    func testRebuildBeforeWarmUpStartsFilesFirst() async throws {
+    @Test func rebuildBeforeWarmUpStartsFilesFirst() async throws {
         let files = ScriptedFileSource()
         let engine = SourceSearchEngine(
             files: files,
@@ -397,10 +398,10 @@ final class SourceSearchEngineTests: XCTestCase {
 
         try await engine.rebuild()
 
-        XCTAssertEqual(files.lifecycle, ["start", "rebuild"])
+        #expect(files.lifecycle == ["start", "rebuild"])
     }
 
-    func testConcurrentStartupFailureAndRetryRemainSingleFlight() async {
+    @Test func concurrentStartupFailureAndRetryRemainSingleFlight() async {
         let applications = ScriptedCatalog(.init(
             startDelay: .milliseconds(30),
             startError: Failure.expected,
@@ -421,8 +422,8 @@ final class SourceSearchEngineTests: XCTestCase {
             await caller.value
         }
 
-        XCTAssertEqual(applications.starts, 2)
-        XCTAssertEqual(applications.maximumConcurrentStarts, 1)
+        #expect(applications.starts == 2)
+        #expect(applications.maximumConcurrentStarts == 1)
     }
 
     private func settledSnapshot(
@@ -433,6 +434,7 @@ final class SourceSearchEngineTests: XCTestCase {
         return try await nextSettled(&iterator)
     }
 
+    @concurrent
     private func nextSettled(
         _ iterator: inout AsyncStream<SearchSnapshot>.AsyncIterator
     ) async throws -> SearchSnapshot {
@@ -442,6 +444,7 @@ final class SourceSearchEngineTests: XCTestCase {
         throw Failure.expected
     }
 
+    @concurrent
     private func awaitNext(
         _ iterator: inout AsyncStream<SearchSnapshot>.AsyncIterator
     ) async -> SearchSnapshot? {

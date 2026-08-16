@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// Drives `SearchCoordinator` through its real pipeline — the query
@@ -14,15 +14,11 @@ import XCTest
 /// integration tests cover the asynchronous half, where a slow Source Search
 /// snapshot can land after the user has already typed something else.
 @MainActor
-class SearchCoordinatorIntegrationTestCase: XCTestCase {
-    private nonisolated(unsafe) var tree: TemporaryTree!
+class SearchCoordinatorIntegrationTestCase {
+    private let tree: TemporaryTree
 
-    override func setUpWithError() throws {
+    init() throws {
         tree = try TemporaryTree(label: "CoordinatorIntegration")
-    }
-
-    override func tearDown() {
-        tree = nil
     }
 
     func makeCoordinator(
@@ -47,8 +43,7 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
     func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -56,7 +51,21 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
+    }
+
+    func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 5,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     /// Lets the debounced indexed pass run to completion.
@@ -69,7 +78,7 @@ class SearchCoordinatorIntegrationTestCase: XCTestCase {
 final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestCase {
     // MARK: - The immediate pass
 
-    func testTypingPublishesTheFirstSourceSnapshot() async throws {
+    @Test func typingPublishesTheFirstSourceSnapshot() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -83,14 +92,14 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await waitUntil("the first Source Search snapshot arrives") {
             coordinator.results.contains { $0.kind == .systemSetting }
         }
-        XCTAssertTrue(coordinator.results
+        #expect(coordinator.results
             .contains { $0.id == "application:/Applications/Xcode.app" })
-        XCTAssertTrue(coordinator.results.contains { $0.kind == .systemSetting })
-        XCTAssertTrue(coordinator.results.contains { $0.id == "web-search" })
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
+        #expect(coordinator.results.contains { $0.kind == .systemSetting })
+        #expect(coordinator.results.contains { $0.id == "web-search" })
+        #expect(coordinator.selectedID == coordinator.results.first?.id)
     }
 
-    func testTheIndexedPassMergesItsResultsIn() async throws {
+    @Test func theIndexedPassMergesItsResultsIn() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)],
@@ -100,15 +109,15 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         let coordinator = try await makeCoordinator(applications: applications)
 
         coordinator.query = "xcode"
-        XCTAssertFalse(coordinator.results.contains { $0.title == "Xcode Beta" })
+        #expect(!coordinator.results.contains { $0.title == "Xcode Beta" })
 
         try await settle(coordinator)
 
-        XCTAssertTrue(coordinator.results.contains { $0.title == "Xcode Beta" })
-        XCTAssertTrue(coordinator.results.contains { $0.title == "Xcode" })
+        #expect(coordinator.results.contains { $0.title == "Xcode Beta" })
+        #expect(coordinator.results.contains { $0.title == "Xcode" })
     }
 
-    func testAnEmptyQueryClearsEverythingImmediately() async throws {
+    @Test func anEmptyQueryClearsEverythingImmediately() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode")]
         )
@@ -118,29 +127,29 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await waitUntil("the first Source Search snapshot arrives") {
             !coordinator.results.isEmpty
         }
-        XCTAssertFalse(coordinator.results.isEmpty)
+        #expect(!coordinator.results.isEmpty)
 
         coordinator.query = ""
 
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
-        XCTAssertFalse(coordinator.isSearching)
-        XCTAssertEqual(coordinator.selectedFilter, .all)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
+        #expect(!coordinator.isSearching)
+        #expect(coordinator.selectedFilter == .all)
     }
 
-    func testAWhitespaceOnlyQueryIsTreatedAsEmpty() async throws {
+    @Test func AWhitespaceOnlyQueryIsTreatedAsEmpty() async throws {
         let coordinator = try await makeCoordinator(
             applications: ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         )
 
         for query in [" ", "\t", "\n", "   \n\t "] {
             coordinator.query = query
-            XCTAssertTrue(coordinator.results.isEmpty, String(reflecting: query))
-            XCTAssertNil(coordinator.selectedID)
+            #expect(coordinator.results.isEmpty, "\(String(reflecting: query))")
+            #expect(coordinator.selectedID == nil)
         }
     }
 
-    func testAssigningTheSameQueryTwiceDoesNotResearch() async throws {
+    @Test func assigningTheSameQueryTwiceDoesNotResearch() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode")]
         )
@@ -150,14 +159,13 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         let afterFirst = applications.queries.count
         coordinator.query = "xcode"
 
-        XCTAssertEqual(
-            applications.queries.count,
-            afterFirst,
+        #expect(
+            applications.queries.count == afterFirst,
             "the didSet guard should ignore an identical assignment"
         )
     }
 
-    func testTheQueryIsTrimmedBeforeReachingTheCatalogs() async throws {
+    @Test func theQueryIsTrimmedBeforeReachingTheCatalogs() async throws {
         let applications = ScriptedCatalog(immediate: [])
         let coordinator = try await makeCoordinator(applications: applications)
 
@@ -166,12 +174,12 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await waitUntil("the normalized query reaches the catalog") {
             !applications.queries.isEmpty
         }
-        XCTAssertEqual(applications.queries, ["xcode"])
+        #expect(applications.queries.allSatisfy { $0 == "xcode" })
     }
 
     // MARK: - Staleness and the generation guard
 
-    func testASlowIndexedPassForAnOldQueryNeverOverwritesANewerOne() async throws {
+    @Test func ASlowIndexedPassForAnOldQueryNeverOverwritesANewerOne() async throws {
         // The race that matters: the user types "a", the indexed pass for
         // "a" takes 300ms, and meanwhile they finish typing "ab". The "a"
         // results must never appear under "ab".
@@ -200,15 +208,15 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         // Give the abandoned "a" pass more than enough time to land.
         try await Task.sleep(for: .milliseconds(500))
 
-        XCTAssertTrue(coordinator.results.contains { $0.id == "app:fresh" })
-        XCTAssertFalse(
-            coordinator.results.contains { $0.id == "app:stale" },
+        #expect(coordinator.results.contains { $0.id == "app:fresh" })
+        #expect(
+            !coordinator.results.contains { $0.id == "app:stale" },
             "results from an abandoned query leaked into the current one"
         )
-        XCTAssertFalse(coordinator.results.contains { $0.id == "app:slow" })
+        #expect(!coordinator.results.contains { $0.id == "app:slow" })
     }
 
-    func testRapidTypingLeavesOnlyTheFinalQuerysResults() async throws {
+    @Test func rapidTypingLeavesOnlyTheFinalQuerysResults() async throws {
         let applications = ScriptedCatalog()
         for query in ["s", "se", "sea", "sear", "searc", "search"] {
             applications.setBehavior(
@@ -223,16 +231,16 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
         try await settle(coordinator)
 
-        XCTAssertTrue(coordinator.results.contains { $0.id == "app:search" })
+        #expect(coordinator.results.contains { $0.id == "app:search" })
         for stale in ["s", "se", "sea", "sear", "searc"] {
-            XCTAssertFalse(
-                coordinator.results.contains { $0.id == "app:\(stale)" },
+            #expect(
+                !coordinator.results.contains { $0.id == "app:\(stale)" },
                 "\(stale) should have been superseded"
             )
         }
     }
 
-    func testAFailingIndexedPassFallsBackToTheImmediateResults() async throws {
+    @Test func AFailingIndexedPassFallsBackToTheImmediateResults() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode")],
@@ -244,15 +252,15 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         coordinator.query = "xcode"
         try await settle(coordinator)
 
-        XCTAssertTrue(
+        #expect(
             coordinator.results.contains { $0.title == "Xcode" },
             "a failed indexed pass must not clear what the immediate pass found"
         )
-        XCTAssertTrue(coordinator.results.contains { $0.id == "web-search" })
-        XCTAssertFalse(coordinator.isSearching)
+        #expect(coordinator.results.contains { $0.id == "web-search" })
+        #expect(!coordinator.isSearching)
     }
 
-    func testResetCancelsInFlightWorkAndClearsPublishedState() async throws {
+    @Test func resetCancelsInFlightWorkAndClearsPublishedState() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode")],
@@ -266,20 +274,20 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         coordinator.selectFilter(.applications)
         coordinator.reset()
 
-        XCTAssertEqual(coordinator.query, "")
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
-        XCTAssertEqual(coordinator.selectedFilter, .all)
-        XCTAssertFalse(coordinator.isSearching)
+        #expect(coordinator.query.isEmpty)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
+        #expect(coordinator.selectedFilter == .all)
+        #expect(!coordinator.isSearching)
 
         try await Task.sleep(for: .milliseconds(600))
-        XCTAssertTrue(
+        #expect(
             coordinator.results.isEmpty,
             "a cancelled search must not repopulate the panel after a reset"
         )
     }
 
-    func testResetDoesNotItselfTriggerASearch() async throws {
+    @Test func resetDoesNotItselfTriggerASearch() async throws {
         let applications = ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         let coordinator = try await makeCoordinator(applications: applications)
 
@@ -287,16 +295,15 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         let afterTyping = applications.queries.count
         coordinator.reset()
 
-        XCTAssertEqual(
-            applications.queries.count,
-            afterTyping,
+        #expect(
+            applications.queries.count == afterTyping,
             "the isResetting guard should suppress the search that clearing the query would start"
         )
     }
 
     // MARK: - Selection
 
-    func testSelectionClampsAtBothEndsOfTheList() async throws {
+    @Test func selectionClampsAtBothEndsOfTheList() async throws {
         let applications = ScriptedCatalog(
             immediate: (0..<5).map {
                 SearchFixtures.application(id: "app:\($0)", name: "App \($0)", score: 120_000 - $0)
@@ -306,65 +313,68 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         coordinator.query = "app"
 
         let ids = coordinator.results.map(\.id)
-        XCTAssertEqual(coordinator.selectedID, ids.first)
+        #expect(coordinator.selectedID == ids.first)
 
         coordinator.moveSelection(by: -1)
-        XCTAssertEqual(coordinator.selectedID, ids.first, "up from the top stays at the top")
+        #expect(coordinator.selectedID == ids.first, "up from the top stays at the top")
 
         coordinator.moveSelection(by: 1_000)
-        XCTAssertEqual(coordinator.selectedID, ids.last, "a huge jump clamps to the last row")
+        #expect(coordinator.selectedID == ids.last, "a huge jump clamps to the last row")
 
         coordinator.moveSelection(by: 1)
-        XCTAssertEqual(coordinator.selectedID, ids.last)
+        #expect(coordinator.selectedID == ids.last)
 
         coordinator.moveSelection(by: -1_000)
-        XCTAssertEqual(coordinator.selectedID, ids.first)
+        #expect(coordinator.selectedID == ids.first)
     }
 
-    func testMovingSelectionOnAnEmptyListIsANoOp() async throws {
+    @Test func movingSelectionOnAnEmptyListIsANoOp() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.moveSelection(by: 1)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.selectedID == nil)
         coordinator.moveSelection(by: -1)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.selectedID == nil)
     }
 
-    func testAUserDrivenSelectionSurvivesTheIndexedPass() async throws {
+    @Test func AUserDrivenSelectionSurvivesTheIndexedPass() async throws {
         // Once the user has arrowed down, a late-landing result set must not
         // yank the selection back to the top.
+        let initialApps = (0..<4).map {
+            SearchFixtures.application(
+                id: "app:\($0)",
+                name: "App \($0)",
+                score: 120_000 - $0
+            )
+        }
         let applications = ScriptedCatalog(
             .init(
-                immediate: (0..<4).map {
+                immediate: initialApps,
+                indexed: initialApps + [
                     SearchFixtures.application(
-                        id: "app:\($0)",
-                        name: "App \($0)",
-                        score: 120_000 - $0
-                    )
-                },
-                indexed: [SearchFixtures.application(id: "app:late", name: "App Late", score: 100)],
-                indexedDelay: .milliseconds(120)
+                        id: "app:late",
+                        name: "App Late",
+                        score: 100
+                    ),
+                ],
+                indexedDelay: .milliseconds(300)
             )
         )
         let coordinator = try await makeCoordinator(applications: applications)
 
         coordinator.query = "app"
-        try await waitUntil("the immediate applications arrive") {
+        try await waitUntil("the immediate applications arrive", timeout: 10) {
             coordinator.results.filter { $0.kind == .application }.count == 4
         }
         coordinator.moveSelection(by: 2)
         let chosen = coordinator.selectedID
-        XCTAssertEqual(chosen, "app:2")
+        #expect(chosen == "app:2")
 
         try await settle(coordinator)
 
-        XCTAssertEqual(
-            coordinator.selectedID,
-            chosen,
-            "the indexed pass stole the user's selection"
-        )
+        #expect(coordinator.selectedID == chosen, "the indexed pass stole the user's selection")
     }
 
-    func testAnAutomaticWebFallbackSelectionYieldsToARealResult() async throws {
+    @Test func anAutomaticWebFallbackSelectionYieldsToARealResult() async throws {
         // With no local matches the web row is selected by default. As soon
         // as a real result lands, the selection should move to it — but only
         // because the user never chose the web row themselves.
@@ -381,14 +391,14 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await waitUntil("the web fallback arrives") {
             coordinator.selectedID == "web-search"
         }
-        XCTAssertEqual(coordinator.selectedID, "web-search")
+        #expect(coordinator.selectedID == "web-search")
 
         try await settle(coordinator)
 
-        XCTAssertEqual(coordinator.selectedID, "app:late")
+        #expect(coordinator.selectedID == "app:late")
     }
 
-    func testAnExplicitlyChosenWebFallbackKeepsTheSelection() async throws {
+    @Test func anExplicitlyChosenWebFallbackKeepsTheSelection() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [],
@@ -402,21 +412,20 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await waitUntil("the web fallback arrives") {
             coordinator.results.contains { $0.id == "web-search" }
         }
-        let web = try XCTUnwrap(coordinator.results.first { $0.id == "web-search" })
+        let web = try #require(coordinator.results.first { $0.id == "web-search" })
         coordinator.select(web)
 
         try await settle(coordinator)
 
-        XCTAssertEqual(
-            coordinator.selectedID,
-            "web-search",
+        #expect(
+            coordinator.selectedID == "web-search",
             "a deliberate selection must not be overridden by a later result"
         )
     }
 
     // MARK: - Filters
 
-    func testSelectingAFilterNarrowsResultsAndResetsSelection() async throws {
+    @Test func selectingAFilterNarrowsResultsAndResetsSelection() async throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -431,17 +440,17 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
 
         coordinator.selectFilter(.applications)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .application })
-        XCTAssertEqual(coordinator.selectedID, coordinator.results.first?.id)
+        #expect(coordinator.results.allSatisfy { $0.kind == .application })
+        #expect(coordinator.selectedID == coordinator.results.first?.id)
 
         coordinator.selectFilter(.settings)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
+        #expect(coordinator.results.allSatisfy { $0.kind == .systemSetting })
 
         coordinator.selectFilter(.all)
-        XCTAssertTrue(coordinator.results.contains { $0.kind == .web })
+        #expect(coordinator.results.contains { $0.kind == .web })
     }
 
-    func testReselectingTheActiveFilterOnlyRefocusesTheField() async throws {
+    @Test func reselectingTheActiveFilterOnlyRefocusesTheField() async throws {
         let coordinator = try await makeCoordinator(
             applications: ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         )
@@ -453,11 +462,11 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         coordinator.selectFilter(.applications)
 
-        XCTAssertEqual(coordinator.results.map(\.id), resultsBefore)
-        XCTAssertEqual(coordinator.focusGeneration, focusBefore + 1)
+        #expect(coordinator.results.map(\.id) == resultsBefore)
+        #expect(coordinator.focusGeneration == focusBefore + 1)
     }
 
-    func testAFilterWithNoMatchesEmptiesTheListAndTheSelection() async throws {
+    @Test func AFilterWithNoMatchesEmptiesTheListAndTheSelection() async throws {
         let coordinator = try await makeCoordinator(
             applications: ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         )
@@ -465,11 +474,11 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         coordinator.selectFilter(.folders)
 
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
     }
 
-    func testFilterCountsPreferTheCatalogTotalOverTheVisibleCount() async throws {
+    @Test func filterCountsPreferTheCatalogTotalOverTheVisibleCount() async throws {
         // The chip should say how many results exist, not how many fit in
         // the page the coordinator asked for.
         let applications = ScriptedCatalog(
@@ -486,61 +495,48 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
             coordinator.filterOptions.first { $0.filter == .applications }?.count == 137
         }
 
-        let option = try XCTUnwrap(
-            coordinator.filterOptions.first { $0.filter == .applications }
-        )
-        XCTAssertEqual(option.count, 137)
+        let option = try #require(coordinator.filterOptions.first { $0.filter == .applications })
+        #expect(option.count == 137)
     }
 
-    func testDynamicFiltersOnlyAppearOnceTheyHaveResults() async throws {
+    @Test func dynamicFiltersOnlyAppearOnceTheyHaveResults() async throws {
         let applications = ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.query = "xcode"
 
-        XCTAssertFalse(coordinator.filterOptions.contains { $0.filter == .pdfs })
+        #expect(!coordinator.filterOptions.contains { $0.filter == .pdfs })
 
         // A selected dynamic filter stays visible even at zero, so the chip
         // the user is standing on cannot vanish underneath them.
         coordinator.selectFilter(.pdfs)
-        XCTAssertTrue(coordinator.filterOptions.contains { $0.filter == .pdfs })
+        #expect(coordinator.filterOptions.contains { $0.filter == .pdfs })
     }
 
-    func testThePrimaryFiltersAreAlwaysPresentInOrder() async throws {
+    @Test func thePrimaryFiltersAreAlwaysPresentInOrder() async throws {
         let coordinator = try await makeCoordinator()
         coordinator.query = "anything"
 
-        XCTAssertEqual(
-            Array(coordinator.filterOptions.prefix(4)).map(\.filter),
-            SearchResultFilter.primary
-        )
+        #expect(Array(coordinator.filterOptions.prefix(4)).map(\.filter) == SearchResultFilter
+            .primary)
     }
 
-    func testLoadingFlagsReportEachCatalogSeparately() async throws {
+    @Test func loadingFlagsReportEachCatalogSeparately() async throws {
         let coordinator = try await makeCoordinator()
 
         // Before `start()`, both catalogs are still loading.
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .applications }?.isLoading,
-            true
-        )
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .all }?.isLoading,
-            true
-        )
+        #expect(coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == true)
+        #expect(coordinator.filterOptions.first { $0.filter == .all }?.isLoading == true)
 
         coordinator.start()
         try await waitUntil("both catalogs finish loading") {
             coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false
         }
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .all }?.isLoading,
-            false
-        )
+        #expect(coordinator.filterOptions.first { $0.filter == .all }?.isLoading == false)
     }
 
     // MARK: - Startup
 
-    func testStartupIsIdempotent() async throws {
+    @Test func startupIsIdempotent() async throws {
         let applications = ScriptedCatalog()
         let coordinator = try await makeCoordinator(applications: applications)
 
@@ -551,10 +547,10 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
             coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false
         }
 
-        XCTAssertEqual(applications.starts, 1, "start() must only run once per launch")
+        #expect(applications.starts == 1, "start() must only run once per launch")
     }
 
-    func testAFailingCatalogStartStillClearsTheLoadingFlags() async throws {
+    @Test func AFailingCatalogStartStillClearsTheLoadingFlags() async throws {
         // If a catalog throws on startup the chips must not spin forever.
         let applications = ScriptedCatalog(.init(startError: TestError.scripted("no disk access")))
         let coordinator = try await makeCoordinator(applications: applications)
@@ -566,17 +562,14 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         // `.settings` is a dynamic chip and stays hidden at zero results,
         // so the aggregate `.all` flag is what proves both catalogs
         // finished loading.
-        XCTAssertEqual(
-            coordinator.filterOptions.first { $0.filter == .all }?.isLoading,
-            false
-        )
+        #expect(coordinator.filterOptions.first { $0.filter == .all }?.isLoading == false)
     }
 
-    func testStartupResolvesWhichAssistantEnginesAreInstalled() async throws {
+    @Test func startupResolvesWhichAssistantEnginesAreInstalled() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         coordinator.query = "claude explain this"
-        XCTAssertFalse(coordinator.results.contains { $0.id == "keyword-engine:claude" })
+        #expect(!coordinator.results.contains { $0.id == "keyword-engine:claude" })
 
         coordinator.start()
         try await waitUntil("the resolved registry is adopted") {
@@ -584,14 +577,14 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
 
         let checked = await runner.checkedCommands
-        XCTAssertEqual(checked.sorted(), ["claude", "codex"])
+        #expect(checked.sorted() == ["claude", "codex"])
 
         coordinator.query = "codex explain this"
         try await settle(coordinator)
-        XCTAssertFalse(coordinator.results.contains { $0.id == "keyword-engine:codex" })
+        #expect(!coordinator.results.contains { $0.id == "keyword-engine:codex" })
     }
 
-    func testPreparingForPresentationRefocusesAndResearches() async throws {
+    @Test func preparingForPresentationRefocusesAndResearches() async throws {
         let applications = ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.query = "xcode"
@@ -602,45 +595,42 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         coordinator.prepareForPresentation()
 
-        XCTAssertEqual(coordinator.focusGeneration, focusBefore + 1)
+        #expect(coordinator.focusGeneration == focusBefore + 1)
         try await waitUntil("presentation starts a fresh Source Search") {
             applications.queries.count > queriesBefore
         }
-        XCTAssertGreaterThan(
-            applications.queries.count,
-            queriesBefore,
+        #expect(
+            applications.queries.count > queriesBefore,
             "re-presenting with a live query should re-run the search"
         )
     }
 
-    func testPreparingForPresentationWithNoQueryDoesNotSearch() async throws {
+    @Test func preparingForPresentationWithNoQueryDoesNotSearch() async throws {
         let applications = ScriptedCatalog()
         let coordinator = try await makeCoordinator(applications: applications)
 
         coordinator.prepareForPresentation()
 
-        XCTAssertEqual(coordinator.focusGeneration, 1)
-        XCTAssertTrue(applications.queries.isEmpty)
+        #expect(coordinator.focusGeneration == 1)
+        #expect(applications.queries.isEmpty)
     }
 
     // MARK: - Assistant lifecycle
 
     private func assistantRow(_ coordinator: SearchCoordinator) throws -> SearchItem {
-        try XCTUnwrap(
-            projectResults(
-                query: "claude explain this function",
-                indexed: [],
-                apps: [],
-                system: [],
-                keywordRegistry: KeywordEngineRegistry(
-                    engines: KeywordEngineCatalog.all,
-                    defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
-                )
-            ).first { $0.id == "keyword-engine:claude" }
-        )
+        try #require(projectResults(
+            query: "claude explain this function",
+            indexed: [],
+            apps: [],
+            system: [],
+            keywordRegistry: KeywordEngineRegistry(
+                engines: KeywordEngineCatalog.all,
+                defaultWebEngineID: KeywordEngineCatalog.defaultEngine.id
+            )
+        ).first { $0.id == "keyword-engine:claude" })
     }
 
-    func testAnAssistantAnswerIsOnlyOfferedToItsOwnRow() async throws {
+    @Test func anAssistantAnswerIsOnlyOfferedToItsOwnRow() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -652,13 +642,13 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
 
         let otherRow = SearchFixtures.application(name: "Xcode")
-        XCTAssertNil(
-            coordinator.assistantAnswerState(for: otherRow),
+        #expect(
+            coordinator.assistantAnswerState(for: otherRow) == nil,
             "an answer must never render under an unrelated row"
         )
     }
 
-    func testTwoConsecutiveAsksDiscardTheFirstAnswer() async throws {
+    @Test func twoConsecutiveAsksDiscardTheFirstAnswer() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -667,20 +657,26 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         try await runner.waitForPendingRun()
         coordinator.activate(row)
 
-        // Both asks may briefly be in flight — the first is cancelled the
-        // instant the second starts — so resolve whatever is pending and
-        // assert that exactly one answer reaches the panel.
-        try await runner.resolveAll(with: .success("second answer"))
+        // Cancelling the first ask removes its continuation asynchronously
+        // from the scripted runner. Wait until that settles and only the
+        // replacement ask is pending before resolving — otherwise resolveAll
+        // can hand the success to the superseded ask.
+        try await waitUntil("the superseded ask is cancelled") {
+            let cancellations = await runner.cancellations
+            let pending = await runner.pendingCount
+            return cancellations >= 1 && pending == 1
+        }
+        try await runner.resolveNext(with: .success("second answer"))
 
         try await waitUntil("the surviving ask answers") {
             coordinator.assistantAnswerState(for: row) == .answered("second answer")
         }
-        XCTAssertEqual(coordinator.assistantRun?.itemID, row.id)
+        #expect(coordinator.assistantRun?.itemID == row.id)
         let cancelled = await runner.cancellations
-        XCTAssertGreaterThanOrEqual(cancelled, 1, "the superseded ask should be cancelled")
+        #expect(cancelled >= 1, "the superseded ask should be cancelled")
     }
 
-    func testAMissingBinaryReportsAnInstallHint() async throws {
+    @Test func AMissingBinaryReportsAnInstallHint() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: [])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -695,7 +691,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
     }
 
-    func testATimeoutReportsAHumanMessageRatherThanAnErrorDescription() async throws {
+    @Test func ATimeoutReportsAHumanMessageRatherThanAnErrorDescription() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -709,7 +705,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
     }
 
-    func testAnEmptyStderrFallsBackToAGenericFailure() async throws {
+    @Test func anEmptyStderrFallsBackToAGenericFailure() async throws {
         // `nonZeroExit` with an empty message falls through to the generic
         // catch, so the panel never shows a blank error row.
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
@@ -726,7 +722,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
     }
 
-    func testAnUnknownErrorFallsBackToAGenericFailure() async throws {
+    @Test func anUnknownErrorFallsBackToAGenericFailure() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -739,7 +735,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         }
     }
 
-    func testEditingTheQueryClearsTheAnswerSynchronously() async throws {
+    @Test func editingTheQueryClearsTheAnswerSynchronously() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let coordinator = try await makeCoordinator(runner: runner)
         let row = try assistantRow(coordinator)
@@ -753,13 +749,13 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         coordinator.query = "claude explain something else"
 
-        XCTAssertNil(
-            coordinator.assistantRun,
+        #expect(
+            coordinator.assistantRun == nil,
             "a stale answer must never linger under a new query"
         )
     }
 
-    func testActivatingAnAssistantRowKeepsThePanelOpen() async throws {
+    @Test func activatingAnAssistantRowKeepsThePanelOpen() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         var dismissed = false
         let coordinator = try await makeCoordinator(
@@ -769,7 +765,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         try coordinator.activate(assistantRow(coordinator))
 
-        XCTAssertFalse(dismissed)
-        XCTAssertEqual(coordinator.assistantRun?.state, .running)
+        #expect(!dismissed)
+        #expect(coordinator.assistantRun?.state == .running)
     }
 }

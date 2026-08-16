@@ -1,5 +1,5 @@
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 /// `SearchItemRanking.topRanked(_:limit:)` is the one selection primitive the
@@ -9,23 +9,23 @@ import XCTest
 /// observably identical to the full sort it replaces, so these tests compare
 /// it against `sorted(by:).prefix(limit)` rather than against a hand-written
 /// expectation.
-final class SearchItemRankingTests: XCTestCase {
-    func testTopRankedMatchesFullSortThenPrefix() {
+struct SearchItemRankingTests {
+    @Test func topRankedMatchesFullSortThenPrefix() {
         for candidateCount in [0, 1, 2, 7, 12, 13, 64, 257] {
             let items = makeItems(count: candidateCount)
             let expected = items.sorted(by: SearchItemRanking.ranksBefore)
 
             for limit in [1, 2, 12, 24, candidateCount, candidateCount + 5] where limit > 0 {
-                XCTAssertEqual(
-                    SearchItemRanking.topRanked(items, limit: limit).map(\.id),
-                    expected.prefix(limit).map(\.id),
+                #expect(
+                    SearchItemRanking.topRanked(items, limit: limit).map(\.id) == expected
+                        .prefix(limit).map(\.id),
                     "candidates=\(candidateCount) limit=\(limit)"
                 )
             }
         }
     }
 
-    func testTopRankedBreaksScoreTiesOnTitleLikeTheFullSort() {
+    @Test func topRankedBreaksScoreTiesOnTitleLikeTheFullSort() {
         // Every item scores the same, so the title tiebreak in `ranksBefore` is
         // the only thing ordering them. A selection that ignored the tiebreak
         // would still return "the top 3" — just not the same three.
@@ -34,46 +34,43 @@ final class SearchItemRankingTests: XCTestCase {
                 makeItem(id: "tie:\(index)", title: title, score: 500)
             }
 
-        XCTAssertEqual(
-            SearchItemRanking.topRanked(items, limit: 3).map(\.title),
-            ["alpha", "bravo", "charlie"]
-        )
+        #expect(SearchItemRanking.topRanked(items, limit: 3).map(\.title) == [
+            "alpha",
+            "bravo",
+            "charlie",
+        ])
     }
 
-    func testTopRankedReturnsNothingForNonPositiveLimit() {
+    @Test func topRankedReturnsNothingForNonPositiveLimit() {
         let items = makeItems(count: 10)
 
-        XCTAssertTrue(SearchItemRanking.topRanked(items, limit: 0).isEmpty)
-        XCTAssertTrue(SearchItemRanking.topRanked(items, limit: -1).isEmpty)
+        #expect(SearchItemRanking.topRanked(items, limit: 0).isEmpty)
+        #expect(SearchItemRanking.topRanked(items, limit: -1).isEmpty)
     }
 
-    func testTopRankedKeepsTheBestWhenCandidatesArriveWorstFirst() {
+    @Test func topRankedKeepsTheBestWhenCandidatesArriveWorstFirst() {
         // Ascending input is the adversarial case for a bounded heap: every
         // candidate displaces the current worst, so the sift path runs on every
         // element.
         let ascending = (0..<200).map { makeItem(id: "asc:\($0)", title: "Item", score: $0) }
 
-        XCTAssertEqual(
-            SearchItemRanking.topRanked(ascending, limit: 3).map(\.score),
-            [199, 198, 197]
-        )
-        XCTAssertEqual(
-            SearchItemRanking.topRanked(ascending.reversed(), limit: 3).map(\.score),
-            [199, 198, 197]
-        )
+        #expect(SearchItemRanking.topRanked(ascending, limit: 3).map(\.score) == [199, 198, 197])
+        #expect(SearchItemRanking.topRanked(ascending.reversed(), limit: 3).map(\.score) == [
+            199,
+            198,
+            197,
+        ])
     }
 
-    func testPageRanksAndReportsTheTotalRatherThanThePageSize() {
+    @Test func pageRanksAndReportsTheTotalRatherThanThePageSize() {
         let items = makeItems(count: 40)
 
         let page = SearchItemRanking.page(items, limit: 5)
 
-        XCTAssertEqual(page.items.count, 5)
-        XCTAssertEqual(page.totalMatched, 40)
-        XCTAssertEqual(
-            page.items.map(\.id),
-            items.sorted(by: SearchItemRanking.ranksBefore).prefix(5).map(\.id)
-        )
+        #expect(page.items.count == 5)
+        #expect(page.totalMatched == 40)
+        #expect(page.items.map(\.id) == items.sorted(by: SearchItemRanking.ranksBefore).prefix(5)
+            .map(\.id))
     }
 
     private func makeItems(count: Int) -> [SearchItem] {

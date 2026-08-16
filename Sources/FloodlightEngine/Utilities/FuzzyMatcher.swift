@@ -48,7 +48,6 @@ package enum FuzzyMatcher {
         return match(normalizedQuery: query, normalizedCandidate: candidate)?.score
     }
 
-    // periphery:ignore - Fast path ASCII score calculation tested against general path.
     package static func scoreASCII(
         normalizedQuery query: [UInt8],
         normalizedCandidate candidate: [UInt8]

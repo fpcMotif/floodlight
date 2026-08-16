@@ -1,11 +1,12 @@
+import AppKit
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class SearchCoordinatorStressTests: XCTestCase {
+struct SearchCoordinatorStressTests {
     private func makeStressCoordinator(
         applications: [SearchItem] = [],
         settings: [SearchItem] = []
@@ -26,8 +27,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
     private func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -35,110 +35,108 @@ final class SearchCoordinatorStressTests: XCTestCase {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     // MARK: - moveSelection
 
-    func testMoveSelectionDownAdvancesSelectedID() async throws {
+    @Test func moveSelectionDownAdvancesSelectedID() async throws {
         let app = SearchFixtures.application(name: "Xcode", score: 100_000)
         let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
         let coordinator = try makeStressCoordinator(applications: [app], settings: [setting])
         coordinator.query = "k"
         try await waitUntil("candidates arrive") { coordinator.results.count >= 2 }
-        let firstID = try XCTUnwrap(coordinator.results.first?.id)
-        let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
+        let firstID = try #require(coordinator.results.first?.id)
+        let secondID = try #require(coordinator.results.dropFirst().first?.id)
 
-        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
+        try coordinator.select(#require(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: 1)
 
-        XCTAssertEqual(coordinator.selectedID, secondID)
+        #expect(coordinator.selectedID == secondID)
     }
 
-    func testMoveSelectionUpMovesBackward() async throws {
+    @Test func moveSelectionUpMovesBackward() async throws {
         let app = SearchFixtures.application(name: "Xcode", score: 100_000)
         let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
         let coordinator = try makeStressCoordinator(applications: [app], settings: [setting])
         coordinator.query = "k"
         try await waitUntil("candidates arrive") { coordinator.results.count >= 2 }
-        let firstID = try XCTUnwrap(coordinator.results.first?.id)
-        let secondID = try XCTUnwrap(coordinator.results.dropFirst().first?.id)
+        let firstID = try #require(coordinator.results.first?.id)
+        let secondID = try #require(coordinator.results.dropFirst().first?.id)
 
-        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == secondID }))
+        try coordinator.select(#require(coordinator.results.first { $0.id == secondID }))
         coordinator.moveSelection(by: -1)
 
-        XCTAssertEqual(coordinator.selectedID, firstID)
+        #expect(coordinator.selectedID == firstID)
     }
 
-    func testMoveSelectionClampsAtLowerBound() async throws {
+    @Test func moveSelectionClampsAtLowerBound() async throws {
         let app = SearchFixtures.application(name: "Xcode", score: 100_000)
         let coordinator = try makeStressCoordinator(applications: [app])
         coordinator.query = "x"
         try await waitUntil("candidates arrive") { !coordinator.results.isEmpty }
-        let firstID = try XCTUnwrap(coordinator.results.first?.id)
+        let firstID = try #require(coordinator.results.first?.id)
 
-        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
+        try coordinator.select(#require(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: -5)
 
-        XCTAssertEqual(coordinator.selectedID, firstID)
+        #expect(coordinator.selectedID == firstID)
     }
 
-    func testMoveSelectionClampsAtUpperBound() async throws {
+    @Test func moveSelectionClampsAtUpperBound() async throws {
         let app = SearchFixtures.application(name: "Xcode", score: 100_000)
         let coordinator = try makeStressCoordinator(applications: [app])
         coordinator.query = "x"
         try await waitUntil("candidates arrive") { !coordinator.results.isEmpty }
-        let lastID = try XCTUnwrap(coordinator.results.last?.id)
+        let lastID = try #require(coordinator.results.last?.id)
 
-        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == lastID }))
+        try coordinator.select(#require(coordinator.results.first { $0.id == lastID }))
         coordinator.moveSelection(by: 100)
 
-        XCTAssertEqual(coordinator.selectedID, lastID)
+        #expect(coordinator.selectedID == lastID)
     }
 
-    func testMoveSelectionOnEmptyResultsIsNoOp() {
+    @Test func moveSelectionOnEmptyResultsIsNoOp() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
 
         coordinator.moveSelection(by: 1)
 
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
     }
 
-    func testMoveSelectionWithZeroDeltaKeepsSelection() throws {
+    @Test func moveSelectionWithZeroDeltaKeepsSelection() throws {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
-        let firstID = try XCTUnwrap(coordinator.results.first?.id)
+        let firstID = try #require(coordinator.results.first?.id)
 
-        try coordinator.select(XCTUnwrap(coordinator.results.first { $0.id == firstID }))
+        try coordinator.select(#require(coordinator.results.first { $0.id == firstID }))
         coordinator.moveSelection(by: 0)
 
-        XCTAssertEqual(coordinator.selectedID, firstID)
+        #expect(coordinator.selectedID == firstID)
     }
 
     // MARK: - reset
 
-    func testResetClearsAllState() {
+    @Test func resetClearsAllState() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
-        XCTAssertFalse(coordinator.results.isEmpty)
+        #expect(!coordinator.results.isEmpty)
 
         coordinator.reset()
 
-        XCTAssertEqual(coordinator.query, "")
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
-        XCTAssertEqual(coordinator.selectedFilter, .all)
-        XCTAssertEqual(
-            Array(coordinator.filterOptions.prefix(SearchResultFilter.primary.count)).map(\.filter),
-            SearchResultFilter.primary
-        )
-        XCTAssertFalse(coordinator.isSearching)
+        #expect(coordinator.query.isEmpty)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
+        #expect(coordinator.selectedFilter == .all)
+        #expect(Array(coordinator.filterOptions.prefix(SearchResultFilter.primary.count))
+            .map(\.filter) == SearchResultFilter.primary)
+        #expect(!coordinator.isSearching)
     }
 
-    func testResetIsIdempotent() {
+    @Test func resetIsIdempotent() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         coordinator.reset()
@@ -148,14 +146,14 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
         coordinator.reset()
 
-        XCTAssertEqual(coordinator.query, snapshotQuery)
-        XCTAssertEqual(coordinator.results, snapshotResults)
-        XCTAssertEqual(coordinator.selectedID, snapshotSelectedID)
+        #expect(coordinator.query == snapshotQuery)
+        #expect(coordinator.results == snapshotResults)
+        #expect(coordinator.selectedID == snapshotSelectedID)
     }
 
     // MARK: - selectFilter
 
-    func testSelectFilterChangesFilterAndResetsSelection() async throws {
+    @Test func selectFilterChangesFilterAndResetsSelection() async throws {
         let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
         let coordinator = try makeStressCoordinator(settings: [setting])
         coordinator.query = "k"
@@ -165,13 +163,13 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
         coordinator.selectFilter(.settings)
 
-        XCTAssertEqual(coordinator.selectedFilter, .settings)
-        XCTAssertFalse(coordinator.results.isEmpty)
-        XCTAssertTrue(coordinator.results.allSatisfy { $0.kind == .systemSetting })
-        XCTAssertEqual(coordinator.selectedID, setting.id)
+        #expect(coordinator.selectedFilter == .settings)
+        #expect(!coordinator.results.isEmpty)
+        #expect(coordinator.results.allSatisfy { $0.kind == .systemSetting })
+        #expect(coordinator.selectedID == setting.id)
     }
 
-    func testSelectFilterWithSameFilterIncrementsFocusGeneration() async throws {
+    @Test func selectFilterWithSameFilterIncrementsFocusGeneration() async throws {
         let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
         let coordinator = try makeStressCoordinator(settings: [setting])
         coordinator.query = "k"
@@ -183,43 +181,43 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
         coordinator.selectFilter(.settings)
 
-        XCTAssertGreaterThan(coordinator.focusGeneration, generationBefore)
-        XCTAssertEqual(coordinator.selectedFilter, .settings)
+        #expect(coordinator.focusGeneration > generationBefore)
+        #expect(coordinator.selectedFilter == .settings)
     }
 
-    func testSelectFilterToEmptyFilterClearsSelection() async throws {
+    @Test func selectFilterToEmptyFilterClearsSelection() async throws {
         let setting = SearchFixtures.setting(title: "Keyboard", score: 11_000)
         let coordinator = try makeStressCoordinator(settings: [setting])
         coordinator.query = "k"
         try await waitUntil("candidates arrive") {
             coordinator.results.contains { $0.id == setting.id }
         }
-        XCTAssertNotNil(coordinator.selectedID)
+        #expect(coordinator.selectedID != nil)
 
         coordinator.selectFilter(.folders)
 
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
     }
 
     // MARK: - select
 
-    func testSelectSetsSelectedID() {
+    @Test func selectSetsSelectedID() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first else {
-            XCTFail("expected at least one result")
+            Issue.record("expected at least one result")
             return
         }
 
         coordinator.select(item)
 
-        XCTAssertEqual(coordinator.selectedID, item.id)
+        #expect(coordinator.selectedID == item.id)
     }
 
     // MARK: - copySelection
 
-    func testCopySelectionWithFileURLWritesPathToPasteboard() {
+    @Test func copySelectionWithFileURLWritesPathToPasteboard() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first(where: { $0.fileURL != nil }) else {
@@ -236,12 +234,12 @@ final class SearchCoordinatorStressTests: XCTestCase {
         let expected = item.fileURL?.path
         coordinator.copySelection()
 
-        XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected)
+        #expect(NSPasteboard.general.string(forType: .string) == expected)
     }
 
-    func testCopySelectionWithNoSelectionIsNoOp() {
+    @Test func copySelectionWithNoSelectionIsNoOp() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
-        XCTAssertNil(coordinator.selectedID)
+        #expect(coordinator.selectedID == nil)
 
         // Should not crash; nothing to copy.
         coordinator.copySelection()
@@ -249,7 +247,7 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
     // MARK: - previewableSelectionURL
 
-    func testPreviewableSelectionURLIsNilForNonFileSelection() {
+    @Test func previewableSelectionURLIsNilForNonFileSelection() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let webItem = coordinator.results.first(where: { $0.kind == .web }) else {
@@ -258,16 +256,16 @@ final class SearchCoordinatorStressTests: XCTestCase {
         }
         coordinator.select(webItem)
 
-        XCTAssertNil(coordinator.previewableSelectionURL)
+        #expect(coordinator.previewableSelectionURL == nil)
     }
 
-    func testPreviewableSelectionURLIsNilWhenNoSelection() {
+    @Test func previewableSelectionURLIsNilWhenNoSelection() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
-        XCTAssertNil(coordinator.selectedID)
-        XCTAssertNil(coordinator.previewableSelectionURL)
+        #expect(coordinator.selectedID == nil)
+        #expect(coordinator.previewableSelectionURL == nil)
     }
 
-    func testPreviewableSelectionURLReturnsFileURLForFileSelection() {
+    @Test func previewableSelectionURLReturnsFileURLForFileSelection() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let fileItem = coordinator.results.first(where: { $0.kind == .file }) else {
@@ -276,23 +274,23 @@ final class SearchCoordinatorStressTests: XCTestCase {
         }
         coordinator.select(fileItem)
 
-        XCTAssertEqual(coordinator.previewableSelectionURL, fileItem.fileURL)
+        #expect(coordinator.previewableSelectionURL == fileItem.fileURL)
     }
 
     // MARK: - assistantAnswerState
 
-    func testAssistantAnswerStateIsNilForNonMatchingItem() {
+    @Test func assistantAnswerStateIsNilForNonMatchingItem() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         guard let item = coordinator.results.first else {
-            XCTFail("expected at least one result")
+            Issue.record("expected at least one result")
             return
         }
         // No assistant run has been triggered.
-        XCTAssertNil(coordinator.assistantAnswerState(for: item))
+        #expect(coordinator.assistantAnswerState(for: item) == nil)
     }
 
-    func testAssistantAnswerStateIsNilWhenNoRunExists() {
+    @Test func assistantAnswerStateIsNilWhenNoRunExists() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         let item = SearchItem(
             id: "keyword-engine:claude",
@@ -302,22 +300,22 @@ final class SearchCoordinatorStressTests: XCTestCase {
             action: .askAssistant(command: "claude", arguments: ["-p", "test"]),
             score: SearchItemRanking.keywordEngine
         )
-        XCTAssertNil(coordinator.assistantAnswerState(for: item))
+        #expect(coordinator.assistantAnswerState(for: item) == nil)
     }
 
     // MARK: - Result Projection edge cases
 
-    func testBuildResultsWithAllEmptySourcesAndEmptyQueryProducesNoWebFallback() {
+    @Test func buildResultsWithAllEmptySourcesAndEmptyQueryProducesNoWebFallback() {
         let results = projectResults(
             query: "",
             indexed: [],
             apps: [],
             system: []
         )
-        XCTAssertTrue(results.isEmpty)
+        #expect(results.isEmpty)
     }
 
-    func testBuildResultsWithEmptyQueryAndLocalMatchesOmitsWebFallback() {
+    @Test func buildResultsWithEmptyQueryAndLocalMatchesOmitsWebFallback() {
         let file = makeFile(name: "notes.txt", score: 100)
         let results = projectResults(
             query: "",
@@ -325,11 +323,11 @@ final class SearchCoordinatorStressTests: XCTestCase {
             apps: [],
             system: []
         )
-        XCTAssertFalse(results.contains { $0.kind == .web })
-        XCTAssertTrue(results.contains { $0.id == file.id })
+        #expect(!results.contains { $0.kind == .web })
+        #expect(results.contains { $0.id == file.id })
     }
 
-    func testBuildResultsDeduplicatesByID() {
+    @Test func buildResultsDeduplicatesByID() {
         let file = makeFile(name: "notes.txt", score: 100)
         let results = projectResults(
             query: "zzzzz",
@@ -337,10 +335,10 @@ final class SearchCoordinatorStressTests: XCTestCase {
             apps: [],
             system: []
         )
-        XCTAssertEqual(results.filter { $0.id == file.id }.count, 1)
+        #expect(results.filter { $0.id == file.id }.count == 1)
     }
 
-    func testBuildResultsTruncatesAtEightyRows() {
+    @Test func buildResultsTruncatesAtEightyRows() {
         let indexed = (0..<100).map { makeFile(name: "file-\($0).txt", score: 1_000 - $0) }
         let results = projectResults(
             query: "zzzzz",
@@ -348,40 +346,40 @@ final class SearchCoordinatorStressTests: XCTestCase {
             apps: [],
             system: []
         )
-        XCTAssertEqual(results.count, 80)
-        XCTAssertEqual(results.last?.id, "web-search")
+        #expect(results.count == 80)
+        #expect(results.last?.id == "web-search")
     }
 
-    func testBuildResultsProducesCalculatorActionForExpression() throws {
+    @Test func buildResultsProducesCalculatorActionForExpression() throws {
         let results = projectResults(
             query: "12 * 12",
             indexed: [],
             apps: [],
             system: []
         )
-        let calc = try XCTUnwrap(results.first { $0.kind == .calculator })
-        XCTAssertEqual(calc.title, "144")
-        XCTAssertEqual(calc.action, .copy("144"))
+        let calc = try #require(results.first { $0.kind == .calculator })
+        #expect(calc.title == "144")
+        #expect(calc.action == .copy("144"))
     }
 
-    func testBuildResultsWebFallbackURLIsGoogleSearch() throws {
+    @Test func buildResultsWebFallbackURLIsGoogleSearch() throws {
         let results = projectResults(
             query: "floodlight",
             indexed: [],
             apps: [],
             system: []
         )
-        let web = try XCTUnwrap(results.first { $0.kind == .web })
+        let web = try #require(results.first { $0.kind == .web })
         guard case let .open(url) = web.action else {
-            XCTFail("expected open action")
+            Issue.record("expected open action")
             return
         }
-        XCTAssertTrue(url.absoluteString.hasPrefix("https://www.google.com/search?q="))
+        #expect(url.absoluteString.hasPrefix("https://www.google.com/search?q="))
     }
 
     // MARK: - query changes
 
-    func testChangingQueryTriggersNewSearch() {
+    @Test func changingQueryTriggersNewSearch() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let firstResults = coordinator.results
@@ -390,30 +388,30 @@ final class SearchCoordinatorStressTests: XCTestCase {
 
         // The new query should produce results; we just assert the pipeline
         // ran (results is non-empty for a real query).
-        XCTAssertFalse(coordinator.results.isEmpty)
-        XCTAssertNotEqual(firstResults, coordinator.results)
+        #expect(!coordinator.results.isEmpty)
+        #expect(firstResults != coordinator.results)
     }
 
-    func testSettingSameQueryValueDoesNotTriggerSearch() {
+    @Test func settingSameQueryValueDoesNotTriggerSearch() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
         let snapshotResults = coordinator.results
 
         coordinator.query = "shortcut"
 
-        XCTAssertEqual(coordinator.results, snapshotResults)
+        #expect(coordinator.results == snapshotResults)
     }
 
-    func testSettingEmptyQueryClearsResults() {
+    @Test func settingEmptyQueryClearsResults() {
         let coordinator = makeSearchCoordinatorWithInertPresentation()
         coordinator.query = "shortcut"
-        XCTAssertFalse(coordinator.results.isEmpty)
+        #expect(!coordinator.results.isEmpty)
 
         coordinator.query = ""
 
-        XCTAssertTrue(coordinator.results.isEmpty)
-        XCTAssertNil(coordinator.selectedID)
-        XCTAssertEqual(coordinator.selectedFilter, .all)
+        #expect(coordinator.results.isEmpty)
+        #expect(coordinator.selectedID == nil)
+        #expect(coordinator.selectedFilter == .all)
     }
 
     // MARK: - Helpers

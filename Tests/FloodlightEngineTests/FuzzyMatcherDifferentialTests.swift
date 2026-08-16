@@ -1,6 +1,6 @@
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 /// `FuzzyMatcher` has two implementations of one algorithm: a `String`
@@ -13,7 +13,7 @@ import XCTest
 /// So the central test in this file is differential: for every ASCII input
 /// the generators can produce, the two scorers must return *the same
 /// number*, not merely the same ordering.
-final class FuzzyMatcherDifferentialTests: XCTestCase {
+struct FuzzyMatcherDifferentialTests {
     private let asciiQuery = Gen<String>.string(
         alphabet: Array("abcdefgh -_/."),
         length: 0...8
@@ -26,7 +26,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
 
     // MARK: - The two scorers must agree exactly
 
-    func testTheASCIIFastPathReturnsTheSameScoreAsTheStringScorer() throws {
+    @Test func theASCIIFastPathReturnsTheSameScoreAsTheStringScorer() throws {
         try checkProperty(
             "scoreASCII == score for ASCII inputs",
             asciiQuery,
@@ -45,7 +45,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testTheASCIIFastPathReturnsTheSameMatchEvidenceAsTheStringScorer() throws {
+    @Test func theASCIIFastPathReturnsTheSameMatchEvidenceAsTheStringScorer() throws {
         try checkProperty(
             "matchASCII == match for ASCII inputs",
             asciiQuery,
@@ -64,7 +64,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testTheTwoScorersAgreeOnDigitsAndPunctuationToo() throws {
+    @Test func theTwoScorersAgreeOnDigitsAndPunctuationToo() throws {
         let alphabet = Array("abz019 -_/.+()[]")
         try checkProperty(
             "scoreASCII == score across a wider ASCII alphabet",
@@ -80,7 +80,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testTheTwoScorersAgreeOnTheRealSettingsVocabulary() {
+    @Test func theTwoScorersAgreeOnTheRealSettingsVocabulary() {
         // The exact strings `SystemCatalog` scores in production, so the
         // agreement is checked on the data that actually flows through the
         // fast path rather than only on synthetic alphabets.
@@ -108,29 +108,29 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
                     normalizedQuery: Array(query.utf8),
                     normalizedCandidate: Array(candidate.utf8)
                 )
-                XCTAssertEqual(reference, fast, "\(query) vs \(candidate)")
+                #expect(reference == fast, "\(query) vs \(candidate)")
             }
         }
     }
 
     // MARK: - What a score means
 
-    func testScoringRequiresStructuralOrTypoEvidence() {
+    @Test func scoringRequiresStructuralOrTypoEvidence() {
         // Loose character subsequences scattered across words are strictly rejected
-        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Grapher"))
-        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Google Chrome"))
-        XCTAssertNil(FuzzyMatcher.score(query: "gh", candidate: "Zed Nightly"))
-        XCTAssertNil(FuzzyMatcher.score(query: "login", candidate: "Gemini"))
-        XCTAssertNil(FuzzyMatcher.score(query: "login", candidate: "Migration Assistant"))
+        #expect(FuzzyMatcher.score(query: "gh", candidate: "Grapher") == nil)
+        #expect(FuzzyMatcher.score(query: "gh", candidate: "Google Chrome") == nil)
+        #expect(FuzzyMatcher.score(query: "gh", candidate: "Zed Nightly") == nil)
+        #expect(FuzzyMatcher.score(query: "login", candidate: "Gemini") == nil)
+        #expect(FuzzyMatcher.score(query: "login", candidate: "Migration Assistant") == nil)
 
         // Structural shapes and typos match
-        XCTAssertNotNil(FuzzyMatcher.score(query: "gh", candidate: "Ghostty"))
-        XCTAssertNotNil(FuzzyMatcher.score(query: "gc", candidate: "Google Chrome"))
-        XCTAssertNotNil(FuzzyMatcher.score(query: "chrome", candidate: "Google Chrome"))
-        XCTAssertNotNil(FuzzyMatcher.score(query: "ryacast", candidate: "Raycast"))
+        #expect(FuzzyMatcher.score(query: "gh", candidate: "Ghostty") != nil)
+        #expect(FuzzyMatcher.score(query: "gc", candidate: "Google Chrome") != nil)
+        #expect(FuzzyMatcher.score(query: "chrome", candidate: "Google Chrome") != nil)
+        #expect(FuzzyMatcher.score(query: "ryacast", candidate: "Raycast") != nil)
     }
 
-    func testAnEmptyQueryAlwaysScoresOne() throws {
+    @Test func anEmptyQueryAlwaysScoresOne() throws {
         try checkProperty(
             "an empty query is the recent-items sentinel",
             Gen<String>.hostile,
@@ -144,7 +144,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testAnEmptyCandidateOnlyMatchesAnEmptyQuery() throws {
+    @Test func anEmptyCandidateOnlyMatchesAnEmptyQuery() throws {
         try checkProperty(
             "nothing but the empty query matches an empty candidate",
             asciiQuery,
@@ -155,7 +155,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testIdenticalStringsAlwaysScoreTheExactMatchCeiling() throws {
+    @Test func identicalStringsAlwaysScoreTheExactMatchCeiling() throws {
         try checkProperty(
             "candidate == query scores 20_000",
             asciiCandidate.filter { !$0.isEmpty },
@@ -165,7 +165,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testScoringIsDeterministic() throws {
+    @Test func scoringIsDeterministic() throws {
         try checkProperty(
             "the same inputs always produce the same score",
             asciiQuery,
@@ -179,7 +179,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
 
     // MARK: - Band ordering
 
-    func testMatchQualityBandsAreOrderedForRealisticLengths() throws {
+    @Test func matchQualityBandsAreOrderedForRealisticLengths() throws {
         // Exact beats prefix beats word prefix beats acronym beats typo
         try checkProperty(
             "exact > prefix > wordPrefix > acronym > typo",
@@ -200,7 +200,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testAPrefixMatchScoresByCandidateLength() throws {
+    @Test func aPrefixMatchScoresByCandidateLength() throws {
         // Padding starts at 1: with none, the candidate *equals* the query
         // and takes the exact-match branch instead.
         try checkProperty(
@@ -214,7 +214,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testAWordPrefixMatchScoresByItsOffset() throws {
+    @Test func aWordPrefixMatchScoresByItsOffset() throws {
         try checkProperty(
             "a word prefix hit is 12_000 minus its offset",
             Gen<Int>.int(in: 1...200),
@@ -228,7 +228,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testWordBoundariesAreRecognizedForAcronymsAndWordPrefixes() {
+    @Test func wordBoundariesAreRecognizedForAcronymsAndWordPrefixes() {
         let boundary = FuzzyMatcher.score(
             normalizedQuery: "fd",
             normalizedCandidate: "full disk access"
@@ -237,68 +237,59 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             normalizedQuery: "fd",
             normalizedCandidate: "affiliated"
         )
-        XCTAssertNotNil(boundary)
-        XCTAssertNil(midWord, "letters scattered mid-word must not match")
+        #expect(boundary != nil)
+        #expect(midWord == nil, "letters scattered mid-word must not match")
 
         for separator in [" ", "-", "_", "/", "."] {
             let separated = FuzzyMatcher.score(
                 normalizedQuery: "b",
                 normalizedCandidate: "a\(separator)b"
             )
-            XCTAssertNotNil(separated, "'\(separator)' should count as a word boundary")
+            #expect(separated != nil, "'\(separator)' should count as a word boundary")
         }
     }
 
     // MARK: - The confidence threshold
 
-    func testTheConfidenceThresholdSitsAtTheLowestTypoFloor() {
-        XCTAssertEqual(FuzzyMatcher.confidentMatchThreshold, 7_000)
+    @Test func theConfidenceThresholdSitsAtTheLowestTypoFloor() {
+        #expect(FuzzyMatcher.confidentMatchThreshold == 7_000)
 
         // A loose subsequence is completely rejected (returns nil)
         let loose = FuzzyMatcher.score(
             normalizedQuery: "aiy",
             normalizedCandidate: "accessibility voiceover zoom display motor hearing"
         )
-        XCTAssertNil(loose, "a loose subsequence must return nil")
+        #expect(loose == nil, "a loose subsequence must return nil")
 
         // The synthetic worst case: three characters scattered across a long candidate
         let scattered = FuzzyMatcher.score(
             normalizedQuery: "abc",
             normalizedCandidate: "axxxxxxxxxbxxxxxxxxxc"
         )
-        XCTAssertNil(scattered, "scattered characters must return nil")
+        #expect(scattered == nil, "scattered characters must return nil")
     }
 
-    func testAVeryLongCandidateCanPushAGenuinePrefixMatchBelowConfidence() throws {
+    @Test func aVeryLongCandidateCanPushAGenuinePrefixMatchBelowConfidence() throws {
         let shortCandidate = "wifi" + String(repeating: "x", count: 1_000)
-        XCTAssertGreaterThan(
-            try XCTUnwrap(
-                FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: shortCandidate)
-            ),
-            FuzzyMatcher.confidentMatchThreshold
-        )
+        #expect(try #require(
+            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: shortCandidate)
+        ) > FuzzyMatcher.confidentMatchThreshold)
 
         let hugeCandidate = "wifi" + String(repeating: "x", count: 8_500)
-        XCTAssertLessThan(
-            try XCTUnwrap(
-                FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: hugeCandidate)
-            ),
-            FuzzyMatcher.confidentMatchThreshold
-        )
+        #expect(try #require(
+            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: hugeCandidate)
+        ) < FuzzyMatcher.confidentMatchThreshold)
 
         // And past 15_000 characters the score turns negative outright.
         let absurdCandidate = "wifi" + String(repeating: "x", count: 20_000)
-        XCTAssertLessThan(
-            try XCTUnwrap(
-                FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: absurdCandidate)
-            ),
-            0
-        )
+        #expect(try #require(
+            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: absurdCandidate)
+        ) < 0)
     }
 
     // MARK: - Normalization
 
-    func testNormalizationFoldsCaseAndDiacritics() throws {
+    @Test func normalizationFoldsCaseAndDiacritics() throws {
         try checkProperty(
             "normalization is case- and diacritic-insensitive",
             Gen<String>.element(of: [
@@ -310,7 +301,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testNormalizationIsIdempotentForRealText() throws {
+    @Test func normalizationIsIdempotentForRealText() throws {
         // Real text — anything with actual base characters — folds to a
         // fixed point in one pass. Degenerate sequences of *bare* combining
         // marks do not; that case is pinned separately below.
@@ -335,7 +326,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testNormalizationIsNotIdempotentForBareCombiningMarks() {
+    @Test func normalizationIsNotIdempotentForBareCombiningMarks() {
         // Found by the property above before it was narrowed. A string of
         // combining marks with no base character folds differently on the
         // second pass, because each pass re-composes what the previous one
@@ -376,31 +367,30 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             }
         }
 
-        XCTAssertFalse(
-            offenders.isEmpty,
+        #expect(
+            !(offenders.isEmpty),
             "normalization now looks idempotent; widen testNormalizationIsIdempotentForRealText"
         )
 
         // The scorer stays self-consistent regardless, which is what
         // actually matters: one normalization pass per side, compared once.
         for offender in [" \u{0328}\u{0301}", "\u{00A0}\u{0301}"] {
-            XCTAssertEqual(
-                FuzzyMatcher.score(query: offender, candidate: offender),
-                20_000,
+            #expect(
+                FuzzyMatcher.score(query: offender, candidate: offender) == 20_000,
                 "a value must always match itself, idempotent folding or not"
             )
         }
     }
 
-    func testTheConvenienceScorerNormalizesBothSides() {
+    @Test func theConvenienceScorerNormalizesBothSides() {
         // The two-argument form is what callers outside the hot path use;
         // it must fold before scoring, or "Café" would not match "cafe".
-        XCTAssertEqual(FuzzyMatcher.score(query: "CAFÉ", candidate: "cafe"), 20_000)
-        XCTAssertEqual(FuzzyMatcher.score(query: "café", candidate: "CAFE"), 20_000)
-        XCTAssertEqual(FuzzyMatcher.score(query: "WIFI", candidate: "wifi settings"), 15_000 - 13)
+        #expect(FuzzyMatcher.score(query: "CAFÉ", candidate: "cafe") == 20_000)
+        #expect(FuzzyMatcher.score(query: "café", candidate: "CAFE") == 20_000)
+        #expect(FuzzyMatcher.score(query: "WIFI", candidate: "wifi settings") == 15_000 - 13)
     }
 
-    func testNormalizationNeverTrapsOnHostileInput() throws {
+    @Test func normalizationNeverTrapsOnHostileInput() throws {
         try checkProperty(
             "normalized() is total",
             Gen<String>.hostile,
@@ -411,7 +401,7 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testScoringNeverTrapsOnHostileUnicode() throws {
+    @Test func scoringNeverTrapsOnHostileUnicode() throws {
         // Emoji, combining marks, and RTL overrides all reach the String
         // scorer through file names. It must return a number or nil for
         // every one of them, never trap on an index.
@@ -431,30 +421,25 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         }
     }
 
-    func testMultiScalarGraphemesAreScoredAsSingleCharacters() {
+    @Test func multiScalarGraphemesAreScoredAsSingleCharacters() {
         // A flag or a family emoji is one `Character` but several scalars.
         // The String scorer walks `Character`s, so an emoji query must
         // match its own emoji exactly rather than half of it.
         let family = "👨‍👩‍👧‍👦"
-        XCTAssertEqual(
-            FuzzyMatcher.score(normalizedQuery: family, normalizedCandidate: family),
-            20_000
-        )
-        XCTAssertNotNil(
-            FuzzyMatcher.score(
-                normalizedQuery: family,
-                normalizedCandidate: "photo of \(family) at home"
-            )
-        )
-        XCTAssertNil(
-            FuzzyMatcher.score(normalizedQuery: family, normalizedCandidate: "👨"),
+        #expect(FuzzyMatcher.score(normalizedQuery: family, normalizedCandidate: family) == 20_000)
+        #expect(FuzzyMatcher.score(
+            normalizedQuery: family,
+            normalizedCandidate: "photo of \(family) at home"
+        ) != nil)
+        #expect(
+            FuzzyMatcher.score(normalizedQuery: family, normalizedCandidate: "👨") == nil,
             "a single scalar must not satisfy a whole-cluster query"
         )
     }
 
     // MARK: - Scale
 
-    func testScoringALongCandidateStaysFastEnoughForEveryKeystroke() {
+    @Test func scoringALongCandidateStaysFastEnoughForEveryKeystroke() {
         // The settings catalogue is scored on every keystroke. A quadratic
         // blowup here would be felt immediately, so the budget is asserted
         // rather than assumed.
@@ -465,10 +450,10 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             _ = FuzzyMatcher.score(normalizedQuery: query, normalizedCandidate: candidate)
         }
         let elapsed = start.duration(to: .now)
-        XCTAssertLessThan(elapsed, .seconds(2))
+        #expect(elapsed < .seconds(2))
     }
 
-    func testTheASCIIPathHandlesLongStringsWithoutBlowingUp() {
+    @Test func theASCIIPathHandlesLongStringsWithoutBlowingUp() {
         let candidate = Array((String(repeating: "a ", count: 10_000) + "b").utf8)
         let query = Array("b".utf8)
 
@@ -479,11 +464,11 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
         )
         let elapsed = start.duration(to: .now)
 
-        XCTAssertNotNil(score)
-        XCTAssertLessThan(elapsed, .seconds(5))
+        #expect(score != nil)
+        #expect(elapsed < .seconds(5))
     }
 
-    func testScoringSurvivesConcurrentUseFromManyThreads() {
+    @Test func scoringSurvivesConcurrentUseFromManyThreads() {
         // Both scorers are pure statics, but `normalized` reaches into
         // `Locale.current`. Hammering it from many threads is how a hidden
         // shared cache would show up.
@@ -494,6 +479,6 @@ final class FuzzyMatcherDifferentialTests: XCTestCase {
             )
         }
         let distinct = Set(results.values.map { $0 ?? -1 })
-        XCTAssertEqual(distinct.count, 1, "concurrent scoring produced different answers")
+        #expect(distinct.count == 1, "concurrent scoring produced different answers")
     }
 }

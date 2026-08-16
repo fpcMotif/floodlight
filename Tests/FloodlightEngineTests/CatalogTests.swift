@@ -1,5 +1,5 @@
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 private final class ApplicationDiscoveryFixture: @unchecked Sendable {
@@ -88,15 +88,15 @@ private final class SystemSettingsDiscoveryFixture: @unchecked Sendable {
     }
 }
 
-final class CatalogTests: XCTestCase {
-    func testDiscoversFinderAndUserFacingCoreServicesApplications() throws {
+struct CatalogTests {
+    @Test func discoversFinderAndUserFacingCoreServicesApplications() throws {
         let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
         guard FileManager.default.fileExists(atPath: finderURL.path) else {
-            throw XCTSkip("Finder is not installed at the standard path.")
+            try Test.cancel("Finder is not installed at the standard path.")
         }
 
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -111,29 +111,29 @@ final class CatalogTests: XCTestCase {
         )
 
         let finder = catalog.immediatePage(for: "finder").items
-        XCTAssertTrue(finder.contains { $0.fileURL == finderURL })
+        #expect(finder.contains { $0.fileURL == finderURL })
 
         let archiveUtilityURL = URL(
             fileURLWithPath: "/System/Library/CoreServices/Applications/Archive Utility.app"
         )
         if FileManager.default.fileExists(atPath: archiveUtilityURL.path) {
             let archiveUtility = catalog.immediatePage(for: "archive utility").items
-            XCTAssertTrue(archiveUtility.contains { $0.fileURL == archiveUtilityURL })
+            #expect(archiveUtility.contains { $0.fileURL == archiveUtilityURL })
         }
 
         let dockAgentURL = URL(fileURLWithPath: "/System/Library/CoreServices/Dock.app")
-        XCTAssertFalse(catalog.immediatePage(for: "dock").items
-            .contains { $0.fileURL == dockAgentURL })
+        #expect(!(catalog.immediatePage(for: "dock").items
+                .contains { $0.fileURL == dockAgentURL }))
     }
 
-    func testDiscoversSymlinkedSystemApplications() async throws {
+    @Test func discoversSymlinkedSystemApplications() async throws {
         let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
         guard FileManager.default.fileExists(atPath: safariURL.path) else {
-            throw XCTSkip("Safari is not installed at the standard path.")
+            try Test.cancel("Safari is not installed at the standard path.")
         }
 
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -148,57 +148,53 @@ final class CatalogTests: XCTestCase {
         )
         try await catalog.start()
         let results = try await catalog.indexedItems(for: "safari")
-        XCTAssertTrue(results.contains { $0.fileURL?.lastPathComponent == "Safari.app" })
-        XCTAssertEqual(
-            results.filter { $0.fileURL?.lastPathComponent == "Safari.app" }.count,
-            1
-        )
+        #expect(results.contains { $0.fileURL?.lastPathComponent == "Safari.app" })
+        #expect(results.filter { $0.fileURL?.lastPathComponent == "Safari.app" }.count == 1)
     }
 
-    func testSystemSettingsAvoidLooseShortSubsequences() {
+    @Test func systemSettingsAvoidLooseShortSubsequences() {
         let catalog = SystemCatalog()
-        XCTAssertTrue(catalog.immediatePage(for: "arc").items.isEmpty)
-        XCTAssertEqual(catalog.immediatePage(for: "bluetooth").items.first?.title, "Bluetooth")
+        #expect(catalog.immediatePage(for: "arc").items.isEmpty)
+        #expect(catalog.immediatePage(for: "bluetooth").items.first?.title == "Bluetooth")
     }
 
-    func testSystemSettingsSurfacesKeywordMatchReasonInSubtitle() {
+    @Test func systemSettingsSurfacesKeywordMatchReasonInSubtitle() {
         let catalog = SystemCatalog()
 
         let bluetooth = catalog.immediatePage(for: "bluetooth").items
-        XCTAssertEqual(bluetooth.first?.title, "Bluetooth")
-        XCTAssertEqual(bluetooth.first?.subtitle, "System Settings")
+        #expect(bluetooth.first?.title == "Bluetooth")
+        #expect(bluetooth.first?.subtitle == "System Settings")
 
         let loginItems = catalog.immediatePage(for: "login").items
-        XCTAssertFalse(loginItems.isEmpty)
-        XCTAssertEqual(loginItems.first?.title, "Login Items & Extensions")
-        XCTAssertEqual(loginItems.first?.subtitle, "System Settings")
+        #expect(!(loginItems.isEmpty))
+        #expect(loginItems.first?.title == "Login Items & Extensions")
+        #expect(loginItems.first?.subtitle == "System Settings")
 
         let keywordMatches = loginItems.dropFirst()
-        XCTAssertFalse(keywordMatches.isEmpty)
+        #expect(!(keywordMatches.isEmpty))
         for match in keywordMatches {
-            XCTAssertEqual(
-                match.subtitle,
-                "Matches: login",
+            #expect(
+                match.subtitle == "Matches: login",
                 "Setting \(match.title) matched on keyword 'login' but had subtitle \(match.subtitle)"
             )
         }
 
         let airdrop = catalog.immediatePage(for: "airdrop").items
-        XCTAssertEqual(airdrop.first?.title, "General")
-        XCTAssertEqual(airdrop.first?.subtitle, "Matches: airdrop")
+        #expect(airdrop.first?.title == "General")
+        #expect(airdrop.first?.subtitle == "Matches: airdrop")
 
         let vpn = catalog.immediatePage(for: "vpn").items
-        XCTAssertEqual(vpn.first?.title, "Network")
-        XCTAssertEqual(vpn.first?.subtitle, "Matches: vpn")
+        #expect(vpn.first?.title == "Network")
+        #expect(vpn.first?.subtitle == "Matches: vpn")
 
         let camera = catalog.immediatePage(for: "camera").items
-        XCTAssertEqual(camera.first?.title, "Privacy & Security")
-        XCTAssertEqual(camera.first?.subtitle, "Matches: camera")
+        #expect(camera.first?.title == "Privacy & Security")
+        #expect(camera.first?.subtitle == "Matches: camera")
     }
 
-    func testFastApplicationSearchDoesNotWaitForFFF() throws {
+    @Test func fastApplicationSearchDoesNotWaitForFFF() throws {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -215,16 +211,16 @@ final class CatalogTests: XCTestCase {
         let page = catalog.immediatePage(for: "claude")
         let elapsed = start.duration(to: .now)
 
-        XCTAssertLessThan(elapsed, .milliseconds(100))
-        XCTAssertGreaterThanOrEqual(page.totalMatched, page.items.count)
+        #expect(elapsed < .milliseconds(100))
+        #expect(page.totalMatched >= page.items.count)
         if FileManager.default.fileExists(atPath: "/Applications/Claude.app") {
-            XCTAssertEqual(page.items.first?.fileURL?.lastPathComponent, "Claude.app")
+            #expect(page.items.first?.fileURL?.lastPathComponent == "Claude.app")
         }
     }
 
-    func testFastAndIndexedApplicationSearchAgreeOnScore() async throws {
+    @Test func fastAndIndexedApplicationSearchAgreeOnScore() async throws {
         let suiteName = "FloodlightScoreTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloodlightScoreTests-\(UUID().uuidString)", isDirectory: true)
@@ -247,19 +243,19 @@ final class CatalogTests: XCTestCase {
                 try await catalog.indexedItems(for: query).contains { $0.fileURL == orbital.url }
             }
 
-            let fast = try XCTUnwrap(
+            let fast = try #require(
                 catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
-                query
+                "\(query)"
             )
             let indexed = try await catalog.indexedItems(for: query)
                 .first { $0.fileURL == orbital.url }
-            XCTAssertEqual(try XCTUnwrap(indexed, query).score, fast.score, query)
+            #expect(try #require(indexed, "\(query)").score == fast.score, "\(query)")
         }
     }
 
-    func testApplicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
+    @Test func applicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
         let suiteName = "FloodlightZeroEvidenceTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -290,17 +286,17 @@ final class CatalogTests: XCTestCase {
         catalog.track(query: "login", selectedURL: gemini.url)
         catalog.track(query: "login", selectedURL: migration.url)
 
-        XCTAssertTrue(catalog.immediatePage(for: "login").items.isEmpty)
+        #expect(catalog.immediatePage(for: "login").items.isEmpty)
         let indexed = try await catalog.indexedItems(for: "login")
-        XCTAssertTrue(
+        #expect(
             indexed.isEmpty,
             "Recalled applications with no match evidence must be discarded, but got: \(indexed.map(\.title))"
         )
     }
 
-    func testRefreshTracksApplicationInstallRenameAndRemovalAfterStartup() async throws {
+    @Test func refreshTracksApplicationInstallRenameAndRemovalAfterStartup() async throws {
         let suiteName = "FloodlightRefreshTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -326,15 +322,15 @@ final class CatalogTests: XCTestCase {
         )
 
         try await catalog.start()
-        XCTAssertTrue(catalog.immediatePage(for: "raycast").items.isEmpty)
+        #expect(catalog.immediatePage(for: "raycast").items.isEmpty)
 
         discovery.replace(with: [notes, raycast])
         let didAddRaycast = try await catalog.refreshIfNeeded(
             minimumInterval: 0,
             forceDiscovery: true
         )
-        XCTAssertTrue(didAddRaycast)
-        XCTAssertEqual(catalog.immediatePage(for: "raycast").items.first?.fileURL, raycast.url)
+        #expect(didAddRaycast)
+        #expect(catalog.immediatePage(for: "raycast").items.first?.fileURL == raycast.url)
         try await assertEventually("The application marker index did not add Raycast") {
             try await catalog.indexedItems(for: "raycast").contains { $0.fileURL == raycast.url }
         }
@@ -348,13 +344,10 @@ final class CatalogTests: XCTestCase {
             minimumInterval: 0,
             forceDiscovery: true
         )
-        XCTAssertTrue(didRenameRaycast)
-        XCTAssertFalse(catalog.immediatePage(for: "raycast").items
-            .contains { $0.fileURL == raycast.url })
-        XCTAssertEqual(
-            catalog.immediatePage(for: "orbital launcher").items.first?.fileURL,
-            orbital.url
-        )
+        #expect(didRenameRaycast)
+        #expect(!(catalog.immediatePage(for: "raycast").items
+                .contains { $0.fileURL == raycast.url }))
+        #expect(catalog.immediatePage(for: "orbital launcher").items.first?.fileURL == orbital.url)
         try await assertEventually("The application marker index did not replace renamed Raycast") {
             let oldResults = try await catalog.indexedItems(for: "raycast")
             let newResults = try await catalog.indexedItems(for: "orbital launcher")
@@ -367,11 +360,9 @@ final class CatalogTests: XCTestCase {
             minimumInterval: 0,
             forceDiscovery: true
         )
-        XCTAssertTrue(didRemoveOrbital)
-        XCTAssertFalse(
-            catalog.immediatePage(for: "orbital launcher").items
-                .contains { $0.fileURL == orbital.url }
-        )
+        #expect(didRemoveOrbital)
+        #expect(!(catalog.immediatePage(for: "orbital launcher").items
+                .contains { $0.fileURL == orbital.url }))
         try await assertEventually("The application marker index did not remove Orbital") {
             try await catalog.indexedItems(for: "orbital launcher")
                 .allSatisfy { $0.fileURL != orbital.url }
@@ -381,12 +372,12 @@ final class CatalogTests: XCTestCase {
             minimumInterval: 0,
             forceDiscovery: true
         )
-        XCTAssertFalse(didChangeAgain)
+        #expect(!didChangeAgain)
     }
 
-    func testApplicationRefreshIsSingleFlight() async throws {
+    @Test func applicationRefreshIsSingleFlight() async throws {
         let suiteName = "FloodlightSingleFlightTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let supportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -412,7 +403,8 @@ final class CatalogTests: XCTestCase {
         }.value
         guard firstStarted else {
             firstRefresh.cancel()
-            return XCTFail("the first forced discovery did not start")
+            Issue.record("the first forced discovery did not start")
+            return
         }
 
         let secondFinished = CatalogTestSignal()
@@ -431,31 +423,32 @@ final class CatalogTests: XCTestCase {
             discovery.resume(count: 2)
             _ = try? await firstRefresh.value
             _ = await secondRefresh.value
-            return XCTFail("a concurrent refresh queued behind the active discovery")
+            Issue.record("a concurrent refresh queued behind the active discovery")
+            return
         }
 
         let secondResult = await secondRefresh.value
-        XCTAssertEqual(secondResult, false)
-        XCTAssertEqual(discovery.callCount, 1)
+        #expect(secondResult == false)
+        #expect(discovery.callCount == 1)
 
         discovery.resume()
         _ = try await firstRefresh.value
-        XCTAssertEqual(discovery.callCount, 1)
+        #expect(discovery.callCount == 1)
     }
 
-    func testIndexesInstalledSystemSettings() async throws {
+    @Test func indexesInstalledSystemSettings() async throws {
         let catalog = SystemCatalog()
         try await catalog.start()
 
         let appearance = catalog.immediatePage(for: "appearance", limit: 24)
         let wifi = catalog.immediatePage(for: "wifi", limit: 24)
 
-        XCTAssertTrue(appearance.items.contains { $0.title == "Appearance" })
-        XCTAssertTrue(wifi.items.contains { $0.title == "Wi-Fi" || $0.title == "Network" })
-        XCTAssertGreaterThanOrEqual(appearance.totalMatched, appearance.items.count)
+        #expect(appearance.items.contains { $0.title == "Appearance" })
+        #expect(wifi.items.contains { $0.title == "Wi-Fi" || $0.title == "Network" })
+        #expect(appearance.totalMatched >= appearance.items.count)
     }
 
-    func testSystemSettingsRefreshTracksInstallRenameAndRemoval() async {
+    @Test func systemSettingsRefreshTracksInstallRenameAndRemoval() async {
         let pane = "com.floodlight.tests.dynamic-settings"
         let aurora = SystemCatalog.DiscoveredSetting(
             name: "Aurora Controls",
@@ -466,11 +459,8 @@ final class CatalogTests: XCTestCase {
         let catalog = SystemCatalog(discoveryProvider: { discovery.snapshot() })
 
         let didInstall = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didInstall)
-        XCTAssertEqual(
-            catalog.immediatePage(for: "Aurora Controls").items.first?.id,
-            "setting:\(pane)"
-        )
+        #expect(didInstall)
+        #expect(catalog.immediatePage(for: "Aurora Controls").items.first?.id == "setting:\(pane)")
 
         let nebula = SystemCatalog.DiscoveredSetting(
             name: "Nebula Controls",
@@ -479,30 +469,22 @@ final class CatalogTests: XCTestCase {
         )
         discovery.replace(with: [nebula])
         let didRename = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didRename)
-        XCTAssertFalse(
-            catalog.immediatePage(for: "Aurora Controls").items
-                .contains { $0.id == "setting:\(pane)" }
-        )
-        XCTAssertEqual(
-            catalog.immediatePage(for: "Nebula Controls").items.first?.id,
-            "setting:\(pane)"
-        )
+        #expect(didRename)
+        #expect(!(catalog.immediatePage(for: "Aurora Controls").items
+                .contains { $0.id == "setting:\(pane)" }))
+        #expect(catalog.immediatePage(for: "Nebula Controls").items.first?.id == "setting:\(pane)")
 
         discovery.replace(with: [])
         let didRemove = await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-        XCTAssertTrue(didRemove)
-        XCTAssertFalse(
-            catalog.immediatePage(for: "Nebula Controls").items
-                .contains { $0.id == "setting:\(pane)" }
-        )
+        #expect(didRemove)
+        #expect(!(catalog.immediatePage(for: "Nebula Controls").items
+                .contains { $0.id == "setting:\(pane)" }))
     }
 
     private func assertEventually(
         _ message: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -512,6 +494,6 @@ final class CatalogTests: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(25))
         } while Date() < deadline
-        XCTFail(message, file: file, line: line)
+        Issue.record("\(message)", sourceLocation: sourceLocation)
     }
 }

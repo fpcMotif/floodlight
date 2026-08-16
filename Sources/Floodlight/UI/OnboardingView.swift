@@ -9,6 +9,7 @@ private extension Color {
     )
 }
 
+@MainActor
 struct OnboardingView: View {
     let presentation: FloodlightConfigurationPresentation
     @Bindable var session: OnboardingSession
@@ -24,6 +25,18 @@ struct OnboardingView: View {
     let onOpenSpotlightSettings: @MainActor @Sendable () -> Void
     let onOpenFullDiskAccess: @MainActor @Sendable () -> Void
     let onFinish: @MainActor @Sendable () -> Void
+
+    /// Passing `onSetLaunchAtLogin` straight into `Binding(set:)` asks IRGen
+    /// for an `@isolated(any)` reabstraction thunk that overflows SmallVector
+    /// on Swift 6.3.3. The wrapper keeps the same callback contract.
+    private var launchesAtLogin: Binding<Bool> {
+        Binding(
+            get: { session.launchesAtLogin },
+            set: { newValue in
+                onSetLaunchAtLogin(newValue)
+            }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,10 +155,7 @@ struct OnboardingView: View {
                 ) {
                     Toggle(
                         "",
-                        isOn: Binding(
-                            get: { session.launchesAtLogin },
-                            set: onSetLaunchAtLogin
-                        )
+                        isOn: launchesAtLogin
                     )
                     .labelsHidden()
                     .toggleStyle(.switch)

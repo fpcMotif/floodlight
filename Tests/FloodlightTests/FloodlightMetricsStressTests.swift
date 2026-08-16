@@ -1,134 +1,118 @@
 import FloodlightEngine
 import SwiftUI
-import XCTest
+import Testing
 @testable import Floodlight
 
-final class FloodlightMetricsStressTests: XCTestCase {
+struct FloodlightMetricsStressTests {
     // MARK: - panelHeight
 
-    func testPanelHeightForEmptyQueryIsSearchHeight() {
-        XCTAssertEqual(
-            FloodlightMetrics.panelHeight(hasQuery: false),
-            FloodlightMetrics.searchHeight
-        )
+    @Test func panelHeightForEmptyQueryIsSearchHeight() {
+        #expect(FloodlightMetrics.panelHeight(hasQuery: false) == FloodlightMetrics.searchHeight)
     }
 
-    func testPanelHeightForNonEmptyQueryIsExpandedHeight() {
-        XCTAssertEqual(
-            FloodlightMetrics.panelHeight(hasQuery: true),
-            FloodlightMetrics.expandedPanelHeight
-        )
+    @Test func panelHeightForNonEmptyQueryIsExpandedHeight() {
+        #expect(FloodlightMetrics.panelHeight(hasQuery: true) == FloodlightMetrics
+            .expandedPanelHeight)
     }
 
-    func testExpandedPanelHeightIsGreaterThanSearchHeight() {
-        XCTAssertGreaterThan(FloodlightMetrics.expandedPanelHeight, FloodlightMetrics.searchHeight)
+    @Test func expandedPanelHeightIsGreaterThanSearchHeight() {
+        #expect(FloodlightMetrics.expandedPanelHeight > FloodlightMetrics.searchHeight)
     }
 
     // MARK: - cornerRadius
 
-    func testCornerRadiusIsHalfSearchHeight() {
-        XCTAssertEqual(FloodlightMetrics.cornerRadius, FloodlightMetrics.searchHeight / 2)
+    @Test func cornerRadiusIsHalfSearchHeight() {
+        #expect(FloodlightMetrics.cornerRadius == FloodlightMetrics.searchHeight / 2)
     }
 
     // MARK: - iconTileCornerRadius
 
-    func testIconTileCornerRadiusIsConcentricWithRowRadius() {
-        XCTAssertEqual(
-            FloodlightMetrics.iconTileCornerRadius,
-            FloodlightMetrics.resultRowCornerRadius - FloodlightMetrics.iconTileInset
-        )
-        XCTAssertLessThan(
-            FloodlightMetrics.iconTileCornerRadius,
-            FloodlightMetrics.resultRowCornerRadius
-        )
-        XCTAssertGreaterThan(FloodlightMetrics.iconTileCornerRadius, 0)
+    @Test func iconTileCornerRadiusIsConcentricWithRowRadius() {
+        #expect(FloodlightMetrics.iconTileCornerRadius == FloodlightMetrics
+            .resultRowCornerRadius - FloodlightMetrics.iconTileInset)
+        #expect(FloodlightMetrics.iconTileCornerRadius < FloodlightMetrics.resultRowCornerRadius)
+        #expect(FloodlightMetrics.iconTileCornerRadius > 0)
     }
 
     // MARK: - iconTint
 
-    func testIconTintForAllKinds() {
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .assistant), .purple)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .calculator), .orange)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .systemSetting), .gray)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .web), .blue)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .application), .accentColor)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .file), .accentColor)
-        XCTAssertEqual(FloodlightMetrics.iconTint(for: .folder), .accentColor)
+    @Test func iconTintForAllKinds() {
+        #expect(FloodlightMetrics.iconTint(for: .assistant) == .purple)
+        #expect(FloodlightMetrics.iconTint(for: .calculator) == .orange)
+        #expect(FloodlightMetrics.iconTint(for: .systemSetting) == .gray)
+        #expect(FloodlightMetrics.iconTint(for: .web) == .blue)
+        #expect(FloodlightMetrics.iconTint(for: .application) == .accentColor)
+        #expect(FloodlightMetrics.iconTint(for: .file) == .accentColor)
+        #expect(FloodlightMetrics.iconTint(for: .folder) == .accentColor)
     }
 
     // MARK: - opacity values
 
-    func testIconTileTintOpacityInRange() {
-        XCTAssertGreaterThan(FloodlightMetrics.iconTileTintOpacity, 0)
-        XCTAssertLessThanOrEqual(FloodlightMetrics.iconTileTintOpacity, 1)
+    @Test func iconTileTintOpacityInRange() {
+        #expect(FloodlightMetrics.iconTileTintOpacity > 0)
+        #expect(FloodlightMetrics.iconTileTintOpacity <= 1)
     }
 
-    func testBadgeFillOpacityInRange() {
-        XCTAssertGreaterThan(FloodlightMetrics.badgeFillOpacity, 0)
-        XCTAssertLessThanOrEqual(FloodlightMetrics.badgeFillOpacity, 1)
+    @Test func badgeFillOpacityInRange() {
+        #expect(FloodlightMetrics.badgeFillOpacity > 0)
+        #expect(FloodlightMetrics.badgeFillOpacity <= 1)
     }
 
-    func testTopHitWashOpacityInRange() {
-        XCTAssertGreaterThan(FloodlightMetrics.topHitWashOpacity, 0)
-        XCTAssertLessThanOrEqual(FloodlightMetrics.topHitWashOpacity, 1)
+    @Test func topHitWashOpacityInRange() {
+        #expect(FloodlightMetrics.topHitWashOpacity > 0)
+        #expect(FloodlightMetrics.topHitWashOpacity <= 1)
     }
 
     // MARK: - size values positive
 
-    func testSizeValuesArePositive() {
-        XCTAssertGreaterThan(FloodlightMetrics.panelWidth, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.searchHeight, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.filterBarHeight, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.resultRowHeight, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.resultPadding, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.maximumVisibleResults, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.resultRowCornerRadius, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.standardIconSize, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.topHitIconSize, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.searchIconSize, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.clearButtonSize, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.iconTileInset, 0)
-        XCTAssertGreaterThan(FloodlightMetrics.Typography.inputSize, 0)
+    @Test func sizeValuesArePositive() {
+        #expect(FloodlightMetrics.panelWidth > 0)
+        #expect(FloodlightMetrics.searchHeight > 0)
+        #expect(FloodlightMetrics.filterBarHeight > 0)
+        #expect(FloodlightMetrics.resultRowHeight > 0)
+        #expect(FloodlightMetrics.resultPadding > 0)
+        #expect(FloodlightMetrics.maximumVisibleResults > 0)
+        #expect(FloodlightMetrics.resultRowCornerRadius > 0)
+        #expect(FloodlightMetrics.standardIconSize > 0)
+        #expect(FloodlightMetrics.topHitIconSize > 0)
+        #expect(FloodlightMetrics.searchIconSize > 0)
+        #expect(FloodlightMetrics.clearButtonSize > 0)
+        #expect(FloodlightMetrics.iconTileInset > 0)
+        #expect(FloodlightMetrics.Typography.inputSize > 0)
     }
 
     // MARK: - topHitIcon > standardIcon
 
-    func testTopHitIconLargerThanStandardIcon() {
-        XCTAssertGreaterThan(
-            FloodlightMetrics.topHitIconSize,
-            FloodlightMetrics.standardIconSize
-        )
+    @Test func topHitIconLargerThanStandardIcon() {
+        #expect(FloodlightMetrics.topHitIconSize > FloodlightMetrics.standardIconSize)
     }
 
     // MARK: - expanded panel height components
 
-    func testExpandedPanelHeightComposesFromAllComponents() {
-        XCTAssertEqual(
-            FloodlightMetrics.expandedPanelHeight,
-            FloodlightMetrics.searchHeight
-                + 1
-                + FloodlightMetrics.filterBarHeight
-                + FloodlightMetrics.resultPadding * 2
-                + CGFloat(FloodlightMetrics.maximumVisibleResults)
-                * FloodlightMetrics.resultRowHeight
-        )
+    @Test func expandedPanelHeightComposesFromAllComponents() {
+        #expect(FloodlightMetrics.expandedPanelHeight == FloodlightMetrics.searchHeight
+            + 1
+            + FloodlightMetrics.filterBarHeight
+            + FloodlightMetrics.resultPadding * 2
+            + CGFloat(FloodlightMetrics.maximumVisibleResults)
+            * FloodlightMetrics.resultRowHeight)
     }
 
     // MARK: - Typography values exist (Font values, not CGFloat)
 
-    func testTypographyValuesExist() {
-        XCTAssertNotNil(FloodlightMetrics.Typography.rowTitle as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.topHitTitle as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.rowSubtitle as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.assistantAnswer as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.badge as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.chip as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.keyChip as Any?)
-        XCTAssertNotNil(FloodlightMetrics.Typography.emptyState as Any?)
+    @Test func typographyValuesExist() {
+        #expect(FloodlightMetrics.Typography.rowTitle as Any? != nil)
+        #expect(FloodlightMetrics.Typography.topHitTitle as Any? != nil)
+        #expect(FloodlightMetrics.Typography.rowSubtitle as Any? != nil)
+        #expect(FloodlightMetrics.Typography.assistantAnswer as Any? != nil)
+        #expect(FloodlightMetrics.Typography.badge as Any? != nil)
+        #expect(FloodlightMetrics.Typography.chip as Any? != nil)
+        #expect(FloodlightMetrics.Typography.keyChip as Any? != nil)
+        #expect(FloodlightMetrics.Typography.emptyState as Any? != nil)
     }
 
-    func testTypographyInputSizeIsCGFloat() {
+    @Test func typographyInputSizeIsCGFloat() {
         // inputSize is the one Typography property that's a CGFloat, not a Font.
-        XCTAssertEqual(FloodlightMetrics.Typography.inputSize, 24)
+        #expect(FloodlightMetrics.Typography.inputSize == 24)
     }
 }

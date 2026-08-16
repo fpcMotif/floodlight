@@ -1,13 +1,13 @@
 import Foundation
 import os
 
-package final class RecentStore: @unchecked Sendable {
-    private struct Entry: Codable {
+package final class RecentStore: Sendable {
+    private struct Entry: Codable, Sendable {
         var launches: Int
         var lastOpened: Date
     }
 
-    private let defaults: UserDefaults
+    private nonisolated(unsafe) let defaults: UserDefaults
     private let key = "recent-items-v1"
     private let entries: OSAllocatedUnfairLock<[String: Entry]>
     private let persistenceQueue = DispatchQueue(

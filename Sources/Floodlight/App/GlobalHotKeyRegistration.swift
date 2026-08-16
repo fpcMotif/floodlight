@@ -479,6 +479,8 @@ private func carbonHotKeyHandler(
         eventClass: GetEventClass(event),
         kind: GetEventKind(event)
     )
+    // Carbon's EventHandlerUPP cannot be typed @MainActor; the application
+    // event target delivers hot-key presses on the main thread.
     return MainActor.assumeIsolated {
         callbackBox.onEvent(hotKeyEvent)
     }

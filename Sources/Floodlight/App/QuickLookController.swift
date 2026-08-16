@@ -31,6 +31,7 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource {
         _ panel: QLPreviewPanel!,
         previewItemAt index: Int
     ) -> any QLPreviewItem {
+        // QLPreviewPanelDataSource is untyped; AppKit invokes this on the main thread.
         MainActor.assumeIsolated {
             (previewURL ?? URL(fileURLWithPath: "/")) as NSURL
         }

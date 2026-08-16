@@ -3,7 +3,7 @@ import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
 import SwiftUI
-import XCTest
+import Testing
 @testable import Floodlight
 
 /// Renders the real SwiftUI hierarchy — `SearchView`, `ResultRow`,
@@ -16,15 +16,12 @@ import XCTest
 /// front of a user, and every state the panel can be in gets rendered at
 /// least once.
 @MainActor
-final class SearchViewRenderingTests: XCTestCase {
-    private nonisolated(unsafe) var tree: TemporaryTree!
+@Suite(.serialized)
+struct SearchViewRenderingTests {
+    private let tree: TemporaryTree
 
-    override func setUpWithError() throws {
+    init() throws {
         tree = try TemporaryTree(label: "SearchViewRendering")
-    }
-
-    override func tearDown() {
-        tree = nil
     }
 
     private func makeCoordinator(
@@ -47,8 +44,7 @@ final class SearchViewRenderingTests: XCTestCase {
     private func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -56,7 +52,7 @@ final class SearchViewRenderingTests: XCTestCase {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     /// Rasterizes `view` at an explicit size and returns the image, failing
@@ -66,8 +62,7 @@ final class SearchViewRenderingTests: XCTestCase {
         width: CGFloat,
         height: CGFloat,
         colorScheme: ColorScheme = .dark,
-        file: StaticString = #filePath,
-        line: UInt = #line
+        sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> CGImage {
         let renderer = ImageRenderer(
             content: view
@@ -76,7 +71,7 @@ final class SearchViewRenderingTests: XCTestCase {
         )
         renderer.proposedSize = ProposedViewSize(width: width, height: height)
         renderer.scale = 1
-        return try XCTUnwrap(renderer.cgImage, file: file, line: line)
+        return try #require(renderer.cgImage, sourceLocation: sourceLocation)
     }
 
     /// Mounts `view` in a real hosting view and forces a layout pass — a
@@ -96,7 +91,7 @@ final class SearchViewRenderingTests: XCTestCase {
 
     // MARK: - SearchView
 
-    func testTheCollapsedPanelRendersAtTheSearchBarHeight() throws {
+    @Test func theCollapsedPanelRendersAtTheSearchBarHeight() throws {
         let coordinator = try makeCoordinator()
 
         let image = try render(
@@ -105,11 +100,11 @@ final class SearchViewRenderingTests: XCTestCase {
             height: FloodlightMetrics.panelHeight(hasQuery: false)
         )
 
-        XCTAssertEqual(image.width, Int(FloodlightMetrics.panelWidth))
-        XCTAssertEqual(image.height, Int(FloodlightMetrics.searchHeight))
+        #expect(image.width == Int(FloodlightMetrics.panelWidth))
+        #expect(image.height == Int(FloodlightMetrics.searchHeight))
     }
 
-    func testThePopulatedPanelRendersAtTheExpandedHeight() async throws {
+    @Test func thePopulatedPanelRendersAtTheExpandedHeight() async throws {
         let applications = ScriptedCatalog(
             immediate: (0..<12).map {
                 SearchFixtures.application(
@@ -125,18 +120,18 @@ final class SearchViewRenderingTests: XCTestCase {
             !coordinator.results.isEmpty
         }
 
-        XCTAssertFalse(coordinator.results.isEmpty)
+        #expect(!coordinator.results.isEmpty)
         let image = try render(
             SearchView(model: coordinator),
             width: FloodlightMetrics.panelWidth,
             height: FloodlightMetrics.panelHeight(hasQuery: true)
         )
 
-        XCTAssertEqual(image.width, Int(FloodlightMetrics.panelWidth))
-        XCTAssertEqual(image.height, Int(FloodlightMetrics.expandedPanelHeight))
+        #expect(image.width == Int(FloodlightMetrics.panelWidth))
+        #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
     }
 
-    func testTheWebModePanelRendersWithoutTheFilterBar() throws {
+    @Test func theWebModePanelRendersWithoutTheFilterBar() throws {
         // Web mode publishes no filter options, so the section drops the
         // chip bar and hands its height to the results — render that path
         // at the panel's real size to catch a layout that traps.
@@ -144,18 +139,18 @@ final class SearchViewRenderingTests: XCTestCase {
         coordinator.query = "yt lofi"
         coordinator.handleTab()
 
-        XCTAssertTrue(coordinator.filterOptions.isEmpty)
-        XCTAssertFalse(coordinator.results.isEmpty)
+        #expect(coordinator.filterOptions.isEmpty)
+        #expect(!coordinator.results.isEmpty)
         let image = try render(
             SearchView(model: coordinator),
             width: FloodlightMetrics.panelWidth,
             height: FloodlightMetrics.expandedPanelHeight
         )
-        XCTAssertEqual(image.width, Int(FloodlightMetrics.panelWidth))
-        XCTAssertEqual(image.height, Int(FloodlightMetrics.expandedPanelHeight))
+        #expect(image.width == Int(FloodlightMetrics.panelWidth))
+        #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
     }
 
-    func testTheEmptyFilterStateRenders() throws {
+    @Test func theEmptyFilterStateRenders() throws {
         // A filter with no matches is the one branch that renders
         // `EmptyResultsView` instead of the list.
         let applications = ScriptedCatalog(
@@ -165,7 +160,7 @@ final class SearchViewRenderingTests: XCTestCase {
         coordinator.query = "xcode"
         coordinator.selectFilter(.folders)
 
-        XCTAssertTrue(coordinator.results.isEmpty)
+        #expect(coordinator.results.isEmpty)
         _ = try render(
             SearchView(model: coordinator),
             width: FloodlightMetrics.panelWidth,
@@ -173,7 +168,7 @@ final class SearchViewRenderingTests: XCTestCase {
         )
     }
 
-    func testThePanelRendersInBothColorSchemes() throws {
+    @Test func thePanelRendersInBothColorSchemes() throws {
         let applications = ScriptedCatalog(
             immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)]
         )
@@ -187,11 +182,11 @@ final class SearchViewRenderingTests: XCTestCase {
                 height: FloodlightMetrics.expandedPanelHeight,
                 colorScheme: scheme
             )
-            XCTAssertEqual(image.width, Int(FloodlightMetrics.panelWidth))
+            #expect(image.width == Int(FloodlightMetrics.panelWidth))
         }
     }
 
-    func testTheLargestReachableResultSetRendersWithinBudget() async throws {
+    @Test func theLargestReachableResultSetRendersWithinBudget() async throws {
         // Rendering the widest set the pipeline can publish catches a layout
         // that is accidentally O(n²) before it reaches the panel.
         //
@@ -221,7 +216,7 @@ final class SearchViewRenderingTests: XCTestCase {
         try await waitUntil("the large result set arrives") {
             coordinator.results.count > FloodlightMetrics.maximumVisibleResults
         }
-        XCTAssertGreaterThan(coordinator.results.count, FloodlightMetrics.maximumVisibleResults)
+        #expect(coordinator.results.count > FloodlightMetrics.maximumVisibleResults)
 
         let start = ContinuousClock.now
         _ = try render(
@@ -229,10 +224,10 @@ final class SearchViewRenderingTests: XCTestCase {
             width: FloodlightMetrics.panelWidth,
             height: FloodlightMetrics.expandedPanelHeight
         )
-        XCTAssertLessThan(start.duration(to: .now), .seconds(10))
+        #expect(start.duration(to: .now) < .seconds(10))
     }
 
-    func testThePanelRendersEveryResultKind() throws {
+    @Test func thePanelRendersEveryResultKind() throws {
         // One row of each kind at once, so every icon, tint, and badge
         // branch in `ResultRow` is exercised in a single layout.
         let mixed: [SearchItem] = [
@@ -256,7 +251,7 @@ final class SearchViewRenderingTests: XCTestCase {
         )
     }
 
-    func testThePanelMountsInARealHostingView() throws {
+    @Test func thePanelMountsInARealHostingView() throws {
         let coordinator = try makeCoordinator(
             applications: ScriptedCatalog(immediate: [SearchFixtures.application(name: "Xcode")])
         )
@@ -268,8 +263,8 @@ final class SearchViewRenderingTests: XCTestCase {
             height: FloodlightMetrics.expandedPanelHeight
         )
 
-        XCTAssertEqual(hosting.frame.width, FloodlightMetrics.panelWidth)
-        XCTAssertFalse(hosting.subviews.isEmpty, "the hosting view produced no content")
+        #expect(hosting.frame.width == FloodlightMetrics.panelWidth)
+        #expect(!hosting.subviews.isEmpty, "the hosting view produced no content")
     }
 
     // MARK: - ResultRow
@@ -279,8 +274,7 @@ final class SearchViewRenderingTests: XCTestCase {
         isSelected: Bool = false,
         isTopHit: Bool = false,
         assistantState: AssistantAnswerState? = nil,
-        file: StaticString = #filePath,
-        line: UInt = #line
+        sourceLocation: SourceLocation = #_sourceLocation
     ) throws {
         _ = try render(
             ResultRow(
@@ -291,12 +285,11 @@ final class SearchViewRenderingTests: XCTestCase {
             ),
             width: FloodlightMetrics.panelWidth - FloodlightMetrics.resultPadding * 2,
             height: FloodlightMetrics.resultRowHeight,
-            file: file,
-            line: line
+            sourceLocation: sourceLocation
         )
     }
 
-    func testEveryRowKindRendersSelectedAndUnselected() throws {
+    @Test func everyRowKindRendersSelectedAndUnselected() throws {
         let items: [SearchItem] = [
             SearchFixtures.application(name: "Xcode"),
             SearchFixtures.file(name: "notes.txt", modifiedAt: .now, fileSize: 12_345),
@@ -316,7 +309,7 @@ final class SearchViewRenderingTests: XCTestCase {
         }
     }
 
-    func testTheAssistantRowRendersEveryAnswerState() throws {
+    @Test func theAssistantRowRendersEveryAnswerState() throws {
         let row = SearchFixtures.assistant()
         for state: AssistantAnswerState in [
             .running,
@@ -330,7 +323,7 @@ final class SearchViewRenderingTests: XCTestCase {
         }
     }
 
-    func testRowsSurviveHostileTitlesAndSubtitles() throws {
+    @Test func rowsSurviveHostileTitlesAndSubtitles() throws {
         // Titles come from file names, so they carry emoji, RTL overrides,
         // and 1_000-character monsters. None may break layout.
         for text in AdversarialCorpus.strings {
@@ -349,41 +342,46 @@ final class SearchViewRenderingTests: XCTestCase {
         }
     }
 
-    func testRowEqualityDrivesTheRedrawDecision() {
+    @Test func rowEqualityDrivesTheRedrawDecision() {
         // `ResultRow` is `Equatable` and used with `.equatable()`, so an
         // incorrect `==` would either freeze rows or defeat the
         // optimization entirely.
         let item = SearchFixtures.application(name: "Xcode")
         let base = ResultRow(item: item, isSelected: false, isTopHit: false, assistantState: nil)
 
-        XCTAssertEqual(
-            base,
-            ResultRow(item: item, isSelected: false, isTopHit: false, assistantState: nil)
-        )
-        XCTAssertNotEqual(
-            base,
-            ResultRow(item: item, isSelected: true, isTopHit: false, assistantState: nil)
-        )
-        XCTAssertNotEqual(
-            base,
-            ResultRow(item: item, isSelected: false, isTopHit: true, assistantState: nil)
-        )
-        XCTAssertNotEqual(
-            base,
-            ResultRow(item: item, isSelected: false, isTopHit: false, assistantState: .running)
-        )
-        XCTAssertNotEqual(
-            base,
-            ResultRow(
-                item: SearchFixtures.application(name: "Xcode Beta"),
-                isSelected: false,
-                isTopHit: false,
-                assistantState: nil
-            )
-        )
+        #expect(base == ResultRow(
+            item: item,
+            isSelected: false,
+            isTopHit: false,
+            assistantState: nil
+        ))
+        #expect(base != ResultRow(
+            item: item,
+            isSelected: true,
+            isTopHit: false,
+            assistantState: nil
+        ))
+        #expect(base != ResultRow(
+            item: item,
+            isSelected: false,
+            isTopHit: true,
+            assistantState: nil
+        ))
+        #expect(base != ResultRow(
+            item: item,
+            isSelected: false,
+            isTopHit: false,
+            assistantState: .running
+        ))
+        #expect(base != ResultRow(
+            item: SearchFixtures.application(name: "Xcode Beta"),
+            isSelected: false,
+            isTopHit: false,
+            assistantState: nil
+        ))
     }
 
-    func testARowWithNoMetadataRendersWithoutTheDotSeparators() throws {
+    @Test func ARowWithNoMetadataRendersWithoutTheDotSeparators() throws {
         // `fileSize == 0` and a nil date both suppress their segment; a row
         // showing a bare "·" would be a visible bug.
         try renderRow(
@@ -403,20 +401,20 @@ final class SearchViewRenderingTests: XCTestCase {
 
     // MARK: - KeyChip
 
-    func testTheKeyChipRendersInBothOfItsForms() throws {
+    @Test func theKeyChipRendersInBothOfItsForms() throws {
         _ = try render(KeyChip(symbolName: "return"), width: 40, height: 24)
         _ = try render(KeyChip(label: "⌘K"), width: 40, height: 24)
         _ = try render(KeyChip(label: ""), width: 40, height: 24)
         _ = try render(KeyChip(symbolName: "not.a.real.symbol.name"), width: 40, height: 24)
     }
 
-    func testEveryShippingEngineSymbolResolvesToARealSFImage() {
+    @Test func everyShippingEngineSymbolResolvesToARealSFImage() {
         // An unknown symbol name renders as an empty tile — the row looks
         // broken rather than merely plain, so the catalog's names are
         // pinned against NSImage's resolver.
         for engine in KeywordEngineCatalog.all {
-            XCTAssertNotNil(
-                NSImage(systemSymbolName: engine.symbolName, accessibilityDescription: nil),
+            #expect(
+                NSImage(systemSymbolName: engine.symbolName, accessibilityDescription: nil) != nil,
                 "\(engine.id)'s symbolName must be a real SF Symbol"
             )
         }
@@ -424,7 +422,7 @@ final class SearchViewRenderingTests: XCTestCase {
 
     // MARK: - Accessibility
 
-    func testEveryResultKindExposesANonEmptyAccessibilityLabel() {
+    @Test func everyResultKindExposesANonEmptyAccessibilityLabel() {
         // The row's accessibility label is its title and the hint names the
         // kind, so an empty label would make a row unreachable by
         // VoiceOver. Checked on the model the view reads from.
@@ -437,14 +435,12 @@ final class SearchViewRenderingTests: XCTestCase {
             .systemSetting,
             .web,
         ] {
-            XCTAssertFalse(kind.label.isEmpty, kind.rawValue)
-            XCTAssertFalse(
-                "Select \(kind.label). Double-click or press Return to open.".isEmpty
-            )
+            #expect(!kind.label.isEmpty, "\(kind.rawValue)")
+            #expect(!"Select \(kind.label). Double-click or press Return to open.".isEmpty)
         }
     }
 
-    func testTheFilterChipsExposeSettledCounts() async throws {
+    @Test func theFilterChipsExposeSettledCounts() async throws {
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode")],
@@ -458,19 +454,17 @@ final class SearchViewRenderingTests: XCTestCase {
                 && !coordinator.isSearching
         }
 
-        let option = try XCTUnwrap(
-            coordinator.filterOptions.first { $0.filter == .applications }
-        )
+        let option = try #require(coordinator.filterOptions.first { $0.filter == .applications })
         // These are the exact values `SearchFilterChip` renders as its
         // accessibility value.
-        XCTAssertEqual(option.count, 7)
-        XCTAssertFalse(option.isLoading)
-        XCTAssertEqual(option.filter.title, "Apps")
+        #expect(option.count == 7)
+        #expect(!option.isLoading)
+        #expect(option.filter.title == "Apps")
     }
 
     // MARK: - Layout metrics the views depend on
 
-    func testTheResultsRegionExactlyFillsTheExpandedPanel() {
+    @Test func theResultsRegionExactlyFillsTheExpandedPanel() {
         // `SearchResultsSection` derives its height by subtraction. If these
         // stop adding up, the list is clipped or the panel gains a gap.
         let resultsHeight = FloodlightMetrics.expandedPanelHeight
@@ -478,12 +472,9 @@ final class SearchViewRenderingTests: XCTestCase {
             - 1
             - FloodlightMetrics.filterBarHeight
 
-        XCTAssertEqual(
-            resultsHeight,
-            FloodlightMetrics.resultPadding * 2
-                + CGFloat(FloodlightMetrics.maximumVisibleResults) * FloodlightMetrics
-                .resultRowHeight
-        )
-        XCTAssertGreaterThan(resultsHeight, 0)
+        #expect(resultsHeight == FloodlightMetrics.resultPadding * 2
+            + CGFloat(FloodlightMetrics.maximumVisibleResults) * FloodlightMetrics
+            .resultRowHeight)
+        #expect(resultsHeight > 0)
     }
 }

@@ -1,74 +1,56 @@
 import AppKit
 import Foundation
-import XCTest
+import Testing
 @testable import Floodlight
 
 @MainActor
-final class FloodlightPanelStressTests: XCTestCase {
+@Suite(.serialized)
+struct FloodlightPanelStressTests {
     // MARK: - shouldHideOnToggle
 
-    func testShouldHideOnToggleAllCombinations() {
+    @Test func shouldHideOnToggleAllCombinations() {
         // Visible + key + active -> hide
-        XCTAssertTrue(
-            FloodlightPanelController.shouldHideOnToggle(
-                panelIsVisible: true,
-                panelIsKeyWindow: true,
-                applicationIsActive: true
-            )
-        )
+        #expect(FloodlightPanelController.shouldHideOnToggle(
+            panelIsVisible: true,
+            panelIsKeyWindow: true,
+            applicationIsActive: true
+        ))
         // Any one false -> show
-        XCTAssertFalse(
-            FloodlightPanelController.shouldHideOnToggle(
-                panelIsVisible: true,
-                panelIsKeyWindow: true,
-                applicationIsActive: false
-            )
-        )
-        XCTAssertFalse(
-            FloodlightPanelController.shouldHideOnToggle(
-                panelIsVisible: true,
-                panelIsKeyWindow: false,
-                applicationIsActive: true
-            )
-        )
-        XCTAssertFalse(
-            FloodlightPanelController.shouldHideOnToggle(
-                panelIsVisible: false,
-                panelIsKeyWindow: true,
-                applicationIsActive: true
-            )
-        )
+        #expect(!(FloodlightPanelController.shouldHideOnToggle(
+            panelIsVisible: true,
+            panelIsKeyWindow: true,
+            applicationIsActive: false
+        )))
+        #expect(!(FloodlightPanelController.shouldHideOnToggle(
+            panelIsVisible: true,
+            panelIsKeyWindow: false,
+            applicationIsActive: true
+        )))
+        #expect(!(FloodlightPanelController.shouldHideOnToggle(
+            panelIsVisible: false,
+            panelIsKeyWindow: true,
+            applicationIsActive: true
+        )))
         // All false -> show
-        XCTAssertFalse(
-            FloodlightPanelController.shouldHideOnToggle(
-                panelIsVisible: false,
-                panelIsKeyWindow: false,
-                applicationIsActive: false
-            )
-        )
+        #expect(!(FloodlightPanelController.shouldHideOnToggle(
+            panelIsVisible: false,
+            panelIsKeyWindow: false,
+            applicationIsActive: false
+        )))
     }
 
     // MARK: - panelCommand
 
-    func testPanelCommandForEverySingleCharacter() {
+    @Test func panelCommandForEverySingleCharacter() {
         // Every lowercase letter: c, l, r (no shift), y map to known commands;
         // everything else is unmatched.
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "c", shiftHeld: false),
-            .copySelection
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "l", shiftHeld: false),
-            .chooseRoot
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
-            .revealSelection
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "y", shiftHeld: false),
-            .togglePreview
-        )
+        #expect(FloodlightPanelController
+            .panelCommand(for: "c", shiftHeld: false) == .copySelection)
+        #expect(FloodlightPanelController.panelCommand(for: "l", shiftHeld: false) == .chooseRoot)
+        #expect(FloodlightPanelController
+            .panelCommand(for: "r", shiftHeld: false) == .revealSelection)
+        #expect(FloodlightPanelController
+            .panelCommand(for: "y", shiftHeld: false) == .togglePreview)
 
         let knownCommands: Set = ["c", "l", "r", "y"]
         for character in "abcdefghijklmnopqrstuvwxyz" {
@@ -76,117 +58,81 @@ final class FloodlightPanelStressTests: XCTestCase {
             if knownCommands.contains(ch) {
                 continue
             }
-            XCTAssertEqual(
-                FloodlightPanelController.panelCommand(for: ch, shiftHeld: false),
-                .unmatched,
+            #expect(
+                FloodlightPanelController.panelCommand(for: ch, shiftHeld: false) == .unmatched,
                 "expected unmatched for \(ch)"
             )
         }
     }
 
-    func testPanelCommandForNil() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: nil, shiftHeld: false),
-            .unmatched
-        )
+    @Test func panelCommandForNil() {
+        #expect(FloodlightPanelController.panelCommand(for: nil, shiftHeld: false) == .unmatched)
     }
 
-    func testPanelCommandForMultiCharString() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false),
-            .unmatched
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "cc", shiftHeld: false),
-            .unmatched
-        )
+    @Test func panelCommandForMultiCharString() {
+        #expect(FloodlightPanelController.panelCommand(for: "cl", shiftHeld: false) == .unmatched)
+        #expect(FloodlightPanelController.panelCommand(for: "cc", shiftHeld: false) == .unmatched)
     }
 
-    func testPanelCommandForEmptyString() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "", shiftHeld: false),
-            .unmatched
-        )
+    @Test func panelCommandForEmptyString() {
+        #expect(FloodlightPanelController.panelCommand(for: "", shiftHeld: false) == .unmatched)
     }
 
-    func testPanelCommandShiftOnlyAffectsR() {
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "r", shiftHeld: true),
-            .rebuildIndex
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "r", shiftHeld: false),
-            .revealSelection
-        )
+    @Test func panelCommandShiftOnlyAffectsR() {
+        #expect(FloodlightPanelController.panelCommand(for: "r", shiftHeld: true) == .rebuildIndex)
+        #expect(FloodlightPanelController
+            .panelCommand(for: "r", shiftHeld: false) == .revealSelection)
         // Shift is ignored for other commands.
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "c", shiftHeld: true),
-            .copySelection
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "l", shiftHeld: true),
-            .chooseRoot
-        )
-        XCTAssertEqual(
-            FloodlightPanelController.panelCommand(for: "y", shiftHeld: true),
-            .togglePreview
-        )
+        #expect(FloodlightPanelController.panelCommand(for: "c", shiftHeld: true) == .copySelection)
+        #expect(FloodlightPanelController.panelCommand(for: "l", shiftHeld: true) == .chooseRoot)
+        #expect(FloodlightPanelController.panelCommand(for: "y", shiftHeld: true) == .togglePreview)
     }
 
     // MARK: - commandDigit
 
-    func testCommandDigitForAllDigits() {
+    @Test func commandDigitForAllDigits() {
         for digit in 0...9 {
-            XCTAssertEqual(FloodlightPanelController.commandDigit(for: String(digit)), digit)
+            #expect(FloodlightPanelController.commandDigit(for: String(digit)) == digit)
         }
     }
 
-    func testCommandDigitForNonDigits() {
-        XCTAssertNil(FloodlightPanelController.commandDigit(for: nil))
-        XCTAssertNil(FloodlightPanelController.commandDigit(for: "x"))
-        XCTAssertNil(FloodlightPanelController.commandDigit(for: "10"))
-        XCTAssertNil(FloodlightPanelController.commandDigit(for: ""))
-        XCTAssertNil(FloodlightPanelController.commandDigit(for: " "))
+    @Test func commandDigitForNonDigits() {
+        #expect(FloodlightPanelController.commandDigit(for: nil) == nil)
+        #expect(FloodlightPanelController.commandDigit(for: "x") == nil)
+        #expect(FloodlightPanelController.commandDigit(for: "10") == nil)
+        #expect(FloodlightPanelController.commandDigit(for: "") == nil)
+        #expect(FloodlightPanelController.commandDigit(for: " ") == nil)
     }
 
     // MARK: - filterShortcutIndex
 
-    func testFilterShortcutIndexForAllDigits() {
+    @Test func filterShortcutIndexForAllDigits() {
         for digit in 1...5 {
-            XCTAssertEqual(
-                FloodlightPanelController.filterShortcutIndex(for: String(digit)),
-                digit - 1
-            )
+            #expect(FloodlightPanelController.filterShortcutIndex(for: String(digit)) == digit - 1)
         }
         for digit in [0, 6, 7, 8, 9] {
-            XCTAssertNil(FloodlightPanelController.filterShortcutIndex(for: String(digit)))
+            #expect(FloodlightPanelController.filterShortcutIndex(for: String(digit)) == nil)
         }
     }
 
     // MARK: - performSearchTextEditingCommand
 
-    func testPerformSearchTextEditingCommandWithNilEditor() {
-        XCTAssertFalse(
-            FloodlightPanelController.performSearchTextEditingCommand("a", in: nil)
-        )
+    @Test func performSearchTextEditingCommandWithNilEditor() {
+        #expect(!(FloodlightPanelController.performSearchTextEditingCommand("a", in: nil)))
     }
 
-    func testPerformSearchTextEditingCommandWithNonFieldEditor() {
+    @Test func performSearchTextEditingCommandWithNonFieldEditor() {
         let editor = NSTextView()
         editor.isFieldEditor = false
-        XCTAssertFalse(
-            FloodlightPanelController.performSearchTextEditingCommand("a", in: editor)
-        )
+        #expect(!(FloodlightPanelController.performSearchTextEditingCommand("a", in: editor)))
     }
 
-    func testPerformSearchTextEditingCommandWithUnknownCommand() {
+    @Test func performSearchTextEditingCommandWithUnknownCommand() {
         let editor = makeFieldEditor()
-        XCTAssertFalse(
-            FloodlightPanelController.performSearchTextEditingCommand("q", in: editor)
-        )
+        #expect(!(FloodlightPanelController.performSearchTextEditingCommand("q", in: editor)))
     }
 
-    func testPerformSearchTextEditingCommandPasteWithEmptyPasteboard() {
+    @Test func performSearchTextEditingCommandPasteWithEmptyPasteboard() {
         let editor = makeFieldEditor()
         editor.string = "hello"
         editor.setSelectedRange(NSRange(location: 5, length: 0))
@@ -196,18 +142,16 @@ final class FloodlightPanelStressTests: XCTestCase {
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
 
-        XCTAssertTrue(
-            FloodlightPanelController.performSearchTextEditingCommand(
-                "v",
-                in: editor,
-                pasteboard: pasteboard
-            )
-        )
+        #expect(FloodlightPanelController.performSearchTextEditingCommand(
+            "v",
+            in: editor,
+            pasteboard: pasteboard
+        ))
         // Empty pasteboard -> nothing inserted.
-        XCTAssertEqual(editor.string, "hello")
+        #expect(editor.string == "hello")
     }
 
-    func testPerformSearchTextEditingCommandCutWithNoSelection() {
+    @Test func performSearchTextEditingCommandCutWithNoSelection() {
         let editor = makeFieldEditor()
         editor.string = "unchanged"
         editor.setSelectedRange(NSRange(location: 4, length: 0))
@@ -218,49 +162,43 @@ final class FloodlightPanelStressTests: XCTestCase {
 
         // Cut with no selection returns true (it's a recognized command) but
         // leaves the string intact.
-        XCTAssertTrue(
-            FloodlightPanelController.performSearchTextEditingCommand(
-                "x",
-                in: editor,
-                pasteboard: pasteboard
-            )
-        )
-        XCTAssertEqual(editor.string, "unchanged")
+        #expect(FloodlightPanelController.performSearchTextEditingCommand(
+            "x",
+            in: editor,
+            pasteboard: pasteboard
+        ))
+        #expect(editor.string == "unchanged")
     }
 
-    func testPerformSearchTextEditingCommandCopyWithNoSelection() {
+    @Test func performSearchTextEditingCommandCopyWithNoSelection() {
         let editor = makeFieldEditor()
         editor.string = "nothing"
         editor.setSelectedRange(NSRange(location: 7, length: 0))
         // Copy with no selection falls through to the default case and
         // returns false (it's a result-row shortcut, not a field-editor one).
-        XCTAssertFalse(
-            FloodlightPanelController.performSearchTextEditingCommand("c", in: editor)
-        )
+        #expect(!(FloodlightPanelController.performSearchTextEditingCommand("c", in: editor)))
     }
 
-    func testPerformSearchTextEditingCommandSelectAll() {
+    @Test func performSearchTextEditingCommandSelectAll() {
         let editor = makeFieldEditor()
         editor.string = "select me"
-        XCTAssertTrue(
-            FloodlightPanelController.performSearchTextEditingCommand("a", in: editor)
-        )
-        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: 9))
+        #expect(FloodlightPanelController.performSearchTextEditingCommand("a", in: editor))
+        #expect(editor.selectedRange() == NSRange(location: 0, length: 9))
     }
 
     // MARK: - PanelCommand equality & hashability
 
-    func testPanelCommandEquality() {
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.copySelection, .copySelection)
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.chooseRoot, .chooseRoot)
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.rebuildIndex, .rebuildIndex)
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.revealSelection, .revealSelection)
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.togglePreview, .togglePreview)
-        XCTAssertEqual(FloodlightPanelController.PanelCommand.unmatched, .unmatched)
-        XCTAssertNotEqual(FloodlightPanelController.PanelCommand.copySelection, .unmatched)
+    @Test func panelCommandEquality() {
+        #expect(FloodlightPanelController.PanelCommand.copySelection == .copySelection)
+        #expect(FloodlightPanelController.PanelCommand.chooseRoot == .chooseRoot)
+        #expect(FloodlightPanelController.PanelCommand.rebuildIndex == .rebuildIndex)
+        #expect(FloodlightPanelController.PanelCommand.revealSelection == .revealSelection)
+        #expect(FloodlightPanelController.PanelCommand.togglePreview == .togglePreview)
+        #expect(FloodlightPanelController.PanelCommand.unmatched == .unmatched)
+        #expect(FloodlightPanelController.PanelCommand.copySelection != .unmatched)
     }
 
-    func testPanelCommandHashability() {
+    @Test func panelCommandHashability() {
         let set: Set<FloodlightPanelController.PanelCommand> = [
             .copySelection,
             .chooseRoot,
@@ -269,9 +207,9 @@ final class FloodlightPanelStressTests: XCTestCase {
             .togglePreview,
             .unmatched,
         ]
-        XCTAssertEqual(set.count, 6)
-        XCTAssertTrue(set.contains(.copySelection))
-        XCTAssertTrue(set.contains(.unmatched))
+        #expect(set.count == 6)
+        #expect(set.contains(.copySelection))
+        #expect(set.contains(.unmatched))
     }
 
     // MARK: - Helpers

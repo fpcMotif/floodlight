@@ -1,9 +1,9 @@
 import AppKit
-import XCTest
+import Testing
 @testable import Floodlight
 
-final class FloodlightIconTests: XCTestCase {
-    func testMenuBarIconLoadsAsTemplateVectorArtwork() throws {
+struct FloodlightIconTests {
+    @Test func menuBarIconLoadsAsTemplateVectorArtwork() throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -14,20 +14,20 @@ final class FloodlightIconTests: XCTestCase {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         let image = FloodlightMenuBarIcon.image(resourceURL: sourceURL)
 
-        XCTAssertTrue(source.contains("<svg"))
-        XCTAssertFalse(source.contains("Floodlight"))
-        XCTAssertTrue(image.isValid)
-        XCTAssertTrue(image.isTemplate)
-        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
+        #expect(source.contains("<svg"))
+        #expect(!source.contains("Floodlight"))
+        #expect(image.isValid)
+        #expect(image.isTemplate)
+        #expect(image.size == NSSize(width: 18, height: 18))
     }
 
-    func testMissingVectorResourceUsesTemplateFallback() {
+    @Test func missingVectorResourceUsesTemplateFallback() {
         let image = FloodlightMenuBarIcon.image(
             resourceURL: URL(fileURLWithPath: "/missing/FloodlightMenuBar.svg")
         )
 
-        XCTAssertTrue(image.isValid)
-        XCTAssertTrue(image.isTemplate)
-        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
+        #expect(image.isValid)
+        #expect(image.isTemplate)
+        #expect(image.size == NSSize(width: 18, height: 18))
     }
 }

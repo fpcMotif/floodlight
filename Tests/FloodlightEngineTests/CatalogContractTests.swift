@@ -2,7 +2,7 @@ import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
 import os
-import XCTest
+import Testing
 
 /// The `Catalog` seam itself: the protocol's default implementations, the
 /// refresh guard that keeps keystrokes from stacking up filesystem walks,
@@ -13,7 +13,7 @@ import XCTest
 /// incidentally through `ApplicationCatalog` and `SystemCatalog`, which
 /// means a regression in the shared machinery would surface as a confusing
 /// failure two layers away.
-final class CatalogContractTests: XCTestCase {
+struct CatalogContractTests {
     /// A catalog that implements only what the protocol *requires*, so the
     /// defaults supplied by the protocol extension are what get tested.
     private final class MinimalCatalog: Catalog, @unchecked Sendable {
@@ -45,59 +45,59 @@ final class CatalogContractTests: XCTestCase {
 
     // MARK: - Protocol defaults
 
-    func testACatalogWithNoIndexReturnsNoIndexedItems() async throws {
+    @Test func aCatalogWithNoIndexReturnsNoIndexedItems() async throws {
         let catalog = MinimalCatalog()
         let items = try await catalog.indexedItems(for: "anything", limit: 50)
-        XCTAssertTrue(items.isEmpty)
+        #expect(items.isEmpty)
     }
 
-    func testTrackingIsANoOpForACatalogThatCannotLearn() throws {
+    @Test func trackingIsANoOpForACatalogThatCannotLearn() throws {
         // The default `track` exists so the coordinator can call it
         // unconditionally. It must not trap for a catalog that ignores it.
         let catalog = MinimalCatalog()
         catalog.track(query: "q", selectedURL: URL(fileURLWithPath: "/tmp/x"))
-        try catalog.track(query: "", selectedURL: XCTUnwrap(URL(string: "https://example.com")))
+        try catalog.track(query: "", selectedURL: #require(URL(string: "https://example.com")))
     }
 
-    func testConvenienceRefreshUsesATwoSecondFloorAndNoForcedDiscovery() async throws {
+    @Test func convenienceRefreshUsesATwoSecondFloorAndNoForcedDiscovery() async throws {
         let catalog = MinimalCatalog()
         let changed = try await catalog.refreshIfNeeded()
 
-        XCTAssertTrue(changed)
-        XCTAssertEqual(catalog.lastMinimumInterval, 2)
-        XCTAssertEqual(catalog.lastForceDiscovery, false)
+        #expect(changed)
+        #expect(catalog.lastMinimumInterval == 2)
+        #expect(catalog.lastForceDiscovery == false)
     }
 
-    func testConveniencePageAndIndexedSearchDefaultToTwelveResults() async throws {
+    @Test func conveniencePageAndIndexedSearchDefaultToTwelveResults() async throws {
         let catalog = MinimalCatalog()
         _ = catalog.immediatePage(for: "q")
-        XCTAssertEqual(catalog.lastLimit, 12)
+        #expect(catalog.lastLimit == 12)
 
         _ = try await catalog.indexedItems(for: "q")
-        XCTAssertEqual(catalog.lastLimit, 12, "the default indexed search must not re-page")
+        #expect(catalog.lastLimit == 12, "the default indexed search must not re-page")
     }
 
-    func testAZeroLimitPageIsEmptyRatherThanACrash() {
+    @Test func aZeroLimitPageIsEmptyRatherThanACrash() {
         let catalog = ScriptedCatalog(
             immediate: (0..<5).map { SearchFixtures.file(name: "f\($0).txt") }
         )
         let page = catalog.immediatePage(for: "f", limit: 0)
-        XCTAssertTrue(page.items.isEmpty)
-        XCTAssertEqual(page.totalMatched, 5, "the count reports matches, not the page")
+        #expect(page.items.isEmpty)
+        #expect(page.totalMatched == 5, "the count reports matches, not the page")
     }
 
-    func testAnOversizedLimitReturnsEverythingWithoutPadding() {
+    @Test func anOversizedLimitReturnsEverythingWithoutPadding() {
         let catalog = ScriptedCatalog(
             immediate: (0..<5).map { SearchFixtures.file(name: "f\($0).txt") }
         )
         let page = catalog.immediatePage(for: "f", limit: 10_000)
-        XCTAssertEqual(page.items.count, 5)
-        XCTAssertEqual(page.totalMatched, 5)
+        #expect(page.items.count == 5)
+        #expect(page.totalMatched == 5)
     }
 
     // MARK: - CatalogRefreshGuard
 
-    func testTheGuardAdmitsExactlyOneOfManyRacingCallers() {
+    @Test func theGuardAdmitsExactlyOneOfManyRacingCallers() {
         let guardUnderTest = CatalogRefreshGuard()
         let admitted = AtomicCounter()
 
@@ -108,42 +108,42 @@ final class CatalogContractTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(admitted.value, 1)
+        #expect(admitted.value == 1)
     }
 
-    func testTheGuardStaysClosedUntilReleased() {
+    @Test func theGuardStaysClosedUntilReleased() {
         let guardUnderTest = CatalogRefreshGuard()
 
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
-        XCTAssertFalse(
-            guardUnderTest.reserve(minimumInterval: 0),
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(
+            !(guardUnderTest.reserve(minimumInterval: 0)),
             "a refresh already in flight must absorb the next request"
         )
 
         guardUnderTest.release()
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
     }
 
-    func testTheGuardEnforcesItsMinimumIntervalAfterRelease() {
+    @Test func theGuardEnforcesItsMinimumIntervalAfterRelease() {
         let guardUnderTest = CatalogRefreshGuard()
 
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
         guardUnderTest.release()
 
         // Released, but the interval has not elapsed.
-        XCTAssertFalse(guardUnderTest.reserve(minimumInterval: 3_600))
+        #expect(!(guardUnderTest.reserve(minimumInterval: 3_600)))
         // A zero interval always admits a released guard.
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
     }
 
-    func testReleasingAGuardThatWasNeverReservedIsHarmless() {
+    @Test func releasingAGuardThatWasNeverReservedIsHarmless() {
         let guardUnderTest = CatalogRefreshGuard()
         guardUnderTest.release()
         guardUnderTest.release()
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
     }
 
-    func testRepeatedReserveReleaseCyclesUnderContentionNeverDoubleAdmit() {
+    @Test func repeatedReserveReleaseCyclesUnderContentionNeverDoubleAdmit() {
         // The realistic shape: a refresh finishes and another immediately
         // starts, while other callers keep hammering. At no instant may two
         // callers hold the reservation.
@@ -160,45 +160,42 @@ final class CatalogContractTests: XCTestCase {
             guardUnderTest.release()
         }
 
-        XCTAssertEqual(overlaps.value, 0, "two callers held the refresh reservation at once")
+        #expect(overlaps.value == 0, "two callers held the refresh reservation at once")
     }
 
-    func testAnUnreleasedGuardBlocksForever() {
+    @Test func anUnreleasedGuardBlocksForever() {
         // The failure mode worth knowing about: a `refresh` that throws
         // before its `defer { release() }` would wedge the catalog. Both
         // shipping catalogs release in a `defer`; this pins what happens if
         // one ever stops.
         let guardUnderTest = CatalogRefreshGuard()
-        XCTAssertTrue(guardUnderTest.reserve(minimumInterval: 0))
+        #expect(guardUnderTest.reserve(minimumInterval: 0))
         for _ in 0..<50 {
-            XCTAssertFalse(guardUnderTest.reserve(minimumInterval: 0))
+            #expect(!(guardUnderTest.reserve(minimumInterval: 0)))
         }
     }
 
     // MARK: - CatalogDirectoryFingerprint
 
-    func testAMissingDirectoryFingerprintsAsTheDistantPast() {
+    @Test func aMissingDirectoryFingerprintsAsTheDistantPast() {
         let missing = "/definitely/not/a/real/path-\(UUID().uuidString)"
-        XCTAssertEqual(
-            CatalogDirectoryFingerprint.modificationDate(
-                ofDirectoryAtPath: missing,
-                fileManager: .default
-            ),
-            .distantPast
-        )
+        #expect(CatalogDirectoryFingerprint.modificationDate(
+            ofDirectoryAtPath: missing,
+            fileManager: .default
+        ) == .distantPast)
     }
 
-    func testAnExistingDirectoryFingerprintsAsARealDate() throws {
+    @Test func anExistingDirectoryFingerprintsAsARealDate() throws {
         let tree = try TemporaryTree(label: "FingerprintTests")
         let date = CatalogDirectoryFingerprint.modificationDate(
             ofDirectoryAtPath: tree.root.path,
             fileManager: .default
         )
-        XCTAssertGreaterThan(date, .distantPast)
-        XCTAssertLessThanOrEqual(date, Date().addingTimeInterval(5))
+        #expect(date > .distantPast)
+        #expect(date <= Date().addingTimeInterval(5))
     }
 
-    func testDuplicatePathsCollapseInsteadOfTrapping() {
+    @Test func duplicatePathsCollapseInsteadOfTrapping() {
         // `make(forPaths:)` builds a dictionary with
         // `uniqueKeysWithValues`, which traps on a duplicate key. The
         // `Set(paths)` in front of it is the only thing preventing that, so
@@ -208,11 +205,11 @@ final class CatalogContractTests: XCTestCase {
             forPaths: [path, path, path, path],
             fileManager: .default
         )
-        XCTAssertEqual(fingerprint.count, 1)
-        XCTAssertNotNil(fingerprint[path])
+        #expect(fingerprint.count == 1)
+        #expect(fingerprint[path] != nil)
     }
 
-    func testURLsThatStandardizeToTheSamePathCollapse() {
+    @Test func uRLsThatStandardizeToTheSamePathCollapse() {
         // Application roots are assembled from several sources that can
         // name the same directory differently. Two spellings of one
         // directory must not become two keys — and must not trap.
@@ -224,19 +221,16 @@ final class CatalogContractTests: XCTestCase {
             URL(fileURLWithPath: base.path + "/", isDirectory: true),
         ]
         let fingerprint = CatalogDirectoryFingerprint.make(for: urls, fileManager: .default)
-        XCTAssertEqual(fingerprint.count, 1, "\(fingerprint.keys)")
+        #expect(fingerprint.count == 1, "\(fingerprint.keys)")
     }
 
-    func testAnEmptyInputProducesAnEmptyFingerprint() {
-        XCTAssertTrue(
-            CatalogDirectoryFingerprint.make(forPaths: [String](), fileManager: .default).isEmpty
-        )
-        XCTAssertTrue(
-            CatalogDirectoryFingerprint.make(for: [URL](), fileManager: .default).isEmpty
-        )
+    @Test func anEmptyInputProducesAnEmptyFingerprint() {
+        #expect(CatalogDirectoryFingerprint.make(forPaths: [String](), fileManager: .default)
+            .isEmpty)
+        #expect(CatalogDirectoryFingerprint.make(for: [URL](), fileManager: .default).isEmpty)
     }
 
-    func testAddingAFileChangesTheEnclosingDirectorysFingerprint() throws {
+    @Test func addingAFileChangesTheEnclosingDirectorysFingerprint() throws {
         // This is the whole point of the type: it answers "is a full
         // re-walk worth it?" without walking. If a change did not move the
         // fingerprint, newly installed applications would never appear.
@@ -259,14 +253,10 @@ final class CatalogContractTests: XCTestCase {
             if after == before { usleep(50_000) }
         }
 
-        XCTAssertNotEqual(
-            after,
-            before,
-            "adding a file did not move the directory's modification date"
-        )
+        #expect(after != before, "adding a file did not move the directory's modification date")
     }
 
-    func testFingerprintingIsStableWhenNothingChanges() throws {
+    @Test func fingerprintingIsStableWhenNothingChanges() throws {
         let tree = try TemporaryTree(label: "FingerprintStableTests")
         try tree.makeFile("a.txt", contents: "a")
 
@@ -275,17 +265,14 @@ final class CatalogContractTests: XCTestCase {
             fileManager: .default
         )
         for _ in 0..<20 {
-            XCTAssertEqual(
-                CatalogDirectoryFingerprint.make(
-                    forPaths: [tree.root.path],
-                    fileManager: .default
-                ),
-                first
-            )
+            #expect(CatalogDirectoryFingerprint.make(
+                forPaths: [tree.root.path],
+                fileManager: .default
+            ) == first)
         }
     }
 
-    func testFingerprintingManyPathsConcurrentlyIsSafe() throws {
+    @Test func fingerprintingManyPathsConcurrentlyIsSafe() throws {
         let tree = try TemporaryTree(label: "FingerprintConcurrentTests")
         let paths = try (0..<20).map { index in
             try tree.makeDirectory("dir-\(index)").path
@@ -300,10 +287,10 @@ final class CatalogContractTests: XCTestCase {
             counts.append(fingerprint.count)
         }
 
-        XCTAssertTrue(counts.values.allSatisfy { $0 == 20 })
+        #expect(counts.values.allSatisfy { $0 == 20 })
     }
 
-    func testHostilePathsAreFingerprintedWithoutTrapping() throws {
+    @Test func hostilePathsAreFingerprintedWithoutTrapping() throws {
         // Paths come from the filesystem, so they carry whatever names
         // users give their folders.
         let tree = try TemporaryTree(label: "FingerprintHostileTests")
@@ -324,12 +311,12 @@ final class CatalogContractTests: XCTestCase {
             forPaths: paths,
             fileManager: .default
         )
-        XCTAssertEqual(fingerprint.count, paths.count)
+        #expect(fingerprint.count == paths.count)
     }
 
     // MARK: - The scripted double honours the contract
 
-    func testTheScriptedCatalogRecordsWhatTheCoordinatorAsksItFor() async throws {
+    @Test func theScriptedCatalogRecordsWhatTheCoordinatorAsksItFor() async throws {
         let catalog = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode")],
@@ -343,14 +330,14 @@ final class CatalogContractTests: XCTestCase {
         _ = try await catalog.indexedItems(for: "xc", limit: 12)
         catalog.track(query: "xc", selectedURL: URL(fileURLWithPath: "/Applications/Xcode.app"))
 
-        XCTAssertEqual(catalog.starts, 1)
-        XCTAssertEqual(catalog.queries, ["xc"])
-        XCTAssertEqual(catalog.indexedSearches, 1)
-        XCTAssertEqual(catalog.tracked.count, 1)
-        XCTAssertEqual(catalog.immediatePage(for: "xc", limit: 12).totalMatched, 42)
+        #expect(catalog.starts == 1)
+        #expect(catalog.queries == ["xc"])
+        #expect(catalog.indexedSearches == 1)
+        #expect(catalog.tracked.count == 1)
+        #expect(catalog.immediatePage(for: "xc", limit: 12).totalMatched == 42)
     }
 
-    func testTheScriptedCatalogCanFailEveryStageIndependently() async {
+    @Test func theScriptedCatalogCanFailEveryStageIndependently() async {
         let catalog = ScriptedCatalog(
             .init(
                 startError: TestError.scripted("start"),
@@ -361,23 +348,23 @@ final class CatalogContractTests: XCTestCase {
 
         do {
             try await catalog.start()
-            XCTFail("start should have thrown")
+            Issue.record("start should have thrown")
         } catch {
-            XCTAssertEqual(error as? TestError, .scripted("start"))
+            #expect(error as? TestError == .scripted("start"))
         }
 
         do {
             _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-            XCTFail("refresh should have thrown")
+            Issue.record("refresh should have thrown")
         } catch {
-            XCTAssertEqual(error as? TestError, .scripted("refresh"))
+            #expect(error as? TestError == .scripted("refresh"))
         }
 
         do {
             _ = try await catalog.indexedItems(for: "q", limit: 1)
-            XCTFail("indexed search should have thrown")
+            Issue.record("indexed search should have thrown")
         } catch {
-            XCTAssertEqual(error as? TestError, .scripted("indexed"))
+            #expect(error as? TestError == .scripted("indexed"))
         }
     }
 }

@@ -1,16 +1,16 @@
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 /// Adversarial, property-based, and stress tests for `Calculator` —
 /// algebraic laws over seeded random inputs, parser fuzzing over hostile
 /// strings, pathological nesting, and exact documentation of the parser's
 /// surprising-but-deliberate behaviors.
-final class CalculatorAdversarialTests: XCTestCase {
+struct CalculatorAdversarialTests {
     // MARK: - Algebraic laws (seeded properties)
 
-    func testAdditionIsCommutative() throws {
+    @Test func additionIsCommutative() throws {
         try checkProperty(
             "addition is commutative",
             .double(in: -10_000...10_000), .double(in: -10_000...10_000)
@@ -23,7 +23,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testMultiplicationIsCommutative() throws {
+    @Test func multiplicationIsCommutative() throws {
         try checkProperty(
             "multiplication is commutative",
             .double(in: -10_000...10_000), .double(in: -10_000...10_000)
@@ -36,7 +36,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testAdditionIsAssociative() throws {
+    @Test func additionIsAssociative() throws {
         try checkProperty(
             "addition is associative",
             .double(in: -1_000...1_000), .double(in: -1_000...1_000)
@@ -50,7 +50,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testMultiplicationDistributesOverAddition() throws {
+    @Test func multiplicationDistributesOverAddition() throws {
         try checkProperty(
             "multiplication distributes over addition",
             .double(in: -100...100), .double(in: -100...100)
@@ -64,7 +64,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testAdditiveAndMultiplicativeIdentities() throws {
+    @Test func additiveAndMultiplicativeIdentities() throws {
         try checkProperty("identities hold", .double(in: -10_000...10_000)) { value in
             evalEqual("\(num(value)) + 0", value, accuracy: 1e-9)
                 && evalEqual("\(num(value)) * 1", value, accuracy: 1e-9)
@@ -72,13 +72,13 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testDoubleNegationIsIdentity() throws {
+    @Test func doubleNegationIsIdentity() throws {
         try checkProperty("--a == a", .double(in: -10_000...10_000)) { value in
             evalEqual("--\(num(value))", value, accuracy: 1e-9)
         }
     }
 
-    func testSelfSubtractionAndSelfDivision() throws {
+    @Test func selfSubtractionAndSelfDivision() throws {
         try checkProperty(
             "a - a == 0 and a / a == 1",
             .double(in: 0.5...10_000)
@@ -88,7 +88,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testPowerProperties() throws {
+    @Test func powerProperties() throws {
         try checkProperty("a^1 == a, a^0 == 1", .double(in: 0.5...100)) { base in
             evalEqual("\(num(base)) ^ 1", base, accuracy: 1e-9)
                 && evalEqual("\(num(base)) ^ 0", 1, accuracy: 1e-9)
@@ -96,7 +96,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testPrecedenceAndLeftAssociativity() throws {
+    @Test func precedenceAndLeftAssociativity() throws {
         try checkProperty(
             "precedence and left associativity",
             .double(in: 1...100), .double(in: 1...100)
@@ -120,7 +120,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testModuloOfMultipleIsZero() throws {
+    @Test func moduloOfMultipleIsZero() throws {
         try checkProperty(
             "(n*k) % k == 0 for integers",
             .int(in: 1...100), .int(in: 2...20)
@@ -129,7 +129,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testWhitespaceAndUnicodeOperatorInvariance() throws {
+    @Test func whitespaceAndUnicodeOperatorInvariance() throws {
         try checkProperty(
             "whitespace and unicode operators do not change results",
             .double(in: -100...100), .double(in: 0.5...100)
@@ -155,7 +155,7 @@ final class CalculatorAdversarialTests: XCTestCase {
 
     // MARK: - Parser fuzzing (hostile inputs never crash, never produce non-finite)
 
-    func testHostileStringsNeverCrashAndNeverYieldNonFinite() throws {
+    @Test func hostileStringsNeverCrashAndNeverYieldNonFinite() throws {
         try checkProperty("hostile input stays safe", Gen<String>.hostile) { input in
             if let value = Calculator.evaluate(input) {
                 return value.isFinite
@@ -164,7 +164,7 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testExpressionSoupNeverCrashesAndNeverYieldsNonFinite() throws {
+    @Test func expressionSoupNeverCrashesAndNeverYieldsNonFinite() throws {
         let soup = Gen<String>.string(
             alphabet: Array("0123456789+-*/%^()., \t"),
             length: 0...40
@@ -177,87 +177,84 @@ final class CalculatorAdversarialTests: XCTestCase {
         }
     }
 
-    func testEvaluationIsDeterministic() throws {
+    @Test func evaluationIsDeterministic() throws {
         let soup = Gen<String>.string(alphabet: Array("0123456789+-*/%^().,"), length: 1...20)
         try checkProperty("same input, same answer", soup) { input in
             Calculator.evaluate(input) == Calculator.evaluate(input)
         }
     }
 
-    func testAdversarialCorpusRejectedExpressionsAllReturnNil() {
+    @Test func adversarialCorpusRejectedExpressionsAllReturnNil() {
         for expression in AdversarialCorpus.rejectedExpressions {
-            XCTAssertNil(
-                Calculator.evaluate(expression),
-                "'\(expression)' must be rejected"
-            )
+            #expect(Calculator.evaluate(expression) == nil, "'\(expression)' must be rejected")
         }
     }
 
     // MARK: - Documented parser behaviors (surprising but deliberate)
 
-    func testUnaryMinusBindsTighterThanPower() {
+    @Test func unaryMinusBindsTighterThanPower() {
         // parsePower calls parseUnary, so "-2 ^ 2" is "(-2) ^ 2" = 4 —
         // the opposite of the standard math convention (-2² = -4).
-        XCTAssertEqual(Calculator.evaluate("-2 ^ 2"), 4)
-        XCTAssertEqual(Calculator.evaluate("(-2) ^ 2"), 4)
-        XCTAssertEqual(Calculator.evaluate("(-2) ^ 3"), -8)
-        XCTAssertEqual(Calculator.evaluate("-(2 ^ 2)"), -4)
+        #expect(Calculator.evaluate("-2 ^ 2") == 4)
+        #expect(Calculator.evaluate("(-2) ^ 2") == 4)
+        #expect(Calculator.evaluate("(-2) ^ 3") == -8)
+        #expect(Calculator.evaluate("-(2 ^ 2)") == -4)
     }
 
-    func testSignedBareNumberEvaluatesButUnsignedBareNumberDoesNot() {
+    @Test func signedBareNumberEvaluatesButUnsignedBareNumberDoesNot() {
         // looksLikeExpression demands an operator character; a leading
         // sign satisfies that check, so "-5" is an "expression" but "5" isn't.
-        XCTAssertEqual(Calculator.evaluate("-5"), -5)
-        XCTAssertEqual(Calculator.evaluate("+5"), 5)
-        XCTAssertEqual(Calculator.evaluate("-0"), 0)
-        XCTAssertNil(Calculator.evaluate("5"))
-        XCTAssertNil(Calculator.evaluate("42"))
-        XCTAssertNil(Calculator.evaluate("3.14"))
+        #expect(Calculator.evaluate("-5") == -5)
+        #expect(Calculator.evaluate("+5") == 5)
+        #expect(Calculator.evaluate("-0") == 0)
+        #expect(Calculator.evaluate("5") == nil)
+        #expect(Calculator.evaluate("42") == nil)
+        #expect(Calculator.evaluate("3.14") == nil)
     }
 
-    func testUnarySignAfterBinaryOperatorIsAccepted() {
-        XCTAssertEqual(Calculator.evaluate("1 - - 2"), 3)
-        XCTAssertEqual(Calculator.evaluate("1 * + 2"), 2)
-        XCTAssertEqual(Calculator.evaluate("1 * - 2"), -2)
-        XCTAssertEqual(Calculator.evaluate("6 / - 2"), -3)
+    @Test func unarySignAfterBinaryOperatorIsAccepted() {
+        #expect(Calculator.evaluate("1 - - 2") == 3)
+        #expect(Calculator.evaluate("1 * + 2") == 2)
+        #expect(Calculator.evaluate("1 * - 2") == -2)
+        #expect(Calculator.evaluate("6 / - 2") == -3)
     }
 
-    func testScientificAndHexNotationAreRejected() {
-        XCTAssertNil(Calculator.evaluate("1e308 + 1"))
-        XCTAssertNil(Calculator.evaluate("1.5e3 * 2"))
-        XCTAssertNil(Calculator.evaluate("2E5 + 1"))
-        XCTAssertNil(Calculator.evaluate("0x10 + 1"))
+    @Test func scientificAndHexNotationAreRejected() {
+        #expect(Calculator.evaluate("1e308 + 1") == nil)
+        #expect(Calculator.evaluate("1.5e3 * 2") == nil)
+        #expect(Calculator.evaluate("2E5 + 1") == nil)
+        #expect(Calculator.evaluate("0x10 + 1") == nil)
     }
 
-    func testCommasAreStrippedAnywhereNotJustAsGrouping() {
+    @Test func commasAreStrippedAnywhereNotJustAsGrouping() {
         // The parser removes every comma without validating grouping.
-        XCTAssertEqual(Calculator.evaluate("1,000 + 1"), 1_001)
-        XCTAssertEqual(Calculator.evaluate("1,0,0,0 + 1"), 1_001)
-        XCTAssertEqual(Calculator.evaluate("1,,2 + 3"), 15)
+        #expect(Calculator.evaluate("1,000 + 1") == 1_001)
+        #expect(Calculator.evaluate("1,0,0,0 + 1") == 1_001)
+        #expect(Calculator.evaluate("1,,2 + 3") == 15)
     }
 
     // MARK: - Division and modulo by zero
 
-    func testDivisionAndModuloByZeroReturnNil() {
-        XCTAssertNil(Calculator.evaluate("1 / 0"))
-        XCTAssertNil(Calculator.evaluate("0 / 0"))
-        XCTAssertNil(Calculator.evaluate("100 / (5 - 5)"))
-        XCTAssertNil(Calculator.evaluate("1 / 0 + 1"))
-        XCTAssertNil(Calculator.evaluate("10 % 0"))
-        XCTAssertNil(Calculator.evaluate("10 % (5 - 5)"))
+    @Test func divisionAndModuloByZeroReturnNil() {
+        #expect(Calculator.evaluate("1 / 0") == nil)
+        #expect(Calculator.evaluate("0 / 0") == nil)
+        #expect(Calculator.evaluate("100 / (5 - 5)") == nil)
+        #expect(Calculator.evaluate("1 / 0 + 1") == nil)
+        #expect(Calculator.evaluate("10 % 0") == nil)
+        #expect(Calculator.evaluate("10 % (5 - 5)") == nil)
     }
 
     // MARK: - Non-finite results are rejected
 
-    func testOverflowToInfinityIsRejected() {
-        XCTAssertNil(Calculator.evaluate("10 ^ 400"))
-        XCTAssertNil(Calculator.evaluate("-10 ^ 400"))
-        XCTAssertNil(Calculator.evaluate("10 ^ 308 * 10 ^ 308"))
+    @Test func overflowToInfinityIsRejected() {
+        #expect(Calculator.evaluate("10 ^ 400") == nil)
+        #expect(Calculator.evaluate("-10 ^ 400") == nil)
+        #expect(Calculator.evaluate("10 ^ 308 * 10 ^ 308") == nil)
     }
 
     // MARK: - Malformed expressions
 
-    func testMalformedExpressionsReturnNil() {
+    @Test func malformedExpressionsReturnNil() {
         let malformed = [
             "", "   ", "\t\n",
             "+", "*", "-", "/", "^", "%",
@@ -271,102 +268,102 @@ final class CalculatorAdversarialTests: XCTestCase {
             "1.2.3 + 1", "1..0 + 1",
         ]
         for expression in malformed {
-            XCTAssertNil(Calculator.evaluate(expression), "'\(expression)' must be nil")
+            #expect(Calculator.evaluate(expression) == nil, "'\(expression)' must be nil")
         }
     }
 
     // MARK: - Nesting and length stress
 
-    func testDeeplyNestedParentheses() {
+    @Test func deeplyNestedParentheses() {
         let depth = 200
         var expr = String(repeating: "(", count: depth) + "1"
         for _ in 0..<depth {
             expr += ")"
         }
-        XCTAssertEqual(Calculator.evaluate(expr), 1)
+        #expect(Calculator.evaluate(expr) == 1)
     }
 
-    func testDeeplyNestedAddition() {
+    @Test func deeplyNestedAddition() {
         let depth = 100
         var expr = String(repeating: "(", count: depth) + "1"
         for _ in 0..<depth {
             expr += " + 1)"
         }
-        XCTAssertEqual(Calculator.evaluate(expr), Double(depth + 1))
+        #expect(Calculator.evaluate(expr) == Double(depth + 1))
     }
 
-    func testLongAdditionChain() {
+    @Test func longAdditionChain() {
         let count = 2_000
         let expr = (0..<count).map(\.description).joined(separator: " + ")
-        XCTAssertEqual(Calculator.evaluate(expr), Double(count * (count - 1) / 2))
+        #expect(Calculator.evaluate(expr) == Double(count * (count - 1) / 2))
     }
 
-    func testLongChainEvaluatesQuickly() {
+    @Test func longChainEvaluatesQuickly() {
         let count = 5_000
         let expr = (1...count).map(\.description).joined(separator: " + ")
         let start = ContinuousClock.now
-        XCTAssertEqual(Calculator.evaluate(expr), Double(count * (count + 1) / 2))
-        XCTAssertLessThan(
-            start.duration(to: .now), .seconds(1),
+        #expect(Calculator.evaluate(expr) == Double(count * (count + 1) / 2))
+        #expect(
+            start.duration(to: .now) < .seconds(1),
             "a \(count)-term chain must evaluate in well under a second"
         )
     }
 
     // MARK: - Complex valid expressions
 
-    func testComplexExpressions() {
-        XCTAssertEqual(Calculator.evaluate("2 + 3 * 4 - 5 / 5"), 2 + 12 - 1)
-        XCTAssertEqual(Calculator.evaluate("(1 + 2) * (3 + 4) / (5 - 2)"), 3 * 7 / 3)
-        XCTAssertEqual(Calculator.evaluate("2 ^ 3 ^ 2"), 512) // right-associative
-        XCTAssertEqual(Calculator.evaluate("10 % 3 + 2 ^ 3"), 1 + 8)
-        XCTAssertEqual(Calculator.evaluate("-(2 + 3) * -(4 - 1)"), -5 * -3)
-        XCTAssertEqual(
-            Calculator.evaluate("((1 + 2) * (3 + 4)) - ((5 + 6) * (7 + 8))"),
-            3 * 7 - 11 * 15
+    @Test func complexExpressions() {
+        #expect(Calculator.evaluate("2 + 3 * 4 - 5 / 5") == Double(2 + 12 - 1))
+        #expect(Calculator.evaluate("(1 + 2) * (3 + 4) / (5 - 2)") == Double(3 * 7 / 3))
+        #expect(Calculator.evaluate("2 ^ 3 ^ 2") == 512) // right-associative
+        #expect(Calculator.evaluate("10 % 3 + 2 ^ 3") == Double(1 + 8))
+        #expect(Calculator.evaluate("-(2 + 3) * -(4 - 1)") == Double(-5 * -3))
+        #expect(
+            Calculator.evaluate("((1 + 2) * (3 + 4)) - ((5 + 6) * (7 + 8))")
+                == Double(3 * 7 - 11 * 15)
         )
-        XCTAssertEqual(Calculator.evaluate("2 ^ -1"), 0.5)
+        #expect(Calculator.evaluate("2 ^ -1") == 0.5)
     }
 
-    func testWhitespaceVariants() {
-        XCTAssertEqual(Calculator.evaluate("1+2"), 3)
-        XCTAssertEqual(Calculator.evaluate(" 1 + 2 "), 3)
-        XCTAssertEqual(Calculator.evaluate("1\t+\t2"), 3)
-        XCTAssertEqual(Calculator.evaluate("1\n+\n2"), 3)
-        XCTAssertEqual(Calculator.evaluate("  1  +  2  "), 3)
+    @Test func whitespaceVariants() {
+        #expect(Calculator.evaluate("1+2") == 3)
+        #expect(Calculator.evaluate(" 1 + 2 ") == 3)
+        #expect(Calculator.evaluate("1\t+\t2") == 3)
+        #expect(Calculator.evaluate("1\n+\n2") == 3)
+        #expect(Calculator.evaluate("  1  +  2  ") == 3)
     }
 
     // MARK: - Format
 
-    func testFormatBasics() throws {
+    @Test func formatBasics() throws {
         try skipUnlessDotDecimalLocale()
-        XCTAssertEqual(Calculator.format(42), "42")
-        XCTAssertEqual(Calculator.format(0), "0")
-        XCTAssertEqual(Calculator.format(-1), "-1")
-        XCTAssertEqual(Calculator.format(0.5), "0.5")
-        XCTAssertEqual(Calculator.format(1.25), "1.25")
-        XCTAssertEqual(Calculator.format(-3.14), "-3.14")
-        XCTAssertEqual(Calculator.format(1.0), "1")
-        XCTAssertEqual(Calculator.format(1.10), "1.1")
+        #expect(Calculator.format(42) == "42")
+        #expect(Calculator.format(0) == "0")
+        #expect(Calculator.format(-1) == "-1")
+        #expect(Calculator.format(0.5) == "0.5")
+        #expect(Calculator.format(1.25) == "1.25")
+        #expect(Calculator.format(-3.14) == "-3.14")
+        #expect(Calculator.format(1.0) == "1")
+        #expect(Calculator.format(1.10) == "1.1")
     }
 
-    func testFormatAppliesGroupingSeparator() {
+    @Test func formatAppliesGroupingSeparator() {
         let formatted = Calculator.format(1_234_567)
         let separator = Locale.current.groupingSeparator ?? ","
-        XCTAssertTrue(
+        #expect(
             formatted.contains(separator),
             "format(1234567) = '\(formatted)' should contain the locale grouping separator"
         )
     }
 
-    func testFormatOfClassicFloatSurprise() throws {
+    @Test func formatOfClassicFloatSurprise() throws {
         try skipUnlessDotDecimalLocale()
         // 0.1 + 0.2 = 0.30000000000000004, but format caps at 10 fraction
         // digits, so the user sees "0.3".
-        let value = try XCTUnwrap(Calculator.evaluate("0.1 + 0.2"))
-        XCTAssertEqual(Calculator.format(value), "0.3")
+        let value = try #require(Calculator.evaluate("0.1 + 0.2"))
+        #expect(Calculator.format(value) == "0.3")
     }
 
-    func testFormatOutputParsesBackToApproximatelyTheInput() throws {
+    @Test func formatOutputParsesBackToApproximatelyTheInput() throws {
         try skipUnlessDotDecimalLocale()
         try checkProperty("format output re-parses", .double(in: -1_000_000...1_000_000)) { value in
             let formatted = Calculator.format(value)
@@ -426,9 +423,10 @@ final class CalculatorAdversarialTests: XCTestCase {
     }
 
     private func skipUnlessDotDecimalLocale() throws {
-        try XCTSkipUnless(
-            Locale.current.decimalSeparator == ".",
-            "NumberFormatter output is locale-dependent; this assertion assumes a '.' decimal separator"
-        )
+        guard Locale.current.decimalSeparator == "." else {
+            try Test.cancel(
+                "NumberFormatter output is locale-dependent; this assertion assumes a '.' decimal separator"
+            )
+        }
     }
 }

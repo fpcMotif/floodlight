@@ -1,6 +1,6 @@
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 /// Property-based tests for the calculator.
@@ -10,7 +10,7 @@ import XCTest
 /// floating point: commutativity, associativity, distributivity, and the
 /// identity elements. Whitespace invariance and unicode-operator
 /// equivalence cover the normalization layer that runs before parsing.
-final class CalculatorPropertyTests: XCTestCase {
+struct CalculatorPropertyTests {
     // MARK: - Helpers
 
     /// Formats a double the way a human writes it — whole numbers without a
@@ -33,7 +33,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Commutativity
 
-    func testAdditionIsCommutative() throws {
+    @Test func additionIsCommutative() throws {
         try checkProperty(
             "a + b == b + a",
             smallDouble,
@@ -47,7 +47,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testMultiplicationIsCommutative() throws {
+    @Test func multiplicationIsCommutative() throws {
         try checkProperty(
             "a * b == b * a",
             smallDouble,
@@ -63,7 +63,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Associativity
 
-    func testAdditionIsAssociative() throws {
+    @Test func additionIsAssociative() throws {
         try checkProperty(
             "(a + b) + c == a + (b + c)",
             smallDouble,
@@ -82,7 +82,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testMultiplicationIsAssociative() throws {
+    @Test func multiplicationIsAssociative() throws {
         try checkProperty(
             "(a * b) * c == a * (b * c)",
             smallDouble,
@@ -103,7 +103,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Distributivity
 
-    func testMultiplicationDistributesOverAddition() throws {
+    @Test func multiplicationDistributesOverAddition() throws {
         try checkProperty(
             "a * (b + c) == a * b + a * c",
             smallDouble,
@@ -126,7 +126,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Identity
 
-    func testAdditiveIdentity() throws {
+    @Test func additiveIdentity() throws {
         try checkProperty(
             "a + 0 == a",
             smallDouble,
@@ -137,7 +137,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testMultiplicativeIdentity() throws {
+    @Test func multiplicativeIdentity() throws {
         try checkProperty(
             "a * 1 == a",
             smallDouble,
@@ -148,7 +148,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testSubtractiveIdentity() throws {
+    @Test func subtractiveIdentity() throws {
         try checkProperty(
             "a - 0 == a",
             smallDouble,
@@ -161,7 +161,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Negation
 
-    func testUnaryNegationIsAnInvolution() throws {
+    @Test func unaryNegationIsAnInvolution() throws {
         try checkProperty(
             "-(-a) == a",
             smallDouble,
@@ -172,7 +172,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testNegationFlipsTheSign() throws {
+    @Test func negationFlipsTheSign() throws {
         try checkProperty(
             "-a == 0 - a",
             smallDouble,
@@ -187,7 +187,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Power
 
-    func testPowerOfTwoMatchesSquaring() throws {
+    @Test func powerOfTwoMatchesSquaring() throws {
         try checkProperty(
             "a ^ 2 == a * a",
             smallDouble,
@@ -200,7 +200,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testPowerOfOneIsIdentity() throws {
+    @Test func powerOfOneIsIdentity() throws {
         try checkProperty(
             "a ^ 1 == a",
             smallDouble,
@@ -213,7 +213,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Modulo
 
-    func testModuloIsLessThanDivisor() throws {
+    @Test func moduloIsLessThanDivisor() throws {
         try checkProperty(
             "a % b < b for positive b",
             positiveDouble,
@@ -229,7 +229,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testModuloOfExactMultipleIsZero() throws {
+    @Test func moduloOfExactMultipleIsZero() throws {
         // Stated over *integers*. With `Double` operands the property is
         // simply false: `a * b` rounds, and the truncating remainder of a
         // rounded product is a value just under `b` about as often as it is
@@ -251,21 +251,19 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testModuloOfAFloatingProductIsNotReliablyZero() throws {
+    @Test func moduloOfAFloatingProductIsNotReliablyZero() throws {
         // The counterexample to the integer identity above, pinned so the
         // limitation is documented rather than rediscovered: 192.08… ×
         // 577.39… does not divide evenly once rounded.
         let product = 192.08361966676026 * 577.3971575676518
-        let remainder = try XCTUnwrap(
-            Calculator.evaluate("\(product) % \(577.3971575676518)")
-        )
-        XCTAssertGreaterThan(remainder, 0)
-        XCTAssertLessThan(remainder, 577.3971575676518)
+        let remainder = try #require(Calculator.evaluate("\(product) % \(577.3971575676518)"))
+        #expect(remainder > 0)
+        #expect(remainder < 577.3971575676518)
     }
 
     // MARK: - Whitespace invariance
 
-    func testWhitespaceBetweenTokensDoesNotChangeTheResult() throws {
+    @Test func whitespaceBetweenTokensDoesNotChangeTheResult() throws {
         let spacingGen = Gen<String>.element(of: ["", " ", "  ", "\t", " \t "])
         try checkProperty(
             "a <sp> + <sp> b == a + b regardless of spacing",
@@ -288,7 +286,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testLeadingAndTrailingWhitespaceIsIgnored() throws {
+    @Test func leadingAndTrailingWhitespaceIsIgnored() throws {
         let paddingGen = Gen<String>.element(of: ["", "  ", "\n", " \n "])
         try checkProperty(
             "padded 'a + b' == 'a + b'",
@@ -314,7 +312,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Unicode operator equivalence
 
-    func testUnicodeMultiplicationSignMatchesAsterisk() throws {
+    @Test func unicodeMultiplicationSignMatchesAsterisk() throws {
         try checkProperty(
             "a × b == a * b",
             smallDouble,
@@ -328,7 +326,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testUnicodeDivisionSignMatchesSlash() throws {
+    @Test func unicodeDivisionSignMatchesSlash() throws {
         try checkProperty(
             "a ÷ b == a / b",
             smallDouble,
@@ -342,7 +340,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testUnicodeMinusSignMatchesHyphen() throws {
+    @Test func unicodeMinusSignMatchesHyphen() throws {
         try checkProperty(
             "−a == 0 - a",
             smallDouble,
@@ -357,7 +355,7 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Comma handling
 
-    func testThousandsCommasDoNotChangeTheResult() throws {
+    @Test func thousandsCommasDoNotChangeTheResult() throws {
         try checkProperty(
             "'1,000 + a' == '1000 + a'",
             smallDouble,
@@ -370,7 +368,7 @@ final class CalculatorPropertyTests: XCTestCase {
         }
     }
 
-    func testCommasInBothOperandsAreStripped() throws {
+    @Test func commasInBothOperandsAreStripped() throws {
         try checkProperty(
             "'1,234 + 5,678' == '1234 + 5678'",
             Gen<Int>.always(0),
@@ -385,14 +383,14 @@ final class CalculatorPropertyTests: XCTestCase {
 
     // MARK: - Format round-trip
 
-    func testFormatPreservesWholeNumbers() {
-        XCTAssertEqual(Calculator.format(1_000), "1,000")
-        XCTAssertEqual(Calculator.format(0), "0")
-        XCTAssertEqual(Calculator.format(-42), "-42")
+    @Test func formatPreservesWholeNumbers() {
+        #expect(Calculator.format(1_000) == "1,000")
+        #expect(Calculator.format(0) == "0")
+        #expect(Calculator.format(-42) == "-42")
     }
 
-    func testFormatUsesGroupingSeparator() {
-        XCTAssertEqual(Calculator.format(1_234_567), "1,234,567")
+    @Test func formatUsesGroupingSeparator() {
+        #expect(Calculator.format(1_234_567) == "1,234,567")
     }
 }
 

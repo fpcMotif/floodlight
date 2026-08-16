@@ -95,6 +95,7 @@ struct FloodlightTextField: NSViewRepresentable {
     }
 
     private func requestFocus(for textField: NSTextField) {
+        // Next run-loop turn: makeFirstResponder is unsafe during SwiftUI update.
         DispatchQueue.main.async { [weak textField] in
             guard let textField, let window = textField.window else { return }
             if
@@ -150,6 +151,7 @@ struct FloodlightTextField: NSViewRepresentable {
 
             guard shouldCollapseSelectionAfterNextEdit else { return }
             shouldCollapseSelectionAfterNextEdit = false
+            // Next run-loop turn: mutating the field editor during didChange re-enters AppKit.
             DispatchQueue.main.async { [weak textField] in
                 guard
                     let textField,
@@ -178,6 +180,7 @@ struct FloodlightTextField: NSViewRepresentable {
                 return false
             }
 
+            // Next run-loop turn: panel/SwiftUI actions must not nest in doCommandBy.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 switch command {

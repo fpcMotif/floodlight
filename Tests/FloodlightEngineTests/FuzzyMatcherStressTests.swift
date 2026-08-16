@@ -1,87 +1,87 @@
 import Foundation
-import XCTest
+import Testing
 @testable import FloodlightEngine
 
 /// Stress tests for the fuzzy matcher: single-character queries, very long
 /// strings, all-same-character candidates, and the boundary/consecutive
 /// scoring paths that the property tests only sample.
-final class FuzzyMatcherStressTests: XCTestCase {
+struct FuzzyMatcherStressTests {
     // MARK: - Single-character queries
 
-    func testSingleCharacterQueryMatchesWordStarts() {
+    @Test func singleCharacterQueryMatchesWordStarts() {
         let candidate = "the quick brown fox jumps over the lazy dog"
         for char in ["t", "q", "b", "f", "j", "o", "l", "d"] {
             let query = String(char)
-            XCTAssertNotNil(
-                FuzzyMatcher.score(query: query, candidate: candidate),
+            #expect(
+                FuzzyMatcher.score(query: query, candidate: candidate) != nil,
                 "char '\(char)' should match word start"
             )
         }
     }
 
-    func testSingleCharacterQueryReturnsNilIfAbsent() {
-        XCTAssertNil(FuzzyMatcher.score(query: "z", candidate: "aaaaaaa"))
-        XCTAssertNil(FuzzyMatcher.score(query: "q", candidate: "bcdef"))
+    @Test func singleCharacterQueryReturnsNilIfAbsent() {
+        #expect(FuzzyMatcher.score(query: "z", candidate: "aaaaaaa") == nil)
+        #expect(FuzzyMatcher.score(query: "q", candidate: "bcdef") == nil)
     }
 
-    func testSingleCharacterAtStartScoresHigherThanLaterWord() throws {
-        let atStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "abc"))
-        let inLaterWord = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "foo bar abc"))
-        XCTAssertGreaterThan(atStart, inLaterWord)
+    @Test func singleCharacterAtStartScoresHigherThanLaterWord() throws {
+        let atStart = try #require(FuzzyMatcher.score(query: "a", candidate: "abc"))
+        let inLaterWord = try #require(FuzzyMatcher.score(query: "a", candidate: "foo bar abc"))
+        #expect(atStart > inLaterWord)
     }
 
-    func testACharacterAfterASeparatorMatchesAsWordPrefix() throws {
-        let afterSep = try XCTUnwrap(FuzzyMatcher.score(query: "b", candidate: "a-b"))
-        XCTAssertEqual(afterSep, 12_000 - 2)
+    @Test func aCharacterAfterASeparatorMatchesAsWordPrefix() throws {
+        let afterSep = try #require(FuzzyMatcher.score(query: "b", candidate: "a-b"))
+        #expect(afterSep == 12_000 - 2)
     }
 
     // MARK: - Very long strings
 
-    func testVeryLongCandidateWithMatchAtEnd() {
+    @Test func veryLongCandidateWithMatchAtEnd() {
         let prefix = String(repeating: "x ", count: 5_000)
         let candidate = prefix + "target"
-        XCTAssertNotNil(FuzzyMatcher.score(query: "target", candidate: candidate))
+        #expect(FuzzyMatcher.score(query: "target", candidate: candidate) != nil)
     }
 
-    func testVeryLongQueryLongerThanCandidateReturnsNil() {
+    @Test func veryLongQueryLongerThanCandidateReturnsNil() {
         let query = String(repeating: "a", count: 1_000)
         let candidate = "aaa"
-        XCTAssertNil(FuzzyMatcher.score(query: query, candidate: candidate))
+        #expect(FuzzyMatcher.score(query: query, candidate: candidate) == nil)
     }
 
-    func testVeryLongExactMatch() {
+    @Test func veryLongExactMatch() {
         let value = String(repeating: "ab", count: 5_000)
-        XCTAssertEqual(FuzzyMatcher.score(query: value, candidate: value), 20_000)
+        #expect(FuzzyMatcher.score(query: value, candidate: value) == 20_000)
     }
 
-    func testVeryLongPrefixMatch() throws {
+    @Test func veryLongPrefixMatch() throws {
         let value = String(repeating: "ab", count: 5_000)
         let prefix = String(repeating: "ab", count: 100)
-        let score = try XCTUnwrap(FuzzyMatcher.score(query: prefix, candidate: value))
-        XCTAssertEqual(score, 15_000 - value.count)
+        let score = try #require(FuzzyMatcher.score(query: prefix, candidate: value))
+        #expect(score == 15_000 - value.count)
     }
 
     // MARK: - All-same-character candidates
 
-    func testAllSameCharacterCandidateMatchesSingleChar() {
+    @Test func allSameCharacterCandidateMatchesSingleChar() {
         let candidate = String(repeating: "a", count: 100)
-        XCTAssertNotNil(FuzzyMatcher.score(query: "a", candidate: candidate))
+        #expect(FuzzyMatcher.score(query: "a", candidate: candidate) != nil)
     }
 
-    func testAllSameCharacterCandidateMatchesRepeatedQuery() {
+    @Test func allSameCharacterCandidateMatchesRepeatedQuery() {
         let candidate = String(repeating: "a", count: 100)
         let query = String(repeating: "a", count: 50)
-        XCTAssertNotNil(FuzzyMatcher.score(query: query, candidate: candidate))
+        #expect(FuzzyMatcher.score(query: query, candidate: candidate) != nil)
     }
 
-    func testAllSameCharacterCandidateRejectsDifferentChar() {
+    @Test func allSameCharacterCandidateRejectsDifferentChar() {
         let candidate = String(repeating: "a", count: 100)
-        XCTAssertNil(FuzzyMatcher.score(query: "b", candidate: candidate))
+        #expect(FuzzyMatcher.score(query: "b", candidate: candidate) == nil)
     }
 
-    func testScatteredCharactersDoNotMatch() {
+    @Test func scatteredCharactersDoNotMatch() {
         let candidate = "a x a x a x a x a"
-        XCTAssertNil(FuzzyMatcher.score(query: "aaaaa", candidate: candidate))
+        #expect(FuzzyMatcher.score(query: "aaaaa", candidate: candidate) == nil)
     }
 
     // MARK: - Boundary detection
@@ -92,126 +92,118 @@ final class FuzzyMatcherStressTests: XCTestCase {
     /// match further right and therefore scores it *lower*. These use
     /// two-character queries so the candidates are genuinely non-contiguous
     /// and the bonus is actually reachable.
-    func testHyphenIsABoundary() throws {
-        let afterHyphen = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a-b"))
+    @Test func hyphenIsABoundary() throws {
+        let afterHyphen = try #require(FuzzyMatcher.score(query: "ab", candidate: "a-b"))
         let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")
-        XCTAssertEqual(afterHyphen, 10_000)
-        XCTAssertNil(noBoundary, "scattered letters without a boundary must not match")
+        #expect(afterHyphen == 10_000)
+        #expect(noBoundary == nil, "scattered letters without a boundary must not match")
     }
 
-    func testUnderscoreIsABoundary() throws {
-        let afterUnderscore = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a_b"))
+    @Test func underscoreIsABoundary() throws {
+        let afterUnderscore = try #require(FuzzyMatcher.score(query: "ab", candidate: "a_b"))
         let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")
-        XCTAssertEqual(afterUnderscore, 10_000)
-        XCTAssertNil(noBoundary)
+        #expect(afterUnderscore == 10_000)
+        #expect(noBoundary == nil)
     }
 
-    func testSlashIsABoundary() throws {
-        let afterSlash = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a/b"))
+    @Test func slashIsABoundary() throws {
+        let afterSlash = try #require(FuzzyMatcher.score(query: "ab", candidate: "a/b"))
         let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")
-        XCTAssertEqual(afterSlash, 10_000)
-        XCTAssertNil(noBoundary)
+        #expect(afterSlash == 10_000)
+        #expect(noBoundary == nil)
     }
 
-    func testDotIsABoundary() throws {
-        let afterDot = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a.b"))
+    @Test func dotIsABoundary() throws {
+        let afterDot = try #require(FuzzyMatcher.score(query: "ab", candidate: "a.b"))
         let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")
-        XCTAssertEqual(afterDot, 10_000)
-        XCTAssertNil(noBoundary)
+        #expect(afterDot == 10_000)
+        #expect(noBoundary == nil)
     }
 
-    func testSpaceIsABoundary() throws {
-        let afterSpace = try XCTUnwrap(FuzzyMatcher.score(query: "ab", candidate: "a b"))
+    @Test func spaceIsABoundary() throws {
+        let afterSpace = try #require(FuzzyMatcher.score(query: "ab", candidate: "a b"))
         let noBoundary = FuzzyMatcher.score(query: "ab", candidate: "azb")
-        XCTAssertEqual(afterSpace, 10_000)
-        XCTAssertNil(noBoundary)
+        #expect(afterSpace == 10_000)
+        #expect(noBoundary == nil)
     }
 
-    func testStartOfStringScoresHigherThanLaterWord() throws {
-        let atStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "abc"))
-        let notAtStart = try XCTUnwrap(FuzzyMatcher.score(query: "a", candidate: "x abc"))
-        XCTAssertGreaterThan(atStart, notAtStart)
+    @Test func startOfStringScoresHigherThanLaterWord() throws {
+        let atStart = try #require(FuzzyMatcher.score(query: "a", candidate: "abc"))
+        let notAtStart = try #require(FuzzyMatcher.score(query: "a", candidate: "x abc"))
+        #expect(atStart > notAtStart)
     }
 
     // MARK: - Score scale values
 
-    func testExactMatchScoreIs20000() {
-        XCTAssertEqual(FuzzyMatcher.score(query: "test", candidate: "test"), 20_000)
+    @Test func exactMatchScoreIs20000() {
+        #expect(FuzzyMatcher.score(query: "test", candidate: "test") == 20_000)
     }
 
-    func testPrefixMatchScoreIs15000MinusCount() throws {
+    @Test func prefixMatchScoreIs15000MinusCount() throws {
         let candidate = "spotlight"
-        let score = try XCTUnwrap(FuzzyMatcher.score(query: "spot", candidate: candidate))
-        XCTAssertEqual(score, 15_000 - candidate.count)
+        let score = try #require(FuzzyMatcher.score(query: "spot", candidate: candidate))
+        #expect(score == 15_000 - candidate.count)
     }
 
-    func testWordPrefixMatchScoreIs12000MinusStart() throws {
+    @Test func wordPrefixMatchScoreIs12000MinusStart() throws {
         let candidate = "spot light"
         let query = "light"
-        let score = try XCTUnwrap(FuzzyMatcher.score(query: query, candidate: candidate))
-        XCTAssertEqual(score, 12_000 - 5)
+        let score = try #require(FuzzyMatcher.score(query: query, candidate: candidate))
+        #expect(score == 12_000 - 5)
     }
 
-    func testAcronymMatchScoreIs10000MinusOffset() throws {
+    @Test func acronymMatchScoreIs10000MinusOffset() throws {
         let candidate = "spot light"
-        let score = try XCTUnwrap(FuzzyMatcher.score(query: "sl", candidate: candidate))
-        XCTAssertEqual(score, 10_000)
+        let score = try #require(FuzzyMatcher.score(query: "sl", candidate: candidate))
+        #expect(score == 10_000)
     }
 
-    func testExactBeatsPrefixBeatsWordPrefixBeatsAcronymBeatsTypo() throws {
+    @Test func exactBeatsPrefixBeatsWordPrefixBeatsAcronymBeatsTypo() throws {
         let candidate = "Google Chrome"
-        let exact = try XCTUnwrap(FuzzyMatcher.score(query: "google chrome", candidate: candidate))
-        let prefix = try XCTUnwrap(FuzzyMatcher.score(query: "google", candidate: candidate))
-        let wordPrefix = try XCTUnwrap(FuzzyMatcher.score(query: "chrome", candidate: candidate))
-        let acronym = try XCTUnwrap(FuzzyMatcher.score(query: "gc", candidate: candidate))
-        let typo = try XCTUnwrap(FuzzyMatcher.score(query: "gogle", candidate: candidate))
-        XCTAssertGreaterThan(exact, prefix)
-        XCTAssertGreaterThan(prefix, wordPrefix)
-        XCTAssertGreaterThan(wordPrefix, acronym)
-        XCTAssertGreaterThan(acronym, typo)
+        let exact = try #require(FuzzyMatcher.score(query: "google chrome", candidate: candidate))
+        let prefix = try #require(FuzzyMatcher.score(query: "google", candidate: candidate))
+        let wordPrefix = try #require(FuzzyMatcher.score(query: "chrome", candidate: candidate))
+        let acronym = try #require(FuzzyMatcher.score(query: "gc", candidate: candidate))
+        let typo = try #require(FuzzyMatcher.score(query: "gogle", candidate: candidate))
+        #expect(exact > prefix)
+        #expect(prefix > wordPrefix)
+        #expect(wordPrefix > acronym)
+        #expect(acronym > typo)
     }
 
     // MARK: - ASCII fast path
 
-    func testASCIIFastPathExactMatch() {
-        XCTAssertEqual(
-            FuzzyMatcher.scoreASCII(
-                normalizedQuery: Array("test".utf8),
-                normalizedCandidate: Array("test".utf8)
-            ),
-            20_000
-        )
+    @Test func aSCIIFastPathExactMatch() {
+        #expect(FuzzyMatcher.scoreASCII(
+            normalizedQuery: Array("test".utf8),
+            normalizedCandidate: Array("test".utf8)
+        ) == 20_000)
     }
 
-    func testASCIIFastPathPrefixMatch() throws {
+    @Test func aSCIIFastPathPrefixMatch() throws {
         let candidate = Array("spotlight".utf8)
-        let score = try XCTUnwrap(FuzzyMatcher.scoreASCII(
+        let score = try #require(FuzzyMatcher.scoreASCII(
             normalizedQuery: Array("spot".utf8),
             normalizedCandidate: candidate
         ))
-        XCTAssertEqual(score, 15_000 - candidate.count)
+        #expect(score == 15_000 - candidate.count)
     }
 
-    func testASCIIFastPathNonMatchReturnsNil() {
-        XCTAssertNil(
-            FuzzyMatcher.scoreASCII(
-                normalizedQuery: Array("xyz".utf8),
-                normalizedCandidate: Array("abc".utf8)
-            )
-        )
+    @Test func aSCIIFastPathNonMatchReturnsNil() {
+        #expect(FuzzyMatcher.scoreASCII(
+            normalizedQuery: Array("xyz".utf8),
+            normalizedCandidate: Array("abc".utf8)
+        ) == nil)
     }
 
-    func testASCIIFastPathEmptyQueryReturnsOne() {
-        XCTAssertEqual(
-            FuzzyMatcher.scoreASCII(
-                normalizedQuery: [],
-                normalizedCandidate: Array("abc".utf8)
-            ),
-            1
-        )
+    @Test func aSCIIFastPathEmptyQueryReturnsOne() {
+        #expect(FuzzyMatcher.scoreASCII(
+            normalizedQuery: [],
+            normalizedCandidate: Array("abc".utf8)
+        ) == 1)
     }
 
-    func testASCIIFastPathMatchesStringScorerAcrossCorpus() {
+    @Test func aSCIIFastPathMatchesStringScorerAcrossCorpus() {
         let queries = ["", "a", "app", "wifi", "privacy", "sftwre", "x y", "zzz"]
         let candidates = [
             "appearance light dark",
@@ -223,76 +215,72 @@ final class FuzzyMatcherStressTests: XCTestCase {
         ]
         for query in queries {
             for candidate in candidates {
-                XCTAssertEqual(
-                    FuzzyMatcher.score(
-                        normalizedQuery: query,
-                        normalizedCandidate: candidate
-                    ),
-                    FuzzyMatcher.scoreASCII(
-                        normalizedQuery: Array(query.utf8),
-                        normalizedCandidate: Array(candidate.utf8)
-                    ),
-                    "\(query) in \(candidate)"
-                )
+                #expect(FuzzyMatcher.score(
+                    normalizedQuery: query,
+                    normalizedCandidate: candidate
+                ) == FuzzyMatcher.scoreASCII(
+                    normalizedQuery: Array(query.utf8),
+                    normalizedCandidate: Array(candidate.utf8)
+                ), "\(query) in \(candidate)")
             }
         }
     }
 
     // MARK: - Normalization edge cases
 
-    func testNormalizationHandlesEmptyString() {
-        XCTAssertEqual(FuzzyMatcher.normalized(""), "")
+    @Test func normalizationHandlesEmptyString() {
+        #expect(FuzzyMatcher.normalized("").isEmpty)
     }
 
-    func testNormalizationHandlesWhitespace() {
-        XCTAssertEqual(FuzzyMatcher.normalized("  Hello  World  ").lowercased(), "  hello  world  ")
+    @Test func normalizationHandlesWhitespace() {
+        #expect(FuzzyMatcher.normalized("  Hello  World  ").lowercased() == "  hello  world  ")
     }
 
-    func testNormalizationFoldsCaseAndDiacriticsTogether() {
-        XCTAssertEqual(FuzzyMatcher.normalized("Café"), FuzzyMatcher.normalized("cafe"))
-        XCTAssertEqual(FuzzyMatcher.normalized("NAÏVE"), FuzzyMatcher.normalized("naive"))
+    @Test func normalizationFoldsCaseAndDiacriticsTogether() {
+        #expect(FuzzyMatcher.normalized("Café") == FuzzyMatcher.normalized("cafe"))
+        #expect(FuzzyMatcher.normalized("NAÏVE") == FuzzyMatcher.normalized("naive"))
     }
 
-    func testNormalizationIsIdempotent() {
+    @Test func normalizationIsIdempotent() {
         for value in ["café", "NAÏVE", "hello", "", "  ", "İstanbul"] {
             let once = FuzzyMatcher.normalized(value)
             let twice = FuzzyMatcher.normalized(once)
-            XCTAssertEqual(once, twice, value)
+            #expect(once == twice, "\(value)")
         }
     }
 
     // MARK: - Query longer than candidate
 
-    func testQueryLongerThanCandidateReturnsNil() {
-        XCTAssertNil(FuzzyMatcher.score(query: "abcdef", candidate: "abc"))
-        XCTAssertNil(FuzzyMatcher.score(query: "long query", candidate: "short"))
+    @Test func queryLongerThanCandidateReturnsNil() {
+        #expect(FuzzyMatcher.score(query: "abcdef", candidate: "abc") == nil)
+        #expect(FuzzyMatcher.score(query: "long query", candidate: "short") == nil)
     }
 
-    func testQuerySameLengthAsCandidateButDifferentReturnsNil() {
-        XCTAssertNil(FuzzyMatcher.score(query: "abc", candidate: "xyz"))
+    @Test func querySameLengthAsCandidateButDifferentReturnsNil() {
+        #expect(FuzzyMatcher.score(query: "abc", candidate: "xyz") == nil)
     }
 
-    func testQuerySameLengthAsCandidateAndSameReturnsExact() {
-        XCTAssertEqual(FuzzyMatcher.score(query: "abc", candidate: "abc"), 20_000)
+    @Test func querySameLengthAsCandidateAndSameReturnsExact() {
+        #expect(FuzzyMatcher.score(query: "abc", candidate: "abc") == 20_000)
     }
 
     // MARK: - Reversed query
 
-    func testReversedQueryDoesNotMatchUnlessPalindrome() {
+    @Test func reversedQueryDoesNotMatchUnlessPalindrome() {
         let candidate = "spotlight"
         let reversed = String(candidate.reversed())
-        XCTAssertNil(FuzzyMatcher.score(query: reversed, candidate: candidate))
+        #expect(FuzzyMatcher.score(query: reversed, candidate: candidate) == nil)
     }
 
-    func testReversedQueryMatchesPalindrome() {
+    @Test func reversedQueryMatchesPalindrome() {
         let palindrome = "racecar"
         let reversed = String(palindrome.reversed())
-        XCTAssertEqual(FuzzyMatcher.score(query: reversed, candidate: palindrome), 20_000)
+        #expect(FuzzyMatcher.score(query: reversed, candidate: palindrome) == 20_000)
     }
 
     // MARK: - Score determinism
 
-    func testScoreIsDeterministicAcrossRepeatedCalls() {
+    @Test func scoreIsDeterministicAcrossRepeatedCalls() {
         let pairs: [(String, String)] = [
             ("saf", "safari"),
             ("abc", "axbxc"),
@@ -303,18 +291,18 @@ final class FuzzyMatcherStressTests: XCTestCase {
             let first = FuzzyMatcher.score(query: query, candidate: candidate)
             let second = FuzzyMatcher.score(query: query, candidate: candidate)
             let third = FuzzyMatcher.score(query: query, candidate: candidate)
-            XCTAssertEqual(first, second)
-            XCTAssertEqual(second, third)
+            #expect(first == second)
+            #expect(second == third)
         }
     }
 
-    func testScoreDoesNotDependOnCallOrder() {
+    @Test func scoreDoesNotDependOnCallOrder() {
         let query = "sfr"
         let candidate = "safari"
         _ = FuzzyMatcher.score(query: "abc", candidate: "xyz")
         let first = FuzzyMatcher.score(query: query, candidate: candidate)
         _ = FuzzyMatcher.score(query: "xyz", candidate: "abc")
         let second = FuzzyMatcher.score(query: query, candidate: candidate)
-        XCTAssertEqual(first, second)
+        #expect(first == second)
     }
 }

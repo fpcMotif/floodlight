@@ -10,6 +10,7 @@
 #
 # SPM mode: Periphery reads Package.swift from the project root, so there is no
 # project or scheme to name.
+index_store_path: ".build/arm64-apple-macosx/debug/index/store"
 
 # Test targets exist to reference production code. Indexing them would let a
 # declaration stay alive purely because a test touches it, which is the one

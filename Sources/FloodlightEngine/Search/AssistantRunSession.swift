@@ -61,7 +61,7 @@ package final class AssistantRunSession {
         let runGeneration = generation
         run = AssistantRun(itemID: request.itemID, state: .running)
 
-        runTask = Task { [weak self, runner] in
+        runTask = Task { @MainActor [weak self, runner] in
             guard !Task.isCancelled else { return }
             let state: AssistantAnswerState
             do {

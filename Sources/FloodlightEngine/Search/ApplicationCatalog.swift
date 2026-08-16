@@ -1,6 +1,7 @@
 import Foundation
+import os
 
-package final class ApplicationCatalog: Catalog, @unchecked Sendable {
+package final class ApplicationCatalog: Catalog {
     private struct Application: Sendable {
         let name: String
         let url: URL
@@ -8,19 +9,24 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         let id: String
         let subtitle: String
         let normalizedName: String
+        let asciiCandidate: [UInt8]?
+        let characterMask: UInt64
     }
 
-    private let lock = NSLock()
+    private struct State: Sendable {
+        var applications: [Application] = []
+        var applicationsByMarker: [String: Application] = [:]
+        var markerByApplicationPath: [String: String] = [:]
+        var isPrepared = false
+        var applicationDirectoryFingerprint: [String: Date] = [:]
+    }
+
     private let discoveryQueue = DispatchQueue(
         label: "com.floodlight.application-catalog",
         qos: .userInitiated
     )
-    private var applications: [Application] = []
-    private var applicationsByMarker: [String: Application] = [:]
-    private var markerByApplicationPath: [String: String] = [:]
-    private var isPrepared = false
+    private let state = OSAllocatedUnfairLock(initialState: State())
     private let refreshGuard = CatalogRefreshGuard()
-    private var applicationDirectoryFingerprint: [String: Date] = [:]
     private let markerRoot: URL
     private let index: FFFIndex
     private let recentStore: RecentStore
@@ -81,14 +87,11 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         defer { refreshGuard.release() }
 
         let signpost = FloodlightPerformance.begin("ApplicationRefresh")
-        let changed: Bool = await withCheckedContinuation { continuation in
-            discoveryQueue.async { [self] in
-                guard forceDiscovery || applicationDirectoriesChanged(fileManager: .default) else {
-                    continuation.resume(returning: false)
-                    return
-                }
-                continuation.resume(returning: prepare(fileManager: .default))
+        let changed = await enqueueDiscovery {
+            guard forceDiscovery || self.applicationDirectoriesChanged(fileManager: .default) else {
+                return false
             }
+            return self.prepare(fileManager: .default)
         }
         FloodlightPerformance.end("ApplicationRefresh", id: signpost)
 
@@ -99,13 +102,10 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
     }
 
     package func start() async throws {
-        if !prepared {
+        if !state.withLock({ $0.isPrepared }) {
             let signpost = FloodlightPerformance.begin("ApplicationDiscovery")
-            await withCheckedContinuation { continuation in
-                discoveryQueue.async { [self] in
-                    prepare(fileManager: .default)
-                    continuation.resume()
-                }
+            _ = await enqueueDiscovery {
+                self.prepare(fileManager: .default)
             }
             FloodlightPerformance.end("ApplicationDiscovery", id: signpost)
         }
@@ -125,6 +125,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
         let applicationsByMarker = snapshotApplicationsByMarker()
+        let queryBytes = Array(normalizedQuery.utf8)
+        let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
         let indexed = try await index.searchFiles(
             query,
             limit: UInt32(max(limit * 2, limit))
@@ -134,7 +136,11 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
-            guard let score = Self.score(of: application, normalizedQuery: normalizedQuery) else {
+            guard let score = Self.score(
+                of: application,
+                normalizedQuery: normalizedQuery,
+                asciiQuery: asciiQuery
+            ) else {
                 return nil
             }
             return SearchItem(
@@ -157,19 +163,24 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             return SearchItemPage(items: [], totalMatched: 0)
         }
         let normalizedQuery = FuzzyMatcher.normalized(query)
+        let queryBytes = Array(normalizedQuery.utf8)
+        let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
+        let queryCharacterMask = Self.characterMask(normalizedQuery)
 
-        lock.lock()
-        let currentApps = applications
-        lock.unlock()
+        let currentApps = state.withLock { $0.applications }
         let boosts = recentStore.boostMap()
 
         var matches: [SearchItem] = []
         matches.reserveCapacity(min(currentApps.count, 64))
 
         for application in currentApps {
+            guard application.characterMask & queryCharacterMask == queryCharacterMask else {
+                continue
+            }
             guard let score = Self.score(
                 of: application,
-                normalizedQuery: normalizedQuery
+                normalizedQuery: normalizedQuery,
+                asciiQuery: asciiQuery
             ) else {
                 continue
             }
@@ -204,32 +215,49 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
     /// the FFF index, whose own result score lives on an unrelated scale.
     /// Scoring both paths here keeps one ranking: whichever path served the
     /// query, an application lands on the same number.
-    private static func score(of application: Application, normalizedQuery: String) -> Int? {
-        FuzzyMatcher.score(
-            normalizedQuery: normalizedQuery,
-            normalizedCandidate: application.normalizedName
-        )
-        .map { SearchItemRanking.application + $0 }
+    private static func score(
+        of application: Application,
+        normalizedQuery: String,
+        asciiQuery: [UInt8]?
+    ) -> Int? {
+        let rawScore: Int? = if let asciiQuery, let asciiCandidate = application.asciiCandidate {
+            FuzzyMatcher.scoreASCII(
+                normalizedQuery: asciiQuery,
+                normalizedCandidate: asciiCandidate
+            )
+        } else {
+            FuzzyMatcher.score(
+                normalizedQuery: normalizedQuery,
+                normalizedCandidate: application.normalizedName
+            )
+        }
+        return rawScore.map { SearchItemRanking.application + $0 }
     }
 
-    private var prepared: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return isPrepared
+    private func enqueueDiscovery<Result: Sendable>(
+        _ work: @escaping @Sendable () -> Result
+    ) async -> Result {
+        await withCheckedContinuation { continuation in
+            discoveryQueue.async {
+                continuation.resume(returning: work())
+            }
+        }
     }
 
     @discardableResult
     private func prepare(fileManager: FileManager) -> Bool {
         let discovered = discoveryProvider()
         let marked = Self.assignMarkerNames(to: discovered)
-        applicationDirectoryFingerprint = Self.makeApplicationDirectoryFingerprint(
+        let fingerprint = Self.makeApplicationDirectoryFingerprint(
             applications: marked,
             fileManager: fileManager
         )
 
-        lock.lock()
-        let changed = !isPrepared || Self.signature(of: applications) != Self.signature(of: marked)
-        lock.unlock()
+        let changed = state.withLock { current in
+            current.applicationDirectoryFingerprint = fingerprint
+            return !current.isPrepared
+                || Self.signature(of: current.applications) != Self.signature(of: marked)
+        }
 
         guard changed else { return false }
 
@@ -239,16 +267,16 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             fileManager: fileManager
         )
 
-        lock.lock()
-        applications = marked
-        applicationsByMarker = Dictionary(
-            uniqueKeysWithValues: marked.map { ($0.markerName, $0) }
-        )
-        markerByApplicationPath = Dictionary(
-            uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
-        )
-        isPrepared = true
-        lock.unlock()
+        state.withLock { current in
+            current.applications = marked
+            current.applicationsByMarker = Dictionary(
+                uniqueKeysWithValues: marked.map { ($0.markerName, $0) }
+            )
+            current.markerByApplicationPath = Dictionary(
+                uniqueKeysWithValues: marked.map { ($0.url.path, $0.markerName) }
+            )
+            current.isPrepared = true
+        }
         return true
     }
 
@@ -257,8 +285,9 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
     }
 
     private func applicationDirectoriesChanged(fileManager: FileManager) -> Bool {
-        guard !applicationDirectoryFingerprint.isEmpty else { return true }
-        return applicationDirectoryFingerprint.contains { path, previousDate in
+        let fingerprint = state.withLock { $0.applicationDirectoryFingerprint }
+        guard !fingerprint.isEmpty else { return true }
+        return fingerprint.contains { path, previousDate in
             CatalogDirectoryFingerprint.modificationDate(
                 ofDirectoryAtPath: path,
                 fileManager: fileManager
@@ -285,15 +314,11 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
     }
 
     private func snapshotApplicationsByMarker() -> [String: Application] {
-        lock.lock()
-        defer { lock.unlock() }
-        return applicationsByMarker
+        state.withLock { $0.applicationsByMarker }
     }
 
     private func snapshotMarkersByApplicationPath() -> [String: String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return markerByApplicationPath
+        state.withLock { $0.markerByApplicationPath }
     }
 
     private static func discoverApplications() -> [(name: String, url: URL)] {
@@ -398,6 +423,24 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         applications.append((displayName, standardized))
     }
 
+    private static func characterMask(_ value: String) -> UInt64 {
+        value.utf8.reduce(into: 0) { mask, byte in
+            let bit: UInt64? = switch byte {
+            case 0x61...0x7A:
+                UInt64(byte - 0x61)
+            case 0x41...0x5A:
+                UInt64(byte - 0x41)
+            case 0x30...0x39:
+                UInt64(byte - 0x30 + 26)
+            default:
+                nil
+            }
+            if let bit {
+                mask |= 1 << bit
+            }
+        }
+    }
+
     private static func assignMarkerNames(
         to applications: [(name: String, url: URL)]
     ) -> [Application] {
@@ -409,13 +452,19 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             let occurrence = occurrences[safeName, default: 0]
             occurrences[safeName] = occurrence + 1
             let suffix = occurrence == 0 ? "" : " — \(occurrence + 1)"
+            let normalized = FuzzyMatcher.normalized(application.name)
+            let utf8Bytes = Array(normalized.utf8)
+            let asciiCandidate = utf8Bytes.allSatisfy { $0 < 0x80 } ? utf8Bytes : nil
+            let mask = characterMask(normalized)
             return Application(
                 name: application.name,
                 url: application.url,
                 markerName: "\(safeName)\(suffix).app",
                 id: "application:\(application.url.path)",
                 subtitle: application.url.deletingLastPathComponent().path,
-                normalizedName: FuzzyMatcher.normalized(application.name)
+                normalizedName: normalized,
+                asciiCandidate: asciiCandidate,
+                characterMask: mask
             )
         }
     }

@@ -5,8 +5,8 @@ import Foundation
 // Every run is driven by an explicit seed, so a failure is replayable from
 // the message alone — no "it failed on CI once" cases. On failure the
 // harness shrinks the counterexample toward the smallest input that still
-// falsifies the property, then throws, which XCTest surfaces as the test's
-// failure with the shrunk value attached.
+// falsifies the property, then throws, which the calling test (Swift Testing
+// or XCTest) surfaces as the test's failure with the shrunk value attached.
 //
 // This lives in its own target rather than in either test target because
 // both the engine's tests and the shell's tests need the same generators —
@@ -326,9 +326,9 @@ package struct PropertyFailure: LocalizedError, CustomStringConvertible {
 package let defaultPropertyRuns = 400
 
 /// Runs `property` against generated values, shrinking any counterexample
-/// before throwing. Throwing (rather than calling `XCTFail`) keeps this
-/// target free of an XCTest dependency and still fails the calling test,
-/// with the shrunk counterexample in the message.
+/// before throwing. Throwing (rather than calling a test-framework fail API)
+/// keeps this target free of XCTest and Testing dependencies and still fails
+/// the calling test, with the shrunk counterexample in the message.
 package func checkProperty<Value>(
     _ description: String,
     _ generator: Gen<Value>,

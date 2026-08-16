@@ -1,7 +1,7 @@
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
-import XCTest
+import Testing
 
 /// `RecentStore` is the only mutable, persisted, cross-thread state in the
 /// engine: every keystroke reads a boost, every launch writes one, and the
@@ -9,15 +9,14 @@ import XCTest
 /// main actor. It had no tests at all. These cover the boost arithmetic,
 /// the persistence round-trip, corrupt-store recovery, and — the reason
 /// this file exists — hammering it from many threads at once.
-final class RecentStoreConcurrencyTests: XCTestCase {
+struct RecentStoreConcurrencyTests {
     /// The store persists asynchronously, so a read taken immediately after
     /// a write legitimately sees the old value. Everything that waits on a
     /// write goes through here.
     private func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line,
+        sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) {
         let deadline = Date().addingTimeInterval(timeout)
@@ -25,21 +24,21 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             if condition() { return }
             usleep(2_000)
         }
-        XCTFail("never became true: \(description)", file: file, line: line)
+        Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
     }
 
     // MARK: - Boost arithmetic
 
-    func testAnUnknownIdentifierHasNoBoost() throws {
+    @Test func anUnknownIdentifierHasNoBoost() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
-        XCTAssertEqual(store.boost(for: "never-opened"), 0)
-        XCTAssertEqual(store.boost(for: ""), 0)
-        XCTAssertEqual(store.boost(for: String(repeating: "x", count: 10_000)), 0)
+        #expect(store.boost(for: "never-opened") == 0)
+        #expect(store.boost(for: "") == 0)
+        #expect(store.boost(for: String(repeating: "x", count: 10_000)) == 0)
     }
 
-    func testRecordingOnceProducesARecencyDominatedBoost() throws {
+    @Test func recordingOnceProducesARecencyDominatedBoost() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
@@ -47,10 +46,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         waitUntil("the first launch is recorded") { store.boost(for: "app:one") > 0 }
 
         // One launch (200) plus a full-strength recency term (4_000).
-        XCTAssertEqual(store.boost(for: "app:one"), 4_200)
+        #expect(store.boost(for: "app:one") == 4_200)
     }
 
-    func testBoostGrowsWithLaunchesUntilItSaturates() throws {
+    @Test func boostGrowsWithLaunchesUntilItSaturates() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
@@ -62,10 +61,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         }
 
         // Launches are capped at 25, so the 26th through 30th add nothing.
-        XCTAssertEqual(store.boost(for: "app:hot"), 4_000 + 25 * 200)
+        #expect(store.boost(for: "app:hot") == 4_000 + 25 * 200)
     }
 
-    func testBoostIsBoundedForEveryPossibleLaunchCount() throws {
+    @Test func boostIsBoundedForEveryPossibleLaunchCount() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
@@ -83,19 +82,19 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         }
     }
 
-    func testDistinctIdentifiersDoNotShareABoost() throws {
+    @Test func distinctIdentifiersDoNotShareABoost() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
         store.record("app:a")
         waitUntil("app:a is recorded") { store.boost(for: "app:a") > 0 }
 
-        XCTAssertGreaterThan(store.boost(for: "app:a"), 0)
-        XCTAssertEqual(store.boost(for: "app:b"), 0)
-        XCTAssertEqual(store.boost(for: "app:A"), 0, "identifiers are case-sensitive")
+        #expect(store.boost(for: "app:a") > 0)
+        #expect(store.boost(for: "app:b") == 0)
+        #expect(store.boost(for: "app:A") == 0, "identifiers are case-sensitive")
     }
 
-    func testHostileIdentifiersRoundTripThroughTheStore() throws {
+    @Test func hostileIdentifiersRoundTripThroughTheStore() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
@@ -110,33 +109,31 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             identifiers.allSatisfy { store.boost(for: $0) > 0 }
         }
 
-        let reloaded = RecentStore(defaults: defaults.defaults)
+        let reloadedIdentifiers = identifiers
         waitUntil("the persisted store reloads them") {
-            identifiers.allSatisfy { reloaded.boost(for: $0) > 0 }
+            let reloaded = RecentStore(defaults: defaults.defaults)
+            return reloadedIdentifiers.allSatisfy { reloaded.boost(for: $0) > 0 }
         }
     }
 
     // MARK: - Persistence
 
-    func testBoostsSurviveARelaunchThroughTheSameDefaults() throws {
+    @Test func boostsSurviveARelaunchThroughTheSameDefaults() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
         for _ in 0..<3 {
             store.record("app:persisted")
         }
-        waitUntil("three launches are recorded") {
-            store.boost(for: "app:persisted") >= 4_600
+        waitUntil("three launches reach the defaults") {
+            Self.persistedLaunches(in: defaults.defaults, for: "app:persisted") == 3
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        waitUntil("the relaunched store sees them") {
-            relaunched.boost(for: "app:persisted") >= 4_600
-        }
-        XCTAssertEqual(relaunched.boost(for: "app:persisted"), 4_600)
+        #expect(relaunched.boost(for: "app:persisted") == 4_600)
     }
 
-    func testStoresOnSeparateSuitesAreFullyIsolated() throws {
+    @Test func storesOnSeparateSuitesAreFullyIsolated() throws {
         let first = try IsolatedDefaults(label: "RecentStoreA")
         let second = try IsolatedDefaults(label: "RecentStoreB")
         let storeA = RecentStore(defaults: first.defaults)
@@ -145,10 +142,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         storeA.record("shared-id")
         waitUntil("A records it") { storeA.boost(for: "shared-id") > 0 }
 
-        XCTAssertEqual(storeB.boost(for: "shared-id"), 0)
+        #expect(storeB.boost(for: "shared-id") == 0)
     }
 
-    func testACorruptPersistedPayloadIsIgnoredRatherThanFatal() throws {
+    @Test func aCorruptPersistedPayloadIsIgnoredRatherThanFatal() throws {
         // Anything could be under this key: an older schema, a truncated
         // write, or a value some other tool wrote. None of it may crash a
         // launcher on startup.
@@ -167,7 +164,7 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             let defaults = try IsolatedDefaults()
             defaults.defaults.set(payload, forKey: "recent-items-v1")
             let store = RecentStore(defaults: defaults.defaults)
-            XCTAssertEqual(store.boost(for: "app"), 0)
+            #expect(store.boost(for: "app") == 0)
 
             // And it must still be usable afterwards.
             store.record("app")
@@ -175,15 +172,15 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         }
     }
 
-    func testANonDataValueUnderTheKeyIsIgnored() throws {
+    @Test func aNonDataValueUnderTheKeyIsIgnored() throws {
         let defaults = try IsolatedDefaults()
         defaults.defaults.set("a string, not data", forKey: "recent-items-v1")
 
         let store = RecentStore(defaults: defaults.defaults)
-        XCTAssertEqual(store.boost(for: "anything"), 0)
+        #expect(store.boost(for: "anything") == 0)
     }
 
-    func testAPartiallyValidPayloadKeepsTheEntriesItCanDecode() throws {
+    @Test func aPartiallyValidPayloadKeepsTheEntriesItCanDecode() throws {
         // The decoder is all-or-nothing on `[String: Entry]`, so a payload
         // with one bad entry drops the whole store. Pinned deliberately:
         // it's a defensible choice, but it should be a chosen one.
@@ -194,16 +191,12 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         )
 
         let store = RecentStore(defaults: defaults.defaults)
-        XCTAssertEqual(
-            store.boost(for: "good"),
-            0,
-            "one undecodable entry discards the entire store"
-        )
+        #expect(store.boost(for: "good") == 0, "one undecodable entry discards the entire store")
     }
 
     // MARK: - Concurrency
 
-    func testConcurrentRecordsOnOneIdentifierNeitherCrashNorExceedTheCap() throws {
+    @Test func concurrentRecordsOnOneIdentifierNeitherCrashNorExceedTheCap() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
 
@@ -214,10 +207,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         waitUntil("the contended identifier saturates", timeout: 15) {
             store.boost(for: "app:contended") == 4_000 + 25 * 200
         }
-        XCTAssertEqual(store.boost(for: "app:contended"), 9_000)
+        #expect(store.boost(for: "app:contended") == 9_000)
     }
 
-    func testConcurrentReadsDuringWritesNeverObserveANegativeOrOversizedBoost() throws {
+    @Test func concurrentReadsDuringWritesNeverObserveANegativeOrOversizedBoost() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
         let violations = AtomicCounter()
@@ -236,10 +229,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(violations.value, 0, "a torn read produced an out-of-range boost")
+        #expect(violations.value == 0, "a torn read produced an out-of-range boost")
     }
 
-    func testConcurrentWritesAcrossManyIdentifiersAllLandEventually() throws {
+    @Test func concurrentWritesAcrossManyIdentifiersAllLandEventually() throws {
         let defaults = try IsolatedDefaults()
         let store = RecentStore(defaults: defaults.defaults)
         let identifiers = (0..<200).map { "app:\($0)" }
@@ -253,7 +246,7 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         }
     }
 
-    func testConstructingManyStoresConcurrentlyOverOneSuiteIsSafe() throws {
+    @Test func constructingManyStoresConcurrentlyOverOneSuiteIsSafe() throws {
         // Every `SearchCoordinator` builds its own `RecentStore`, and tests
         // (and previews) can build several. Concurrent decodes of the same
         // defaults blob must not race.
@@ -268,14 +261,14 @@ final class RecentStoreConcurrencyTests: XCTestCase {
             boosts.append(store.boost(for: "app:seeded"))
         }
 
-        XCTAssertEqual(boosts.values.count, 12 * 25)
-        XCTAssertTrue(
+        #expect(boosts.values.count == 12 * 25)
+        #expect(
             boosts.values.allSatisfy { $0 == 4_200 },
             "every freshly-constructed store should agree on the persisted boost"
         )
     }
 
-    func testRelaunchesAccumulateLaunchesWhenEachWriteIsAllowedToLand() throws {
+    @Test func relaunchesAccumulateLaunchesWhenEachWriteIsAllowedToLand() throws {
         // A launcher quit and relaunched must never *lose* count — provided
         // the previous write actually reached disk. Each round waits on the
         // persisted payload, not on the in-memory value, because the two
@@ -291,10 +284,10 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        XCTAssertEqual(relaunched.boost(for: "app:monotonic"), 4_000 + 10 * 200)
+        #expect(relaunched.boost(for: "app:monotonic") == 4_000 + 10 * 200)
     }
 
-    func testAStoreBuiltBeforeThePreviousWriteLandsOverwritesIt() throws {
+    @Test func aStoreBuiltBeforeThePreviousWriteLandsOverwritesIt() throws {
         // The write path is `persistenceQueue.async` + a whole-dictionary
         // `defaults.set`, so two `RecentStore` instances over one suite are
         // last-writer-wins on the entire store, not per entry. A store
@@ -325,14 +318,11 @@ final class RecentStoreConcurrencyTests: XCTestCase {
 
         // Three launches happened; two are recorded. Lost update, by design
         // of the whole-dictionary write.
-        XCTAssertEqual(
-            Self.persistedLaunches(in: defaults.defaults, for: "app:clobbered"),
-            2
-        )
-        XCTAssertEqual(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered"), 4_400)
+        #expect(Self.persistedLaunches(in: defaults.defaults, for: "app:clobbered") == 2)
+        #expect(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered") == 4_400)
     }
 
-    func testRecordingIsAsynchronousSoAnImmediateReadCanMissIt() throws {
+    @Test func recordingIsAsynchronousSoAnImmediateReadCanMissIt() throws {
         // Documents the timing contract the tests above have to work
         // around: `record` returns before the entry is visible, so nothing
         // in the app may assume a boost is readable on the next line.
@@ -343,7 +333,7 @@ final class RecentStoreConcurrencyTests: XCTestCase {
         let immediate = store.boost(for: "app:async")
         waitUntil("the write eventually lands") { store.boost(for: "app:async") > 0 }
 
-        XCTAssertTrue(
+        #expect(
             immediate == 0 || immediate == 4_200,
             "an immediate read must either miss the write entirely or see it whole, never a partial value"
         )
