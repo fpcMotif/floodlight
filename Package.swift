@@ -16,6 +16,10 @@ let strictConcurrency: [SwiftSetting] = [
     .enableExperimentalFeature("StrictConcurrency"),
 ]
 
+let shellSettings: [SwiftSetting] = [
+    .enableExperimentalFeature("StrictConcurrency"),
+    .unsafeFlags(["-Osize"]),
+]
 /// The platform-neutral engine is compiled in Swift 6 mode. The AppKit shell
 /// stays in Swift 5 mode until the current compiler IRGen failure in
 /// `OnboardingView` is fixed upstream.
@@ -55,7 +59,7 @@ let package = Package(
             ],
             path: "Sources/Floodlight",
             exclude: ["Resources"],
-            swiftSettings: strictConcurrency,
+            swiftSettings: shellSettings,
             linkerSettings: [
                 .linkedFramework("Carbon"),
                 .linkedFramework("QuickLookUI"),
