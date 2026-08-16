@@ -32,7 +32,7 @@ mouse.
 ## Requirements
 
 - macOS 14 or newer
-- Xcode command-line tools with Swift 5.10 or newer
+- Xcode 27 or newer (Swift 6.4)
 
 ## Build and run
 

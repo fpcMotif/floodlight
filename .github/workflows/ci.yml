@@ -24,7 +24,7 @@ concurrency:
 jobs:
   check:
     name: Gates
-    runs-on: macos-26
+    runs-on: xcode-27
 
     steps:
       - name: Check out Floodlight
@@ -67,7 +67,7 @@ jobs:
 
   test:
     name: Tests
-    runs-on: macos-26
+    runs-on: xcode-27
 
     steps:
       - name: Check out Floodlight
@@ -103,7 +103,7 @@ jobs:
 
   sanitizers:
     name: ${{ matrix.name }}
-    runs-on: macos-26
+    runs-on: xcode-27
 
     strategy:
       fail-fast: false

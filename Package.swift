@@ -1,30 +1,17 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 
 import PackageDescription
 
-/// Complete strict concurrency checking for the Swift 5 shell and tests.
-///
-/// The indexing and discovery paths hand snapshots between a serial queue, the
-/// cooperative pool, and the main actor; a data race there shows up as a
-/// corrupted result list, which is a bug report nobody can reproduce. This makes
-/// the compiler find them instead. It lives in the package settings rather than
-/// in the check invocation so it holds in Xcode and in an editor too — unlike
-/// warnings-as-errors, which is a flag `make check` passes so that exploratory
-/// local builds stay lenient.
-///
-let strictConcurrency: [SwiftSetting] = [
-    .enableExperimentalFeature("StrictConcurrency"),
+/// Upcoming features that stay opt-in until a later language mode. Swift 6
+/// already implies complete concurrency checking. These two match Approachable
+/// Concurrency in Xcode 27 / Swift 6.4.
+let upcoming: [SwiftSetting] = [
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
 ]
 
-let shellSettings: [SwiftSetting] = [
-    .enableExperimentalFeature("StrictConcurrency"),
+let shellSettings: [SwiftSetting] = upcoming + [
     .unsafeFlags(["-Osize"]),
-]
-/// The platform-neutral engine is compiled in Swift 6 mode. The AppKit shell
-/// stays in Swift 5 mode until the current compiler IRGen failure in
-/// `OnboardingView` is fixed upstream.
-let swiftSix: [SwiftSetting] = [
-    .swiftLanguageMode(.v6),
 ]
 
 let package = Package(
@@ -49,7 +36,7 @@ let package = Package(
                 .product(name: "FFFKit", package: "fff-swift"),
             ],
             path: "Sources/FloodlightEngine",
-            swiftSettings: swiftSix
+            swiftSettings: upcoming
         ),
         // The macOS shell: panel, hotkey, menu bar, onboarding, QuickLook, login item.
         .executableTarget(
@@ -75,7 +62,7 @@ let package = Package(
             name: "FloodlightTestSupport",
             dependencies: ["FloodlightEngine"],
             path: "Tests/FloodlightTestSupport",
-            swiftSettings: strictConcurrency
+            swiftSettings: upcoming
         ),
         .testTarget(
             name: "FloodlightEngineTests",
@@ -85,14 +72,14 @@ let package = Package(
                 .product(name: "FFFKit", package: "fff-swift"),
             ],
             path: "Tests/FloodlightEngineTests",
-            swiftSettings: strictConcurrency
+            swiftSettings: upcoming
         ),
         .testTarget(
             name: "FloodlightTests",
             dependencies: ["Floodlight", "FloodlightEngine", "FloodlightTestSupport"],
             path: "Tests/FloodlightTests",
-            swiftSettings: strictConcurrency
+            swiftSettings: upcoming
         ),
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )
