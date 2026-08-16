@@ -127,7 +127,7 @@ package enum FuzzyMatcher {
 
     private static func findWordPrefix(
         queryChars: [Character],
-        in words: [(offset: Int, chars: [Character])]
+        in words: [(offset: Int, chars: ArraySlice<Character>)]
     ) -> MatchEvidence? {
         for word in words where word.offset > 0 && word.chars.starts(with: queryChars) {
             return MatchEvidence(
@@ -153,7 +153,7 @@ package enum FuzzyMatcher {
 
     private static func findAcronym(
         queryChars: [Character],
-        in words: [(offset: Int, chars: [Character])]
+        in words: [(offset: Int, chars: ArraySlice<Character>)]
     ) -> MatchEvidence? {
         guard words.count > 1 else { return nil }
         let initials = words.compactMap(\.chars.first)
@@ -186,7 +186,7 @@ package enum FuzzyMatcher {
     private static func findTypo(
         queryChars: [Character],
         candidateChars: [Character],
-        words: [(offset: Int, chars: [Character])]
+        words: [(offset: Int, chars: ArraySlice<Character>)]
     ) -> MatchEvidence? {
         let budget = editBudget(forQueryLength: queryChars.count)
         guard budget > 0 else { return nil }
@@ -288,8 +288,9 @@ package enum FuzzyMatcher {
 
     private static func extractWords(
         from characters: [Character]
-    ) -> [(offset: Int, chars: [Character])] {
-        var words: [(offset: Int, chars: [Character])] = []
+    ) -> [(offset: Int, chars: ArraySlice<Character>)] {
+        var words: [(offset: Int, chars: ArraySlice<Character>)] = []
+        words.reserveCapacity(4)
         var currentWordStart: Int?
         for (index, char) in characters.enumerated() {
             if !isSeparatorChar(char) {
@@ -298,13 +299,13 @@ package enum FuzzyMatcher {
                 }
             } else {
                 if let start = currentWordStart {
-                    words.append((offset: start, chars: Array(characters[start..<index])))
+                    words.append((offset: start, chars: characters[start..<index]))
                     currentWordStart = nil
                 }
             }
         }
         if let start = currentWordStart {
-            words.append((offset: start, chars: Array(characters[start..<characters.count])))
+            words.append((offset: start, chars: characters[start..<characters.count]))
         }
         return words
     }
