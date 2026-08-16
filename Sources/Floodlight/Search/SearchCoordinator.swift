@@ -153,11 +153,13 @@ final class SearchCoordinator {
             ?? fallbackStorage
         let environment = ProcessInfo.processInfo.environment
         let recentStore = RecentStore()
+        let fileIndexStorage = indexStorage.appendingPathComponent("FileIndex", isDirectory: true)
+        try? fileManager.createDirectory(at: fileIndexStorage, withIntermediateDirectories: true)
 
         self.init(
             sourceSearch: SourceSearchEngine(
                 rootURL: initialRoot,
-                storageURL: indexStorage,
+                storageURL: fileIndexStorage,
                 applications: ApplicationCatalog(
                     recentStore: recentStore,
                     deferDiscovery: true
