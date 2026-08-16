@@ -1,4 +1,5 @@
 import FloodlightEngine
+import Foundation
 
 struct SearchResultPublication: Equatable {
     let sourceCandidates: [SearchItem]
@@ -63,6 +64,7 @@ enum SearchResultProjection {
         let selection: SearchResultSelection?
         let progress: SearchResultProgress
         let filterContinuity: FilterContinuity
+        let rootURL: URL?
 
         init(
             query: String,
@@ -71,7 +73,8 @@ enum SearchResultProjection {
             selectedFilter: SearchResultFilter,
             selection: SearchResultSelection?,
             progress: SearchResultProgress,
-            filterContinuity: FilterContinuity = .reconcileWhenSettled
+            filterContinuity: FilterContinuity = .reconcileWhenSettled,
+            rootURL: URL? = nil
         ) {
             self.query = query
             self.candidates = candidates
@@ -80,6 +83,7 @@ enum SearchResultProjection {
             self.selection = selection
             self.progress = progress
             self.filterContinuity = filterContinuity
+            self.rootURL = rootURL
         }
     }
 
@@ -160,6 +164,9 @@ enum SearchResultProjection {
         }
         if let item = context.keywordRegistry.addressedResult(for: context.query) {
             output.append(item)
+        }
+        if let pathResult = PathNavigator.resolve(query: context.query, rootURL: context.rootURL) {
+            output.append(pathResult.folderItem)
         }
         output.append(contentsOf: context.candidates)
 

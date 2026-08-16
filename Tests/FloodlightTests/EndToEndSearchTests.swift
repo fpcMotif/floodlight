@@ -229,6 +229,69 @@ final class EndToEndSearchTests: XCTestCase {
         )
     }
 
+    func testTypingDownloadsWithTrailingSlashReturnsDownloadsFolderAsTopHit() async throws {
+        let coordinator = try await makeCoordinator()
+
+        coordinator.query = "Downloads/"
+        try await waitUntil("Downloads/ is the Top Hit folder") {
+            coordinator.results.first?.kind == .folder
+                && coordinator.results.first?.title.hasPrefix("Downloads") == true
+        }
+
+        let row = try XCTUnwrap(coordinator.results.first)
+        XCTAssertEqual(row.kind, .folder)
+        XCTAssertEqual(row.title, "Downloads/")
+    }
+
+    func testTildePathExpandsAndReturnsHomeOrDownloadsFolder() async throws {
+        let coordinator = try await makeCoordinator()
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
+        var isDirectory: ObjCBool = false
+        let downloadsExists = FileManager.default.fileExists(
+            atPath: downloads.path,
+            isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+
+        if downloadsExists {
+            coordinator.query = "~/Downloads"
+            try await waitUntil("~/Downloads expands to a Downloads folder row") {
+                coordinator.results.contains {
+                    $0.kind == .folder && $0.title.hasPrefix("Downloads")
+                }
+            }
+            let downloadsRow = try XCTUnwrap(
+                coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Downloads") }
+            )
+            XCTAssertEqual(downloadsRow.kind, .folder)
+            XCTAssertEqual(downloadsRow.title, "Downloads/")
+        }
+
+        coordinator.query = "~/"
+        try await waitUntil("~/ expands to a folder row") {
+            coordinator.results.contains { $0.kind == .folder }
+        }
+        let homeRow = try XCTUnwrap(coordinator.results.first { $0.kind == .folder })
+        XCTAssertEqual(homeRow.kind, .folder)
+    }
+
+    func testAbsoluteApplicationsPathReturnsApplicationsFolder() async throws {
+        let coordinator = try await makeCoordinator()
+
+        coordinator.query = "/Applications"
+        try await waitUntil("the Applications folder appears") {
+            coordinator.results
+                .contains { $0.kind == .folder && $0.title.hasPrefix("Applications") }
+        }
+
+        let row = try XCTUnwrap(
+            coordinator.results.first { $0.kind == .folder && $0.title.hasPrefix("Applications") }
+        )
+        XCTAssertEqual(row.kind, .folder)
+        XCTAssertEqual(row.title, "Applications/")
+        XCTAssertEqual(row.fileURL?.standardizedFileURL.path, "/Applications")
+    }
+
     func testAccentedFileNamesAreFoundByTheirUnaccentedSpelling() async throws {
         // The whole reason `FuzzyMatcher.normalized` exists, proven against
         // a file that is really on disk.

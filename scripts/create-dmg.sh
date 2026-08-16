@@ -35,8 +35,7 @@ ln -s /Applications "$STAGING_DIR/Applications"
 hdiutil create \
     -volname "Floodlight" \
     -srcfolder "$STAGING_DIR" \
-    -format UDZO \
-    -imagekey zlib-level=9 \
+    -format ULMO \
     -ov \
     "$OUTPUT_PATH"
 

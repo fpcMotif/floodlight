@@ -14,6 +14,7 @@ if [ -e "$APP_DIR" ]; then
 fi
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BIN_DIR/Floodlight" "$CONTENTS/MacOS/Floodlight"
+strip -u -r "$CONTENTS/MacOS/Floodlight"
 cp "$RESOURCE_SOURCE/Info.plist" "$CONTENTS/Info.plist"
 cp "$RESOURCE_SOURCE/FloodlightMenuBar.svg" "$CONTENTS/Resources/"
 "$SCRIPT_DIR/build-app-icon.sh" \

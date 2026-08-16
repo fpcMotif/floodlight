@@ -158,22 +158,30 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
         }
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
-        let matches = snapshotApplications().compactMap { application -> SearchItem? in
+        lock.lock()
+        let currentApps = applications
+        let boostStore = recentStore
+        lock.unlock()
+
+        var matches: [SearchItem] = []
+        matches.reserveCapacity(min(currentApps.count, 64))
+
+        for application in currentApps {
             guard let score = Self.score(
                 of: application,
                 normalizedQuery: normalizedQuery
             ) else {
-                return nil
+                continue
             }
-            return SearchItem(
+            matches.append(SearchItem(
                 id: application.id,
                 title: application.name,
                 subtitle: application.subtitle,
                 kind: .application,
                 action: .open(application.url),
-                score: score + recentStore.boost(for: application.id),
+                score: score + boostStore.boost(for: application.id),
                 fileURL: application.url
-            )
+            ))
         }
 
         return SearchItemRanking.page(matches, limit: limit)
@@ -274,12 +282,6 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             }
         )
         return CatalogDirectoryFingerprint.make(forPaths: paths, fileManager: fileManager)
-    }
-
-    private func snapshotApplications() -> [Application] {
-        lock.lock()
-        defer { lock.unlock() }
-        return applications
     }
 
     private func snapshotApplicationsByMarker() -> [String: Application] {

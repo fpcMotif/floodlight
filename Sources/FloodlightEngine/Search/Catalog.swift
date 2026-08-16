@@ -66,6 +66,7 @@ package enum SearchItemRanking {
     package static let keywordEngine = 150_000
     package static let calculator = 100_000
     package static let application = 100_000
+    package static let pathNavigation = 100_000
     package static let setting = 50_000
     package static let content = 1_000
 
@@ -156,14 +157,15 @@ package enum SearchItemRanking {
 
     private static func siftDown(_ heap: inout [SearchItem], from index: Int) {
         var parent = index
+        let count = heap.count
         while true {
             let left = parent * 2 + 1
             let right = left + 1
             var worst = parent
-            if left < heap.count, ranksBefore(heap[worst], heap[left]) {
+            if left < count, ranksBefore(heap[worst], heap[left]) {
                 worst = left
             }
-            if right < heap.count, ranksBefore(heap[worst], heap[right]) {
+            if right < count, ranksBefore(heap[worst], heap[right]) {
                 worst = right
             }
             guard worst != parent else { return }

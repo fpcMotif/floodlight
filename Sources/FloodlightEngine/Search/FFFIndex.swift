@@ -21,6 +21,7 @@ final class FFFFileSource: FileSource, @unchecked Sendable {
 
     func start() async throws {
         try await index.start()
+        try await waitForScanCompletion()
         state.withLock { $0.hasStartedIndex = true }
     }
 

@@ -249,7 +249,7 @@ package enum FuzzyMatcher {
         }
 
         for word in words where word.bytes.first == query.first {
-            if let edits = damerauLevenshtein(query, Array(word.bytes), maxEdits: budget),
+            if let edits = damerauLevenshtein(query, word.bytes, maxEdits: budget),
                edits > 0
             {
                 if let current = bestTypo {
@@ -286,9 +286,12 @@ package enum FuzzyMatcher {
     }
 
     private static func isSeparatorByte(_ byte: UInt8) -> Bool {
-        byte == 0x20 || byte == 0x2D || byte == 0x5F || byte == 0x2F || byte == 0x2E
-            || byte == 0x26 || byte == 0x2C || byte == 0x3A || byte == 0x3B
-            || byte == 0x28 || byte == 0x29 || byte == 0x5B || byte == 0x5D
+        switch byte {
+        case 0x20, 0x2D, 0x5F, 0x2F, 0x2E, 0x26, 0x2C, 0x3A, 0x3B, 0x28, 0x29, 0x5B, 0x5D:
+            true
+        default:
+            false
+        }
     }
 
     private static func extractWords(
@@ -337,49 +340,65 @@ package enum FuzzyMatcher {
         return words
     }
 
-    private static func damerauLevenshtein<Element: Equatable>(
-        _ source: [Element],
-        _ target: [Element],
+    private static func damerauLevenshtein<
+        C1: RandomAccessCollection,
+        C2: RandomAccessCollection
+    >(
+        _ source: C1,
+        _ target: C2,
         maxEdits: Int
-    ) -> Int? {
+    ) -> Int? where C1.Element == C2.Element, C1.Element: Equatable, C1.Index == Int,
+        C2.Index == Int
+    {
         let sourceLength = source.count
         let targetLength = target.count
         if abs(sourceLength - targetLength) > maxEdits { return nil }
-        if source == target { return 0 }
+        if sourceLength == targetLength, source.elementsEqual(target) { return 0 }
 
-        var matrix = [[Int]](
-            repeating: [Int](repeating: 0, count: targetLength + 1),
-            count: sourceLength + 1
-        )
-        for index in 0...sourceLength {
-            matrix[index][0] = index
-        }
-        for columnIndex in 0...targetLength {
-            matrix[0][columnIndex] = columnIndex
-        }
+        let cols = targetLength + 1
+        let total = (sourceLength + 1) * cols
 
-        for rowIndex in 1...sourceLength {
-            var rowMin = Int.max
-            for columnIndex in 1...targetLength {
-                let cost = (source[rowIndex - 1] == target[columnIndex - 1]) ? 0 : 1
-                var dist = min(
-                    matrix[rowIndex - 1][columnIndex] + 1,
-                    matrix[rowIndex][columnIndex - 1] + 1,
-                    matrix[rowIndex - 1][columnIndex - 1] + cost
-                )
-                if rowIndex > 1,
-                   columnIndex > 1,
-                   source[rowIndex - 1] == target[columnIndex - 2],
-                   source[rowIndex - 2] == target[columnIndex - 1]
-                {
-                    dist = min(dist, matrix[rowIndex - 2][columnIndex - 2] + 1)
-                }
-                matrix[rowIndex][columnIndex] = dist
-                if dist < rowMin { rowMin = dist }
+        return withUnsafeTemporaryAllocation(of: Int.self, capacity: total) { buffer in
+            guard let base = buffer.baseAddress else { return nil }
+            for index in 0...sourceLength {
+                base[index * cols] = index
             }
-            if rowMin > maxEdits { return nil }
+            for columnIndex in 0...targetLength {
+                base[columnIndex] = columnIndex
+            }
+
+            let sourceStartIndex = source.startIndex
+            let targetStartIndex = target.startIndex
+
+            for rowIndex in 1...sourceLength {
+                var rowMin = Int.max
+                let rowOffset = rowIndex * cols
+                let prevRowOffset = (rowIndex - 1) * cols
+                let sourceChar = source[sourceStartIndex + rowIndex - 1]
+
+                for columnIndex in 1...targetLength {
+                    let targetChar = target[targetStartIndex + columnIndex - 1]
+                    let cost = (sourceChar == targetChar) ? 0 : 1
+                    var dist = min(
+                        base[prevRowOffset + columnIndex] + 1,
+                        base[rowOffset + columnIndex - 1] + 1,
+                        base[prevRowOffset + columnIndex - 1] + cost
+                    )
+                    if rowIndex > 1,
+                       columnIndex > 1,
+                       sourceChar == target[targetStartIndex + columnIndex - 2],
+                       source[sourceStartIndex + rowIndex - 2] == targetChar
+                    {
+                        let prevPrevRowOffset = (rowIndex - 2) * cols
+                        dist = min(dist, base[prevPrevRowOffset + columnIndex - 2] + 1)
+                    }
+                    base[rowOffset + columnIndex] = dist
+                    if dist < rowMin { rowMin = dist }
+                }
+                if rowMin > maxEdits { return nil }
+            }
+            let result = base[sourceLength * cols + targetLength]
+            return result <= maxEdits ? result : nil
         }
-        let result = matrix[sourceLength][targetLength]
-        return result <= maxEdits ? result : nil
     }
 }

@@ -408,12 +408,14 @@ final class SearchModelInvariantTests: XCTestCase {
             Tier(name: "keywordEngine", baseScore: SearchItemRanking.keywordEngine),
             Tier(name: "calculator", baseScore: SearchItemRanking.calculator),
             Tier(name: "application", baseScore: SearchItemRanking.application),
+            Tier(name: "pathNavigation", baseScore: SearchItemRanking.pathNavigation),
             Tier(name: "setting", baseScore: SearchItemRanking.setting),
             Tier(name: "content", baseScore: SearchItemRanking.content),
         ]
 
         let declaredExemptions: Set = [
             "calculator-application",
+            "application-pathNavigation",
         ]
 
         let maxAchievableMatchScore = 20_000

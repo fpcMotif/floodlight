@@ -492,7 +492,8 @@ final class SearchCoordinator {
                 selectedFilter: selectedFilter,
                 selection: selection,
                 progress: progress,
-                filterContinuity: filterContinuity
+                filterContinuity: filterContinuity,
+                rootURL: rootURL
             ))
         )
     }
