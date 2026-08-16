@@ -160,8 +160,8 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
 
         lock.lock()
         let currentApps = applications
-        let boostStore = recentStore
         lock.unlock()
+        let boosts = recentStore.boostMap()
 
         var matches: [SearchItem] = []
         matches.reserveCapacity(min(currentApps.count, 64))
@@ -173,17 +173,17 @@ package final class ApplicationCatalog: Catalog, @unchecked Sendable {
             ) else {
                 continue
             }
+            let boost = boosts[application.id] ?? 0
             matches.append(SearchItem(
                 id: application.id,
                 title: application.name,
                 subtitle: application.subtitle,
                 kind: .application,
                 action: .open(application.url),
-                score: score + boostStore.boost(for: application.id),
+                score: score + boost,
                 fileURL: application.url
             ))
         }
-
         return SearchItemRanking.page(matches, limit: limit)
     }
 

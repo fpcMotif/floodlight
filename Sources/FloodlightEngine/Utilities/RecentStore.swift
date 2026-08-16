@@ -46,6 +46,19 @@ package final class RecentStore: @unchecked Sendable {
         }
     }
 
+    package func boostMap() -> [String: Int] {
+        entries.withLock { dict in
+            guard !dict.isEmpty else { return [:] }
+            let now = Date.now
+            var result: [String: Int] = [:]
+            result.reserveCapacity(dict.count)
+            for (id, entry) in dict {
+                result[id] = Self.boost(for: entry, now: now)
+            }
+            return result
+        }
+    }
+
     private static func boost(for entry: Entry, now: Date) -> Int {
         let age = max(0, now.timeIntervalSince(entry.lastOpened))
         let recency = max(0, 4_000 - Int(age / 900))

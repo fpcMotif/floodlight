@@ -359,10 +359,7 @@ package final class SystemCatalog: Catalog {
                 else {
                     continue
                 }
-                let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery,
-                                                               let asciiCandidate = setting
-                                                               .asciiCandidate
-                {
+                let evidence = if let asciiQuery, let asciiCandidate = setting.asciiCandidate {
                     FuzzyMatcher.matchASCII(
                         normalizedQuery: asciiQuery,
                         normalizedCandidate: asciiCandidate
