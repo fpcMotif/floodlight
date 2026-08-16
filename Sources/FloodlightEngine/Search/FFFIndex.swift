@@ -1,23 +1,27 @@
 import FFFKit
 import Foundation
+import os
 
 package typealias FFFIndex = FFFKit.FFFIndex
 package typealias IndexedSearchItem = FFFKit.FFFSearchResult
 
-actor FFFFileSource: FileSource {
+final class FFFFileSource: FileSource, @unchecked Sendable {
+    private struct State {
+        var rootURL: URL
+        var hasStartedIndex = false
+    }
+
     private let index: FFFKit.FFFIndex
-    private var rootURL: URL
-    private var hasStartedIndex = false
+    private let state: OSAllocatedUnfairLock<State>
 
     init(index: FFFKit.FFFIndex, rootURL: URL) {
         self.index = index
-        self.rootURL = rootURL.standardizedFileURL
+        state = OSAllocatedUnfairLock(initialState: State(rootURL: rootURL.standardizedFileURL))
     }
 
     func start() async throws {
         try await index.start()
-        hasStartedIndex = true
-        try await waitForScanCompletion()
+        state.withLock { $0.hasStartedIndex = true }
     }
 
     func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
@@ -40,15 +44,15 @@ actor FFFFileSource: FileSource {
 
     func changeScope(to url: URL) async throws {
         let newRoot = url.standardizedFileURL
-        let previousRoot = rootURL
+        let (previousRoot, isStarted) = state.withLock { ($0.rootURL, $0.hasStartedIndex) }
         try await index.changeRoot(to: newRoot)
         do {
-            guard hasStartedIndex else {
-                rootURL = newRoot
+            guard isStarted else {
+                state.withLock { $0.rootURL = newRoot }
                 return
             }
             try await waitForScanCompletion()
-            rootURL = newRoot
+            state.withLock { $0.rootURL = newRoot }
         } catch {
             try? await index.changeRoot(to: previousRoot)
             try? await waitForScanCompletion()
@@ -57,15 +61,12 @@ actor FFFFileSource: FileSource {
     }
 
     func rebuild() async throws {
-        // A same-root restart gives this rebuild an operation-scoped barrier.
-        // FFF's rescan may be deferred behind post-scan indexing while
-        // `isScanning` remains false, so polling cannot prove that request
-        // committed. Root restart replaces the picker and pre-arms its scan.
-        try await index.changeRoot(to: rootURL)
+        let currentRoot = state.withLock { $0.rootURL }
+        try await index.changeRoot(to: currentRoot)
         try await waitForScanCompletion()
     }
 
-    nonisolated func track(query: String, selectedURL: URL) {
+    func track(query: String, selectedURL: URL) {
         index.track(query: query, selectedURL: selectedURL)
     }
 
