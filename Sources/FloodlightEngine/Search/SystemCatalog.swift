@@ -346,73 +346,76 @@ package final class SystemCatalog: Catalog {
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
         let queryCharacterMask = Self.characterMask(normalizedQuery)
         let requiresWordPrefix = normalizedQuery.count < 4
-        let snapshot = settings.withLock { $0 }
-        let matches = snapshot.compactMap { setting -> SearchItem? in
-            guard setting.characterMask & queryCharacterMask == queryCharacterMask else {
-                return nil
-            }
-            guard
-                !requiresWordPrefix
-                || setting.words.contains(where: { $0.hasPrefix(normalizedQuery) })
-            else {
-                return nil
-            }
-            let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery,
-                                                           let asciiCandidate = setting
-                                                           .asciiCandidate
-            {
-                FuzzyMatcher.matchASCII(
-                    normalizedQuery: asciiQuery,
-                    normalizedCandidate: asciiCandidate
-                )
-            } else {
-                FuzzyMatcher.match(
-                    normalizedQuery: normalizedQuery,
-                    normalizedCandidate: setting.normalizedCandidate
-                )
-            }
-            guard let evidence, let url = setting.url else {
-                return nil
-            }
-
-            let isTitleMatch: Bool = switch evidence.shape {
-            case .exact, .namePrefix:
-                true
-            case let .wordPrefix(offset), let .typo(_, offset):
-                offset < setting.nameLength
-            case let .acronym(wordIndex):
-                wordIndex < setting.titleWordCount
-            }
-
-            let subtitle: String
-            if isTitleMatch {
-                subtitle = "System Settings"
-            } else {
-                let keyword: String = switch evidence.shape {
-                case let .acronym(wordIndex):
-                    wordIndex < setting.words.count ? setting.words[wordIndex] : ""
-                case let .wordPrefix(offset), let .typo(_, offset):
-                    Self.extractMatchedKeyword(
-                        from: setting.normalizedCandidate,
-                        startingAt: offset
-                    )
-                case .exact, .namePrefix:
-                    ""
+        let matches = settings.withLock { allSettings -> [SearchItem] in
+            var matches: [SearchItem] = []
+            matches.reserveCapacity(min(limit * 2, 32))
+            for setting in allSettings {
+                guard setting.characterMask & queryCharacterMask == queryCharacterMask else {
+                    continue
                 }
-                subtitle = keyword.isEmpty ? "System Settings" : "Matches: \(keyword)"
+                guard
+                    !requiresWordPrefix
+                    || setting.words.contains(where: { $0.hasPrefix(normalizedQuery) })
+                else {
+                    continue
+                }
+                let evidence: FuzzyMatcher.MatchEvidence? = if let asciiQuery,
+                                                               let asciiCandidate = setting
+                                                               .asciiCandidate
+                {
+                    FuzzyMatcher.matchASCII(
+                        normalizedQuery: asciiQuery,
+                        normalizedCandidate: asciiCandidate
+                    )
+                } else {
+                    FuzzyMatcher.match(
+                        normalizedQuery: normalizedQuery,
+                        normalizedCandidate: setting.normalizedCandidate
+                    )
+                }
+                guard let evidence, let url = setting.url else {
+                    continue
+                }
+
+                let isTitleMatch: Bool = switch evidence.shape {
+                case .exact, .namePrefix:
+                    true
+                case let .wordPrefix(offset), let .typo(_, offset):
+                    offset < setting.nameLength
+                case let .acronym(wordIndex):
+                    wordIndex < setting.titleWordCount
+                }
+
+                let subtitle: String
+                if isTitleMatch {
+                    subtitle = "System Settings"
+                } else {
+                    let keyword: String = switch evidence.shape {
+                    case let .acronym(wordIndex):
+                        wordIndex < setting.words.count ? setting.words[wordIndex] : ""
+                    case let .wordPrefix(offset), let .typo(_, offset):
+                        Self.extractMatchedKeyword(
+                            from: setting.normalizedCandidate,
+                            startingAt: offset
+                        )
+                    case .exact, .namePrefix:
+                        ""
+                    }
+                    subtitle = keyword.isEmpty ? "System Settings" : "Matches: \(keyword)"
+                }
+
+                matches.append(SearchItem(
+                    id: "setting:\(setting.pane)",
+                    title: setting.name,
+                    subtitle: subtitle,
+                    kind: .systemSetting,
+                    action: .open(url),
+                    score: SearchItemRanking.setting + evidence.score,
+                    fileURL: nil
+                ))
             }
-
-            return SearchItem(
-                id: "setting:\(setting.pane)",
-                title: setting.name,
-                subtitle: subtitle,
-                kind: .systemSetting,
-                action: .open(url),
-                score: SearchItemRanking.setting + evidence.score,
-                fileURL: nil
-            )
+            return matches
         }
-
         return SearchItemRanking.page(matches, limit: limit)
     }
 
@@ -420,16 +423,18 @@ package final class SystemCatalog: Catalog {
         from candidate: String,
         startingAt offset: Int
     ) -> String {
-        let chars = Array(candidate)
-        guard offset < chars.count else { return "" }
-        var endIndex = offset
-        for index in offset..<chars.count {
-            if FuzzyMatcher.isSeparatorChar(chars[index]) {
-                break
-            }
-            endIndex = index + 1
+        guard let startIndex = candidate.index(
+            candidate.startIndex,
+            offsetBy: offset,
+            limitedBy: candidate.endIndex
+        ) else {
+            return ""
         }
-        return String(chars[offset..<endIndex])
+        let remainder = candidate[startIndex...]
+        if let sepIndex = remainder.firstIndex(where: FuzzyMatcher.isSeparatorChar) {
+            return String(remainder[..<sepIndex])
+        }
+        return String(remainder)
     }
 
     private static func characterMask(_ value: String) -> UInt64 {
