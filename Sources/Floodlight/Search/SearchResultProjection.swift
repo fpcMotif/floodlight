@@ -210,6 +210,19 @@ enum SearchResultProjection {
         index: Int,
         now: Date
     ) -> SearchItem {
+        switch entry.kind {
+        case .file:
+            buildClipboardFileRow(entry: entry, index: index)
+        case .text:
+            buildClipboardTextRow(entry: entry, index: index, now: now)
+        }
+    }
+
+    private static func buildClipboardTextRow(
+        entry: ClipboardEntry,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
         let preview = previewTitle(for: entry.text)
         let title = entry.isPinned ? "📌 \(preview)" : preview
         let app = appDisplayName(for: entry.sourceAppBundleID)
@@ -228,6 +241,28 @@ enum SearchResultProjection {
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
             modifiedAt: entry.createdAt
+        )
+    }
+
+    private static func buildClipboardFileRow(
+        entry: ClipboardEntry,
+        index: Int
+    ) -> SearchItem {
+        let path = entry.text
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let preview = name.isEmpty ? path : name
+        let title = entry.isPinned ? "📌 \(preview)" : preview
+        let fileURL = URL(fileURLWithPath: path)
+
+        return SearchItem(
+            id: "clipboard:\(entry.id)",
+            title: title,
+            subtitle: path,
+            kind: .clipboard,
+            action: .copyFiles([path]),
+            iconSource: .inferred,
+            score: SearchItemRanking.calculator - index,
+            fileURL: fileURL
         )
     }
 

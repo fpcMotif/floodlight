@@ -279,4 +279,108 @@ struct ClipboardHistoryStoreTests {
             #expect(searchResults.count == 2)
         }
     }
+
+    // MARK: - File Entries
+
+    @Test func recordingAFilePathPreservesKindAndIndexesNameAndPath() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+
+        let entry = store.recordFile(
+            path: path,
+            sourceAppBundleID: "com.apple.finder",
+            date: now
+        )
+
+        let unwrapped = try #require(entry)
+        #expect(unwrapped.kind == .file)
+        #expect(unwrapped.text == path)
+        #expect(unwrapped.sourceAppBundleID == "com.apple.finder")
+        #expect(unwrapped.createdAt == now)
+        #expect(!unwrapped.isPinned)
+        #expect(store.count == 1)
+
+        #expect(store.search(query: "Invoice_2026.pdf").map(\.text) == [path])
+        #expect(store.search(query: "/Users/f/Documents").map(\.text) == [path])
+        #expect(store.search(query: "inv").map(\.text) == [path])
+    }
+
+    @Test func consecutiveDuplicateFilePathsAreCollapsed() {
+        let store = ClipboardHistoryStore.inMemory()
+        let path = "/Users/f/Movies/ProductDemo_4K.mov"
+
+        #expect(store.recordFile(path: path) != nil)
+        #expect(store.count == 1)
+        #expect(store.recordFile(path: path) == nil)
+        #expect(store.count == 1)
+
+        #expect(store.record(text: path) != nil)
+        #expect(store.count == 2)
+        #expect(store.recordFile(path: path) != nil)
+        #expect(store.count == 3)
+    }
+
+    @Test func emptyFilePathsAreSkipped() {
+        let store = ClipboardHistoryStore.inMemory()
+        #expect(store.recordFile(path: "") == nil)
+        #expect(store.recordFile(path: "   ") == nil)
+        #expect(store.isEmpty)
+    }
+
+    @Test func fileEntriesPinDeleteClearAndPruneLikeText() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let day: TimeInterval = 86_400
+        let now = Date(timeIntervalSince1970: 10_000_000)
+
+        let oldFile = try #require(store.recordFile(
+            path: "/Users/f/Old/report.pdf",
+            date: now.addingTimeInterval(-10 * day)
+        ))
+        let pinnedFile = try #require(store.recordFile(
+            path: "/Users/f/Pinned/keep.pdf",
+            date: now.addingTimeInterval(-10 * day)
+        ))
+        let recentFile = try #require(store.recordFile(
+            path: "/Users/f/Recent/notes.txt",
+            date: now.addingTimeInterval(-2 * day)
+        ))
+        store.pin(id: pinnedFile.id)
+
+        store.prune(olderThan: now.addingTimeInterval(-7 * day))
+        #expect(store.search(query: "").map(\.id) == [pinnedFile.id, recentFile.id])
+        #expect(!store.search(query: "").contains { $0.id == oldFile.id })
+        #expect(store.search(query: "").first { $0.id == pinnedFile.id }?.kind == .file)
+
+        store.delete(id: recentFile.id)
+        #expect(store.search(query: "").map(\.id) == [pinnedFile.id])
+
+        store.clear()
+        #expect(store.isEmpty)
+    }
+
+    @Test func diskStorePersistsFileKindAndFTS() throws {
+        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        defer { cleanup() }
+        let path = "/Users/f/devv/floodlight/Package.swift"
+
+        do {
+            let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
+            _ = try #require(store1.record(text: "plain note"))
+            let file = try #require(store1.recordFile(path: path))
+            store1.pin(id: file.id)
+            #expect(store1.count == 2)
+        }
+
+        do {
+            let store2 = try ClipboardHistoryStore(databaseURL: dbURL)
+            let all = store2.search(query: "")
+            #expect(all.count == 2)
+            #expect(all[0].kind == .file)
+            #expect(all[0].text == path)
+            #expect(all[0].isPinned)
+            #expect(all[1].kind == .text)
+            #expect(store2.search(query: "Package.swift").map(\.kind) == [.file])
+        }
+    }
 }

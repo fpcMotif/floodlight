@@ -23,6 +23,7 @@ Mechanical AppKit operations sit behind one cohesive `SelectedResultActionEffect
 | Action | Presentation | Successful consequences |
 |---|---|---|
 | Activate `.copy(value)` | Dismiss only after the clipboard accepts the exact value | None |
+| Activate `.copyFiles(paths)` | Dismiss only after the clipboard accepts native file references | None |
 | Explicit Copy | Keep search open | None |
 | Activate an already-running application | Dismiss after synchronous activation succeeds | Record application recency and report Source Selection Learning |
 | Open an application, file, folder, or URL | Dismiss promptly; never reopen automatically after delayed failure | After confirmed completion, record application recency when applicable and report Source Selection Learning |
@@ -33,7 +34,7 @@ Each open activation is independent. A later activation does not cancel an earli
 
 `RecentStore` records only successful application activation because `ApplicationCatalog` is its only ranking consumer. Source Selection Learning is separate and query-specific: every successful `.open` activation is reported, then `SourceSearchEngine` uses its provenance to route or ignore the feedback. Failed opens produce neither signal.
 
-Explicit Copy derives one representation inside the performer: `.copy` uses its exact payload, file URLs use their path, other URLs use their absolute string, and an Assistant row uses its completed answer when available or its title otherwise. The effects adapter receives only the final exact string.
+Explicit Copy derives one representation inside the performer: `.copy` uses its exact payload, `.copyFiles` uses the first absolute path, file URLs use their path, other URLs use their absolute string, and an Assistant row uses its completed answer when available or its title otherwise. Native file restoration is a separate mechanical effect so Return can paste Finder-ready file references while Option-Return / ⌘C still copy the path string.
 
 ## Failure policy
 

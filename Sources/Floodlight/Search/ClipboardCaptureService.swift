@@ -7,6 +7,7 @@ protocol PasteboardObserving: AnyObject {
     var changeCount: Int { get }
     var pasteboardTypes: [NSPasteboard.PasteboardType]? { get }
     func string(forType type: NSPasteboard.PasteboardType) -> String?
+    func filePaths() -> [String]
     var frontmostApplicationBundleIdentifier: String? { get }
 }
 
@@ -30,8 +31,62 @@ final class AppKitPasteboardObserver: PasteboardObserving {
         pasteboard.string(forType: type)
     }
 
+    func filePaths() -> [String] {
+        ClipboardFileReference.paths(from: pasteboard)
+    }
+
     var frontmostApplicationBundleIdentifier: String? {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
+}
+
+enum ClipboardFileReference {
+    static let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+
+    static func paths(from pasteboard: NSPasteboard) -> [String] {
+        var seen = Set<String>()
+        var paths: [String] = []
+
+        if let filenames = pasteboard.propertyList(forType: filenamesType) as? [String] {
+            for filename in filenames {
+                appendCanonicalPath(filename, into: &paths, seen: &seen)
+            }
+        }
+
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+        ]) as? [URL] {
+            for url in urls where url.isFileURL {
+                appendCanonicalPath(url.path, into: &paths, seen: &seen)
+            }
+        }
+
+        if paths.isEmpty, let string = pasteboard.string(forType: .fileURL) {
+            appendCanonicalPath(string, into: &paths, seen: &seen)
+        }
+
+        return paths
+    }
+
+    static func canonicalize(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("file:") {
+            guard let url = URL(string: trimmed), url.isFileURL else { return nil }
+            let path = url.standardizedFileURL.path
+            return path.isEmpty ? nil : path
+        }
+        let path = URL(fileURLWithPath: trimmed).standardizedFileURL.path
+        return path.isEmpty ? nil : path
+    }
+
+    private static func appendCanonicalPath(
+        _ raw: String,
+        into paths: inout [String],
+        seen: inout Set<String>
+    ) {
+        guard let path = canonicalize(raw), seen.insert(path).inserted else { return }
+        paths.append(path)
     }
 }
 
@@ -187,6 +242,14 @@ final class ClipboardCaptureService {
         // Rule 4: Excluded application bundle ID -> skip
         let bundleID = observer.frontmostApplicationBundleIdentifier
         if let bundleID, exclusions.isExcluded(bundleID: bundleID) {
+            return
+        }
+
+        let filePaths = observer.filePaths().compactMap(ClipboardFileReference.canonicalize)
+        if !filePaths.isEmpty {
+            for path in filePaths {
+                store.recordFile(path: path, sourceAppBundleID: bundleID)
+            }
             return
         }
 

@@ -92,6 +92,7 @@ private struct SearchBar: View {
                 focusGeneration: model.focusGeneration,
                 onSubmit: model.openSelection,
                 onCommandSubmit: model.revealSelection,
+                onOptionSubmit: model.copySelection,
                 // Esc is layered by the coordinator: exit web mode first,
                 // dismiss the panel second.
                 onCancel: model.handleEscape,

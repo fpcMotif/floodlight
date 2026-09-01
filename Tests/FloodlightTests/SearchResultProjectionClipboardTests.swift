@@ -52,4 +52,51 @@ struct SearchResultProjectionClipboardTests {
         #expect(secondRow.kind == .clipboard)
         #expect(secondRow.action == .copy("https://vendor.example/inv/2214"))
     }
+
+    @Test func clipboardProjectionRendersFileEntriesWithNamePathAndFileURL() {
+        let created = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_120)
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+        let folderPath = "/Users/f/devv/floodlight"
+
+        let file = ClipboardEntry(
+            id: "file-1",
+            text: path,
+            kind: .file,
+            createdAt: created
+        )
+        let folder = ClipboardEntry(
+            id: "file-2",
+            text: folderPath,
+            kind: .file,
+            createdAt: created,
+            pinnedAt: now
+        )
+
+        let publication = SearchResultProjection.project(
+            .clipboard(.init(
+                query: "invoice",
+                entries: [file, folder],
+                selection: nil,
+                now: now
+            ))
+        )
+
+        #expect(publication.visibleRows.count == 2)
+
+        let fileRow = publication.visibleRows[0]
+        #expect(fileRow.id == "clipboard:file-1")
+        #expect(fileRow.title == "Invoice_2026.pdf")
+        #expect(fileRow.subtitle == path)
+        #expect(fileRow.kind == .clipboard)
+        #expect(fileRow.fileURL == URL(fileURLWithPath: path))
+        #expect(fileRow.iconSource == .inferred)
+        #expect(fileRow.action == .copyFiles([path]))
+
+        let folderRow = publication.visibleRows[1]
+        #expect(folderRow.title == "📌 floodlight")
+        #expect(folderRow.subtitle == folderPath)
+        #expect(folderRow.fileURL == URL(fileURLWithPath: folderPath))
+        #expect(folderRow.action == .copyFiles([folderPath]))
+    }
 }

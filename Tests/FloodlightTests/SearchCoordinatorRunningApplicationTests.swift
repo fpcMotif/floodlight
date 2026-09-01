@@ -91,6 +91,10 @@ private struct ScriptedSelectedResultActionEffects: SelectedResultActionEffects 
         true
     }
 
+    func writeFilesToClipboard(_ paths: [String]) -> Bool {
+        true
+    }
+
     func open(_ url: URL, asApplication: Bool) async throws {}
 
     func revealInFinder(_ url: URL) {}

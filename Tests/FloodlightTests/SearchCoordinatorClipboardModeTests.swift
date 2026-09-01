@@ -69,6 +69,80 @@ struct SearchCoordinatorClipboardModeTests {
 
     // MARK: - Activation
 
+    @Test func openSelectionRestoresNativeFileReferencesAndDismisses() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+        _ = try #require(store.recordFile(path: path))
+
+        var dismissed = false
+        var writtenFiles: [[String]] = []
+        var writtenText: [String] = []
+
+        let effects = ScriptedActionEffects(
+            onWrite: { value in
+                writtenText.append(value)
+                return true
+            },
+            onWriteFiles: { paths in
+                writtenFiles.append(paths)
+                return true
+            }
+        )
+
+        let coordinator = try await makeCoordinator(
+            clipboardStore: store,
+            actionEffects: effects,
+            onDismiss: { dismissed = true }
+        )
+
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        #expect(coordinator.results.count == 1)
+        #expect(coordinator.results[0].title == "Invoice_2026.pdf")
+        #expect(coordinator.results[0].subtitle == path)
+
+        coordinator.openSelection()
+
+        #expect(writtenFiles == [[path]])
+        #expect(writtenText.isEmpty)
+        #expect(dismissed)
+    }
+
+    @Test func copySelectionWritesAbsoluteFilePathWithoutDismissing() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let path = "/Users/f/Movies/ProductDemo_4K.mov"
+        _ = try #require(store.recordFile(path: path))
+
+        var dismissed = false
+        var writtenFiles: [[String]] = []
+        var writtenText: [String] = []
+
+        let effects = ScriptedActionEffects(
+            onWrite: { value in
+                writtenText.append(value)
+                return true
+            },
+            onWriteFiles: { paths in
+                writtenFiles.append(paths)
+                return true
+            }
+        )
+
+        let coordinator = try await makeCoordinator(
+            clipboardStore: store,
+            actionEffects: effects,
+            onDismiss: { dismissed = true }
+        )
+
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        coordinator.copySelection()
+
+        #expect(writtenText == [path])
+        #expect(writtenFiles.isEmpty)
+        #expect(!dismissed)
+    }
+
     @Test func openSelectionPutsExactTextOnClipboardAndDismisses() async throws {
         let store = ClipboardHistoryStore.inMemory()
         _ = store.record(text: "Exact Multi-line\nText Snippet")
@@ -198,13 +272,22 @@ struct SearchCoordinatorClipboardModeTests {
 
 private final class ScriptedActionEffects: SelectedResultActionEffects {
     let onWrite: (String) -> Bool
+    let onWriteFiles: ([String]) -> Bool
 
-    init(onWrite: @escaping (String) -> Bool) {
+    init(
+        onWrite: @escaping (String) -> Bool,
+        onWriteFiles: @escaping ([String]) -> Bool = { _ in true }
+    ) {
         self.onWrite = onWrite
+        self.onWriteFiles = onWriteFiles
     }
 
     func writeToClipboard(_ value: String) -> Bool {
         onWrite(value)
+    }
+
+    func writeFilesToClipboard(_ paths: [String]) -> Bool {
+        onWriteFiles(paths)
     }
 
     func open(_ url: URL, asApplication: Bool) async throws {}

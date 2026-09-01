@@ -9,11 +9,13 @@ final class ScriptedPasteboardObserver: PasteboardObserving {
     var changeCount: Int = 0
     var pasteboardTypes: [NSPasteboard.PasteboardType]?
     var stringValues: [NSPasteboard.PasteboardType: String] = [:]
+    var capturedFilePaths: [String] = []
     var frontmostApplicationBundleIdentifier: String?
 
     func setContents(
         string: String?,
         types: [NSPasteboard.PasteboardType] = [.string],
+        filePaths: [String] = [],
         bundleID: String? = nil,
         bumpChangeCount: Bool = true
     ) {
@@ -25,11 +27,16 @@ final class ScriptedPasteboardObserver: PasteboardObserving {
         if let string {
             stringValues[.string] = string
         }
+        capturedFilePaths = filePaths
         frontmostApplicationBundleIdentifier = bundleID
     }
 
     func string(forType type: NSPasteboard.PasteboardType) -> String? {
         stringValues[type]
+    }
+
+    func filePaths() -> [String] {
+        capturedFilePaths
     }
 }
 
@@ -194,5 +201,97 @@ struct ClipboardCaptureServiceTests {
         harness.service.poll()
         #expect(harness.store.count == 1)
         #expect(harness.store.mostRecentEntry?.text == "Active copy")
+    }
+
+    @Test func pollRecordsCopiedFileReferencesAsFileEntries() {
+        let harness = makeHarness()
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+
+        harness.observer.setContents(
+            string: path,
+            types: [.fileURL, NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: [path],
+            bundleID: "com.apple.finder"
+        )
+        harness.service.poll()
+
+        #expect(harness.store.count == 1)
+        let entry = harness.store.mostRecentEntry
+        #expect(entry?.kind == .file)
+        #expect(entry?.text == path)
+        #expect(entry?.sourceAppBundleID == "com.apple.finder")
+    }
+
+    @Test func pollCanonicalizesFileURLsAndRelativePaths() {
+        let harness = makeHarness()
+
+        harness.observer.setContents(
+            string: nil,
+            types: [.fileURL],
+            filePaths: ["file:///Users/f/Movies/ProductDemo_4K.mov"]
+        )
+        harness.service.poll()
+
+        #expect(harness.store.mostRecentEntry?.kind == .file)
+        #expect(harness.store.mostRecentEntry?.text == "/Users/f/Movies/ProductDemo_4K.mov")
+    }
+
+    @Test func pollRecordsEachCopiedFileAsItsOwnEntry() {
+        let harness = makeHarness()
+
+        harness.observer.setContents(
+            string: nil,
+            types: [NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: [
+                "/Users/f/Documents/Invoice_2026.pdf",
+                "/Users/f/devv/floodlight",
+            ]
+        )
+        harness.service.poll()
+
+        #expect(harness.store.count == 2)
+        #expect(harness.store.search(query: "").map(\.text) == [
+            "/Users/f/devv/floodlight",
+            "/Users/f/Documents/Invoice_2026.pdf",
+        ])
+        #expect(harness.store.search(query: "").allSatisfy { $0.kind == .file })
+    }
+
+    @Test func pollPrefersFileReferencesOverPlainTextWhenBothArePresent() {
+        let harness = makeHarness()
+        let path = "/Users/f/Documents/Invoice_2026.pdf"
+
+        harness.observer.setContents(
+            string: path,
+            types: [.string, .fileURL],
+            filePaths: [path]
+        )
+        harness.service.poll()
+
+        #expect(harness.store.count == 1)
+        #expect(harness.store.mostRecentEntry?.kind == .file)
+        #expect(harness.store.mostRecentEntry?.text == path)
+    }
+
+    @Test func pollSkipsOwnWriteAndExcludedAppsForFileCopies() {
+        let harness = makeHarness(excludedBundleIDs: ["com.1password.1password"])
+        let path = "/Users/f/secret.pdf"
+
+        harness.observer.setContents(
+            string: nil,
+            types: [.fileURL, .floodlightOwnWrite],
+            filePaths: [path]
+        )
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
+
+        harness.observer.setContents(
+            string: nil,
+            types: [.fileURL],
+            filePaths: [path],
+            bundleID: "com.1password.1password"
+        )
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
     }
 }

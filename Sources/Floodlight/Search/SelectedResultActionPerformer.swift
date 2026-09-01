@@ -9,6 +9,7 @@ extension NSPasteboard.PasteboardType {
 @MainActor
 protocol SelectedResultActionEffects {
     func writeToClipboard(_ value: String) -> Bool
+    func writeFilesToClipboard(_ paths: [String]) -> Bool
     func open(_ url: URL, asApplication: Bool) async throws
     func revealInFinder(_ url: URL)
 }
@@ -26,9 +27,30 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
     }
 
     func writeToClipboard(_ value: String) -> Bool {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setData(Data(), forType: .floodlightOwnWrite)
-        return NSPasteboard.general.setString(value, forType: .string)
+        Self.writeString(value, to: .general)
+    }
+
+    func writeFilesToClipboard(_ paths: [String]) -> Bool {
+        Self.writeFiles(paths, to: .general)
+    }
+
+    static func writeString(_ value: String, to pasteboard: NSPasteboard) -> Bool {
+        pasteboard.clearContents()
+        pasteboard.setData(Data(), forType: .floodlightOwnWrite)
+        return pasteboard.setString(value, forType: .string)
+    }
+
+    static func writeFiles(_ paths: [String], to pasteboard: NSPasteboard) -> Bool {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else { return false }
+        pasteboard.clearContents()
+        pasteboard.setData(Data(), forType: .floodlightOwnWrite)
+        let filenames = urls.map(\.path)
+        pasteboard.setPropertyList(
+            filenames,
+            forType: ClipboardFileReference.filenamesType
+        )
+        return pasteboard.writeObjects(urls as [NSURL])
     }
 
     func open(_ url: URL, asApplication: Bool) async throws {
@@ -113,6 +135,13 @@ final class SelectedResultActionPerformer {
             }
             onDismiss()
 
+        case let .copyFiles(paths):
+            guard effects.writeFilesToClipboard(paths) else {
+                logClipboardFailure(for: item)
+                return
+            }
+            onDismiss()
+
         case let .open(url):
             open(url, for: item, query: query)
 
@@ -176,6 +205,8 @@ final class SelectedResultActionPerformer {
         switch item.action {
         case let .copy(value):
             value
+        case let .copyFiles(paths):
+            paths.first ?? item.fileURL?.path ?? item.subtitle
         case let .open(url):
             url.isFileURL ? url.path : url.absoluteString
         case .askAssistant:

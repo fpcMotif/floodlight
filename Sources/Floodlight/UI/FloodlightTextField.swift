@@ -8,6 +8,7 @@ struct FloodlightTextField: NSViewRepresentable {
     let focusGeneration: Int
     let onSubmit: () -> Void
     let onCommandSubmit: () -> Void
+    var onOptionSubmit: () -> Void = {}
     let onCancel: () -> Void
     var onTab: () -> Void = {}
     var onShiftTab: () -> Void = {}
@@ -20,6 +21,7 @@ struct FloodlightTextField: NSViewRepresentable {
     enum FieldCommand: Hashable {
         case submit
         case commandSubmit
+        case copySelection
         case cancel
         case tab
         case shiftTab
@@ -29,12 +31,19 @@ struct FloodlightTextField: NSViewRepresentable {
     static func fieldCommand(
         for commandSelector: Selector,
         commandKeyIsDown: Bool,
+        optionKeyIsDown: Bool = false,
         textIsEmpty: Bool
     ) -> FieldCommand? {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)),
              #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            commandKeyIsDown ? .commandSubmit : .submit
+            if commandKeyIsDown {
+                .commandSubmit
+            } else if optionKeyIsDown {
+                .copySelection
+            } else {
+                .submit
+            }
         case #selector(NSResponder.cancelOperation(_:)):
             .cancel
         case #selector(NSResponder.insertTab(_:)):
@@ -170,10 +179,12 @@ struct FloodlightTextField: NSViewRepresentable {
             textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
+            let modifiers = NSApp.currentEvent?.modifierFlags ?? []
             guard
                 let command = FloodlightTextField.fieldCommand(
                     for: commandSelector,
-                    commandKeyIsDown: NSApp.currentEvent?.modifierFlags.contains(.command) == true,
+                    commandKeyIsDown: modifiers.contains(.command),
+                    optionKeyIsDown: modifiers.contains(.option),
                     textIsEmpty: textView.string.isEmpty
                 )
             else {
@@ -188,6 +199,8 @@ struct FloodlightTextField: NSViewRepresentable {
                     parent.onSubmit()
                 case .commandSubmit:
                     parent.onCommandSubmit()
+                case .copySelection:
+                    parent.onOptionSubmit()
                 case .cancel:
                     parent.onCancel()
                 case .tab:

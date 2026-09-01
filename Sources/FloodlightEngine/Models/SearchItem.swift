@@ -213,6 +213,9 @@ package struct SearchItemPage: Sendable {
 
 package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
+    /// Restore native file references to the pasteboard so Finder and apps
+    /// can paste the files themselves rather than their path strings.
+    case copyFiles([String])
     case open(URL)
     /// Runs an installed CLI locally and reports its stdout back into the
     /// panel — `command` is a bare executable name and `arguments` are

@@ -72,4 +72,26 @@ struct ClipboardHistoryStorePropertyTests {
             return true
         }
     }
+
+    @Test func filePathsRemainSearchableAndKeepFileKind() {
+        let store = ClipboardHistoryStore.inMemory()
+        let paths = [
+            "/Users/f/Documents/Invoices/Invoice_2026.pdf",
+            "/Users/f/Movies/ProductDemo_4K.mov",
+            "/Users/f/devv/floodlight",
+        ]
+
+        for path in paths {
+            #expect(store.recordFile(path: path)?.kind == .file)
+        }
+
+        for path in paths {
+            let byName = store.search(query: URL(fileURLWithPath: path).lastPathComponent)
+            #expect(byName.contains { $0.text == path && $0.kind == .file })
+        }
+
+        let byDirectory = store.search(query: "/Users/f")
+        #expect(byDirectory.count == 3)
+        #expect(byDirectory.allSatisfy { $0.kind == .file })
+    }
 }

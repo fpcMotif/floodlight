@@ -2,10 +2,17 @@ import Foundation
 import os
 import SQLite3
 
-/// One immutable captured or pinned text snippet in Clipboard History.
+/// What a Clipboard Entry holds: copied text, or a copied file/folder path.
+package enum ClipboardEntryKind: String, Equatable, Hashable, Sendable {
+    case text
+    case file
+}
+
+/// One immutable captured or pinned Clipboard History entry.
 package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
     package let id: String
     package let text: String
+    package let kind: ClipboardEntryKind
     package let createdAt: Date
     package let sourceAppBundleID: String?
     package let pinnedAt: Date?
@@ -17,15 +24,28 @@ package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
     package init(
         id: String = UUID().uuidString,
         text: String,
+        kind: ClipboardEntryKind = .text,
         createdAt: Date = .now,
         sourceAppBundleID: String? = nil,
         pinnedAt: Date? = nil
     ) {
         self.id = id
         self.text = text
+        self.kind = kind
         self.createdAt = createdAt
         self.sourceAppBundleID = sourceAppBundleID
         self.pinnedAt = pinnedAt
+    }
+
+    fileprivate func withPinnedAt(_ pinnedAt: Date?) -> ClipboardEntry {
+        ClipboardEntry(
+            id: id,
+            text: text,
+            kind: kind,
+            createdAt: createdAt,
+            sourceAppBundleID: sourceAppBundleID,
+            pinnedAt: pinnedAt
+        )
     }
 }
 
@@ -162,6 +182,36 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         sourceAppBundleID: String? = nil,
         date: Date = .now
     ) -> ClipboardEntry? {
+        insert(
+            text: text,
+            kind: .text,
+            sourceAppBundleID: sourceAppBundleID,
+            date: date
+        )
+    }
+
+    @discardableResult
+    package func recordFile(
+        path: String,
+        sourceAppBundleID: String? = nil,
+        date: Date = .now
+    ) -> ClipboardEntry? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return insert(
+            text: trimmed,
+            kind: .file,
+            sourceAppBundleID: sourceAppBundleID,
+            date: date
+        )
+    }
+
+    private func insert(
+        text: String,
+        kind: ClipboardEntryKind,
+        sourceAppBundleID: String?,
+        date: Date
+    ) -> ClipboardEntry? {
         guard text.utf8.count <= Self.maxTextByteCount else {
             return nil
         }
@@ -169,24 +219,24 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         return stateLock.withLock { state -> ClipboardEntry? in
             guard let db = state.db else { return nil }
 
-            // Consecutive duplicate check
             let latest = state.recentEntries.first
                 ?? state.pinnedEntries.max { $0.createdAt < $1.createdAt }
-            if let latest, latest.text == text {
+            if let latest, latest.text == text, latest.kind == kind {
                 return nil
             }
 
             let entry = ClipboardEntry(
                 id: UUID().uuidString,
                 text: text,
+                kind: kind,
                 createdAt: date,
                 sourceAppBundleID: sourceAppBundleID,
                 pinnedAt: nil
             )
 
             let insertSQL = """
-            INSERT INTO clipboard_entries (id, text, created_at, source_app_bundle_id, pinned_at)
-            VALUES (?, ?, ?, ?, NULL);
+            INSERT INTO clipboard_entries (id, text, kind, created_at, source_app_bundle_id, pinned_at)
+            VALUES (?, ?, ?, ?, ?, NULL);
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
@@ -196,11 +246,12 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             sqlite3_bind_text(stmt, 1, (entry.id as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 2, (entry.text as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(stmt, 3, entry.createdAt.timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (entry.kind.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
             if let bundleID = entry.sourceAppBundleID {
-                sqlite3_bind_text(stmt, 4, (bundleID as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 5, (bundleID as NSString).utf8String, -1, nil)
             } else {
-                sqlite3_bind_null(stmt, 4)
+                sqlite3_bind_null(stmt, 5)
             }
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -242,7 +293,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             // FTS5 trigram search for queries of 3 or more characters
             let escaped = "\"" + trimmed.replacingOccurrences(of: "\"", with: "\"\"") + "\""
             let ftsSQL = """
-            SELECT id, text, created_at, source_app_bundle_id, pinned_at
+            SELECT id, text, created_at, source_app_bundle_id, pinned_at, kind
             FROM clipboard_entries
             WHERE rowid IN (SELECT rowid FROM clipboard_fts WHERE clipboard_fts MATCH ?)
             ORDER BY pinned_at IS NOT NULL DESC, pinned_at ASC, created_at DESC
@@ -291,25 +342,12 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             if let idx = state.recentEntries.firstIndex(where: { $0.id == id }) {
                 let unpinned = state.recentEntries.remove(at: idx)
-                let pinned = ClipboardEntry(
-                    id: unpinned.id,
-                    text: unpinned.text,
-                    createdAt: unpinned.createdAt,
-                    sourceAppBundleID: unpinned.sourceAppBundleID,
-                    pinnedAt: date
-                )
-                state.pinnedEntries.append(pinned)
+                state.pinnedEntries.append(unpinned.withPinnedAt(date))
                 state.pinnedEntries
                     .sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             } else if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let existing = state.pinnedEntries[idx]
-                state.pinnedEntries[idx] = ClipboardEntry(
-                    id: existing.id,
-                    text: existing.text,
-                    createdAt: existing.createdAt,
-                    sourceAppBundleID: existing.sourceAppBundleID,
-                    pinnedAt: date
-                )
+                state.pinnedEntries[idx] = existing.withPinnedAt(date)
                 state.pinnedEntries
                     .sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             }
@@ -330,14 +368,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let pinned = state.pinnedEntries.remove(at: idx)
-                let unpinned = ClipboardEntry(
-                    id: pinned.id,
-                    text: pinned.text,
-                    createdAt: pinned.createdAt,
-                    sourceAppBundleID: pinned.sourceAppBundleID,
-                    pinnedAt: nil
-                )
-                state.recentEntries.append(unpinned)
+                state.recentEntries.append(pinned.withPinnedAt(nil))
                 state.recentEntries.sort { $0.createdAt > $1.createdAt }
                 if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
                     state.recentEntries.removeLast()
@@ -429,7 +460,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             text TEXT NOT NULL,
             created_at REAL NOT NULL,
             source_app_bundle_id TEXT,
-            pinned_at REAL
+            pinned_at REAL,
+            kind TEXT NOT NULL DEFAULT 'text'
         );
 
         CREATE INDEX IF NOT EXISTS idx_clipboard_created_at ON clipboard_entries(created_at DESC);
@@ -456,6 +488,14 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         END;
         """
         sqlite3_exec(db, schemaSQL, nil, nil, nil)
+        // Ignore duplicate-column failures on databases that already have `kind`.
+        sqlite3_exec(
+            db,
+            "ALTER TABLE clipboard_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';",
+            nil,
+            nil,
+            nil
+        )
     }
 
     private static func loadInitialWindow(
@@ -466,7 +506,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
         // Load all pinned entries sorted by pin time ascending
         let pinnedSQL = """
-        SELECT id, text, created_at, source_app_bundle_id, pinned_at
+        SELECT id, text, created_at, source_app_bundle_id, pinned_at, kind
         FROM clipboard_entries
         WHERE pinned_at IS NOT NULL
         ORDER BY pinned_at ASC;
@@ -483,7 +523,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
         // Load newest unpinned entries up to limit
         let recentSQL = """
-        SELECT id, text, created_at, source_app_bundle_id, pinned_at
+        SELECT id, text, created_at, source_app_bundle_id, pinned_at, kind
         FROM clipboard_entries
         WHERE pinned_at IS NULL
         ORDER BY created_at DESC
@@ -540,9 +580,20 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             nil
         }
 
+        let kind: ClipboardEntryKind = if sqlite3_column_type(stmt, 5) != SQLITE_NULL,
+                                          let kindCString = sqlite3_column_text(stmt, 5),
+                                          let parsed =
+                                          ClipboardEntryKind(rawValue: String(cString: kindCString))
+        {
+            parsed
+        } else {
+            .text
+        }
+
         return ClipboardEntry(
             id: id,
             text: text,
+            kind: kind,
             createdAt: createdAt,
             sourceAppBundleID: sourceAppBundleID,
             pinnedAt: pinnedAt

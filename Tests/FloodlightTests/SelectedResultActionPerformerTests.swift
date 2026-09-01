@@ -1,3 +1,4 @@
+import AppKit
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
@@ -40,6 +41,84 @@ struct SelectedResultActionPerformerTests {
 
         #expect(harness.effects.clipboardValues == [clipboardText])
         #expect(harness.presentation.events == [.dismiss])
+    }
+
+    @Test func clipboardFileActivationRestoresNativeFileReferencesAndDismisses() {
+        let harness = makeHarness()
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+        let item = SearchItem(
+            id: "clipboard:file-1",
+            title: "Invoice_2026.pdf",
+            subtitle: path,
+            kind: .clipboard,
+            action: .copyFiles([path]),
+            score: 100,
+            fileURL: URL(fileURLWithPath: path)
+        )
+
+        harness.performer.activate(item, query: "invoice")
+
+        #expect(harness.effects.clipboardFilePaths == [[path]])
+        #expect(harness.effects.clipboardValues.isEmpty)
+        #expect(harness.presentation.events == [.dismiss])
+    }
+
+    @Test func clipboardFileCopyWritesTheAbsolutePathWithoutDismissing() {
+        let harness = makeHarness()
+        let path = "/Users/f/Movies/ProductDemo_4K.mov"
+        let item = SearchItem(
+            id: "clipboard:file-2",
+            title: "ProductDemo_4K.mov",
+            subtitle: path,
+            kind: .clipboard,
+            action: .copyFiles([path]),
+            score: 100,
+            fileURL: URL(fileURLWithPath: path)
+        )
+
+        harness.performer.copy(item)
+
+        #expect(harness.effects.clipboardValues == [path])
+        #expect(harness.effects.clipboardFilePaths.isEmpty)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func nativeFileWritePutsFilenamesOwnWriteMarkerAndFileURLsOnPasteboard() {
+        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("FloodlightFileClipboard-\(UUID().uuidString)")
+        )
+        defer { pasteboard.releaseGlobally() }
+
+        #expect(AppKitSelectedResultActionEffects.writeFiles([path], to: pasteboard))
+        let types = pasteboard.types ?? []
+        #expect(types.contains(.floodlightOwnWrite))
+        #expect(types.contains(ClipboardFileReference.filenamesType))
+        #expect(pasteboard.propertyList(forType: ClipboardFileReference.filenamesType) as? [String]
+            == [path])
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+        ]) as? [URL]
+        #expect(Set(urls?.map(\.path) ?? []) == [path])
+    }
+
+    @Test func clipboardFileActivationFailureKeepsSearchOpen() {
+        let harness = makeHarness(clipboardSucceeds: false)
+        let path = "/Users/f/Documents/Invoice_2026.pdf"
+        let item = SearchItem(
+            id: "clipboard:file-3",
+            title: "Invoice_2026.pdf",
+            subtitle: path,
+            kind: .clipboard,
+            action: .copyFiles([path]),
+            score: 100,
+            fileURL: URL(fileURLWithPath: path)
+        )
+
+        harness.performer.activate(item, query: "invoice")
+
+        #expect(harness.effects.clipboardFilePaths == [[path]])
+        #expect(harness.presentation.events.isEmpty)
     }
 
     @Test func explicitCopyUsesTheResultRepresentationAndKeepsSearchOpen() throws {
@@ -391,6 +470,7 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     private let openGate: OpenGate?
     private let events: EventRecorder
     private(set) var clipboardValues: [String] = []
+    private(set) var clipboardFilePaths: [[String]] = []
     private(set) var openRequests: [OpenRequest] = []
     private(set) var completedOpenCount = 0
     private(set) var revealedURLs: [URL] = []
@@ -410,6 +490,12 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     func writeToClipboard(_ value: String) -> Bool {
         clipboardValues.append(value)
         events.record(.clipboard(value))
+        return clipboardSucceeds
+    }
+
+    func writeFilesToClipboard(_ paths: [String]) -> Bool {
+        clipboardFilePaths.append(paths)
+        events.record(.clipboardFiles(paths))
         return clipboardSucceeds
     }
 
@@ -493,6 +579,7 @@ private final class EventRecorder {
 
 private enum ActionEvent: Equatable {
     case clipboard(String)
+    case clipboardFiles([String])
     case runningApplicationActivationRequested(URL)
     case openRequested(URL, asApplication: Bool)
     case openSucceeded(URL)
