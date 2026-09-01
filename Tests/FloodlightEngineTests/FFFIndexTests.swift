@@ -559,6 +559,41 @@ struct FFFIndexTests {
         }
     }
 
+    @Test func homeDirectoryScanningIsSupportedWhenExplicitlyEnabled() async throws {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        let parent = canonicalFileURL(fileManager.temporaryDirectory)
+            .appendingPathComponent("FloodlightHomeScanTests-\(UUID().uuidString)")
+        let storage = parent.appendingPathComponent("Storage", isDirectory: true)
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: parent) }
+
+        let denied = FFFIndex(
+            rootURL: home,
+            storageURL: storage.appendingPathComponent("Denied"),
+            enableContentIndexing: false,
+            watch: false,
+            enableHomeDirectoryScanning: false
+        )
+        do {
+            try await denied.start()
+            Issue.record("FFF unexpectedly allowed a home-directory scan without opt-in")
+        } catch let FFFIndexError.message(message) {
+            #expect(!message.isEmpty)
+        }
+
+        let allowed = FFFIndex(
+            rootURL: home,
+            storageURL: storage.appendingPathComponent("Allowed"),
+            enableContentIndexing: false,
+            watch: false,
+            enableHomeDirectoryScanning: true
+        )
+        try await allowed.start()
+        let progress = try await allowed.progress()
+        #expect(progress.scannedFiles >= 0)
+    }
+
     private func canonicalFileURL(_ url: URL) -> URL {
         let resolvedPath = url.path.withCString { path -> String? in
             guard let resolved = realpath(path, nil) else { return nil }
