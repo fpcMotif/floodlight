@@ -345,7 +345,7 @@ package final class SystemCatalog: Catalog {
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
         let queryCharacterMask = Self.characterMask(normalizedQuery)
-        let requiresWordPrefix = normalizedQuery.count < 4
+        let requiresWordPrefix = normalizedQuery.utf8.count < 4
         let matches = settings.withLock { allSettings -> [SearchItem] in
             var matches: [SearchItem] = []
             matches.reserveCapacity(min(limit * 2, 32))

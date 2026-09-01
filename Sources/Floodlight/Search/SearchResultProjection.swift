@@ -123,7 +123,29 @@ enum SearchResultProjection {
         }
     }
 
+    private static let emptyFilterOptions = SearchResultFilter.primary.map {
+        SearchFilterOption(filter: $0, count: 0, isLoading: false)
+    }
+
+    static let emptyLocal = SearchResultPublication(
+        sourceCandidates: [],
+        allRows: [],
+        visibleRows: [],
+        filterOptions: emptyFilterOptions,
+        selectedFilter: .all,
+        selection: nil,
+        progress: .settled
+    )
+
     private static func projectLocal(_ context: LocalContext) -> SearchResultPublication {
+        if context.query.isEmpty,
+           context.candidates.isEmpty,
+           context.selectedFilter == .all,
+           context.progress == .settled,
+           context.selection == nil
+        {
+            return emptyLocal
+        }
         let allRows = buildLocalRows(context)
         let counts = SearchFilterCounts(items: allRows)
         var selectedFilter = context.selectedFilter

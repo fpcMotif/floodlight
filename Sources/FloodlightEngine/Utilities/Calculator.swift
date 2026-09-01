@@ -2,12 +2,13 @@ import Foundation
 
 package enum Calculator {
     package static func evaluate(_ source: String) -> Double? {
+        guard !source.isEmpty else { return nil }
+        guard source.contains(where: { "+-*/%^()×÷−".contains($0) }) else { return nil }
         let normalized = source
             .replacingOccurrences(of: "×", with: "*")
             .replacingOccurrences(of: "÷", with: "/")
             .replacingOccurrences(of: "−", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-
         guard looksLikeExpression(normalized) else { return nil }
         var parser = Parser(normalized)
         guard let value = parser.parseExpression(), parser.isAtEnd, value.isFinite else {

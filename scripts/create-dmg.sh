@@ -39,4 +39,9 @@ hdiutil create \
     -ov \
     "$OUTPUT_PATH"
 
+DMG_BYTES=$(stat -f%z "$OUTPUT_PATH")
+BINARY_PATH="$APP_PATH/Contents/MacOS/Floodlight"
+BINARY_BYTES=$(stat -f%z "$BINARY_PATH" 2>/dev/null || echo 0)
+
+echo "FLOODLIGHT_BENCH dmg_size_bytes=$DMG_BYTES binary_size_bytes=$BINARY_BYTES"
 echo "$OUTPUT_PATH"

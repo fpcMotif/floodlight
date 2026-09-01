@@ -13,8 +13,19 @@ if [ -e "$APP_DIR" ]; then
     rm -rf "$APP_DIR"
 fi
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
-cp "$BIN_DIR/Floodlight" "$CONTENTS/MacOS/Floodlight"
-strip -u -r "$CONTENTS/MacOS/Floodlight"
+
+ORIGINAL_BINARY="$BIN_DIR/Floodlight"
+TARGET_BINARY="$CONTENTS/MacOS/Floodlight"
+UNSTRIPPED_BYTES=$(stat -f%z "$ORIGINAL_BINARY")
+
+cp "$ORIGINAL_BINARY" "$TARGET_BINARY"
+strip -u -r "$TARGET_BINARY"
+STRIPPED_BYTES=$(stat -f%z "$TARGET_BINARY")
+SAVED_BYTES=$((UNSTRIPPED_BYTES - STRIPPED_BYTES))
+
+echo "bundle: stripped $TARGET_BINARY: $UNSTRIPPED_BYTES bytes -> $STRIPPED_BYTES bytes (saved $SAVED_BYTES bytes)"
+echo "FLOODLIGHT_BENCH binary_size_bytes=$STRIPPED_BYTES unstripped_binary_size_bytes=$UNSTRIPPED_BYTES saved_strip_bytes=$SAVED_BYTES"
+
 cp "$RESOURCE_SOURCE/Info.plist" "$CONTENTS/Info.plist"
 cp "$RESOURCE_SOURCE/FloodlightMenuBar.svg" "$CONTENTS/Resources/"
 "$SCRIPT_DIR/build-app-icon.sh" \

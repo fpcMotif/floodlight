@@ -303,7 +303,7 @@ package actor SourceSearchEngine: SourceSearching {
             (currentSettingsPage.items, .settings),
             (indexedFiles.value, .files),
         ])
-        let contentEligible = query.count >= 3 && indexedFiles.value.count < 12
+        let contentEligible = query.utf8.count >= 3 && indexedFiles.value.count < 12
         publish(
             token: token,
             snapshot: SearchSnapshot(

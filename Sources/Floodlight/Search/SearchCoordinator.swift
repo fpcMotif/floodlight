@@ -68,15 +68,24 @@ final class SearchCoordinator {
         return false
     }
 
+    @ObservationIgnored
     private let sourceSearch: any SourceSearching
+    @ObservationIgnored
     package let blocklistStore: BlocklistStore
+    @ObservationIgnored
     package let clipboardStore: ClipboardHistoryStore
+    @ObservationIgnored
     private let assistantRunner: any AssistantProcessRunning
+    @ObservationIgnored
     private let assistantRunSession: AssistantRunSession
+    @ObservationIgnored
     private let actionPerformer: SelectedResultActionPerformer
+    @ObservationIgnored
     private let onDismiss: @MainActor () -> Void
     private var publication: SearchResultPublication
+    @ObservationIgnored
     private var sourceWarmUpComplete = false
+    @ObservationIgnored
     private var keywordRegistry: KeywordEngineRegistry
     @ObservationIgnored
     private var searchTask: Task<Void, Never>?

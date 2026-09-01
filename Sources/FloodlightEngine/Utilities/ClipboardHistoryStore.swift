@@ -229,7 +229,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 return state.pinnedEntries + state.recentEntries
             }
 
-            if trimmed.count < 3 {
+            if trimmed.utf8.count < 3 {
                 let pinnedMatches = state.pinnedEntries.filter {
                     $0.text.localizedCaseInsensitiveContains(trimmed)
                 }

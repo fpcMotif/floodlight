@@ -21,9 +21,11 @@ package enum PathNavigator {
         homeURL: URL? = nil,
         fileManager: FileManager = .default
     ) -> ResolvedPath? {
+        guard !query.isEmpty else { return nil }
+        guard query.contains("/") || query.hasPrefix("~") || query.hasPrefix("/")
+        else { return nil }
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-
         let isPathSyntax = trimmed.hasPrefix("~") || trimmed.hasPrefix("/") || trimmed.contains("/")
         guard isPathSyntax else { return nil }
 
