@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self?.globalHotKeyDidFire()
     }
 
+    private lazy var clipboardCapture = ClipboardCaptureService(
+        store: model.clipboardStore
+    )
+
     // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
     // back an unowned item, so dropping this reference removes the menu bar
     // icon. The assignment *is* the use.
@@ -29,10 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         installStatusItem()
         installGlobalHotKey()
         LaunchAtLogin.enableOnFirstRun()
+        clipboardCapture.start()
         presentation.launch(initialSetupRequired: OnboardingSession.shouldPresent())
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        clipboardCapture.stop()
         globalHotKeyRegistration.stop()
     }
 
@@ -314,6 +320,9 @@ extension AppDelegate: ApplicationPresentationEffects {
             activeShortcut: globalHotKeyRegistration.activeShortcut,
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
+            blocklistStore: model.blocklistStore,
+            clipboardExclusionStore: clipboardCapture.exclusions,
+            clipboardStore: model.clipboardStore,
             selectShortcut: { [weak self] shortcut in
                 self?.selectShortcut(shortcut) ?? .noShortcutActive
             },

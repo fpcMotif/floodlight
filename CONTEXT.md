@@ -66,3 +66,15 @@ _Avoid_: Hot-key manager, keyboard-shortcut framework
 **Degraded Search**:
 A search execution whose available sources still produce usable candidates while one or more expected sources are unavailable. Degradation never discards candidates from healthy sources.
 _Avoid_: Failed search, partial failure
+
+**Clipboard History**:
+The local, privacy-filtered record of text copied across macOS, retained for a configurable period and searchable within Clipboard mode.
+_Avoid_: Clipboard cache, pasteboard manager
+
+**Clipboard Entry**:
+One immutable captured or pinned text snippet in Clipboard History, including its text, creation timestamp, optional source application, and optional pinned timestamp.
+_Avoid_: History item, clipboard row
+
+**Clipboard Capture**:
+The background observation and filtering process that records new system pasteboard changes into Clipboard History while excluding sensitive, oversized, self-generated, and blocked-application copies.
+_Avoid_: Pasteboard watcher, clipboard listener

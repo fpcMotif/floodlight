@@ -24,6 +24,24 @@ struct SelectedResultActionPerformerTests {
         #expect(failed.events.events == [.clipboard("42")])
     }
 
+    @Test func clipboardEntryActivationPutsExactTextOnClipboardAndDismisses() {
+        let harness = makeHarness()
+        let clipboardText = "Multi-line\nClipboard\nSnippet\t123"
+        let item = SearchItem(
+            id: "clipboard:entry-1",
+            title: "Multi-line Clipboard Snippet 123",
+            subtitle: "Notes · 2m",
+            kind: .clipboard,
+            action: .copy(clipboardText),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "Snippet")
+
+        #expect(harness.effects.clipboardValues == [clipboardText])
+        #expect(harness.presentation.events == [.dismiss])
+    }
+
     @Test func explicitCopyUsesTheResultRepresentationAndKeepsSearchOpen() throws {
         let harness = makeHarness()
         let fileURL = URL(fileURLWithPath: "/tmp/Annual Report.pdf")

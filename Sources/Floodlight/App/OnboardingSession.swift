@@ -35,6 +35,39 @@ final class OnboardingSession {
     private(set) var hasFullDiskAccess: Bool
     var blocklistVersion = 0
 
+    var clipboardVersion = 0
+
+    var clipboardHistoryEnabled: Bool {
+        get {
+            _ = clipboardVersion
+            if defaults.object(forKey: ClipboardCaptureService.enabledDefaultsKey) == nil {
+                return true
+            }
+            return defaults.bool(forKey: ClipboardCaptureService.enabledDefaultsKey)
+        }
+        set {
+            defaults.set(newValue, forKey: ClipboardCaptureService.enabledDefaultsKey)
+            clipboardVersion += 1
+        }
+    }
+
+    var clipboardRetentionDays: Int {
+        get {
+            _ = clipboardVersion
+            let val = defaults.integer(forKey: ClipboardCaptureService.retentionDaysDefaultsKey)
+            return val > 0 ? val : (val == -1 ? -1 : 30)
+        }
+        set {
+            defaults.set(newValue, forKey: ClipboardCaptureService.retentionDaysDefaultsKey)
+            clipboardVersion += 1
+        }
+    }
+
+    var clipboardExclusions: [String] {
+        _ = clipboardVersion
+        return clipboardExclusionStore.excludedBundleIDs
+    }
+
     var blocklistRules: [BlocklistRule] {
         _ = blocklistVersion
         return blocklistStore.rules
@@ -50,12 +83,19 @@ final class OnboardingSession {
     private let fullDiskAccessProvider: () -> Bool
     @ObservationIgnored
     private let blocklistStore: BlocklistStore
+    @ObservationIgnored
+    private let clipboardExclusionStore: ClipboardExclusionStore
+    @ObservationIgnored
+    private let clipboardStore: ClipboardHistoryStore
     init(
         activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
         defaults: UserDefaults = .standard,
         blocklistStore: BlocklistStore = BlocklistStore(),
+        clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
+        clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
+            ClipboardHistoryStore.inMemory(),
         fullDiskAccessProvider: @escaping () -> Bool = {
             FloodlightFullDiskAccess.isGranted()
         }
@@ -65,6 +105,8 @@ final class OnboardingSession {
         self.rootURL = rootURL
         self.defaults = defaults
         self.blocklistStore = blocklistStore
+        self.clipboardExclusionStore = clipboardExclusionStore
+        self.clipboardStore = clipboardStore
         self.fullDiskAccessProvider = fullDiskAccessProvider
         hasFullDiskAccess = fullDiskAccessProvider()
     }
@@ -86,6 +128,21 @@ final class OnboardingSession {
             blocklistStore.unblock(id: id)
         }
         blocklistVersion += 1
+    }
+
+    func excludeClipboardApp(bundleID: String) {
+        clipboardExclusionStore.exclude(bundleID: bundleID)
+        clipboardVersion += 1
+    }
+
+    func unexcludeClipboardApp(bundleID: String) {
+        clipboardExclusionStore.unexclude(bundleID: bundleID)
+        clipboardVersion += 1
+    }
+
+    func clearClipboardHistory() {
+        clipboardStore.clear()
+        clipboardVersion += 1
     }
 
     func complete() {

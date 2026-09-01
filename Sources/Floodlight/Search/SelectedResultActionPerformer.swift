@@ -2,6 +2,10 @@ import AppKit
 import FloodlightEngine
 import Foundation
 
+extension NSPasteboard.PasteboardType {
+    static let floodlightOwnWrite = NSPasteboard.PasteboardType("com.floodlight.own-write")
+}
+
 @MainActor
 protocol SelectedResultActionEffects {
     func writeToClipboard(_ value: String) -> Bool
@@ -23,6 +27,7 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
 
     func writeToClipboard(_ value: String) -> Bool {
         NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(Data(), forType: .floodlightOwnWrite)
         return NSPasteboard.general.setString(value, forType: .string)
     }
 

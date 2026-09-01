@@ -9,6 +9,7 @@ import Foundation
 package enum SearchMode: Equatable, Sendable {
     case local
     case web(WebContext)
+    case clipboard(ClipboardContext)
 
     package struct WebContext: Equatable, Sendable {
         package let engineID: String
@@ -23,6 +24,16 @@ package enum SearchMode: Equatable, Sendable {
 
         package init(engineID: String, typedKeyword: String?, queryAtEntry: String) {
             self.engineID = engineID
+            self.typedKeyword = typedKeyword
+            self.queryAtEntry = queryAtEntry
+        }
+    }
+
+    package struct ClipboardContext: Equatable, Sendable {
+        package let typedKeyword: String
+        package let queryAtEntry: String
+
+        package init(typedKeyword: String = "clip", queryAtEntry: String = "") {
             self.typedKeyword = typedKeyword
             self.queryAtEntry = queryAtEntry
         }
@@ -58,8 +69,14 @@ extension SearchMode {
             return entered(query: query, registry: registry)
 
         case .shiftTab, .escape, .backspaceOnEmptyQuery:
-            guard case let .web(context) = mode else { return (mode, query) }
-            return (.local, exitFieldText(for: context, query: query, registry: registry))
+            switch mode {
+            case let .web(context):
+                return (.local, exitFieldText(for: context, query: query, registry: registry))
+            case let .clipboard(context):
+                return (.local, exitClipboardFieldText(for: context, query: query))
+            case .local:
+                return (mode, query)
+            }
         }
     }
 
@@ -72,6 +89,16 @@ extension SearchMode {
         query: String,
         registry: KeywordEngineRegistry
     ) -> (mode: SearchMode, query: String) {
+        if let token = parseTokenAndRemainder(query),
+           token.typedKeyword.lowercased() == "clip"
+        {
+            let context = ClipboardContext(
+                typedKeyword: token.typedKeyword,
+                queryAtEntry: token.remainder
+            )
+            return (.clipboard(context), token.remainder)
+        }
+
         guard let address = registry.webModeAddress(for: query) else {
             let context = WebContext(
                 engineID: registry.defaultWebEngineID,
@@ -106,5 +133,51 @@ extension SearchMode {
             registry.canonicalKeyword(for: context.engineID) ?? typedKeyword
         }
         return query.isEmpty ? spelling : "\(spelling) \(query)"
+    }
+
+    private static func exitClipboardFieldText(
+        for context: ClipboardContext,
+        query: String
+    ) -> String {
+        let spelling: String = if query == context.queryAtEntry {
+            context.typedKeyword
+        } else {
+            "clip"
+        }
+        return query.isEmpty ? spelling : "\(spelling) \(query)"
+    }
+
+    private static func parseTokenAndRemainder(_ query: String) -> (
+        typedKeyword: String,
+        remainder: String
+    )? {
+        let end = query.endIndex
+        var keywordStart = query.startIndex
+        while keywordStart < end, query[keywordStart].isWhitespace {
+            query.formIndex(after: &keywordStart)
+        }
+        guard keywordStart < end else { return nil }
+        guard let separator = query[keywordStart...].firstIndex(where: \.isWhitespace) else {
+            return (String(query[keywordStart..<end]), "")
+        }
+
+        var remainderStart = separator
+        while remainderStart < end, query[remainderStart].isWhitespace {
+            query.formIndex(after: &remainderStart)
+        }
+        guard remainderStart < end else {
+            return (String(query[keywordStart..<separator]), "")
+        }
+
+        var remainderEnd = end
+        while remainderEnd > remainderStart {
+            let previous = query.index(before: remainderEnd)
+            guard query[previous].isWhitespace else { break }
+            remainderEnd = previous
+        }
+        return (
+            typedKeyword: String(query[keywordStart..<separator]),
+            remainder: String(query[remainderStart..<remainderEnd])
+        )
     }
 }

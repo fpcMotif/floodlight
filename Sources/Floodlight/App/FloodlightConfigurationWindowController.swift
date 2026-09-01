@@ -1,4 +1,7 @@
 import AppKit
+
+// periphery:ignore - Module import required for FloodlightEngine types.
+import FloodlightEngine
 import SwiftUI
 
 enum FloodlightConfigurationPresentation {
@@ -35,6 +38,10 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
+        blocklistStore: BlocklistStore = BlocklistStore(),
+        clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
+        clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
+            ClipboardHistoryStore.inMemory(),
         selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
         setLaunchAtLogin: @escaping (Bool) -> String?,
         chooseScope: @escaping () -> URL?,
@@ -45,7 +52,10 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         let session = OnboardingSession(
             activeShortcut: activeShortcut,
             launchesAtLogin: launchesAtLogin,
-            rootURL: rootURL
+            rootURL: rootURL,
+            blocklistStore: blocklistStore,
+            clipboardExclusionStore: clipboardExclusionStore,
+            clipboardStore: clipboardStore
         )
         self.session = session
         flow = OnboardingFlowState(

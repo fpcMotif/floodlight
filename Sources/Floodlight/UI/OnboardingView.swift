@@ -17,6 +17,7 @@ struct OnboardingView: View {
     let presentation: FloodlightConfigurationPresentation
     @Bindable var session: OnboardingSession
     @State private var newExclusionName = ""
+    @State private var newClipboardExclusion = ""
     // because it drives a `Binding`'s setter and SwiftUI now requires that
     // setter to be `@isolated(any) @Sendable`; the rest are annotated to match
     // rather than leaving one of six spelled differently for a reason that is
@@ -53,6 +54,7 @@ struct OnboardingView: View {
                     searchAccessSection
                     if presentation == .settings {
                         blocklistSection
+                        clipboardSection
                     }
                     Spacer(minLength: 0)
                 }
@@ -271,6 +273,127 @@ struct OnboardingView: View {
                         }
                     }
                 }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var clipboardSection: some View {
+        SetupSection(title: "Clipboard History") {
+            VStack(alignment: .leading, spacing: 10) {
+                SetupRow(
+                    icon: "doc.on.clipboard",
+                    title: "Record clipboard history",
+                    subtitle: "Store copied text locally for instant search and restore."
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { session.clipboardHistoryEnabled },
+                            set: { session.clipboardHistoryEnabled = $0 }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Color.floodlightSetupAccent)
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("History retention")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("Unpinned entries older than this duration are pruned.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { session.clipboardRetentionDays },
+                        set: { session.clipboardRetentionDays = $0 }
+                    )) {
+                        Text("7 days").tag(7)
+                        Text("30 days").tag(30)
+                        Text("90 days").tag(90)
+                        Text("Forever").tag(-1)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                }
+                .padding(.vertical, 4)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Excluded applications")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Nothing copied from these app bundle IDs or names will be recorded.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        TextField(
+                            "App bundle ID (e.g. com.1password.1password)",
+                            text: $newClipboardExclusion
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        Button("Exclude") {
+                            let trimmed = newClipboardExclusion
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            session.excludeClipboardApp(bundleID: trimmed)
+                            newClipboardExclusion = ""
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(Color.floodlightSetupAccent)
+                        .disabled(newClipboardExclusion
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
+                    if session.clipboardExclusions.isEmpty {
+                        Text("No excluded apps.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(session.clipboardExclusions, id: \.self) { bundleID in
+                                    HStack(spacing: 5) {
+                                        Text(bundleID)
+                                            .font(.system(size: 12, weight: .medium))
+                                        Button {
+                                            session.unexcludeClipboardApp(bundleID: bundleID)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.white.opacity(0.08), in: Capsule())
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+
+                Divider()
+
+                HStack {
+                    Text("Clear history")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Button("Clear all history…") {
+                        session.clearClipboardHistory()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 4)
             }
             .padding(.vertical, 6)
         }

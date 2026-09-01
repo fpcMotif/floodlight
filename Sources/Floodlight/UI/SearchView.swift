@@ -78,6 +78,12 @@ private struct SearchBar: View {
                         transaction.animation = nil
                         transaction.disablesAnimations = true
                     }
+            } else if model.isClipboardMode {
+                ClipboardModeToken()
+                    .transaction { transaction in
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
             }
 
             FloodlightTextField(
@@ -156,11 +162,23 @@ private struct WebModeToken: View {
     }
 }
 
+private struct ClipboardModeToken: View {
+    var body: some View {
+        Image(systemName: "doc.on.clipboard")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .frame(width: 26, height: 26)
+            .modifier(FloodlightChipSurface(isSelected: true))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Clipboard")
+    }
+}
+
 private struct SearchResultsSection: View {
     let model: SearchCoordinator
 
     var body: some View {
-        if !model.query.isEmpty {
+        if !model.query.isEmpty || model.isClipboardMode {
             Divider().opacity(0.45)
             // Web mode publishes no filter options — rendering the bar
             // anyway leaves an empty strip between the field and the rows.
@@ -187,7 +205,11 @@ private struct SearchResultsSection: View {
     @ViewBuilder
     private var resultsContent: some View {
         if model.results.isEmpty {
-            EmptyResultsView(filter: model.selectedFilter, query: model.query)
+            EmptyResultsView(
+                filter: model.selectedFilter,
+                query: model.query,
+                isClipboardMode: model.isClipboardMode
+            )
         } else {
             ResultList(model: model)
         }
@@ -201,11 +223,18 @@ private struct SearchResultsSection: View {
 private struct EmptyResultsView: View {
     let filter: SearchResultFilter
     let query: String
+    let isClipboardMode: Bool
+
+    init(filter: SearchResultFilter, query: String, isClipboardMode: Bool = false) {
+        self.filter = filter
+        self.query = query
+        self.isClipboardMode = isClipboardMode
+    }
 
     var body: some View {
         VStack {
             Spacer(minLength: 0)
-            Text(ResultShowcase.emptyStateMessage(filter: filter, query: query))
+            Text(emptyMessage)
                 .font(FloodlightMetrics.Typography.emptyState)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -213,6 +242,15 @@ private struct EmptyResultsView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var emptyMessage: String {
+        if isClipboardMode {
+            return query.isEmpty
+                ? "Clipboard history is empty. Copied text will appear here."
+                : "No matching clipboard entries for “\(query)”"
+        }
+        return ResultShowcase.emptyStateMessage(filter: filter, query: query)
     }
 }
 

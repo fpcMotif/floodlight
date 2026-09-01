@@ -63,8 +63,14 @@ final class SearchCoordinator {
         return keywordRegistry.webEngine(id: context.engineID)
     }
 
+    var isClipboardMode: Bool {
+        if case .clipboard = mode { return true }
+        return false
+    }
+
     private let sourceSearch: any SourceSearching
     package let blocklistStore: BlocklistStore
+    package let clipboardStore: ClipboardHistoryStore
     private let assistantRunner: any AssistantProcessRunning
     private let assistantRunSession: AssistantRunSession
     private let actionPerformer: SelectedResultActionPerformer
@@ -84,6 +90,8 @@ final class SearchCoordinator {
         sourceSearch: any SourceSearching,
         recentStore: RecentStore,
         blocklistStore: BlocklistStore = BlocklistStore(),
+        clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
+            ClipboardHistoryStore.inMemory(),
         rootURL: URL,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
         runningApplicationActivator: any RunningApplicationActivating =
@@ -93,6 +101,7 @@ final class SearchCoordinator {
     ) {
         self.sourceSearch = sourceSearch
         self.blocklistStore = blocklistStore
+        self.clipboardStore = clipboardStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
         self.onDismiss = onDismiss
@@ -177,6 +186,11 @@ final class SearchCoordinator {
             ),
             recentStore: recentStore,
             blocklistStore: blocklistStore,
+            clipboardStore: (try? ClipboardHistoryStore(databaseURL: indexStorage
+                    .appendingPathComponent(
+                        "clipboard.sqlite3",
+                        isDirectory: false
+                    ))) ?? ClipboardHistoryStore.inMemory(),
             rootURL: initialRoot,
             assistantRunner: assistantRunner,
             onDismiss: onDismiss
@@ -248,11 +262,12 @@ final class SearchCoordinator {
     /// Esc only exits the mode; in local mode Esc dismisses the panel
     /// exactly as it always has.
     func handleEscape() {
-        guard case .web = mode else {
+        switch mode {
+        case .web, .clipboard:
+            applyModeEvent(.escape)
+        case .local:
             onDismiss()
-            return
         }
-        applyModeEvent(.escape)
     }
 
     func handleBackspaceOnEmptyQuery() {
@@ -368,6 +383,31 @@ final class SearchCoordinator {
         actionPerformer.copy(item)
     }
 
+    func togglePinSelection() {
+        guard isClipboardMode, let selectedItem else { return }
+        let entryID = selectedItem.id.replacingOccurrences(of: "clipboard:", with: "")
+        clipboardStore.togglePin(id: entryID)
+        if case let .clipboard(context) = mode {
+            publishClipboardModeResults(context: context)
+        }
+    }
+
+    func deleteSelection() {
+        guard isClipboardMode, let selectedItem else { return }
+        let entryID = selectedItem.id.replacingOccurrences(of: "clipboard:", with: "")
+        clipboardStore.delete(id: entryID)
+        if case let .clipboard(context) = mode {
+            publishClipboardModeResults(context: context)
+        }
+    }
+
+    func clearHistory() {
+        clipboardStore.clear()
+        if case let .clipboard(context) = mode {
+            publishClipboardModeResults(context: context)
+        }
+    }
+
     /// The previewable file URL of the current selection, or `nil` if the
     /// selection has no file URL or isn't previewable. The shell uses this to
     /// drive QuickLook without re-deriving previewability itself.
@@ -415,6 +455,13 @@ final class SearchCoordinator {
             searchTask?.cancel()
             searchTask = nil
             publishWebModeResults(context: context)
+            return
+        }
+
+        if case let .clipboard(context) = mode {
+            searchTask?.cancel()
+            searchTask = nil
+            publishClipboardModeResults(context: context)
             return
         }
 
@@ -491,6 +538,19 @@ final class SearchCoordinator {
                 activeEngineID: context.engineID,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
+                selection: publication.selection
+            ))
+        )
+    }
+
+    private func publishClipboardModeResults(context: SearchMode.ClipboardContext) {
+        searchTask?.cancel()
+        searchTask = nil
+        let entries = clipboardStore.search(query: query)
+        publication = SearchResultProjection.project(
+            .clipboard(.init(
+                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
+                entries: entries,
                 selection: publication.selection
             ))
         )

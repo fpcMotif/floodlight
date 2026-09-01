@@ -75,6 +75,7 @@ enum FloodlightMetrics {
         switch kind {
         case .assistant: .purple
         case .calculator: .orange
+        case .clipboard: .teal
         case .systemSetting: .gray
         case .web: .blue
         case .application, .file, .folder: .accentColor

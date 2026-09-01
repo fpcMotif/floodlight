@@ -25,6 +25,104 @@ struct SearchModeTests {
         )
     }
 
+    private func clipboardContext(
+        typedKeyword: String = "clip",
+        queryAtEntry: String
+    ) -> SearchMode {
+        .clipboard(
+            SearchMode.ClipboardContext(
+                typedKeyword: typedKeyword,
+                queryAtEntry: queryAtEntry
+            )
+        )
+    }
+
+    // MARK: - Entering clipboard mode with Tab
+
+    @Test func tabOnBareClipEntersClipboardModeWithEmptyQuery() {
+        let result = transition(from: .local, query: "clip", event: .tab)
+
+        #expect(result.mode == clipboardContext(typedKeyword: "clip", queryAtEntry: ""))
+        #expect(result.query.isEmpty)
+    }
+
+    @Test func tabOnClipWithRemainderEntersClipboardModeWithRemainder() {
+        let result = transition(from: .local, query: "clip invoice", event: .tab)
+
+        #expect(result.mode == clipboardContext(typedKeyword: "clip", queryAtEntry: "invoice"))
+        #expect(result.query == "invoice")
+    }
+
+    @Test func tabOnClipPreservesTypedCasingAndWhitespace() {
+        let result = transition(from: .local, query: "CLIP   notes and tasks  ", event: .tab)
+
+        #expect(result.mode == clipboardContext(
+            typedKeyword: "CLIP",
+            queryAtEntry: "notes and tasks"
+        ))
+        #expect(result.query == "notes and tasks")
+    }
+
+    @Test func tabWhileAlreadyInClipboardModeIsANoOp() {
+        let mode = clipboardContext(typedKeyword: "clip", queryAtEntry: "test")
+        let result = transition(from: mode, query: "test", event: .tab)
+
+        #expect(result.mode == mode)
+        #expect(result.query == "test")
+    }
+
+    // MARK: - Exiting clipboard mode
+
+    @Test func escapeExitsClipboardModeReconstructingTheTypedSpelling() {
+        let mode = clipboardContext(typedKeyword: "clip", queryAtEntry: "invoice")
+        let result = transition(from: mode, query: "invoice", event: .escape)
+
+        #expect(result.mode == .local)
+        #expect(result.query == "clip invoice")
+    }
+
+    @Test func escapeAfterEditingQueryInClipboardModeReconstructsCanonicalSpelling() {
+        let mode = clipboardContext(typedKeyword: "CLIP", queryAtEntry: "invoice")
+        let result = transition(from: mode, query: "receipt", event: .escape)
+
+        #expect(result.mode == .local)
+        #expect(result.query == "clip receipt")
+    }
+
+    @Test func escapeOnBareClipModeReconstructsJustTheKeyword() {
+        let mode = clipboardContext(typedKeyword: "clip", queryAtEntry: "")
+        let result = transition(from: mode, query: "", event: .escape)
+
+        #expect(result.mode == .local)
+        #expect(result.query == "clip")
+    }
+
+    @Test(arguments: [SearchModeEvent.shiftTab, .backspaceOnEmptyQuery])
+    func shiftTabAndBackspaceOnEmptyExitClipboardModeExactlyLikeEscape(event: SearchModeEvent) {
+        let mode = clipboardContext(typedKeyword: "clip", queryAtEntry: "address")
+        let result = transition(from: mode, query: "address", event: event)
+        #expect(result.mode == .local, "\(event)")
+        #expect(result.query == "clip address", "\(event)")
+    }
+
+    @Test func tabThenEscapeRoundTripsTheOriginalFieldInClipboardMode() {
+        let entered = transition(from: .local, query: "clip invoice", event: .tab)
+        let exited = transition(from: entered.mode, query: entered.query, event: .escape)
+
+        #expect(exited.mode == .local)
+        #expect(exited.query == "clip invoice")
+    }
+
+    @Test func resetExitsClipboardModeToEmptyLocal() {
+        let fromClip = transition(
+            from: clipboardContext(typedKeyword: "clip", queryAtEntry: "test"),
+            query: "test",
+            event: .reset
+        )
+        #expect(fromClip.mode == .local)
+        #expect(fromClip.query.isEmpty)
+    }
+
     // MARK: - Entering web mode with Tab
 
     @Test func tabOnAPlainQueryEntersDefaultEngineModeCarryingTheQuery() {

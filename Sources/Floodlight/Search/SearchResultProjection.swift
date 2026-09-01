@@ -54,6 +54,7 @@ enum SearchResultProjection {
     enum Input {
         case local(LocalContext)
         case web(WebContext)
+        case clipboard(ClipboardContext)
     }
 
     struct LocalContext {
@@ -95,10 +96,30 @@ enum SearchResultProjection {
         let selection: SearchResultSelection?
     }
 
+    struct ClipboardContext: Equatable {
+        let query: String
+        let entries: [ClipboardEntry]
+        let selection: SearchResultSelection?
+        let now: Date
+
+        init(
+            query: String,
+            entries: [ClipboardEntry],
+            selection: SearchResultSelection?,
+            now: Date = .now
+        ) {
+            self.query = query
+            self.entries = entries
+            self.selection = selection
+            self.now = now
+        }
+    }
+
     static func project(_ input: Input) -> SearchResultPublication {
         switch input {
         case let .local(context): projectLocal(context)
         case let .web(context): projectWeb(context)
+        case let .clipboard(context): projectClipboard(context)
         }
     }
 
@@ -145,6 +166,87 @@ enum SearchResultProjection {
             selection: reconcile(context.selection, in: rows),
             progress: .settled
         )
+    }
+
+    private static func projectClipboard(_ context: ClipboardContext) -> SearchResultPublication {
+        let rows = context.entries.enumerated().map { index, entry in
+            buildClipboardRow(entry: entry, index: index, now: context.now)
+        }
+        return SearchResultPublication(
+            sourceCandidates: [],
+            allRows: rows,
+            visibleRows: rows,
+            filterOptions: [],
+            selectedFilter: .all,
+            selection: reconcile(context.selection, in: rows),
+            progress: .settled
+        )
+    }
+
+    private static func buildClipboardRow(
+        entry: ClipboardEntry,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
+        let preview = previewTitle(for: entry.text)
+        let title = entry.isPinned ? "📌 \(preview)" : preview
+        let app = appDisplayName(for: entry.sourceAppBundleID)
+        let time = formattedRelativeTime(since: entry.createdAt, now: now)
+        let subtitle = "\(app) · \(time)"
+        let iconSource: SearchItemIconSource = entry.isPinned
+            ? .engine(symbol: "pin.fill", tint: .orange)
+            : .engine(symbol: "doc.on.clipboard", tint: .gray)
+
+        return SearchItem(
+            id: "clipboard:\(entry.id)",
+            title: title,
+            subtitle: subtitle,
+            kind: .clipboard,
+            action: .copy(entry.text),
+            iconSource: iconSource,
+            score: SearchItemRanking.calculator - index,
+            modifiedAt: entry.createdAt
+        )
+    }
+
+    private static func previewTitle(for text: String) -> String {
+        let singleLine = text.split(whereSeparator: \.isNewline)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return singleLine.isEmpty ? "(Empty text)" : singleLine
+    }
+
+    private static func appDisplayName(for bundleID: String?) -> String {
+        guard let bundleID, !bundleID.isEmpty else { return "Clipboard" }
+        if let lastComponent = bundleID.split(separator: ".").last, !lastComponent.isEmpty {
+            return String(lastComponent)
+        }
+        return bundleID
+    }
+
+    private static func formattedRelativeTime(since date: Date, now: Date) -> String {
+        let elapsed = max(0, Int(now.timeIntervalSince(date)))
+        if elapsed < 60 {
+            return "just now"
+        }
+        let minutes = elapsed / 60
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        let hours = minutes / 60
+        if hours < 24 {
+            return "\(hours)h"
+        }
+        let days = hours / 24
+        if days < 30 {
+            return "\(days)d"
+        }
+        let months = days / 30
+        if months < 12 {
+            return "\(months)mo"
+        }
+        let years = days / 365
+        return "\(years)y"
     }
 
     private static let maxResultsLimit = 80

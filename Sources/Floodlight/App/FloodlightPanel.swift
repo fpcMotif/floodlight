@@ -241,10 +241,12 @@ final class FloodlightPanelController {
     private func observeQueryForPanelHeight() {
         withObservationTracking {
             _ = model.query
+            _ = model.isClipboardMode
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.resize(to: FloodlightMetrics.panelHeight(hasQuery: !self.model.query.isEmpty))
+                let hasQuery = !self.model.query.isEmpty || self.model.isClipboardMode
+                self.resize(to: FloodlightMetrics.panelHeight(hasQuery: hasQuery))
                 self.observeQueryForPanelHeight()
             }
         }
@@ -331,6 +333,12 @@ final class FloodlightPanelController {
             model.revealSelection()
         case .togglePreview:
             togglePreview()
+        case .togglePin:
+            guard model.isClipboardMode else { return false }
+            model.togglePinSelection()
+        case .deleteSelection:
+            guard model.isClipboardMode else { return false }
+            model.deleteSelection()
         case .unmatched:
             return false
         }
@@ -343,6 +351,8 @@ final class FloodlightPanelController {
         case rebuildIndex
         case revealSelection
         case togglePreview
+        case togglePin
+        case deleteSelection
         case unmatched
     }
 
@@ -358,6 +368,10 @@ final class FloodlightPanelController {
             .togglePreview
         case "\r", "\n":
             .revealSelection
+        case ".":
+            .togglePin
+        case "d":
+            .deleteSelection
         default:
             .unmatched
         }

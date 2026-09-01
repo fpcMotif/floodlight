@@ -4,6 +4,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
     case application
     case assistant
     case calculator
+    case clipboard
     case file
     case folder
     case systemSetting
@@ -14,6 +15,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
         case .application: "Application"
         case .assistant: "AI Assistant"
         case .calculator: "Calculator"
+        case .clipboard: "Clipboard"
         case .file: "File"
         case .folder: "Folder"
         case .systemSetting: "System Setting"
@@ -26,6 +28,7 @@ package enum SearchItemKind: String, Hashable, Sendable {
         case .application: "square.grid.2x2.fill"
         case .assistant: "sparkles"
         case .calculator: "function"
+        case .clipboard: "doc.on.clipboard"
         case .file: "doc.text.fill"
         case .folder: "folder.fill"
         case .systemSetting: "gearshape.fill"
@@ -155,7 +158,7 @@ package struct SearchFilterCounts: Equatable, Sendable {
                 folders += 1
             case .systemSetting:
                 settings += 1
-            case .assistant, .calculator, .web:
+            case .assistant, .calculator, .clipboard, .web:
                 break
             }
         }

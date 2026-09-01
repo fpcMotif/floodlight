@@ -42,17 +42,21 @@ struct FloodlightPanelStressTests {
     // MARK: - panelCommand
 
     @Test func panelCommandForEverySingleCharacter() {
-        // Every lowercase letter: c, l, r (no shift), y map to known commands;
+        // Every lowercase letter: c, d, l, r (no shift), y map to known commands;
         // everything else is unmatched.
         #expect(FloodlightPanelController
             .panelCommand(for: "c", shiftHeld: false) == .copySelection)
+        #expect(FloodlightPanelController
+            .panelCommand(for: "d", shiftHeld: false) == .deleteSelection)
         #expect(FloodlightPanelController.panelCommand(for: "l", shiftHeld: false) == .chooseRoot)
         #expect(FloodlightPanelController
             .panelCommand(for: "r", shiftHeld: false) == .revealSelection)
         #expect(FloodlightPanelController
             .panelCommand(for: "y", shiftHeld: false) == .togglePreview)
+        #expect(FloodlightPanelController
+            .panelCommand(for: ".", shiftHeld: false) == .togglePin)
 
-        let knownCommands: Set = ["c", "l", "r", "y"]
+        let knownCommands: Set = ["c", "d", "l", "r", "y"]
         for character in "abcdefghijklmnopqrstuvwxyz" {
             let ch = String(character)
             if knownCommands.contains(ch) {
