@@ -423,6 +423,12 @@ final class SearchCoordinator {
         if case let .copyImage(id) = selectedItem.action {
             return clipboardImagePreviewURL(for: id)
         }
+        if case let .copy(text) = selectedItem.action,
+           let localURL = ClipboardInspector.parseLocalPath(text),
+           FileManager.default.fileExists(atPath: localURL.path)
+        {
+            return localURL
+        }
         return nil
     }
 

@@ -83,4 +83,97 @@ struct ClipboardInspectorTests {
         #expect(detail.sourceApp == "CleanShotX")
         #expect(detail.createdAt == created)
     }
+
+    @Test func urlSnapshotClassifiesAsLinkAndExtractsDomain() {
+        let entry = ClipboardEntry(
+            id: "url-1",
+            text: "https://www.reddit.com/r/MacOS/comments/123",
+            createdAt: .now,
+            sourceAppBundleID: "com.apple.Safari"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("expected text snapshot for URL")
+            return
+        }
+        #expect(detail.contentType == .link)
+        #expect(detail.domain == "reddit.com")
+        #expect(detail.sourceApp == "Safari")
+        #expect(detail.characterCount > 0)
+    }
+
+    @Test func hexColorSnapshotClassifiesAsColorAndExtractsHex() {
+        let entry = ClipboardEntry(
+            id: "color-1",
+            text: "#3498db",
+            createdAt: .now,
+            sourceAppBundleID: "com.figma.Desktop"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("expected text snapshot for color")
+            return
+        }
+        #expect(detail.contentType == .color)
+        #expect(detail.colorHex == "#3498DB")
+    }
+
+    @Test func jsonSnapshotClassifiesAsCode() {
+        let entry = ClipboardEntry(
+            id: "json-1",
+            text: "{\n  \"name\": \"floodlight\",\n  \"version\": 1\n}",
+            createdAt: .now,
+            sourceAppBundleID: "com.microsoft.VSCode"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("expected text snapshot for JSON")
+            return
+        }
+        #expect(detail.contentType == .code)
+        #expect(detail.codeLanguage == "JSON")
+        #expect(detail.lineCount == 4)
+        #expect(detail.wordCount == 6)
+    }
+
+    @Test func videoFileSnapshotClassifiesAsVideo() {
+        let path = "/Users/f/Movies/demo.mp4"
+        let entry = ClipboardEntry(
+            id: "file-video",
+            text: path,
+            kind: .file,
+            createdAt: .now
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .file(detail) = snapshot else {
+            Issue.record("expected file snapshot for video")
+            return
+        }
+        #expect(detail.contentType == .video)
+        #expect(detail.isVideo)
+        #expect(!detail.isImage)
+    }
+
+    @Test func localFilePathTextEntryClassifiesAsFile() throws {
+        let tempFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-screenshot.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        let entry = ClipboardEntry(
+            id: "path-1",
+            text: tempFile.path,
+            createdAt: .now,
+            sourceAppBundleID: "com.mitchellh.ghostty"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .file(detail) = snapshot else {
+            Issue.record("expected file snapshot for local image path")
+            return
+        }
+        #expect(detail.name == "test-screenshot.png")
+        #expect(detail.isImage)
+        #expect(detail.sourceApp == "Ghostty")
+        #expect(detail.fileURL == tempFile)
+    }
 }

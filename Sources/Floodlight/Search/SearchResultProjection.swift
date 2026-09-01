@@ -278,21 +278,60 @@ enum SearchResultProjection {
         index: Int,
         now: Date
     ) -> SearchItem {
-        let preview = previewTitle(for: entry.text)
+        let text = entry.text
+        if let localURL = ClipboardInspector.parseLocalPath(text) {
+            let name = localURL.lastPathComponent
+            let preview = name.isEmpty ? text : name
+            let title = entry.isPinned ? "📌 \(preview)" : preview
+            let app = appDisplayName(for: entry.sourceAppBundleID)
+            let time = formattedRelativeTime(since: entry.createdAt, now: now)
+            let subtitle = "\(app) · \(time)"
+            let ext = localURL.pathExtension.lowercased()
+            let iconSource: SearchItemIconSource = if entry.isPinned {
+                .engine(symbol: "pin.fill", tint: .orange)
+            } else if ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "svg"].contains(ext) {
+                .engine(symbol: "photo", tint: .cyan)
+            } else if ["mp4", "mov", "m4v", "webm", "mkv", "avi"].contains(ext) {
+                .engine(symbol: "video.fill", tint: .purple)
+            } else {
+                .inferred
+            }
+            let exists = FileManager.default.fileExists(atPath: localURL.path)
+            return SearchItem(
+                id: "clipboard:\(entry.id)",
+                title: title,
+                subtitle: subtitle,
+                kind: .clipboard,
+                action: .copy(text),
+                iconSource: iconSource,
+                score: SearchItemRanking.calculator - index,
+                fileURL: exists ? localURL : nil,
+                modifiedAt: entry.createdAt
+            )
+        }
+
+        let preview = previewTitle(for: text)
         let title = entry.isPinned ? "📌 \(preview)" : preview
         let app = appDisplayName(for: entry.sourceAppBundleID)
         let time = formattedRelativeTime(since: entry.createdAt, now: now)
         let subtitle = "\(app) · \(time)"
-        let iconSource: SearchItemIconSource = entry.isPinned
-            ? .engine(symbol: "pin.fill", tint: .orange)
-            : .engine(symbol: "doc.on.clipboard", tint: .gray)
-
+        let iconSource: SearchItemIconSource = if entry.isPinned {
+            .engine(symbol: "pin.fill", tint: .orange)
+        } else if ClipboardInspector.parseURL(text) != nil {
+            .engine(symbol: "link", tint: .blue)
+        } else if ClipboardInspector.parseHexColor(text) != nil {
+            .engine(symbol: "paintpalette.fill", tint: .purple)
+        } else if ClipboardInspector.parseCodeHint(text) != nil {
+            .engine(symbol: "curlybraces", tint: .cyan)
+        } else {
+            .engine(symbol: "doc.text", tint: .gray)
+        }
         return SearchItem(
             id: "clipboard:\(entry.id)",
             title: title,
             subtitle: subtitle,
             kind: .clipboard,
-            action: .copy(entry.text),
+            action: .copy(text),
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
             modifiedAt: entry.createdAt

@@ -212,12 +212,16 @@ private struct SearchResultsSection: View {
                 isClipboardMode: model.isClipboardMode
             )
         } else if model.isClipboardMode {
-            HStack(spacing: 0) {
-                ResultList(model: model)
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ResultList(model: model)
+                        .frame(maxWidth: .infinity)
+                    Divider().opacity(0.45)
+                    ClipboardInspectorPane(snapshot: model.clipboardInspector)
+                        .frame(width: FloodlightMetrics.clipboardInspectorWidth)
+                }
                 Divider().opacity(0.45)
-                ClipboardInspectorPane(snapshot: model.clipboardInspector)
-                    .frame(width: FloodlightMetrics.clipboardInspectorWidth)
+                ClipboardFooterBar(model: model)
             }
         } else {
             ResultList(model: model)
@@ -456,5 +460,72 @@ private struct ResultList: View {
         .accessibilityAction(.default) {
             model.activate(item)
         }
+    }
+}
+
+private struct ClipboardFooterBar: View {
+    let model: SearchCoordinator
+
+    private var targetAppName: String {
+        model.clipboardInspector?.sourceApp ?? "App"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(model.results.count) \(model.results.count == 1 ? "entry" : "entries")")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button {
+                    model.openSelection()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("Paste to \(targetAppName)")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Text("↵")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.25))
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    model.copySelection()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("Actions")
+                            .font(.system(size: 11.5, weight: .medium))
+                        HStack(spacing: 2) {
+                            Text("⌘")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("K")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 32)
+        .background(Color.secondary.opacity(0.04))
     }
 }
