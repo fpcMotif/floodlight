@@ -26,7 +26,8 @@ struct SearchViewRenderingTests {
 
     private func makeCoordinator(
         applications: ScriptedCatalog = ScriptedCatalog(),
-        settings: ScriptedCatalog = ScriptedCatalog()
+        settings: ScriptedCatalog = ScriptedCatalog(),
+        clipboardStore: ClipboardHistoryStore = ClipboardHistoryStore.inMemory()
     ) throws -> SearchCoordinator {
         try SearchCoordinator(
             sourceSearch: SourceSearchEngine(
@@ -35,6 +36,7 @@ struct SearchViewRenderingTests {
                 settings: settings
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
+            clipboardStore: clipboardStore,
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
             onDismiss: {}
@@ -148,6 +150,84 @@ struct SearchViewRenderingTests {
         )
         #expect(image.width == Int(FloodlightMetrics.panelWidth))
         #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
+    }
+
+    @Test func theClipboardBoardRendersListAndInspector() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Acme billing address")
+        _ = store.recordFile(path: "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf")
+        let coordinator = try makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(!coordinator.filterOptions.isEmpty)
+        #expect(coordinator.clipboardInspector != nil)
+
+        let image = try render(
+            SearchView(model: coordinator),
+            width: FloodlightMetrics.panelWidth,
+            height: FloodlightMetrics.expandedPanelHeight
+        )
+        #expect(image.width == Int(FloodlightMetrics.panelWidth))
+        #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
+    }
+
+    @Test func clipboardInspectorPanesRenderForEachEntryKind() throws {
+        let created = Date(timeIntervalSince1970: 1_785_250_800)
+        let width = FloodlightMetrics.clipboardInspectorWidth
+        let height = FloodlightMetrics.expandedPanelHeight / 2
+
+        _ = try render(
+            ClipboardInspectorPane(snapshot: ClipboardInspector.snapshot(
+                for: ClipboardEntry(
+                    id: "text-1",
+                    text: "Pinned multi-line\naddress line 2",
+                    createdAt: created,
+                    sourceAppBundleID: "com.apple.Notes"
+                )
+            )),
+            width: width,
+            height: height
+        )
+        _ = try render(
+            ClipboardInspectorPane(snapshot: ClipboardInspector.snapshot(
+                for: ClipboardEntry(
+                    id: "file-1",
+                    text: "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf",
+                    kind: .file,
+                    createdAt: created,
+                    sourceAppBundleID: "com.apple.finder"
+                )
+            )),
+            width: width,
+            height: height
+        )
+        _ = try render(
+            ClipboardInspectorPane(snapshot: ClipboardInspector.snapshot(
+                for: ClipboardEntry(
+                    id: "image-1",
+                    text: "Screenshot 2026-09-01.png",
+                    kind: .image,
+                    createdAt: created,
+                    image: ClipboardImageMetadata(
+                        hash: "abc",
+                        width: 32,
+                        height: 16,
+                        byteCount: 64,
+                        thumbnailPNGData: ClipboardImageTestData.thumbnail
+                    )
+                ),
+                imagePNG: ClipboardImageTestData.png
+            )),
+            width: width,
+            height: height
+        )
+        _ = try render(
+            ClipboardInspectorPane(snapshot: nil),
+            width: width,
+            height: height
+        )
     }
 
     @Test func theEmptyFilterStateRenders() throws {

@@ -312,21 +312,156 @@ struct SearchCoordinatorClipboardModeTests {
         coordinator.handleEscape()
         #expect(dismissed, "second escape dismisses panel")
     }
+
+    // MARK: - Category filters
+
+    @Test func clipboardModePublishesTypeChipsAndSelectFilterScopesRows() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Acme billing address")
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf"))
+        _ = try #require(store.recordImage(
+            pngData: ClipboardImageTestData.png,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 32,
+            height: 16,
+            displayName: "Screenshot 2026-09-01.png"
+        ))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.filterOptions.map(\.filter) == [.all, .text, .files, .images])
+        #expect(coordinator.filterOptions.map(\.count) == [3, 1, 1, 1])
+        #expect(coordinator.selectedFilter == .all)
+        #expect(coordinator.results.count == 3)
+
+        coordinator.selectFilter(.text)
+        #expect(coordinator.selectedFilter == .text)
+        #expect(coordinator.results.map(\.title) == ["Acme billing address"])
+
+        coordinator.selectFilter(.files)
+        #expect(coordinator.results.map(\.title) == ["Invoice_Q3_Final.pdf"])
+
+        coordinator.selectFilter(.images)
+        #expect(coordinator.results.map(\.title) == ["Screenshot 2026-09-01.png"])
+
+        coordinator.selectFilter(.all)
+        #expect(coordinator.results.count == 3)
+    }
+
+    @Test func clipboardQueryFiltersWithinTheActiveTypeTab() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Invoice #101")
+        _ = store.record(text: "Receipt #202")
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf"))
+        _ = try #require(store.recordFile(path: "/Users/f/Downloads/Receipt.pdf"))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        coordinator.selectFilter(.files)
+        coordinator.query = "Invoice"
+
+        #expect(coordinator.selectedFilter == .files)
+        #expect(coordinator.results.map(\.title) == ["Invoice_Q3_Final.pdf"])
+        #expect(!(coordinator.results.contains { $0.title.contains("#101") }))
+    }
+
+    @Test func leavingClipboardModeResetsTheTypeFilter() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Snippet")
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        coordinator.selectFilter(.text)
+        #expect(coordinator.selectedFilter == .text)
+
+        coordinator.handleEscape()
+
+        #expect(!coordinator.isClipboardMode)
+        #expect(coordinator.selectedFilter == .all)
+    }
+
+    @Test func enteringClipboardModeStartsOnAllRegardlessOfLocalFilter() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Snippet")
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoices/Invoice.pdf"))
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "xcode"
+        coordinator.selectFilter(.files)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.selectedFilter == .all)
+        #expect(coordinator.results.count == 2)
+    }
+
+    @Test func clipboardFileSelectionIsPreviewableAndRevealable() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let path = "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf"
+        _ = try #require(store.recordFile(path: path))
+        var revealed: [URL] = []
+        var dismissed = false
+        let effects = ScriptedActionEffects(
+            onWrite: { _ in true },
+            onReveal: { revealed.append($0) }
+        )
+        let coordinator = try await makeCoordinator(
+            clipboardStore: store,
+            actionEffects: effects,
+            onDismiss: { dismissed = true }
+        )
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.previewableSelectionURL == URL(fileURLWithPath: path))
+        coordinator.revealSelection()
+        #expect(revealed == [URL(fileURLWithPath: path)])
+        #expect(dismissed)
+    }
+
+    @Test func clipboardInspectorFollowsTheSelectedEntry() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Acme billing address")
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoices/Invoice_Q3_Final.pdf"))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        guard case let .file(file) = coordinator.clipboardInspector else {
+            Issue.record("newest file entry should be inspected first")
+            return
+        }
+        #expect(file.name == "Invoice_Q3_Final.pdf")
+
+        coordinator.moveSelection(by: 1)
+        guard case let .text(text) = coordinator.clipboardInspector else {
+            Issue.record("moving selection should inspect the text entry")
+            return
+        }
+        #expect(text.body == "Acme billing address")
+    }
 }
 
 private final class ScriptedActionEffects: SelectedResultActionEffects {
     let onWrite: (String) -> Bool
     let onWriteFiles: ([String]) -> Bool
     let onWriteImage: (Data?, Data?) -> Bool
+    let onReveal: (URL) -> Void
 
     init(
         onWrite: @escaping (String) -> Bool,
         onWriteFiles: @escaping ([String]) -> Bool = { _ in true },
-        onWriteImage: @escaping (Data?, Data?) -> Bool = { _, _ in true }
+        onWriteImage: @escaping (Data?, Data?) -> Bool = { _, _ in true },
+        onReveal: @escaping (URL) -> Void = { _ in }
     ) {
         self.onWrite = onWrite
         self.onWriteFiles = onWriteFiles
         self.onWriteImage = onWriteImage
+        self.onReveal = onReveal
     }
 
     func writeToClipboard(_ value: String) -> Bool {
@@ -343,5 +478,7 @@ private final class ScriptedActionEffects: SelectedResultActionEffects {
 
     func open(_ url: URL, asApplication: Bool) async throws {}
 
-    func revealInFinder(_ url: URL) {}
+    func revealInFinder(_ url: URL) {
+        onReveal(url)
+    }
 }

@@ -87,9 +87,9 @@ struct SearchModelInvariantTests {
 
     // MARK: - Previewability
 
-    @Test func onlyFilesWithAURLArePreviewable() throws {
+    @Test func filesAndClipboardFilesWithAURLArePreviewable() throws {
         try checkProperty(
-            "isPreviewable == (kind == .file && fileURL != nil)",
+            "isPreviewable == ((kind == .file || kind == .clipboard) && fileURL != nil)",
             SearchGenerators.kind,
             Gen<Bool>.bool,
             runs: 200
@@ -103,7 +103,8 @@ struct SearchModelInvariantTests {
                 score: 0,
                 fileURL: url
             )
-            return item.isPreviewable == (kind == .file && url != nil)
+            let expected = (kind == .file || kind == .clipboard) && url != nil
+            return item.isPreviewable == expected
         }
     }
 
@@ -232,8 +233,10 @@ struct SearchModelInvariantTests {
         // become unreachable in the UI, so the union is checked against
         // `allCases` rather than assumed.
         let listed = SearchResultFilter.primary + SearchResultFilter.dynamic
-        #expect(Set(listed) == Set(SearchResultFilter.allCases))
         #expect(listed.count == Set(listed).count, "a filter is listed twice")
+        #expect(
+            Set(listed).union(SearchResultFilter.clipboard) == Set(SearchResultFilter.allCases)
+        )
         let allDynamic = SearchResultFilter.dynamic.allSatisfy(\.isDynamic)
         #expect(allDynamic)
         let nonePrimaryDynamic = SearchResultFilter.primary.allSatisfy { !$0.isDynamic }

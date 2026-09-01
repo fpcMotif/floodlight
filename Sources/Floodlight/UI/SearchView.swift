@@ -211,6 +211,14 @@ private struct SearchResultsSection: View {
                 query: model.query,
                 isClipboardMode: model.isClipboardMode
             )
+        } else if model.isClipboardMode {
+            HStack(spacing: 0) {
+                ResultList(model: model)
+                    .frame(maxWidth: .infinity)
+                Divider().opacity(0.45)
+                ClipboardInspectorPane(snapshot: model.clipboardInspector)
+                    .frame(width: FloodlightMetrics.clipboardInspectorWidth)
+            }
         } else {
             ResultList(model: model)
         }
@@ -247,9 +255,13 @@ private struct EmptyResultsView: View {
 
     private var emptyMessage: String {
         if isClipboardMode {
-            return query.isEmpty
-                ? "Clipboard history is empty. Copied text will appear here."
-                : "No matching clipboard entries for “\(query)”"
+            if query.isEmpty, filter == .all {
+                return "Clipboard history is empty. Copied text, files, and images will appear here."
+            }
+            if query.isEmpty {
+                return "No \(filter.title.lowercased()) clipboard entries"
+            }
+            return "No matching clipboard \(filter.title.lowercased()) for “\(query)”"
         }
         return ResultShowcase.emptyStateMessage(filter: filter, query: query)
     }

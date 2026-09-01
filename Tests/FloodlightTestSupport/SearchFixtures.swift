@@ -133,7 +133,7 @@ package enum SearchFixtures {
 
 package enum SearchGenerators {
     package static let kind = Gen<SearchItemKind>.element(of: [
-        .application, .assistant, .calculator, .file, .folder, .systemSetting, .web,
+        .application, .assistant, .calculator, .clipboard, .file, .folder, .systemSetting, .web,
     ])
 
     package static let filter = Gen<SearchResultFilter>.element(

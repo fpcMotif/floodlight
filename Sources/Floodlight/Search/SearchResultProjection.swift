@@ -99,17 +99,20 @@ enum SearchResultProjection {
     struct ClipboardContext: Equatable {
         let query: String
         let entries: [ClipboardEntry]
+        let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
         let now: Date
 
         init(
             query: String,
             entries: [ClipboardEntry],
+            selectedFilter: SearchResultFilter = .all,
             selection: SearchResultSelection?,
             now: Date = .now
         ) {
             self.query = query
             self.entries = entries
+            self.selectedFilter = selectedFilter
             self.selection = selection
             self.now = now
         }
@@ -194,15 +197,65 @@ enum SearchResultProjection {
         let rows = context.entries.enumerated().map { index, entry in
             buildClipboardRow(entry: entry, index: index, now: context.now)
         }
+        let selectedFilter = SearchResultFilter.clipboard.contains(context.selectedFilter)
+            ? context.selectedFilter
+            : .all
+        let visibleRows = rows.filter { clipboardFilter(selectedFilter, includes: $0) }
         return SearchResultPublication(
             sourceCandidates: [],
             allRows: rows,
-            visibleRows: rows,
-            filterOptions: [],
-            selectedFilter: .all,
-            selection: reconcile(context.selection, in: rows),
+            visibleRows: visibleRows,
+            filterOptions: clipboardFilterOptions(entries: context.entries),
+            selectedFilter: selectedFilter,
+            selection: reconcile(context.selection, in: visibleRows),
             progress: .settled
         )
+    }
+
+    private static func clipboardFilter(
+        _ filter: SearchResultFilter,
+        includes row: SearchItem
+    ) -> Bool {
+        switch filter {
+        case .all:
+            true
+        case .text:
+            if case .copy = row.action { true } else { false }
+        case .files:
+            if case .copyFiles = row.action { true } else { false }
+        case .images:
+            if case .copyImage = row.action { true } else { false }
+        default:
+            false
+        }
+    }
+
+    private static func clipboardFilterOptions(
+        entries: [ClipboardEntry]
+    ) -> [SearchFilterOption] {
+        var text = 0
+        var files = 0
+        var images = 0
+        for entry in entries {
+            switch entry.kind {
+            case .text: text += 1
+            case .file: files += 1
+            case .image: images += 1
+            }
+        }
+        let counts: [SearchResultFilter: Int] = [
+            .all: entries.count,
+            .text: text,
+            .files: files,
+            .images: images,
+        ]
+        return SearchResultFilter.clipboard.map { filter in
+            SearchFilterOption(
+                filter: filter,
+                count: counts[filter, default: 0],
+                isLoading: false
+            )
+        }
     }
 
     private static func buildClipboardRow(
@@ -440,6 +493,8 @@ enum SearchResultProjection {
             progress.isSearching
         case .settings:
             progress.pendingKinds.contains(.systemSetting)
+        case .text:
+            false
         }
     }
 }

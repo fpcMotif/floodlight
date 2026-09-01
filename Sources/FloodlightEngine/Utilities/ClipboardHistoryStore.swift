@@ -116,6 +116,30 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         search(query: "")
     }
 
+    package func entry(id: String) -> ClipboardEntry? {
+        stateLock.withLock { state in
+            if let pinned = state.pinnedEntries.first(where: { $0.id == id }) {
+                return pinned
+            }
+            if let recent = state.recentEntries.first(where: { $0.id == id }) {
+                return recent
+            }
+            guard let db = state.db else { return nil }
+            let sql = """
+            SELECT \(ClipboardHistorySQLite.entryColumns)
+            FROM clipboard_entries
+            WHERE id = ?
+            LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return ClipboardHistorySQLite.readEntry(from: stmt)
+        }
+    }
+
     // MARK: - Recording
 
     @discardableResult

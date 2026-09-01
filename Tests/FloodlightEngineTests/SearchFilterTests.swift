@@ -9,6 +9,8 @@ struct SearchFilterTests {
         let folder = item(kind: .folder, path: "/Users/test/Documents")
 
         #expect(SearchResultFilter.primary == [.all, .applications, .files, .folders])
+        #expect(SearchResultFilter.clipboard == [.all, .text, .files, .images])
+        #expect(SearchResultFilter.text.title == "Text")
         #expect(SearchResultFilter.all.includes(app))
         #expect(SearchResultFilter.applications.includes(app))
         #expect(!(SearchResultFilter.applications.includes(file)))

@@ -35,6 +35,29 @@ struct FloodlightPanelTests {
         #expect(controller.panel.isVisible)
     }
 
+    @Test func spaceTogglesQuickLookInClipboardModeWhenIdleAndPreviewable() {
+        #expect(FloodlightPanelController.shouldHandleSpaceAsPreview(
+            isClipboardMode: true,
+            query: "",
+            hasPreviewableSelection: true
+        ))
+        #expect(!(FloodlightPanelController.shouldHandleSpaceAsPreview(
+            isClipboardMode: true,
+            query: "invoice",
+            hasPreviewableSelection: true
+        )))
+        #expect(!(FloodlightPanelController.shouldHandleSpaceAsPreview(
+            isClipboardMode: true,
+            query: "",
+            hasPreviewableSelection: false
+        )))
+        #expect(!(FloodlightPanelController.shouldHandleSpaceAsPreview(
+            isClipboardMode: false,
+            query: "",
+            hasPreviewableSelection: true
+        )))
+    }
+
     @Test func commandDigitsOneThroughFiveMapToVisibleFilterSlots() {
         for digit in 1...5 {
             #expect(FloodlightPanelController.filterShortcutIndex(for: String(digit)) == digit - 1)
