@@ -121,6 +121,9 @@ final class SearchCoordinator {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: runningApplicationActivator,
             recentStore: recentStore,
+            clipboardImagePayload: { [clipboardStore] id in
+                clipboardStore.imageData(for: id)
+            },
             trackSelection: { candidateID, selectedURL, query in
                 await sourceSearch.trackSelection(
                     of: candidateID,
@@ -305,11 +308,23 @@ final class SearchCoordinator {
             registry: keywordRegistry
         )
         guard next.mode != mode || next.query != query else { return }
+        let leavingClipboard = isClipboardMode && next.mode != mode
+        let enteringClipboard: Bool = if case .clipboard = next.mode {
+            !isClipboardMode
+        } else {
+            false
+        }
         mode = next.mode
+        if leavingClipboard {
+            publication = idleLocalPublication()
+        }
+        if enteringClipboard {
+            publishClipboardModeResults(selectedFilter: .all, selection: nil)
+        }
         if query != next.query {
             // The observer republishes for the new mode.
             query = next.query
-        } else {
+        } else if !enteringClipboard {
             scheduleSearch(immediate: true)
         }
     }
@@ -338,6 +353,11 @@ final class SearchCoordinator {
 
     func selectFilter(_ filter: SearchResultFilter) {
         guard filter != selectedFilter else {
+            focusGeneration += 1
+            return
+        }
+        if case .clipboard = mode {
+            publishClipboardModeResults(selectedFilter: filter, selection: nil)
             focusGeneration += 1
             return
         }
@@ -392,31 +412,6 @@ final class SearchCoordinator {
         actionPerformer.copy(item)
     }
 
-    func togglePinSelection() {
-        guard isClipboardMode, let selectedItem else { return }
-        let entryID = selectedItem.id.replacingOccurrences(of: "clipboard:", with: "")
-        clipboardStore.togglePin(id: entryID)
-        if case let .clipboard(context) = mode {
-            publishClipboardModeResults(context: context)
-        }
-    }
-
-    func deleteSelection() {
-        guard isClipboardMode, let selectedItem else { return }
-        let entryID = selectedItem.id.replacingOccurrences(of: "clipboard:", with: "")
-        clipboardStore.delete(id: entryID)
-        if case let .clipboard(context) = mode {
-            publishClipboardModeResults(context: context)
-        }
-    }
-
-    func clearHistory() {
-        clipboardStore.clear()
-        if case let .clipboard(context) = mode {
-            publishClipboardModeResults(context: context)
-        }
-    }
-
     /// The previewable file URL of the current selection, or `nil` if the
     /// selection has no file URL or isn't previewable. The shell uses this to
     /// drive QuickLook without re-deriving previewability itself.
@@ -467,10 +462,10 @@ final class SearchCoordinator {
             return
         }
 
-        if case let .clipboard(context) = mode {
+        if case .clipboard = mode {
             searchTask?.cancel()
             searchTask = nil
-            publishClipboardModeResults(context: context)
+            publishClipboardModeResults()
             return
         }
 
@@ -552,19 +547,6 @@ final class SearchCoordinator {
         )
     }
 
-    private func publishClipboardModeResults(context: SearchMode.ClipboardContext) {
-        searchTask?.cancel()
-        searchTask = nil
-        let entries = clipboardStore.search(query: query)
-        publication = SearchResultProjection.project(
-            .clipboard(.init(
-                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
-                entries: entries,
-                selection: publication.selection
-            ))
-        )
-    }
-
     private func projectLocal(
         query: String? = nil,
         candidates: [SearchItem],
@@ -604,5 +586,64 @@ final class SearchCoordinator {
             ),
             filterContinuity: .preserve
         )
+    }
+}
+
+extension SearchCoordinator {
+    func togglePinSelection() {
+        mutateSelectedClipboardEntry { clipboardStore.togglePin(id: $0) }
+    }
+
+    func deleteSelection() {
+        mutateSelectedClipboardEntry { clipboardStore.delete(id: $0) }
+    }
+
+    func clearHistory() {
+        clipboardStore.clear()
+        if isClipboardMode {
+            publishClipboardModeResults()
+        }
+    }
+
+    /// Inspector snapshot for the selected Clipboard History entry.
+    var clipboardInspector: ClipboardInspector? {
+        guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
+        else {
+            return nil
+        }
+        guard let entry = clipboardStore.entry(id: entryID) else { return nil }
+        let png = entry.kind == .image ? clipboardStore.imageData(for: entryID)?.png : nil
+        return ClipboardInspector.snapshot(for: entry, imagePNG: png)
+    }
+
+    fileprivate func publishClipboardModeResults(
+        selectedFilter: SearchResultFilter? = nil,
+        selection: SearchResultSelection? = nil
+    ) {
+        searchTask?.cancel()
+        searchTask = nil
+        publication = SearchResultProjection.project(
+            .clipboard(.init(
+                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
+                entries: clipboardStore.search(query: query),
+                selectedFilter: selectedFilter ?? self.selectedFilter,
+                selection: selection ?? publication.selection
+            ))
+        )
+    }
+
+    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Void) {
+        guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
+        else {
+            return
+        }
+        mutate(entryID)
+        publishClipboardModeResults()
+    }
+
+    private func clipboardEntryID(from item: SearchItem) -> String? {
+        let prefix = "clipboard:"
+        guard item.id.hasPrefix(prefix) else { return nil }
+        return String(item.id.dropFirst(prefix.count))
     }
 }

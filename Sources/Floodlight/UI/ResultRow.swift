@@ -190,6 +190,17 @@ private struct ResultIcon: View {
             switch item.iconSource {
             case let .engine(symbol, tint):
                 symbolTile(symbol, tint: tint.color)
+            case let .thumbnail(data):
+                if let image = NSImage(data: data) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    symbolTile(
+                        "photo",
+                        tint: FloodlightMetrics.iconTint(for: item.kind)
+                    )
+                }
             case .inferred:
                 if let fileIcon {
                     Image(nsImage: fileIcon)

@@ -2,52 +2,11 @@ import Foundation
 import os
 import SQLite3
 
-/// One immutable captured or pinned text snippet in Clipboard History.
-package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
-    package let id: String
-    package let text: String
-    package let createdAt: Date
-    package let sourceAppBundleID: String?
-    package let pinnedAt: Date?
-
-    package var isPinned: Bool {
-        pinnedAt != nil
-    }
-
-    package init(
-        id: String = UUID().uuidString,
-        text: String,
-        createdAt: Date = .now,
-        sourceAppBundleID: String? = nil,
-        pinnedAt: Date? = nil
-    ) {
-        self.id = id
-        self.text = text
-        self.createdAt = createdAt
-        self.sourceAppBundleID = sourceAppBundleID
-        self.pinnedAt = pinnedAt
-    }
-}
-
-/// Retention period for clipboard history.
-package enum ClipboardRetention: Equatable, Sendable {
-    case days(Int)
-    case forever
-
-    package func cutoffDate(from now: Date = .now) -> Date? {
-        switch self {
-        case let .days(days):
-            now.addingTimeInterval(-Double(days) * 86_400)
-        case .forever:
-            nil
-        }
-    }
-}
-
 /// A persistent, privacy-respecting local clipboard store powered by SQLite3
 /// and an FTS5 trigram index.
 package final class ClipboardHistoryStore: @unchecked Sendable {
     package static let maxTextByteCount = 32_000
+    package static let maxImageByteCount = 15 * 1_024 * 1_024
     package static let inMemoryRecentWindowLimit = 1_000
     package static let searchResultLimit = 200
 
@@ -106,8 +65,11 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             )
         }
 
-        Self.initializeSchema(db: db)
-        let (pinned, recent, total) = Self.loadInitialWindow(db: db)
+        ClipboardHistorySQLite.initializeSchema(db: db)
+        let (pinned, recent, total) = ClipboardHistorySQLite.loadInitialWindow(
+            db: db,
+            recentLimit: Self.inMemoryRecentWindowLimit
+        )
 
         stateLock = OSAllocatedUnfairLock(initialState: State(
             db: db,
@@ -154,6 +116,30 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         search(query: "")
     }
 
+    package func entry(id: String) -> ClipboardEntry? {
+        stateLock.withLock { state in
+            if let pinned = state.pinnedEntries.first(where: { $0.id == id }) {
+                return pinned
+            }
+            if let recent = state.recentEntries.first(where: { $0.id == id }) {
+                return recent
+            }
+            guard let db = state.db else { return nil }
+            let sql = """
+            SELECT \(ClipboardHistorySQLite.entryColumns)
+            FROM clipboard_entries
+            WHERE id = ?
+            LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return ClipboardHistorySQLite.readEntry(from: stmt)
+        }
+    }
+
     // MARK: - Recording
 
     @discardableResult
@@ -162,31 +148,81 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         sourceAppBundleID: String? = nil,
         date: Date = .now
     ) -> ClipboardEntry? {
-        guard text.utf8.count <= Self.maxTextByteCount else {
-            return nil
-        }
+        insert(
+            text: text,
+            kind: .text,
+            sourceAppBundleID: sourceAppBundleID,
+            date: date
+        )
+    }
+
+    @discardableResult
+    package func recordFile(
+        path: String,
+        sourceAppBundleID: String? = nil,
+        date: Date = .now
+    ) -> ClipboardEntry? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return insert(
+            text: trimmed,
+            kind: .file,
+            sourceAppBundleID: sourceAppBundleID,
+            date: date
+        )
+    }
+
+    @discardableResult
+    package func recordImage(
+        pngData: Data? = nil,
+        tiffData: Data? = nil,
+        thumbnailPNGData: Data,
+        width: Int,
+        height: Int,
+        displayName: String,
+        sourceAppBundleID: String? = nil,
+        date: Date = .now
+    ) -> ClipboardEntry? {
+        let png = Self.cappedImageData(pngData)
+        let tiff = Self.cappedImageData(tiffData)
+        guard let primary = png ?? tiff else { return nil }
+        let hash = ClipboardHistorySQLite.sha256Hex(primary)
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let searchable = name.isEmpty ? "\(width)×\(height)" : name
+        let metadata = ClipboardImageMetadata(
+            hash: hash,
+            width: width,
+            height: height,
+            byteCount: primary.count,
+            thumbnailPNGData: thumbnailPNGData
+        )
 
         return stateLock.withLock { state -> ClipboardEntry? in
             guard let db = state.db else { return nil }
 
-            // Consecutive duplicate check
             let latest = state.recentEntries.first
                 ?? state.pinnedEntries.max { $0.createdAt < $1.createdAt }
-            if let latest, latest.text == text {
+            if let latest, latest.kind == .image, latest.image?.hash == hash {
                 return nil
             }
 
             let entry = ClipboardEntry(
                 id: UUID().uuidString,
-                text: text,
+                text: searchable,
+                kind: .image,
                 createdAt: date,
                 sourceAppBundleID: sourceAppBundleID,
-                pinnedAt: nil
+                pinnedAt: nil,
+                image: metadata
             )
 
             let insertSQL = """
-            INSERT INTO clipboard_entries (id, text, created_at, source_app_bundle_id, pinned_at)
-            VALUES (?, ?, ?, ?, NULL);
+            INSERT INTO clipboard_entries (
+                id, text, kind, created_at, source_app_bundle_id, pinned_at,
+                image_hash, image_width, image_height, image_byte_count,
+                thumbnail_png, png_data, tiff_data
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?);
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
@@ -196,11 +232,96 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             sqlite3_bind_text(stmt, 1, (entry.id as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 2, (entry.text as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(stmt, 3, entry.createdAt.timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (entry.kind.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
             if let bundleID = entry.sourceAppBundleID {
-                sqlite3_bind_text(stmt, 4, (bundleID as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 5, (bundleID as NSString).utf8String, -1, nil)
             } else {
-                sqlite3_bind_null(stmt, 4)
+                sqlite3_bind_null(stmt, 5)
+            }
+            sqlite3_bind_text(stmt, 6, (hash as NSString).utf8String, -1, nil)
+            sqlite3_bind_int64(stmt, 7, Int64(width))
+            sqlite3_bind_int64(stmt, 8, Int64(height))
+            sqlite3_bind_int64(stmt, 9, Int64(primary.count))
+            ClipboardHistorySQLite.bindBlob(stmt, index: 10, data: thumbnailPNGData)
+            ClipboardHistorySQLite.bindBlob(stmt, index: 11, data: png)
+            ClipboardHistorySQLite.bindBlob(stmt, index: 12, data: tiff)
+
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                return nil
+            }
+
+            state.recentEntries.insert(entry, at: 0)
+            if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
+                state.recentEntries.removeLast()
+            }
+            state.totalCount += 1
+            return entry
+        }
+    }
+
+    package func imageData(for id: String) -> ClipboardImagePayload? {
+        stateLock.withLock { state in
+            guard let db = state.db else { return nil }
+            let sql = "SELECT png_data, tiff_data FROM clipboard_entries WHERE id = ?;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            let png = ClipboardHistorySQLite.readBlob(stmt, index: 0)
+            let tiff = ClipboardHistorySQLite.readBlob(stmt, index: 1)
+            guard png != nil || tiff != nil else { return nil }
+            return ClipboardImagePayload(png: png, tiff: tiff)
+        }
+    }
+
+    private func insert(
+        text: String,
+        kind: ClipboardEntryKind,
+        sourceAppBundleID: String?,
+        date: Date
+    ) -> ClipboardEntry? {
+        guard text.utf8.count <= Self.maxTextByteCount else {
+            return nil
+        }
+
+        return stateLock.withLock { state -> ClipboardEntry? in
+            guard let db = state.db else { return nil }
+
+            let latest = state.recentEntries.first
+                ?? state.pinnedEntries.max { $0.createdAt < $1.createdAt }
+            if let latest, latest.text == text, latest.kind == kind {
+                return nil
+            }
+
+            let entry = ClipboardEntry(
+                id: UUID().uuidString,
+                text: text,
+                kind: kind,
+                createdAt: date,
+                sourceAppBundleID: sourceAppBundleID,
+                pinnedAt: nil
+            )
+
+            let insertSQL = """
+            INSERT INTO clipboard_entries (id, text, kind, created_at, source_app_bundle_id, pinned_at)
+            VALUES (?, ?, ?, ?, ?, NULL);
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, (entry.id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (entry.text as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (entry.kind.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
+            if let bundleID = entry.sourceAppBundleID {
+                sqlite3_bind_text(stmt, 5, (bundleID as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 5)
             }
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -231,10 +352,10 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             if trimmed.utf8.count < 3 {
                 let pinnedMatches = state.pinnedEntries.filter {
-                    $0.text.localizedCaseInsensitiveContains(trimmed)
+                    Self.matchesSearch($0, query: trimmed)
                 }
                 let recentMatches = state.recentEntries.filter {
-                    $0.text.localizedCaseInsensitiveContains(trimmed)
+                    Self.matchesSearch($0, query: trimmed)
                 }
                 return pinnedMatches + recentMatches
             }
@@ -242,7 +363,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             // FTS5 trigram search for queries of 3 or more characters
             let escaped = "\"" + trimmed.replacingOccurrences(of: "\"", with: "\"\"") + "\""
             let ftsSQL = """
-            SELECT id, text, created_at, source_app_bundle_id, pinned_at
+            SELECT \(ClipboardHistorySQLite.entryColumns)
             FROM clipboard_entries
             WHERE rowid IN (SELECT rowid FROM clipboard_fts WHERE clipboard_fts MATCH ?)
             ORDER BY pinned_at IS NOT NULL DESC, pinned_at ASC, created_at DESC
@@ -256,7 +377,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
                 var results: [ClipboardEntry] = []
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    if let entry = Self.readEntry(from: stmt) {
+                    if let entry = ClipboardHistorySQLite.readEntry(from: stmt) {
                         results.append(entry)
                     }
                 }
@@ -265,13 +386,26 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             // Fallback to in-memory filter if FTS query preparation fails
             let pinnedMatches = state.pinnedEntries.filter {
-                $0.text.localizedCaseInsensitiveContains(trimmed)
+                Self.matchesSearch($0, query: trimmed)
             }
             let recentMatches = state.recentEntries.filter {
-                $0.text.localizedCaseInsensitiveContains(trimmed)
+                Self.matchesSearch($0, query: trimmed)
             }
             return pinnedMatches + recentMatches
         }
+    }
+
+    private static func cappedImageData(_ data: Data?) -> Data? {
+        guard let data, !data.isEmpty, data.count <= maxImageByteCount else {
+            return nil
+        }
+        return data
+    }
+
+    private static func matchesSearch(_ entry: ClipboardEntry, query: String) -> Bool {
+        if entry.text.localizedCaseInsensitiveContains(query) { return true }
+        guard let image = entry.image else { return false }
+        return "\(image.width)×\(image.height)".localizedCaseInsensitiveContains(query)
     }
 
     // MARK: - Pinning
@@ -291,25 +425,12 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             if let idx = state.recentEntries.firstIndex(where: { $0.id == id }) {
                 let unpinned = state.recentEntries.remove(at: idx)
-                let pinned = ClipboardEntry(
-                    id: unpinned.id,
-                    text: unpinned.text,
-                    createdAt: unpinned.createdAt,
-                    sourceAppBundleID: unpinned.sourceAppBundleID,
-                    pinnedAt: date
-                )
-                state.pinnedEntries.append(pinned)
+                state.pinnedEntries.append(unpinned.withPinnedAt(date))
                 state.pinnedEntries
                     .sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             } else if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let existing = state.pinnedEntries[idx]
-                state.pinnedEntries[idx] = ClipboardEntry(
-                    id: existing.id,
-                    text: existing.text,
-                    createdAt: existing.createdAt,
-                    sourceAppBundleID: existing.sourceAppBundleID,
-                    pinnedAt: date
-                )
+                state.pinnedEntries[idx] = existing.withPinnedAt(date)
                 state.pinnedEntries
                     .sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             }
@@ -330,14 +451,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
 
             if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let pinned = state.pinnedEntries.remove(at: idx)
-                let unpinned = ClipboardEntry(
-                    id: pinned.id,
-                    text: pinned.text,
-                    createdAt: pinned.createdAt,
-                    sourceAppBundleID: pinned.sourceAppBundleID,
-                    pinnedAt: nil
-                )
-                state.recentEntries.append(unpinned)
+                state.recentEntries.append(pinned.withPinnedAt(nil))
                 state.recentEntries.sort { $0.createdAt > $1.createdAt }
                 if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
                     state.recentEntries.removeLast()
@@ -408,144 +522,12 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             guard sqlite3_step(stmt) == SQLITE_DONE else { return }
 
             state.recentEntries.removeAll { $0.createdAt < cutoff }
-            state.totalCount = Self.queryTotalCount(db: db)
+            state.totalCount = ClipboardHistorySQLite.queryTotalCount(db: db)
         }
     }
 
     package func prune(retention: ClipboardRetention, now: Date = .now) {
         guard let cutoff = retention.cutoffDate(from: now) else { return }
         prune(olderThan: cutoff)
-    }
-
-    // MARK: - Private SQLite Helpers
-
-    private static func initializeSchema(db: OpaquePointer) {
-        let schemaSQL = """
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
-
-        CREATE TABLE IF NOT EXISTS clipboard_entries (
-            id TEXT PRIMARY KEY,
-            text TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            source_app_bundle_id TEXT,
-            pinned_at REAL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_clipboard_created_at ON clipboard_entries(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_clipboard_pinned_at ON clipboard_entries(pinned_at ASC);
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(
-            text,
-            content='clipboard_entries',
-            content_rowid='rowid',
-            tokenize='trigram'
-        );
-
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_ai AFTER INSERT ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_ad AFTER DELETE ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(clipboard_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_au AFTER UPDATE ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(clipboard_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-            INSERT INTO clipboard_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;
-        """
-        sqlite3_exec(db, schemaSQL, nil, nil, nil)
-    }
-
-    private static func loadInitialWindow(
-        db: OpaquePointer
-    ) -> (pinned: [ClipboardEntry], recent: [ClipboardEntry], total: Int) {
-        var pinned: [ClipboardEntry] = []
-        var recent: [ClipboardEntry] = []
-
-        // Load all pinned entries sorted by pin time ascending
-        let pinnedSQL = """
-        SELECT id, text, created_at, source_app_bundle_id, pinned_at
-        FROM clipboard_entries
-        WHERE pinned_at IS NOT NULL
-        ORDER BY pinned_at ASC;
-        """
-        var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, pinnedSQL, -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let entry = readEntry(from: stmt) {
-                    pinned.append(entry)
-                }
-            }
-        }
-
-        // Load newest unpinned entries up to limit
-        let recentSQL = """
-        SELECT id, text, created_at, source_app_bundle_id, pinned_at
-        FROM clipboard_entries
-        WHERE pinned_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT ?;
-        """
-        if sqlite3_prepare_v2(db, recentSQL, -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int(stmt, 1, Int32(inMemoryRecentWindowLimit))
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let entry = readEntry(from: stmt) {
-                    recent.append(entry)
-                }
-            }
-        }
-
-        let total = queryTotalCount(db: db)
-        return (pinned, recent, total)
-    }
-
-    private static func queryTotalCount(db: OpaquePointer) -> Int {
-        let countSQL = "SELECT COUNT(*) FROM clipboard_entries;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, countSQL, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int64(stmt, 0))
-    }
-
-    private static func readEntry(from stmt: OpaquePointer?) -> ClipboardEntry? {
-        guard let stmt else { return nil }
-
-        guard let idCString = sqlite3_column_text(stmt, 0),
-              let textCString = sqlite3_column_text(stmt, 1)
-        else {
-            return nil
-        }
-
-        let id = String(cString: idCString)
-        let text = String(cString: textCString)
-        let createdAtTimestamp = sqlite3_column_double(stmt, 2)
-        let createdAt = Date(timeIntervalSince1970: createdAtTimestamp)
-
-        let sourceAppBundleID: String? = if sqlite3_column_type(stmt, 3) != SQLITE_NULL,
-                                            let bundleIDCString = sqlite3_column_text(stmt, 3)
-        {
-            String(cString: bundleIDCString)
-        } else {
-            nil
-        }
-
-        let pinnedAt: Date? = if sqlite3_column_type(stmt, 4) != SQLITE_NULL {
-            Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
-        } else {
-            nil
-        }
-
-        return ClipboardEntry(
-            id: id,
-            text: text,
-            createdAt: createdAt,
-            sourceAppBundleID: sourceAppBundleID,
-            pinnedAt: pinnedAt
-        )
     }
 }

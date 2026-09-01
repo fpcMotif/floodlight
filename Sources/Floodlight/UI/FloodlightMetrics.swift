@@ -10,6 +10,7 @@ enum FloodlightMetrics {
     static let resultRowHeight: CGFloat = 58
     static let resultPadding: CGFloat = 7
     static let maximumVisibleResults = 7
+    static let clipboardInspectorWidth: CGFloat = 272
 
     static var expandedPanelHeight: CGFloat {
         searchHeight

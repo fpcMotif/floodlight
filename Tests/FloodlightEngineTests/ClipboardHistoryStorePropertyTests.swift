@@ -72,4 +72,53 @@ struct ClipboardHistoryStorePropertyTests {
             return true
         }
     }
+
+    @Test func filePathsRemainSearchableAndKeepFileKind() {
+        let store = ClipboardHistoryStore.inMemory()
+        let paths = [
+            "/Users/f/Documents/Invoices/Invoice_2026.pdf",
+            "/Users/f/Movies/ProductDemo_4K.mov",
+            "/Users/f/devv/floodlight",
+        ]
+
+        for path in paths {
+            #expect(store.recordFile(path: path)?.kind == .file)
+        }
+
+        for path in paths {
+            let byName = store.search(query: URL(fileURLWithPath: path).lastPathComponent)
+            #expect(byName.contains { $0.text == path && $0.kind == .file })
+        }
+
+        let byDirectory = store.search(query: "/Users/f")
+        #expect(byDirectory.count == 3)
+        #expect(byDirectory.allSatisfy { $0.kind == .file })
+    }
+
+    @Test func imageHashesRemainSearchableAndKeepImageKind() {
+        let store = ClipboardHistoryStore.inMemory()
+        let names = [
+            "CleanShot 2026-09-01 at 15.30.png",
+            "AppMockup_Dark_v2.png",
+            "Figma_Canvas_Selection.png",
+        ]
+
+        for (index, name) in names.enumerated() {
+            #expect(store.recordImage(
+                pngData: Data(repeating: UInt8(index + 1), count: 16),
+                thumbnailPNGData: ClipboardImageTestData.thumbnail,
+                width: 100 + index,
+                height: 80,
+                displayName: name
+            )?.kind == .image)
+        }
+
+        for name in names {
+            let byName = store.search(query: name)
+            #expect(byName.contains { $0.text == name && $0.kind == .image })
+        }
+
+        let byDimension = store.search(query: "100")
+        #expect(byDimension.contains { $0.kind == .image && $0.image?.width == 100 })
+    }
 }

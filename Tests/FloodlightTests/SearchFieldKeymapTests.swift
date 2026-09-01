@@ -11,11 +11,13 @@ struct SearchFieldKeymapTests {
     private func command(
         _ selector: Selector,
         commandKeyIsDown: Bool = false,
+        optionKeyIsDown: Bool = false,
         textIsEmpty: Bool = false
     ) -> FloodlightTextField.FieldCommand? {
         FloodlightTextField.fieldCommand(
             for: selector,
             commandKeyIsDown: commandKeyIsDown,
+            optionKeyIsDown: optionKeyIsDown,
             textIsEmpty: textIsEmpty
         )
     }
@@ -25,6 +27,27 @@ struct SearchFieldKeymapTests {
         #expect(command(#selector(NSResponder.insertNewline(_:)), commandKeyIsDown: true) ==
             .commandSubmit)
         #expect(command(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))) == .submit)
+    }
+
+    @Test func optionReturnMapsToCopySelection() {
+        #expect(
+            command(#selector(NSResponder.insertNewline(_:)), optionKeyIsDown: true) ==
+                .copySelection
+        )
+        #expect(
+            command(
+                #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)),
+                optionKeyIsDown: true
+            ) == .copySelection
+        )
+        #expect(
+            command(
+                #selector(NSResponder.insertNewline(_:)),
+                commandKeyIsDown: true,
+                optionKeyIsDown: true
+            ) == .commandSubmit,
+            "⌘Return keeps Finder reveal even when Option is also down"
+        )
     }
 
     @Test func escapeMapsToCancel() {

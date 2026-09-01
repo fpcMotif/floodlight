@@ -287,6 +287,15 @@ final class FloodlightPanelController {
         case 126:
             model.moveSelection(by: -1)
             return nil
+        case 49:
+            if Self.shouldHandleSpaceAsPreview(
+                isClipboardMode: model.isClipboardMode,
+                query: model.query,
+                hasPreviewableSelection: model.previewableSelectionURL != nil
+            ) {
+                togglePreview()
+                return nil
+            }
         default:
             break
         }
@@ -435,5 +444,15 @@ final class FloodlightPanelController {
             return nil
         }
         return digit - 1
+    }
+
+    static func shouldHandleSpaceAsPreview(
+        isClipboardMode: Bool,
+        query: String,
+        hasPreviewableSelection: Bool
+    ) -> Bool {
+        isClipboardMode
+            && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && hasPreviewableSelection
     }
 }

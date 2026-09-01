@@ -99,17 +99,20 @@ enum SearchResultProjection {
     struct ClipboardContext: Equatable {
         let query: String
         let entries: [ClipboardEntry]
+        let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
         let now: Date
 
         init(
             query: String,
             entries: [ClipboardEntry],
+            selectedFilter: SearchResultFilter = .all,
             selection: SearchResultSelection?,
             now: Date = .now
         ) {
             self.query = query
             self.entries = entries
+            self.selectedFilter = selectedFilter
             self.selection = selection
             self.now = now
         }
@@ -194,18 +197,83 @@ enum SearchResultProjection {
         let rows = context.entries.enumerated().map { index, entry in
             buildClipboardRow(entry: entry, index: index, now: context.now)
         }
+        let selectedFilter = SearchResultFilter.clipboard.contains(context.selectedFilter)
+            ? context.selectedFilter
+            : .all
+        let visibleRows = rows.filter { clipboardFilter(selectedFilter, includes: $0) }
         return SearchResultPublication(
             sourceCandidates: [],
             allRows: rows,
-            visibleRows: rows,
-            filterOptions: [],
-            selectedFilter: .all,
-            selection: reconcile(context.selection, in: rows),
+            visibleRows: visibleRows,
+            filterOptions: clipboardFilterOptions(entries: context.entries),
+            selectedFilter: selectedFilter,
+            selection: reconcile(context.selection, in: visibleRows),
             progress: .settled
         )
     }
 
+    private static func clipboardFilter(
+        _ filter: SearchResultFilter,
+        includes row: SearchItem
+    ) -> Bool {
+        switch filter {
+        case .all:
+            true
+        case .text:
+            if case .copy = row.action { true } else { false }
+        case .files:
+            if case .copyFiles = row.action { true } else { false }
+        case .images:
+            if case .copyImage = row.action { true } else { false }
+        default:
+            false
+        }
+    }
+
+    private static func clipboardFilterOptions(
+        entries: [ClipboardEntry]
+    ) -> [SearchFilterOption] {
+        var text = 0
+        var files = 0
+        var images = 0
+        for entry in entries {
+            switch entry.kind {
+            case .text: text += 1
+            case .file: files += 1
+            case .image: images += 1
+            }
+        }
+        let counts: [SearchResultFilter: Int] = [
+            .all: entries.count,
+            .text: text,
+            .files: files,
+            .images: images,
+        ]
+        return SearchResultFilter.clipboard.map { filter in
+            SearchFilterOption(
+                filter: filter,
+                count: counts[filter, default: 0],
+                isLoading: false
+            )
+        }
+    }
+
     private static func buildClipboardRow(
+        entry: ClipboardEntry,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
+        switch entry.kind {
+        case .file:
+            buildClipboardFileRow(entry: entry, index: index)
+        case .text:
+            buildClipboardTextRow(entry: entry, index: index, now: now)
+        case .image:
+            buildClipboardImageRow(entry: entry, index: index, now: now)
+        }
+    }
+
+    private static func buildClipboardTextRow(
         entry: ClipboardEntry,
         index: Int,
         now: Date
@@ -228,6 +296,61 @@ enum SearchResultProjection {
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
             modifiedAt: entry.createdAt
+        )
+    }
+
+    private static func buildClipboardFileRow(
+        entry: ClipboardEntry,
+        index: Int
+    ) -> SearchItem {
+        let path = entry.text
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let preview = name.isEmpty ? path : name
+        let title = entry.isPinned ? "📌 \(preview)" : preview
+        let fileURL = URL(fileURLWithPath: path)
+
+        return SearchItem(
+            id: "clipboard:\(entry.id)",
+            title: title,
+            subtitle: path,
+            kind: .clipboard,
+            action: .copyFiles([path]),
+            iconSource: .inferred,
+            score: SearchItemRanking.calculator - index,
+            fileURL: fileURL
+        )
+    }
+
+    private static func buildClipboardImageRow(
+        entry: ClipboardEntry,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
+        let preview = entry.text.isEmpty ? "Image" : entry.text
+        let title = entry.isPinned ? "📌 \(preview)" : preview
+        let dimensions = if let image = entry.image {
+            "\(image.width)×\(image.height)"
+        } else {
+            "Image"
+        }
+        let time = formattedRelativeTime(since: entry.createdAt, now: now)
+        let iconSource: SearchItemIconSource = if let thumbnail = entry.image?.thumbnailPNGData,
+                                                  !thumbnail.isEmpty
+        {
+            .thumbnail(thumbnail)
+        } else {
+            .engine(symbol: "photo", tint: .gray)
+        }
+
+        return SearchItem(
+            id: "clipboard:\(entry.id)",
+            title: title,
+            subtitle: "\(dimensions) · \(time)",
+            kind: .clipboard,
+            action: .copyImage(id: entry.id),
+            iconSource: iconSource,
+            score: SearchItemRanking.calculator - index,
+            fileSize: entry.image.map { UInt64($0.byteCount) }
         )
     }
 
@@ -370,6 +493,8 @@ enum SearchResultProjection {
             progress.isSearching
         case .settings:
             progress.pendingKinds.contains(.systemSetting)
+        case .text:
+            false
         }
     }
 }

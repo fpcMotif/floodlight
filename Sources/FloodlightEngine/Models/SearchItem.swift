@@ -46,6 +46,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
     case pdfs
     case images
     case documents
+    case text
 
     package static let primary: [SearchResultFilter] = [
         .all,
@@ -59,6 +60,16 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         .pdfs,
         .images,
         .documents,
+    ]
+
+    /// Clipboard mode's always-visible chips. `.text` is clipboard-only;
+    /// `.all`/`.files`/`.images` reuse the local titles so ⌘1–⌘4 stay on
+    /// the same chip control.
+    package static let clipboard: [SearchResultFilter] = [
+        .all,
+        .text,
+        .files,
+        .images,
     ]
 
     package var id: String {
@@ -75,6 +86,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         case .pdfs: "PDFs"
         case .images: "Images"
         case .documents: "Documents"
+        case .text: "Text"
         }
     }
 
@@ -88,6 +100,7 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
         case .pdfs: "doc.richtext.fill"
         case .images: "photo.fill"
         case .documents: "doc.fill"
+        case .text: "text.alignleft"
         }
     }
 
@@ -113,6 +126,8 @@ package enum SearchResultFilter: String, CaseIterable, Hashable, Identifiable, S
             item.kind == .file && Self.imageExtensions.contains(item.fileExtension)
         case .documents:
             item.kind == .file && Self.documentExtensions.contains(item.fileExtension)
+        case .text:
+            false
         }
     }
 
@@ -174,6 +189,7 @@ package struct SearchFilterCounts: Equatable, Sendable {
         case .pdfs: pdfs
         case .images: images
         case .documents: documents
+        case .text: 0
         }
     }
 }
@@ -213,6 +229,11 @@ package struct SearchItemPage: Sendable {
 
 package enum SearchItemAction: Hashable, Sendable {
     case copy(String)
+    /// Restore native file references to the pasteboard so Finder and apps
+    /// can paste the files themselves rather than their path strings.
+    case copyFiles([String])
+    /// Restore captured PNG/TIFF bytes for a Clipboard History image entry.
+    case copyImage(id: String)
     case open(URL)
     /// Runs an installed CLI locally and reports its stdout back into the
     /// panel — `command` is a bare executable name and `arguments` are
@@ -240,6 +261,8 @@ package enum SearchItemIconSource: Hashable, Sendable {
     /// A keyword-engine row's own glyph and brand tint, resolved by the
     /// engine that built the row.
     case engine(symbol: String, tint: SearchItemIconTint)
+    /// A downscaled PNG thumbnail for a Clipboard History image entry.
+    case thumbnail(Data)
 }
 
 package struct SearchItem: Identifiable, Hashable, Sendable {
@@ -283,7 +306,7 @@ package struct SearchItem: Identifiable, Hashable, Sendable {
     }
 
     package var isPreviewable: Bool {
-        kind == .file && fileURL != nil
+        fileURL != nil && (kind == .file || kind == .clipboard)
     }
 
     fileprivate var fileExtension: String {
