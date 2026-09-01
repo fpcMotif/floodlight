@@ -216,6 +216,8 @@ package enum SearchItemAction: Hashable, Sendable {
     /// Restore native file references to the pasteboard so Finder and apps
     /// can paste the files themselves rather than their path strings.
     case copyFiles([String])
+    /// Restore captured PNG/TIFF bytes for a Clipboard History image entry.
+    case copyImage(id: String)
     case open(URL)
     /// Runs an installed CLI locally and reports its stdout back into the
     /// panel — `command` is a bare executable name and `arguments` are
@@ -243,6 +245,8 @@ package enum SearchItemIconSource: Hashable, Sendable {
     /// A keyword-engine row's own glyph and brand tint, resolved by the
     /// engine that built the row.
     case engine(symbol: String, tint: SearchItemIconTint)
+    /// A downscaled PNG thumbnail for a Clipboard History image entry.
+    case thumbnail(Data)
 }
 
 package struct SearchItem: Identifiable, Hashable, Sendable {

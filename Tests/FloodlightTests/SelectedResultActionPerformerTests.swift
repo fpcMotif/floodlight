@@ -102,6 +102,83 @@ struct SelectedResultActionPerformerTests {
         #expect(Set(urls?.map(\.path) ?? []) == [path])
     }
 
+    @Test func clipboardImageActivationRestoresPNGAndTIFFAndDismisses() {
+        let harness = makeHarness()
+        let png = Data(repeating: 0xAB, count: 64)
+        let tiff = Data(repeating: 0xCD, count: 80)
+        harness.events.imagePayloads["image-1"] = ClipboardImagePayload(png: png, tiff: tiff)
+        let item = SearchItem(
+            id: "clipboard:image-1",
+            title: "CleanShot 2026-09-01 at 15.30.png",
+            subtitle: "2880×1800 · 2m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-1"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "screenshot")
+
+        #expect(harness.effects.clipboardImages.count == 1)
+        #expect(harness.effects.clipboardImages[0].png == png)
+        #expect(harness.effects.clipboardImages[0].tiff == tiff)
+        #expect(harness.effects.clipboardValues.isEmpty)
+        #expect(harness.presentation.events == [.dismiss])
+    }
+
+    @Test func clipboardImageCopyWritesTheDisplayNameWithoutDismissing() {
+        let harness = makeHarness()
+        let item = SearchItem(
+            id: "clipboard:image-2",
+            title: "📌 AppMockup_Dark_v2.png",
+            subtitle: "1440×900 · 1h",
+            kind: .clipboard,
+            action: .copyImage(id: "image-2"),
+            score: 100
+        )
+
+        harness.performer.copy(item)
+
+        #expect(harness.effects.clipboardValues == ["AppMockup_Dark_v2.png"])
+        #expect(harness.effects.clipboardImages.isEmpty)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func nativeImageWritePutsPNGTIFFAndOwnWriteMarkerOnPasteboard() {
+        let png = Data(repeating: 0xAB, count: 64)
+        let tiff = Data(repeating: 0xCD, count: 80)
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("FloodlightImageClipboard-\(UUID().uuidString)")
+        )
+        defer { pasteboard.releaseGlobally() }
+
+        #expect(AppKitSelectedResultActionEffects.writeImage(png: png, tiff: tiff, to: pasteboard))
+        let types = pasteboard.types ?? []
+        #expect(types.contains(.floodlightOwnWrite))
+        #expect(pasteboard.data(forType: .png) == png)
+        #expect(pasteboard.data(forType: .tiff) == tiff)
+    }
+
+    @Test func clipboardImageActivationFailureKeepsSearchOpen() {
+        let harness = makeHarness(clipboardSucceeds: false)
+        harness.events.imagePayloads["image-3"] = ClipboardImagePayload(
+            png: Data(repeating: 0x11, count: 8),
+            tiff: nil
+        )
+        let item = SearchItem(
+            id: "clipboard:image-3",
+            title: "shot.png",
+            subtitle: "10×10 · 1m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-3"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "shot")
+
+        #expect(harness.effects.clipboardImages.count == 1)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
     @Test func clipboardFileActivationFailureKeepsSearchOpen() {
         let harness = makeHarness(clipboardSucceeds: false)
         let path = "/Users/f/Documents/Invoice_2026.pdf"
@@ -446,6 +523,9 @@ private final class Harness {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: activator,
             recentStore: recentStore,
+            clipboardImagePayload: { id in
+                events.imagePayloads[id]
+            },
             trackSelection: { itemID, url, query in
                 await learning.record(itemID: itemID, url: url, query: query)
                 await events.record(.learned(itemID, url, query))
@@ -471,6 +551,7 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     private let events: EventRecorder
     private(set) var clipboardValues: [String] = []
     private(set) var clipboardFilePaths: [[String]] = []
+    private(set) var clipboardImages: [(png: Data?, tiff: Data?)] = []
     private(set) var openRequests: [OpenRequest] = []
     private(set) var completedOpenCount = 0
     private(set) var revealedURLs: [URL] = []
@@ -496,6 +577,12 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     func writeFilesToClipboard(_ paths: [String]) -> Bool {
         clipboardFilePaths.append(paths)
         events.record(.clipboardFiles(paths))
+        return clipboardSucceeds
+    }
+
+    func writeImageDataToClipboard(png: Data?, tiff: Data?) -> Bool {
+        clipboardImages.append((png, tiff))
+        events.record(.clipboardImage(png, tiff))
         return clipboardSucceeds
     }
 
@@ -571,6 +658,7 @@ private final class PresentationRecorder {
 @MainActor
 private final class EventRecorder {
     private(set) var events: [ActionEvent] = []
+    var imagePayloads: [String: ClipboardImagePayload] = [:]
 
     func record(_ event: ActionEvent) {
         events.append(event)
@@ -580,6 +668,7 @@ private final class EventRecorder {
 private enum ActionEvent: Equatable {
     case clipboard(String)
     case clipboardFiles([String])
+    case clipboardImage(Data?, Data?)
     case runningApplicationActivationRequested(URL)
     case openRequested(URL, asApplication: Bool)
     case openSucceeded(URL)

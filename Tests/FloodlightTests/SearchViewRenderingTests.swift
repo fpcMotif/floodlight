@@ -298,6 +298,16 @@ struct SearchViewRenderingTests {
             SearchFixtures.calculator(),
             SearchFixtures.assistant(),
             SearchFixtures.web(),
+            SearchItem(
+                id: "clipboard:image-render",
+                title: "Screenshot",
+                subtitle: "32×16 · 2m",
+                kind: .clipboard,
+                action: .copyImage(id: "image-render"),
+                iconSource: .thumbnail(Data(repeating: 0xEF, count: 32)),
+                score: 1,
+                fileSize: 1_400
+            ),
         ]
 
         for item in items {

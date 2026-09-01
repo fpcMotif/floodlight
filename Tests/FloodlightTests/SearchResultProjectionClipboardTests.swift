@@ -99,4 +99,64 @@ struct SearchResultProjectionClipboardTests {
         #expect(folderRow.fileURL == URL(fileURLWithPath: folderPath))
         #expect(folderRow.action == .copyFiles([folderPath]))
     }
+
+    @Test func clipboardProjectionRendersImageEntriesWithThumbnailDimensionsAndTimestamp() {
+        let created = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_120)
+        let thumbnail = Data(repeating: 0xEF, count: 32)
+
+        let image = ClipboardEntry(
+            id: "image-1",
+            text: "CleanShot 2026-09-01 at 15.30.png",
+            kind: .image,
+            createdAt: created,
+            image: ClipboardImageMetadata(
+                hash: "abc",
+                width: 2_880,
+                height: 1_800,
+                byteCount: 1_400_000,
+                thumbnailPNGData: thumbnail
+            )
+        )
+        let pinned = ClipboardEntry(
+            id: "image-2",
+            text: "AppMockup_Dark_v2.png",
+            kind: .image,
+            createdAt: created,
+            pinnedAt: now,
+            image: ClipboardImageMetadata(
+                hash: "def",
+                width: 1_440,
+                height: 900,
+                byteCount: 480_000,
+                thumbnailPNGData: thumbnail
+            )
+        )
+
+        let publication = SearchResultProjection.project(
+            .clipboard(.init(
+                query: "screenshot",
+                entries: [image, pinned],
+                selection: nil,
+                now: now
+            ))
+        )
+
+        #expect(publication.visibleRows.count == 2)
+
+        let imageRow = publication.visibleRows[0]
+        #expect(imageRow.id == "clipboard:image-1")
+        #expect(imageRow.title == "CleanShot 2026-09-01 at 15.30.png")
+        #expect(imageRow.subtitle == "2880×1800 · 2m")
+        #expect(imageRow.kind == .clipboard)
+        #expect(imageRow.fileSize == 1_400_000)
+        #expect(imageRow.iconSource == .thumbnail(thumbnail))
+        #expect(imageRow.action == .copyImage(id: "image-1"))
+
+        let pinnedRow = publication.visibleRows[1]
+        #expect(pinnedRow.title == "📌 AppMockup_Dark_v2.png")
+        #expect(pinnedRow.subtitle == "1440×900 · 2m")
+        #expect(pinnedRow.fileSize == 480_000)
+        #expect(pinnedRow.action == .copyImage(id: "image-2"))
+    }
 }

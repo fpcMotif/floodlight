@@ -8,6 +8,8 @@ protocol PasteboardObserving: AnyObject {
     var pasteboardTypes: [NSPasteboard.PasteboardType]? { get }
     func string(forType type: NSPasteboard.PasteboardType) -> String?
     func filePaths() -> [String]
+    func pngData() -> Data?
+    func tiffData() -> Data?
     var frontmostApplicationBundleIdentifier: String? { get }
 }
 
@@ -33,6 +35,14 @@ final class AppKitPasteboardObserver: PasteboardObserving {
 
     func filePaths() -> [String] {
         ClipboardFileReference.paths(from: pasteboard)
+    }
+
+    func pngData() -> Data? {
+        pasteboard.data(forType: .png)
+    }
+
+    func tiffData() -> Data? {
+        pasteboard.data(forType: .tiff)
     }
 
     var frontmostApplicationBundleIdentifier: String? {
@@ -250,6 +260,19 @@ final class ClipboardCaptureService {
             for path in filePaths {
                 store.recordFile(path: path, sourceAppBundleID: bundleID)
             }
+            return
+        }
+
+        if let image = ClipboardImageCapture.payload(from: observer) {
+            store.recordImage(
+                pngData: image.png,
+                tiffData: image.tiff,
+                thumbnailPNGData: image.thumbnailPNGData,
+                width: image.width,
+                height: image.height,
+                displayName: image.displayName,
+                sourceAppBundleID: bundleID
+            )
             return
         }
 

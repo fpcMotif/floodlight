@@ -10,6 +10,7 @@ extension NSPasteboard.PasteboardType {
 protocol SelectedResultActionEffects {
     func writeToClipboard(_ value: String) -> Bool
     func writeFilesToClipboard(_ paths: [String]) -> Bool
+    func writeImageDataToClipboard(png: Data?, tiff: Data?) -> Bool
     func open(_ url: URL, asApplication: Bool) async throws
     func revealInFinder(_ url: URL)
 }
@@ -34,6 +35,10 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
         Self.writeFiles(paths, to: .general)
     }
 
+    func writeImageDataToClipboard(png: Data?, tiff: Data?) -> Bool {
+        Self.writeImage(png: png, tiff: tiff, to: .general)
+    }
+
     static func writeString(_ value: String, to pasteboard: NSPasteboard) -> Bool {
         pasteboard.clearContents()
         pasteboard.setData(Data(), forType: .floodlightOwnWrite)
@@ -51,6 +56,22 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
             forType: ClipboardFileReference.filenamesType
         )
         return pasteboard.writeObjects(urls as [NSURL])
+    }
+
+    static func writeImage(png: Data?, tiff: Data?, to pasteboard: NSPasteboard) -> Bool {
+        let pngData = png.flatMap { $0.isEmpty ? nil : $0 }
+        let tiffData = tiff.flatMap { $0.isEmpty ? nil : $0 }
+        guard pngData != nil || tiffData != nil else { return false }
+        pasteboard.clearContents()
+        pasteboard.setData(Data(), forType: .floodlightOwnWrite)
+        var wrote = false
+        if let pngData {
+            wrote = pasteboard.setData(pngData, forType: .png) || wrote
+        }
+        if let tiffData {
+            wrote = pasteboard.setData(tiffData, forType: .tiff) || wrote
+        }
+        return wrote
     }
 
     func open(_ url: URL, asApplication: Bool) async throws {
@@ -107,6 +128,7 @@ final class SelectedResultActionPerformer {
     private let assistantRunSession: AssistantRunSession
     private let runningApplicationActivator: any RunningApplicationActivating
     private let recentStore: RecentStore
+    private let clipboardImagePayload: (String) -> ClipboardImagePayload?
     private let trackSelection: TrackSelection
     private let onDismiss: @MainActor () -> Void
 
@@ -115,6 +137,7 @@ final class SelectedResultActionPerformer {
         assistantRunSession: AssistantRunSession,
         runningApplicationActivator: any RunningApplicationActivating,
         recentStore: RecentStore,
+        clipboardImagePayload: @escaping (String) -> ClipboardImagePayload? = { _ in nil },
         trackSelection: @escaping TrackSelection,
         onDismiss: @escaping @MainActor () -> Void
     ) {
@@ -122,6 +145,7 @@ final class SelectedResultActionPerformer {
         self.assistantRunSession = assistantRunSession
         self.runningApplicationActivator = runningApplicationActivator
         self.recentStore = recentStore
+        self.clipboardImagePayload = clipboardImagePayload
         self.trackSelection = trackSelection
         self.onDismiss = onDismiss
     }
@@ -137,6 +161,15 @@ final class SelectedResultActionPerformer {
 
         case let .copyFiles(paths):
             guard effects.writeFilesToClipboard(paths) else {
+                logClipboardFailure(for: item)
+                return
+            }
+            onDismiss()
+
+        case let .copyImage(id):
+            guard let payload = clipboardImagePayload(id),
+                  effects.writeImageDataToClipboard(png: payload.png, tiff: payload.tiff)
+            else {
                 logClipboardFailure(for: item)
                 return
             }
@@ -207,6 +240,8 @@ final class SelectedResultActionPerformer {
             value
         case let .copyFiles(paths):
             paths.first ?? item.fileURL?.path ?? item.subtitle
+        case .copyImage:
+            item.title.hasPrefix("📌 ") ? String(item.title.dropFirst(2)) : item.title
         case let .open(url):
             url.isFileURL ? url.path : url.absoluteString
         case .askAssistant:

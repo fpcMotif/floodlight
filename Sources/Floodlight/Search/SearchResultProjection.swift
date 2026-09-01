@@ -215,6 +215,8 @@ enum SearchResultProjection {
             buildClipboardFileRow(entry: entry, index: index)
         case .text:
             buildClipboardTextRow(entry: entry, index: index, now: now)
+        case .image:
+            buildClipboardImageRow(entry: entry, index: index, now: now)
         }
     }
 
@@ -263,6 +265,39 @@ enum SearchResultProjection {
             iconSource: .inferred,
             score: SearchItemRanking.calculator - index,
             fileURL: fileURL
+        )
+    }
+
+    private static func buildClipboardImageRow(
+        entry: ClipboardEntry,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
+        let preview = entry.text.isEmpty ? "Image" : entry.text
+        let title = entry.isPinned ? "📌 \(preview)" : preview
+        let dimensions = if let image = entry.image {
+            "\(image.width)×\(image.height)"
+        } else {
+            "Image"
+        }
+        let time = formattedRelativeTime(since: entry.createdAt, now: now)
+        let iconSource: SearchItemIconSource = if let thumbnail = entry.image?.thumbnailPNGData,
+                                                  !thumbnail.isEmpty
+        {
+            .thumbnail(thumbnail)
+        } else {
+            .engine(symbol: "photo", tint: .gray)
+        }
+
+        return SearchItem(
+            id: "clipboard:\(entry.id)",
+            title: title,
+            subtitle: "\(dimensions) · \(time)",
+            kind: .clipboard,
+            action: .copyImage(id: entry.id),
+            iconSource: iconSource,
+            score: SearchItemRanking.calculator - index,
+            fileSize: entry.image.map { UInt64($0.byteCount) }
         )
     }
 

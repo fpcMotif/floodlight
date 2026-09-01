@@ -1,3 +1,4 @@
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -381,6 +382,225 @@ struct ClipboardHistoryStoreTests {
             #expect(all[0].isPinned)
             #expect(all[1].kind == .text)
             #expect(store2.search(query: "Package.swift").map(\.kind) == [.file])
+        }
+    }
+
+    // MARK: - Image Entries
+
+    @Test func recordingAnImagePreservesKindHashDimensionsAndThumbnail() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let png = ClipboardImageTestData.png
+        let thumbnail = ClipboardImageTestData.thumbnail
+
+        let entry = store.recordImage(
+            pngData: png,
+            thumbnailPNGData: thumbnail,
+            width: 2_880,
+            height: 1_800,
+            displayName: "CleanShot 2026-09-01 at 15.30.png",
+            sourceAppBundleID: "com.apple.screencapture",
+            date: now
+        )
+
+        let unwrapped = try #require(entry)
+        #expect(unwrapped.kind == .image)
+        #expect(unwrapped.text == "CleanShot 2026-09-01 at 15.30.png")
+        #expect(unwrapped.sourceAppBundleID == "com.apple.screencapture")
+        #expect(unwrapped.createdAt == now)
+        #expect(!unwrapped.isPinned)
+        #expect(unwrapped.image?.width == 2_880)
+        #expect(unwrapped.image?.height == 1_800)
+        #expect(unwrapped.image?.byteCount == png.count)
+        #expect(unwrapped.image?.hash == ClipboardImageTestData.pngSHA256)
+        #expect(unwrapped.image?.thumbnailPNGData == thumbnail)
+        #expect(store.count == 1)
+
+        let loaded = try #require(store.imageData(for: unwrapped.id))
+        #expect(loaded.png == png)
+        #expect(loaded.tiff == nil)
+
+        #expect(store.search(query: "CleanShot").map(\.id) == [unwrapped.id])
+        #expect(store.search(query: "2880").map(\.kind) == [.image])
+    }
+
+    @Test func consecutiveDuplicateImageHashesAreCollapsed() {
+        let store = ClipboardHistoryStore.inMemory()
+        let png = ClipboardImageTestData.png
+
+        #expect(store.recordImage(
+            pngData: png,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 800,
+            height: 600,
+            displayName: "first.png"
+        ) != nil)
+        #expect(store.count == 1)
+        #expect(store.recordImage(
+            pngData: png,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 800,
+            height: 600,
+            displayName: "again.png"
+        ) == nil)
+        #expect(store.count == 1)
+
+        #expect(store.recordImage(
+            pngData: ClipboardImageTestData.tiff,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 100,
+            height: 100,
+            displayName: "other.png"
+        ) != nil)
+        #expect(store.count == 2)
+        #expect(store.recordImage(
+            pngData: png,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 800,
+            height: 600,
+            displayName: "first-again.png"
+        ) != nil)
+        #expect(store.count == 3)
+    }
+
+    @Test func imagesExceeding15MBAreSkipped() {
+        let store = ClipboardHistoryStore.inMemory()
+        let oversized = Data(repeating: 0x11, count: ClipboardHistoryStore.maxImageByteCount + 1)
+
+        #expect(store.recordImage(
+            pngData: oversized,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 10,
+            height: 10,
+            displayName: "huge.png"
+        ) == nil)
+        #expect(store.isEmpty)
+
+        let exact = Data(repeating: 0x22, count: ClipboardHistoryStore.maxImageByteCount)
+        #expect(store.recordImage(
+            pngData: exact,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 10,
+            height: 10,
+            displayName: "exact.png"
+        ) != nil)
+        #expect(store.count == 1)
+    }
+
+    @Test func oversizedCompanionRepresentationDoesNotDropAValidImage() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let oversized = Data(repeating: 0x11, count: ClipboardHistoryStore.maxImageByteCount + 1)
+        let tiff = Data(repeating: 0x33, count: 16)
+        let kept = try #require(store.recordImage(
+            pngData: oversized,
+            tiffData: tiff,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 8,
+            height: 8,
+            displayName: "tiff-only.png"
+        ))
+        #expect(store.imageData(for: kept.id)?.png == nil)
+        #expect(store.imageData(for: kept.id)?.tiff == tiff)
+    }
+
+    @Test func emptyImagePayloadsAreSkipped() {
+        let store = ClipboardHistoryStore.inMemory()
+        #expect(store.recordImage(
+            pngData: Data(),
+            tiffData: Data(),
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 1,
+            height: 1,
+            displayName: "empty.png"
+        ) == nil)
+        #expect(store.isEmpty)
+    }
+
+    @Test func imageEntriesPinDeleteClearAndPruneLikeText() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let day: TimeInterval = 86_400
+        let now = Date(timeIntervalSince1970: 10_000_000)
+
+        let oldImage = try #require(store.recordImage(
+            pngData: Data(repeating: 0x01, count: 16),
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 10,
+            height: 10,
+            displayName: "old.png",
+            date: now.addingTimeInterval(-10 * day)
+        ))
+        let pinnedImage = try #require(store.recordImage(
+            pngData: Data(repeating: 0x02, count: 16),
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 20,
+            height: 20,
+            displayName: "pinned.png",
+            date: now.addingTimeInterval(-10 * day)
+        ))
+        let recentImage = try #require(store.recordImage(
+            pngData: Data(repeating: 0x03, count: 16),
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 30,
+            height: 30,
+            displayName: "recent.png",
+            date: now.addingTimeInterval(-2 * day)
+        ))
+        store.pin(id: pinnedImage.id)
+
+        store.prune(olderThan: now.addingTimeInterval(-7 * day))
+        #expect(store.search(query: "").map(\.id) == [pinnedImage.id, recentImage.id])
+        #expect(!store.search(query: "").contains { $0.id == oldImage.id })
+        #expect(store.search(query: "").first { $0.id == pinnedImage.id }?.kind == .image)
+        #expect(store.imageData(for: oldImage.id) == nil)
+        #expect(store.imageData(for: pinnedImage.id)?.png == Data(repeating: 0x02, count: 16))
+
+        store.delete(id: recentImage.id)
+        #expect(store.search(query: "").map(\.id) == [pinnedImage.id])
+        #expect(store.imageData(for: recentImage.id) == nil)
+
+        store.clear()
+        #expect(store.isEmpty)
+        #expect(store.imageData(for: pinnedImage.id) == nil)
+    }
+
+    @Test func diskStorePersistsImageKindThumbnailAndPayload() throws {
+        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        defer { cleanup() }
+        let png = ClipboardImageTestData.png
+        let thumbnail = ClipboardImageTestData.thumbnail
+        var imageID = ""
+
+        do {
+            let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
+            _ = try #require(store1.record(text: "plain note"))
+            let image = try #require(store1.recordImage(
+                pngData: png,
+                tiffData: ClipboardImageTestData.tiff,
+                thumbnailPNGData: thumbnail,
+                width: 1_440,
+                height: 900,
+                displayName: "AppMockup_Dark_v2.png"
+            ))
+            store1.pin(id: image.id)
+            imageID = image.id
+            #expect(store1.count == 2)
+        }
+
+        do {
+            let store2 = try ClipboardHistoryStore(databaseURL: dbURL)
+            let all = store2.search(query: "")
+            #expect(all.count == 2)
+            #expect(all[0].kind == .image)
+            #expect(all[0].text == "AppMockup_Dark_v2.png")
+            #expect(all[0].isPinned)
+            #expect(all[0].image?.width == 1_440)
+            #expect(all[0].image?.height == 900)
+            #expect(all[0].image?.thumbnailPNGData == thumbnail)
+            #expect(all[1].kind == .text)
+            #expect(store2.search(query: "AppMockup").map(\.kind) == [.image])
+            let loaded = try #require(store2.imageData(for: imageID))
+            #expect(loaded.png == png)
+            #expect(loaded.tiff == ClipboardImageTestData.tiff)
         }
     }
 }

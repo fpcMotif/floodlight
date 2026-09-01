@@ -108,6 +108,50 @@ struct SearchCoordinatorClipboardModeTests {
         #expect(dismissed)
     }
 
+    @Test func openSelectionRestoresImageDataAndDismisses() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let png = ClipboardImageTestData.png
+        let tiff = ClipboardImageTestData.tiff
+        _ = try #require(store.recordImage(
+            pngData: png,
+            tiffData: tiff,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 2_880,
+            height: 1_800,
+            displayName: "CleanShot 2026-09-01 at 15.30.png"
+        ))
+
+        var dismissed = false
+        var writtenImages: [(png: Data?, tiff: Data?)] = []
+
+        let effects = ScriptedActionEffects(
+            onWrite: { _ in true },
+            onWriteImage: { pngData, tiffData in
+                writtenImages.append((pngData, tiffData))
+                return true
+            }
+        )
+
+        let coordinator = try await makeCoordinator(
+            clipboardStore: store,
+            actionEffects: effects,
+            onDismiss: { dismissed = true }
+        )
+
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        #expect(coordinator.results.count == 1)
+        #expect(coordinator.results[0].title == "CleanShot 2026-09-01 at 15.30.png")
+        #expect(coordinator.results[0].subtitle.hasPrefix("2880×1800"))
+
+        coordinator.openSelection()
+
+        #expect(writtenImages.count == 1)
+        #expect(writtenImages[0].png == png)
+        #expect(writtenImages[0].tiff == tiff)
+        #expect(dismissed)
+    }
+
     @Test func copySelectionWritesAbsoluteFilePathWithoutDismissing() async throws {
         let store = ClipboardHistoryStore.inMemory()
         let path = "/Users/f/Movies/ProductDemo_4K.mov"
@@ -273,13 +317,16 @@ struct SearchCoordinatorClipboardModeTests {
 private final class ScriptedActionEffects: SelectedResultActionEffects {
     let onWrite: (String) -> Bool
     let onWriteFiles: ([String]) -> Bool
+    let onWriteImage: (Data?, Data?) -> Bool
 
     init(
         onWrite: @escaping (String) -> Bool,
-        onWriteFiles: @escaping ([String]) -> Bool = { _ in true }
+        onWriteFiles: @escaping ([String]) -> Bool = { _ in true },
+        onWriteImage: @escaping (Data?, Data?) -> Bool = { _, _ in true }
     ) {
         self.onWrite = onWrite
         self.onWriteFiles = onWriteFiles
+        self.onWriteImage = onWriteImage
     }
 
     func writeToClipboard(_ value: String) -> Bool {
@@ -288,6 +335,10 @@ private final class ScriptedActionEffects: SelectedResultActionEffects {
 
     func writeFilesToClipboard(_ paths: [String]) -> Bool {
         onWriteFiles(paths)
+    }
+
+    func writeImageDataToClipboard(png: Data?, tiff: Data?) -> Bool {
+        onWriteImage(png, tiff)
     }
 
     func open(_ url: URL, asApplication: Bool) async throws {}

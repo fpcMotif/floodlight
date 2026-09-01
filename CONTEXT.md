@@ -68,11 +68,11 @@ A search execution whose available sources still produce usable candidates while
 _Avoid_: Failed search, partial failure
 
 **Clipboard History**:
-The local, privacy-filtered record of text, files, and folders copied across macOS, retained for a configurable period and searchable within Clipboard mode.
+The local, privacy-filtered record of text, files, folders, and images copied across macOS, retained for a configurable period and searchable within Clipboard mode.
 _Avoid_: Clipboard cache, pasteboard manager
 
 **Clipboard Entry**:
-One immutable captured or pinned snippet in Clipboard History: either copied text or a copied file/folder path, including its creation timestamp, optional source application, and optional pinned timestamp.
+One immutable captured or pinned snippet in Clipboard History: copied text, a copied file/folder path, or a captured image with thumbnail and dimensions, including its creation timestamp, optional source application, and optional pinned timestamp.
 _Avoid_: History item, clipboard row
 
 **Clipboard Capture**:

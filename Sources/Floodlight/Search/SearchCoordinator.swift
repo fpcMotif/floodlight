@@ -121,6 +121,9 @@ final class SearchCoordinator {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: runningApplicationActivator,
             recentStore: recentStore,
+            clipboardImagePayload: { [clipboardStore] id in
+                clipboardStore.imageData(for: id)
+            },
             trackSelection: { candidateID, selectedURL, query in
                 await sourceSearch.trackSelection(
                     of: candidateID,
