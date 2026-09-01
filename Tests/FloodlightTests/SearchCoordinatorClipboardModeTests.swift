@@ -444,6 +444,43 @@ struct SearchCoordinatorClipboardModeTests {
         }
         #expect(text.body == "Acme billing address")
     }
+
+    @Test func previewableSelectionURLResolvesForClipboardImageAndFileEntries() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let imageEntry = try #require(store.recordImage(
+            pngData: pngBytes,
+            tiffData: nil,
+            thumbnailPNGData: pngBytes,
+            width: 100,
+            height: 100,
+            displayName: "Screenshot"
+        ))
+        let fileURL = tree.root.appendingPathComponent("sample.mp4")
+        try Data("video-bytes".utf8).write(to: fileURL)
+        let fileEntry = try #require(store.recordFile(path: fileURL.path))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.results.count == 2)
+
+        // First result is fileEntry (most recent)
+        let fileItem = try #require(coordinator.results
+            .first { $0.id == "clipboard:\(fileEntry.id)" })
+        coordinator.select(fileItem)
+        #expect(coordinator.previewableSelectionURL == fileURL)
+
+        // Second result is imageEntry
+        let imageItem = try #require(coordinator.results
+            .first { $0.id == "clipboard:\(imageEntry.id)" })
+        coordinator.select(imageItem)
+        let imagePreviewURL = try #require(coordinator.previewableSelectionURL)
+        #expect(FileManager.default.fileExists(atPath: imagePreviewURL.path))
+        let diskBytes = try Data(contentsOf: imagePreviewURL)
+        #expect(diskBytes == pngBytes)
+    }
 }
 
 private final class ScriptedActionEffects: SelectedResultActionEffects {

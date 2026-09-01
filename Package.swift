@@ -50,6 +50,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Carbon"),
                 .linkedFramework("QuickLookUI"),
+                .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("ServiceManagement"),
                 .unsafeFlags(["-Xlinker", "-dead_strip_dylibs"]),
             ]

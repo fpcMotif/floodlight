@@ -416,8 +416,40 @@ final class SearchCoordinator {
     /// selection has no file URL or isn't previewable. The shell uses this to
     /// drive QuickLook without re-deriving previewability itself.
     var previewableSelectionURL: URL? {
-        guard let selectedItem, selectedItem.isPreviewable else { return nil }
-        return selectedItem.fileURL
+        guard let selectedItem else { return nil }
+        if selectedItem.isPreviewable, let fileURL = selectedItem.fileURL {
+            return fileURL
+        }
+        if case let .copyImage(id) = selectedItem.action {
+            return clipboardImagePreviewURL(for: id)
+        }
+        return nil
+    }
+
+    private func clipboardImagePreviewURL(for id: String) -> URL? {
+        guard let payload = clipboardStore.imageData(for: id) ?? clipboardStore.entry(id: id)
+            .flatMap({ entry in
+                entry.image.flatMap { image in
+                    image.thumbnailPNGData.isEmpty ? nil : ClipboardImagePayload(
+                        png: image.thumbnailPNGData,
+                        tiff: nil
+                    )
+                }
+            })
+        else {
+            return nil
+        }
+        let data = payload.png ?? payload.tiff
+        guard let data, !data.isEmpty else { return nil }
+        let ext = payload.png != nil ? "png" : "tiff"
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("FloodlightClipboardPreviews", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let fileURL = tempDir.appendingPathComponent("\(id).\(ext)")
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            try? data.write(to: fileURL)
+        }
+        return fileURL
     }
 
     /// `assistantRun`'s state, but only if it belongs to `item` — every

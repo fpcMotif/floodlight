@@ -44,6 +44,7 @@ struct ClipboardInspectorPane: View {
 
     private func filePane(_ detail: ClipboardInspector.FileDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            FileMediaPreview(url: detail.fileURL)
             Text(detail.name)
                 .font(FloodlightMetrics.Typography.topHitTitle)
                 .foregroundStyle(.primary)
@@ -63,7 +64,7 @@ struct ClipboardInspectorPane: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: 180)
                     .clipShape(
                         RoundedRectangle(
                             cornerRadius: FloodlightMetrics.resultRowCornerRadius,
@@ -92,16 +93,59 @@ struct ClipboardInspectorPane: View {
     private func labeled(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(FloodlightMetrics.Typography.badge)
+                .font(FloodlightMetrics.Typography.rowSubtitle)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(FloodlightMetrics.Typography.rowSubtitle)
+                .font(FloodlightMetrics.Typography.rowTitle)
                 .foregroundStyle(.primary)
-                .textSelection(.enabled)
+                .lineLimit(2)
         }
     }
 
     private func byteCount(_ count: Int) -> String {
         UInt64(count).formatted(.byteCount(style: .file))
+    }
+}
+
+private struct FileMediaPreview: View {
+    let url: URL
+    @State private var thumbnail: NSImage?
+    @State private var isVideo = false
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                ZStack(alignment: .center) {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: 180)
+                        .clipShape(
+                            RoundedRectangle(
+                                cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+                                style: .continuous
+                            )
+                        )
+                    if isVideo {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(radius: 4)
+                    }
+                }
+            }
+        }
+        .task(id: url) {
+            let ext = url.pathExtension.lowercased()
+            let videoExtensions: Set = [
+                "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "ts", "mpg", "mpeg",
+            ]
+            isVideo = videoExtensions.contains(ext)
+            if let cached = FileThumbnailCache.shared.cachedThumbnail(for: url) {
+                thumbnail = cached
+            } else {
+                thumbnail = await FileThumbnailCache.shared.thumbnail(for: url)
+            }
+        }
     }
 }
