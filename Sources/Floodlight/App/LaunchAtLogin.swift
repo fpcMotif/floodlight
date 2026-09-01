@@ -1,46 +1,143 @@
 import Foundation
 import ServiceManagement
 
-/// Wraps `SMAppService.mainApp` registration and the one-time first-run
+@MainActor
+protocol LaunchAtLoginService: AnyObject {
+    var status: SMAppService.Status { get }
+
+    func register() throws
+    func unregister() throws
+}
+
+extension SMAppService: LaunchAtLoginService {}
+
+enum LaunchAtLoginError: LocalizedError, Equatable {
+    case requiresApproval
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .requiresApproval:
+            "Allow Floodlight in System Settings → General → Login Items & Extensions."
+        case .unavailable:
+            "macOS did not enable Floodlight as a login item. Try again after moving Floodlight to Applications."
+        }
+    }
+}
+
+@MainActor
+final class LaunchAtLoginController {
+    static let configuredKey = "launch-at-login-configured"
+
+    private let service: any LaunchAtLoginService
+    private let defaults: UserDefaults
+    private let logError: (String) -> Void
+
+    init(
+        service: any LaunchAtLoginService = SMAppService.mainApp,
+        defaults: UserDefaults = .standard,
+        logError: @escaping (String) -> Void = { message in
+            NSLog("Floodlight could not enable launch at login: %@", message)
+        }
+    ) {
+        self.service = service
+        self.defaults = defaults
+        self.logError = logError
+    }
+
+    var isEnabled: Bool {
+        service.status == .enabled
+    }
+
+    /// Opts in on the first successful registration attempt.
+    ///
+    /// A failed attempt deliberately leaves the preference unset so a later
+    /// launch can retry. A user-denied item is considered configured and is
+    /// never re-enabled behind the user's back.
+    func enableOnFirstRun() {
+        guard !defaults.bool(forKey: Self.configuredKey) else { return }
+
+        switch service.status {
+        case .enabled, .requiresApproval:
+            markConfigured()
+            return
+        case .notRegistered, .notFound:
+            break
+        @unknown default:
+            break
+        }
+
+        do {
+            try service.register()
+            try requireEnabledStatus()
+            markConfigured()
+        } catch {
+            logError(error.localizedDescription)
+        }
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            switch service.status {
+            case .enabled:
+                break
+            case .requiresApproval:
+                throw LaunchAtLoginError.requiresApproval
+            case .notRegistered, .notFound:
+                try service.register()
+                try requireEnabledStatus()
+            @unknown default:
+                throw LaunchAtLoginError.unavailable
+            }
+        } else {
+            switch service.status {
+            case .enabled, .requiresApproval:
+                try service.unregister()
+            case .notRegistered, .notFound:
+                break
+            @unknown default:
+                break
+            }
+        }
+
+        markConfigured()
+    }
+
+    private func requireEnabledStatus() throws {
+        switch service.status {
+        case .enabled:
+            return
+        case .requiresApproval:
+            throw LaunchAtLoginError.requiresApproval
+        case .notRegistered, .notFound:
+            throw LaunchAtLoginError.unavailable
+        @unknown default:
+            throw LaunchAtLoginError.unavailable
+        }
+    }
+
+    private func markConfigured() {
+        defaults.set(true, forKey: Self.configuredKey)
+    }
+}
+
+/// Wraps `LaunchAtLoginController` registration and the one-time first-run
 /// opt-in decision. Kept as a small shell-side type rather than a
 /// `SearchCoordinator` member, since login-item presentation has nothing to
 /// do with search.
 @MainActor
 enum LaunchAtLogin {
-    private static let configuredKey = "launch-at-login-configured"
+    private static let controller = LaunchAtLoginController()
 
     static var launchesAtLogin: Bool {
-        SMAppService.mainApp.status == .enabled
+        controller.isEnabled
     }
 
-    /// Registers the login item on the very first launch only.
-    ///
-    /// A launcher is only useful once it is already running, so Floodlight opts
-    /// in for you. The `launch-at-login-configured` flag makes this a one-time
-    /// decision: if you later turn it off — here or in System Settings — the
-    /// next launch leaves it off instead of switching it back on.
     static func enableOnFirstRun() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: configuredKey) else { return }
-        defaults.set(true, forKey: configuredKey)
-
-        guard SMAppService.mainApp.status != .enabled else { return }
-        do {
-            try SMAppService.mainApp.register()
-        } catch {
-            NSLog(
-                "Floodlight could not enable launch at login: %@",
-                error.localizedDescription
-            )
-        }
+        controller.enableOnFirstRun()
     }
 
     static func setLaunchAtLogin(_ enabled: Bool) throws {
-        if enabled {
-            try SMAppService.mainApp.register()
-        } else {
-            try SMAppService.mainApp.unregister()
-        }
-        UserDefaults.standard.set(true, forKey: configuredKey)
+        try controller.setEnabled(enabled)
     }
 }
