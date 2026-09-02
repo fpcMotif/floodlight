@@ -216,7 +216,7 @@ struct ClipboardInspectorTests {
             id: "path-1",
             text: tempFile.path,
             createdAt: .now,
-            sourceAppBundleID: "com.mitchellh.ghostty"
+            sourceAppBundleID: "com.apple.finder"
         )
         let snapshot = ClipboardInspector.snapshot(for: entry)
         guard case let .file(detail) = snapshot else {
@@ -225,7 +225,42 @@ struct ClipboardInspectorTests {
         }
         #expect(detail.name == "test-screenshot.png")
         #expect(detail.isImage)
-        #expect(detail.sourceApp == "Ghostty")
+        #expect(detail.sourceApp == "Finder")
         #expect(detail.fileURL == tempFile)
+    }
+
+    @Test func crlfMultilineTextIsNotClassifiedAsALocalPath() {
+        #expect(ClipboardInspector.parseLocalPath("/tmp/shot.png") != nil)
+        #expect(ClipboardInspector.parseLocalPath("/tmp/shot.png\r\nmore") == nil)
+        #expect(ClipboardInspector.parseLocalPath("~/Desktop/a.png\nb") == nil)
+
+        let entry = ClipboardEntry(
+            id: "crlf-path",
+            text: "/tmp/shot.png\r\nnot a path",
+            createdAt: .now
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("CRLF text must stay a text snapshot, not a file path")
+            return
+        }
+        #expect(detail.contentType == .text)
+        #expect(detail.body == "/tmp/shot.png\r\nnot a path")
+    }
+
+    @Test func unknownSourceAppFallsBackToTheBundleIDLastComponent() {
+        let entry = ClipboardEntry(
+            id: "unknown-app",
+            text: "snippet",
+            createdAt: .now,
+            sourceAppBundleID: "com.example.NotAnInstalledApp"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("expected text snapshot")
+            return
+        }
+        #expect(detail.sourceApp == "NotAnInstalledApp")
+        #expect(detail.sourceAppBundleID == "com.example.NotAnInstalledApp")
     }
 }

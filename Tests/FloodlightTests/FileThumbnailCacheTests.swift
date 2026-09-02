@@ -37,9 +37,9 @@ struct FileThumbnailCacheTests {
         ))
         let blue = NSColor(calibratedRed: 0.2, green: 0.6, blue: 0.86, alpha: 1)
         let red = NSColor(calibratedRed: 0.9, green: 0.2, blue: 0.2, alpha: 1)
-        for y in 0..<16 {
-            for x in 0..<24 {
-                representation.setColor(x < 12 ? blue : red, atX: x, y: y)
+        for row in 0..<16 {
+            for column in 0..<24 {
+                representation.setColor(column < 12 ? blue : red, atX: column, y: row)
             }
         }
 

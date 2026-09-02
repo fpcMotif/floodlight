@@ -262,7 +262,8 @@ enum ClipboardInspector: Equatable {
     static func parseLocalPath(_ text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        guard !trimmed.contains("\n"), !trimmed.contains("\r") else { return nil }
+        // `\r\n` is one Swift Character, so `contains("\n")` misses CRLF.
+        guard !trimmed.contains(where: \.isNewline) else { return nil }
 
         let path: String
         if trimmed.hasPrefix("file://") {
@@ -363,11 +364,15 @@ enum ClipboardInspector: Equatable {
     }
 
     static func codeLines(_ text: String, limit: Int = 200) -> [String] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let stripped = lines.map { line -> String in
-            line.hasSuffix("\r") ? String(line.dropLast()) : line
-        }
-        return Array(stripped.prefix(limit))
+        // Empty input is one blank line. Non-empty input splits on every
+        // Unicode newline, including the `\r\n` grapheme cluster Swift treats
+        // as a single Character — splitting on `"\n"` alone would leave a
+        // CRLF-joined remainder intact.
+        guard !text.isEmpty else { return [""] }
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .prefix(limit)
+            .map(String.init)
+        return Array(lines)
     }
 
     static func formattedDetailedDate(_ date: Date) -> String {

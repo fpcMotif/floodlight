@@ -57,7 +57,7 @@ struct ResultRow: View, Equatable {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)
-                    if !isTopHit && !isCompact {
+                    if !isTopHit, !isCompact {
                         Text(item.kind.label)
                             .font(FloodlightMetrics.Typography.badge)
                             .foregroundStyle(.secondary)
@@ -111,7 +111,6 @@ struct ResultRow: View, Equatable {
     /// modified-date and Top Hit segments — the inspector beside them
     /// already shows that metadata in full, and the 360 pt column has no
     /// room for both without truncating the subtitle itself.
-    @ViewBuilder
     private var subtitleLine: some View {
         HStack(spacing: 6) {
             Text(item.subtitle)
