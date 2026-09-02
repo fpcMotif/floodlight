@@ -118,6 +118,58 @@ struct ClipboardInspectorTests {
         #expect(detail.colorHex == "#3498DB")
     }
 
+    @Test func hexColorSnapshotExposesRGBComponents() {
+        let entry = ClipboardEntry(
+            id: "color-2",
+            text: "#3498DB",
+            createdAt: .now,
+            sourceAppBundleID: "com.figma.Desktop"
+        )
+        let snapshot = ClipboardInspector.snapshot(for: entry)
+        guard case let .text(detail) = snapshot else {
+            Issue.record("expected text snapshot for color")
+            return
+        }
+        #expect(detail.contentType == .color)
+        #expect(detail.colorHex == "#3498DB")
+        #expect(
+            detail.colorComponents == ClipboardInspector.ColorComponents(
+                red: 52,
+                green: 152,
+                blue: 219,
+                alpha: nil
+            )
+        )
+        #expect(detail.colorComponents?.rgbDescription == "rgb(52, 152, 219)")
+    }
+
+    @Test func shortAndAlphaHexColorsParse() {
+        #expect(
+            ClipboardInspector.parseHexColorComponents("#fff") ==
+                ClipboardInspector.ColorComponents(red: 255, green: 255, blue: 255, alpha: nil)
+        )
+
+        let withAlpha = ClipboardInspector.parseHexColorComponents("#3498DB80")
+        #expect(
+            withAlpha == ClipboardInspector.ColorComponents(
+                red: 52,
+                green: 152,
+                blue: 219,
+                alpha: 128
+            )
+        )
+        #expect(withAlpha?.rgbDescription.hasPrefix("rgba(52, 152, 219, 0.50") == true)
+
+        #expect(ClipboardInspector.parseHexColorComponents("#12345") == nil)
+        #expect(ClipboardInspector.parseHexColorComponents("3498DB") == nil)
+    }
+
+    @Test func codeLinesKeepEmptyLinesStripCarriageReturnsAndCap() {
+        #expect(ClipboardInspector.codeLines("a\n\nb\r\nc") == ["a", "", "b", "c"])
+        #expect(ClipboardInspector.codeLines("x\ny\nz", limit: 2) == ["x", "y"])
+        #expect(ClipboardInspector.codeLines("") == [""])
+    }
+
     @Test func jsonSnapshotClassifiesAsCode() {
         let entry = ClipboardEntry(
             id: "json-1",

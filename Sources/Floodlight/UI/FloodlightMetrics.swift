@@ -10,7 +10,29 @@ enum FloodlightMetrics {
     static let resultRowHeight: CGFloat = 58
     static let resultPadding: CGFloat = 7
     static let maximumVisibleResults = 7
-    static let clipboardInspectorWidth: CGFloat = 340
+
+    // MARK: - Clipboard board (#57)
+
+    /// The 360 pt list column of the clipboard board.
+    static let clipboardListWidth: CGFloat = 360
+    /// The 480 pt inspector column of the clipboard board — it also
+    /// absorbs the 1 pt divider between the two columns, since the list
+    /// gets a fixed width and the inspector fills whatever remains.
+    static let clipboardInspectorWidth: CGFloat = 480
+    /// The clipboard board's total panel width: list + inspector, no gap
+    /// left unaccounted for.
+    static let clipboardPanelWidth: CGFloat = clipboardListWidth + clipboardInspectorWidth
+
+    /// The panel's outer width in clipboard mode versus every other mode —
+    /// the one place that decision is made, so the shell's frame and the
+    /// resize animation can never disagree about which width applies.
+    static func resolvedPanelWidth(isClipboardMode: Bool) -> CGFloat {
+        isClipboardMode ? clipboardPanelWidth : panelWidth
+    }
+
+    /// The board sits over glass; this fill keeps text legible over busy
+    /// windows behind it (#57).
+    static let clipboardBackingOpacity: Double = 0.62
 
     static var expandedPanelHeight: CGFloat {
         searchHeight

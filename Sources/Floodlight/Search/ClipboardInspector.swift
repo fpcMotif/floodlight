@@ -19,6 +19,22 @@ enum ClipboardInspector: Equatable {
         let domain: String?
         let colorHex: String?
         let codeLanguage: String?
+        let colorComponents: ColorComponents?
+    }
+
+    struct ColorComponents: Equatable {
+        let red: Int
+        let green: Int
+        let blue: Int
+        let alpha: Int?
+
+        var rgbDescription: String {
+            guard let alpha else {
+                return "rgb(\(red), \(green), \(blue))"
+            }
+            let alphaValue = Double(alpha) / 255
+            return "rgba(\(red), \(green), \(blue), \(String(format: "%.2f", alphaValue)))"
+        }
     }
 
     struct FileClassification: Equatable {
@@ -37,6 +53,7 @@ enum ClipboardInspector: Equatable {
         let domain: String?
         let colorHex: String?
         let codeLanguage: String?
+        let colorComponents: ColorComponents?
         let sourceApp: String
         let sourceAppBundleID: String?
         let createdAt: Date
@@ -138,6 +155,7 @@ enum ClipboardInspector: Equatable {
                 domain: classification.domain,
                 colorHex: classification.colorHex,
                 codeLanguage: classification.codeLanguage,
+                colorComponents: classification.colorComponents,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,
@@ -192,7 +210,8 @@ enum ClipboardInspector: Equatable {
                 contentType: .link,
                 domain: domain,
                 colorHex: nil,
-                codeLanguage: nil
+                codeLanguage: nil,
+                colorComponents: nil
             )
         }
         if let hex = parseHexColor(text) {
@@ -200,7 +219,8 @@ enum ClipboardInspector: Equatable {
                 contentType: .color,
                 domain: nil,
                 colorHex: hex,
-                codeLanguage: nil
+                codeLanguage: nil,
+                colorComponents: parseHexColorComponents(text)
             )
         }
         if let code = parseCodeHint(text) {
@@ -208,10 +228,17 @@ enum ClipboardInspector: Equatable {
                 contentType: .code,
                 domain: nil,
                 colorHex: nil,
-                codeLanguage: code
+                codeLanguage: code,
+                colorComponents: nil
             )
         }
-        return TextClassification(contentType: .text, domain: nil, colorHex: nil, codeLanguage: nil)
+        return TextClassification(
+            contentType: .text,
+            domain: nil,
+            colorHex: nil,
+            codeLanguage: nil,
+            colorComponents: nil
+        )
     }
 
     private static func classifyFile(url: URL, ext: String) -> FileClassification {
@@ -269,6 +296,34 @@ enum ClipboardInspector: Equatable {
         return "#" + hex.uppercased()
     }
 
+    static func parseHexColorComponents(_ text: String) -> ColorComponents? {
+        guard let hex = parseHexColor(text) else { return nil }
+        let digits = String(hex.dropFirst())
+        var value: UInt64 = 0
+        guard Scanner(string: digits).scanHexInt64(&value) else { return nil }
+
+        switch digits.count {
+        case 3:
+            let red = Int((value >> 8) & 0xF) * 17
+            let green = Int((value >> 4) & 0xF) * 17
+            let blue = Int(value & 0xF) * 17
+            return ColorComponents(red: red, green: green, blue: blue, alpha: nil)
+        case 6:
+            let red = Int((value >> 16) & 0xFF)
+            let green = Int((value >> 8) & 0xFF)
+            let blue = Int(value & 0xFF)
+            return ColorComponents(red: red, green: green, blue: blue, alpha: nil)
+        case 8:
+            let red = Int((value >> 24) & 0xFF)
+            let green = Int((value >> 16) & 0xFF)
+            let blue = Int((value >> 8) & 0xFF)
+            let alpha = Int(value & 0xFF)
+            return ColorComponents(red: red, green: green, blue: blue, alpha: alpha)
+        default:
+            return nil
+        }
+    }
+
     static func parseCodeHint(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")) ||
@@ -305,6 +360,14 @@ enum ClipboardInspector: Equatable {
     static func countLines(_ text: String) -> Int {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         return max(1, lines.count)
+    }
+
+    static func codeLines(_ text: String, limit: Int = 200) -> [String] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let stripped = lines.map { line -> String in
+            line.hasSuffix("\r") ? String(line.dropLast()) : line
+        }
+        return Array(stripped.prefix(limit))
     }
 
     static func formattedDetailedDate(_ date: Date) -> String {

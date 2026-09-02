@@ -27,6 +27,7 @@ final class FloodlightPanelController {
     let panel: FloodlightPanel
     private let model: SearchCoordinator
     private let quickLook = QuickLookController()
+    private let boardContext = ClipboardBoardContext()
 
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
@@ -68,7 +69,9 @@ final class FloodlightPanelController {
         )
         applyGlassSlabState()
 
-        observeQueryForPanelHeight()
+        observeModelForPanelSize()
+
+        boardContext.previewHandler = { [weak self] in self?.togglePreview() }
 
         localKeyMonitor = NSEvent
             .addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -124,7 +127,8 @@ final class FloodlightPanelController {
         appliedGlassSlabState = usesGlassSlab
         panel.contentViewController = Self.makeContentController(
             model: model,
-            usesGlassSlab: usesGlassSlab
+            usesGlassSlab: usesGlassSlab,
+            boardContext: boardContext
         )
         // The glass slab (`NSGlassEffectView`) rounds its own corners; every
         // other path — macOS 14/15, or macOS 26 with Reduce Transparency —
@@ -153,10 +157,15 @@ final class FloodlightPanelController {
 
     private static func makeContentController(
         model: SearchCoordinator,
-        usesGlassSlab: Bool
+        usesGlassSlab: Bool,
+        boardContext: ClipboardBoardContext
     ) -> NSViewController {
         let hostingController = NSHostingController(
-            rootView: SearchView(model: model, usesGlassSlab: usesGlassSlab)
+            rootView: SearchView(
+                model: model,
+                usesGlassSlab: usesGlassSlab,
+                boardContext: boardContext
+            )
         )
         guard #available(macOS 26.0, *), usesGlassSlab else {
             return hostingController
@@ -198,6 +207,12 @@ final class FloodlightPanelController {
         defer { FloodlightPerformance.end("ShowPanel", id: signpost) }
         positionOnActiveScreen()
         model.prepareForPresentation()
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        boardContext.pasteTargetAppName = ClipboardBoardContext.pasteTargetName(
+            frontmostName: frontmost?.localizedName,
+            frontmostBundleID: frontmost?.bundleIdentifier,
+            ownBundleID: Bundle.main.bundleIdentifier
+        )
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeKey()
@@ -234,11 +249,11 @@ final class FloodlightPanelController {
     }
 
     /// Re-registers after every fire — `withObservationTracking`'s `onChange`
-    /// only fires once per registration — and resizes to the height for the
-    /// query's current empty/non-empty state. `resize(to:)` already no-ops
-    /// within half a point, so a burst of query changes settles at the
-    /// correct height without a visible double-resize.
-    private func observeQueryForPanelHeight() {
+    /// only fires once per registration — and resizes to the width/height for
+    /// the query's current empty/non-empty state and clipboard mode.
+    /// `resize(to:)` already no-ops within half a point, so a burst of query
+    /// changes settles at the correct size without a visible double-resize.
+    private func observeModelForPanelSize() {
         withObservationTracking {
             _ = model.query
             _ = model.isClipboardMode
@@ -246,20 +261,32 @@ final class FloodlightPanelController {
             Task { @MainActor in
                 guard let self else { return }
                 let hasQuery = !self.model.query.isEmpty || self.model.isClipboardMode
-                self.resize(to: FloodlightMetrics.panelHeight(hasQuery: hasQuery))
-                self.observeQueryForPanelHeight()
+                let width = FloodlightMetrics.resolvedPanelWidth(
+                    isClipboardMode: self.model.isClipboardMode
+                )
+                self.resize(to: NSSize(
+                    width: width,
+                    height: FloodlightMetrics.panelHeight(hasQuery: hasQuery)
+                ))
+                self.observeModelForPanelSize()
             }
         }
     }
 
     /// Grows or shrinks the visible panel without slowing result publication.
-    /// Hidden panels and Reduce Motion use the final frame immediately.
-    private func resize(to height: CGFloat) {
-        guard abs(panel.frame.height - height) > 0.5 else { return }
+    /// Hidden panels and Reduce Motion use the final frame immediately. The
+    /// top edge and horizontal center stay fixed, so entering/leaving the
+    /// wider clipboard board never shifts the panel off the point the user
+    /// is looking at.
+    private func resize(to size: NSSize) {
+        guard abs(panel.frame.height - size.height) > 0.5
+            || abs(panel.frame.width - size.width) > 0.5
+        else { return }
         var frame = panel.frame
         let top = frame.maxY
-        frame.size = NSSize(width: FloodlightMetrics.panelWidth, height: height)
-        frame.origin.y = top - height
+        let midX = frame.midX
+        frame.size = size
+        frame.origin = NSPoint(x: midX - size.width / 2, y: top - size.height)
 
         guard panel.isVisible,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

@@ -481,6 +481,30 @@ struct SearchCoordinatorClipboardModeTests {
         let diskBytes = try Data(contentsOf: imagePreviewURL)
         #expect(diskBytes == pngBytes)
     }
+
+    @Test func previewableSelectionURLResolvesForLocalPathTextEntries() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let shotURL = tree.root.appendingPathComponent("shot.png")
+        try Data("shot-bytes".utf8).write(to: shotURL)
+        let existingEntry = try #require(store.record(text: shotURL.path))
+        let missingEntry = try #require(store.record(text: "/definitely/missing/file.png"))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.results.count == 2)
+
+        let existingItem = try #require(coordinator.results
+            .first { $0.id == "clipboard:\(existingEntry.id)" })
+        coordinator.select(existingItem)
+        #expect(coordinator.previewableSelectionURL == URL(fileURLWithPath: shotURL.path))
+
+        let missingItem = try #require(coordinator.results
+            .first { $0.id == "clipboard:\(missingEntry.id)" })
+        coordinator.select(missingItem)
+        #expect(coordinator.previewableSelectionURL == nil)
+    }
 }
 
 private final class ScriptedActionEffects: SelectedResultActionEffects {

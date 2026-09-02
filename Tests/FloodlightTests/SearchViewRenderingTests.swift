@@ -166,11 +166,60 @@ struct SearchViewRenderingTests {
 
         let image = try render(
             SearchView(model: coordinator),
-            width: FloodlightMetrics.panelWidth,
+            width: FloodlightMetrics.clipboardPanelWidth,
             height: FloodlightMetrics.expandedPanelHeight
         )
-        #expect(image.width == Int(FloodlightMetrics.panelWidth))
+        #expect(image.width == Int(FloodlightMetrics.clipboardPanelWidth))
         #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
+    }
+
+    @Test func compactClipboardRowsRenderLongTitlesAndPathsWithoutGrowing() throws {
+        // The 360 pt list column shows compact rows: no kind badge, no
+        // modified-date/Top Hit segments — just a title and a path that
+        // must truncate rather than grow the row past its fixed height.
+        let item = SearchItem(
+            title: String(repeating: "A", count: 600),
+            subtitle: String(repeating: "/a", count: 150),
+            kind: .clipboard,
+            action: .copy("x"),
+            iconSource: .engine(symbol: "doc.text", tint: .gray),
+            score: 0
+        )
+
+        let image = try render(
+            ResultRow(
+                item: item,
+                isSelected: true,
+                isTopHit: false,
+                assistantState: nil,
+                isCompact: true
+            ),
+            width: FloodlightMetrics.clipboardListWidth,
+            height: FloodlightMetrics.resultRowHeight
+        )
+        #expect(image.height == Int(FloodlightMetrics.resultRowHeight))
+    }
+
+    @Test func theFooterShowsThePasteTargetAndPreviewChip() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let fileURL = tree.root.appendingPathComponent("shot.png")
+        try Data([0x01, 0x02, 0x03]).write(to: fileURL)
+        _ = try #require(store.recordFile(path: fileURL.path))
+
+        let coordinator = try makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.isClipboardMode)
+
+        _ = try render(
+            SearchView(
+                model: coordinator,
+                boardContext: ClipboardBoardContext(pasteTargetAppName: "Safari")
+            ),
+            width: FloodlightMetrics.clipboardPanelWidth,
+            height: FloodlightMetrics.expandedPanelHeight
+        )
     }
 
     @Test func clipboardInspectorPanesRenderForEachEntryKind() throws {
