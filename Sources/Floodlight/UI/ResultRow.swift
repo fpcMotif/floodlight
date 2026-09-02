@@ -18,6 +18,10 @@ struct ResultRow: View, Equatable {
     /// so the gesture is advertised at exactly the moment it applies. See
     /// `SearchCoordinator.tabCompletionHint(for:)`.
     var tabCompletionHint: String?
+    /// Set for clipboard-board rows in the 360 pt list column: no kind
+    /// badge, and a trimmed subtitle line without the metadata segments the
+    /// board's inspector already shows in full. See `subtitleLine`.
+    var isCompact = false
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
 
@@ -30,6 +34,7 @@ struct ResultRow: View, Equatable {
             && lhs.isTopHit == rhs.isTopHit
             && lhs.assistantState == rhs.assistantState
             && lhs.tabCompletionHint == rhs.tabCompletionHint
+            && lhs.isCompact == rhs.isCompact
     }
 
     var body: some View {
@@ -50,8 +55,9 @@ struct ResultRow: View, Equatable {
                         )
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                         .layoutPriority(1)
-                    if !isTopHit {
+                    if !isTopHit, !isCompact {
                         Text(item.kind.label)
                             .font(FloodlightMetrics.Typography.badge)
                             .foregroundStyle(.secondary)
@@ -64,27 +70,7 @@ struct ResultRow: View, Equatable {
                     }
                 }
 
-                HStack(spacing: 6) {
-                    Text(item.subtitle)
-                        .lineLimit(1)
-
-                    if let fileSize = item.fileSize, fileSize > 0 {
-                        Text("·")
-                        Text(fileSize.formatted(.byteCount(style: .file)))
-                    }
-
-                    if let modifiedAt = item.modifiedAt {
-                        Text("·")
-                        Text(ResultShowcase.formattedModifiedDate(modifiedAt))
-                    }
-
-                    if isTopHit {
-                        Text("·")
-                        Text("Top Hit")
-                    }
-                }
-                .font(FloodlightMetrics.Typography.rowSubtitle)
-                .foregroundStyle(.secondary)
+                subtitleLine
 
                 if let assistantState {
                     AssistantAnswerView(state: assistantState)
@@ -119,6 +105,37 @@ struct ResultRow: View, Equatable {
         )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+    }
+
+    /// Compact rows (the clipboard board's list column) drop the
+    /// modified-date and Top Hit segments — the inspector beside them
+    /// already shows that metadata in full, and the 360 pt column has no
+    /// room for both without truncating the subtitle itself.
+    private var subtitleLine: some View {
+        HStack(spacing: 6) {
+            Text(item.subtitle)
+                .lineLimit(1)
+                .truncationMode(isCompact ? .middle : .tail)
+
+            if let fileSize = item.fileSize, fileSize > 0 {
+                Text("·")
+                Text(fileSize.formatted(.byteCount(style: .file)))
+            }
+
+            if !isCompact {
+                if let modifiedAt = item.modifiedAt {
+                    Text("·")
+                    Text(ResultShowcase.formattedModifiedDate(modifiedAt))
+                }
+
+                if isTopHit {
+                    Text("·")
+                    Text("Top Hit")
+                }
+            }
+        }
+        .font(FloodlightMetrics.Typography.rowSubtitle)
+        .foregroundStyle(.secondary)
     }
 
     private var backgroundColor: Color {

@@ -48,6 +48,7 @@ let package = Package(
             exclude: ["Resources"],
             swiftSettings: shellSettings,
             linkerSettings: [
+                .linkedFramework("AVFoundation"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("QuickLookThumbnailing"),

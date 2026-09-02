@@ -74,12 +74,12 @@ struct ClipboardInspectorPane: View {
 
         case .color:
             VStack(alignment: .leading, spacing: 8) {
-                if let hex = detail.colorHex, let color = Color(hex: hex) {
+                if let components = detail.colorComponents {
                     RoundedRectangle(
                         cornerRadius: FloodlightMetrics.resultRowCornerRadius,
                         style: .continuous
                     )
-                    .fill(color)
+                    .fill(Color(components: components))
                     .frame(maxWidth: .infinity)
                     .frame(height: 72)
                     .overlay(
@@ -89,11 +89,22 @@ struct ClipboardInspectorPane: View {
                         )
                         .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
                     )
+                    HStack(spacing: 10) {
+                        Text(detail.body)
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                        Text(components.rgbDescription)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    Text(detail.body)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
                 }
-                Text(detail.body)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
             }
 
         case .code:
@@ -107,15 +118,7 @@ struct ClipboardInspectorPane: View {
                         .background(Color.secondary.opacity(0.12))
                         .clipShape(Capsule())
                 }
-                Text(detail.body)
-                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                numberedCodeBlock(detail.body)
             }
 
         case .text, .image, .video, .file:
@@ -126,6 +129,31 @@ struct ClipboardInspectorPane: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func numberedCodeBlock(_ body: String) -> some View {
+        let lines = ClipboardInspector.codeLines(body)
+        let gutterWidth = CGFloat(String(lines.count).count) * 7 + 6
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(index + 1)")
+                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: gutterWidth, alignment: .trailing)
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .textSelection(.enabled)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private func filePreview(_ detail: ClipboardInspector.FileDetail) -> some View {
@@ -178,6 +206,9 @@ struct ClipboardInspectorPane: View {
                 infoRow(label: "Type", value: detail.contentType.rawValue)
                 if let domain = detail.domain {
                     infoRow(label: "Domain", value: domain)
+                }
+                if let components = detail.colorComponents {
+                    infoRow(label: "RGB", value: components.rgbDescription)
                 }
                 infoRow(label: "Characters", value: "\(detail.characterCount)")
                 infoRow(label: "Words", value: "\(detail.wordCount)")
@@ -245,8 +276,8 @@ struct ClipboardInspectorPane: View {
             if let icon = AppIconCache.shared.icon(for: bundleID) {
                 Image(nsImage: icon)
                     .resizable()
-                    .frame(width: 14, height: 14)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
             } else {
                 Image(systemName: "app.dashed")
                     .font(.system(size: 12))
@@ -288,11 +319,7 @@ private struct FileMediaPreview: View {
             }
         }
         .task(id: url) {
-            let ext = url.pathExtension.lowercased()
-            let videoExtensions: Set = [
-                "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "ts", "mpg", "mpeg",
-            ]
-            isVideo = videoExtensions.contains(ext)
+            isVideo = FileThumbnailCache.isVideo(url)
             if let cached = FileThumbnailCache.shared.cachedThumbnail(for: url) {
                 thumbnail = cached
             } else {
@@ -303,33 +330,12 @@ private struct FileMediaPreview: View {
 }
 
 private extension Color {
-    init?(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        if hexSanitized.hasPrefix("#") {
-            hexSanitized.removeFirst()
-        }
-
-        var rgb: UInt64 = 0
-        guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else { return nil }
-        let length = hexSanitized.count
-        if length == 3 {
-            let red = Double((rgb >> 8) & 0xF) / 15.0
-            let green = Double((rgb >> 4) & 0xF) / 15.0
-            let blue = Double(rgb & 0xF) / 15.0
-            self.init(red: red, green: green, blue: blue)
-        } else if length == 6 {
-            let red = Double((rgb >> 16) & 0xFF) / 255.0
-            let green = Double((rgb >> 8) & 0xFF) / 255.0
-            let blue = Double(rgb & 0xFF) / 255.0
-            self.init(red: red, green: green, blue: blue)
-        } else if length == 8 {
-            let red = Double((rgb >> 24) & 0xFF) / 255.0
-            let green = Double((rgb >> 16) & 0xFF) / 255.0
-            let blue = Double((rgb >> 8) & 0xFF) / 255.0
-            let alpha = Double(rgb & 0xFF) / 255.0
-            self.init(red: red, green: green, blue: blue, opacity: alpha)
-        } else {
-            return nil
-        }
+    init(components: ClipboardInspector.ColorComponents) {
+        self.init(
+            red: Double(components.red) / 255,
+            green: Double(components.green) / 255,
+            blue: Double(components.blue) / 255,
+            opacity: components.alpha.map { Double($0) / 255 } ?? 1
+        )
     }
 }

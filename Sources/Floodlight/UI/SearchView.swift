@@ -1,22 +1,32 @@
+import AppKit
 import FloodlightEngine
 import SwiftUI
 
 struct SearchView: View {
     let model: SearchCoordinator
     let usesGlassSlab: Bool
+    let boardContext: ClipboardBoardContext
     @Environment(\.colorScheme) private var colorScheme
 
-    init(model: SearchCoordinator, usesGlassSlab: Bool = false) {
+    init(
+        model: SearchCoordinator,
+        usesGlassSlab: Bool = false,
+        boardContext: ClipboardBoardContext = ClipboardBoardContext()
+    ) {
         self.model = model
         self.usesGlassSlab = usesGlassSlab
+        self.boardContext = boardContext
     }
 
     var body: some View {
         VStack(spacing: 0) {
             SearchBar(model: model)
-            SearchResultsSection(model: model)
+            SearchResultsSection(model: model, boardContext: boardContext)
         }
-        .frame(width: FloodlightMetrics.panelWidth, alignment: .top)
+        .frame(
+            width: FloodlightMetrics.resolvedPanelWidth(isClipboardMode: model.isClipboardMode),
+            alignment: .top
+        )
         .modifier(FloodlightSurface())
         .clipShape(
             RoundedRectangle(
@@ -177,6 +187,7 @@ private struct ClipboardModeToken: View {
 
 private struct SearchResultsSection: View {
     let model: SearchCoordinator
+    let boardContext: ClipboardBoardContext
 
     var body: some View {
         if !model.query.isEmpty || model.isClipboardMode {
@@ -215,17 +226,28 @@ private struct SearchResultsSection: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     ResultList(model: model)
-                        .frame(maxWidth: .infinity)
+                        .frame(width: FloodlightMetrics.clipboardListWidth)
                     Divider().opacity(0.45)
                     ClipboardInspectorPane(snapshot: model.clipboardInspector)
-                        .frame(width: FloodlightMetrics.clipboardInspectorWidth)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.primary.opacity(0.03))
                 }
                 Divider().opacity(0.45)
-                ClipboardFooterBar(model: model)
+                ClipboardFooterBar(model: model, boardContext: boardContext)
             }
+            .background(ClipboardBoardBacking())
         } else {
             ResultList(model: model)
         }
+    }
+}
+
+/// High-contrast backing for the board (#57): a window-background tint over
+/// the glass.
+private struct ClipboardBoardBacking: View {
+    var body: some View {
+        Color(nsColor: .windowBackgroundColor)
+            .opacity(FloodlightMetrics.clipboardBackingOpacity)
     }
 }
 
@@ -412,13 +434,14 @@ private struct ResultList: View {
             ResultRow(
                 item: item,
                 isSelected: model.selectedID == item.id,
-                isTopHit: ResultShowcase.isTopHit(
+                isTopHit: !model.isClipboardMode && ResultShowcase.isTopHit(
                     index: index,
                     resultCount: model.results.count,
                     filter: model.selectedFilter
                 ),
                 assistantState: model.assistantAnswerState(for: item),
-                tabCompletionHint: model.tabCompletionHint(for: item)
+                tabCompletionHint: model.tabCompletionHint(for: item),
+                isCompact: model.isClipboardMode
             )
             .equatable()
         }
@@ -465,9 +488,17 @@ private struct ResultList: View {
 
 private struct ClipboardFooterBar: View {
     let model: SearchCoordinator
+    let boardContext: ClipboardBoardContext
 
-    private var targetAppName: String {
-        model.clipboardInspector?.sourceApp ?? "App"
+    /// Context-aware to the application that was frontmost when the panel
+    /// opened — falls back to a bare "Paste" once Floodlight itself was
+    /// frontmost, or the frontmost application couldn't be named (#57).
+    private var pasteLabel: String {
+        if let name = boardContext.pasteTargetAppName {
+            "Paste to \(name)"
+        } else {
+            "Paste"
+        }
     }
 
     var body: some View {
@@ -482,50 +513,57 @@ private struct ClipboardFooterBar: View {
                 Button {
                     model.openSelection()
                 } label: {
-                    HStack(spacing: 5) {
-                        Text("Paste to \(targetAppName)")
-                            .font(.system(size: 11.5, weight: .medium))
-                        Text("↵")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.25))
-                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
+                    FooterChip(title: pasteLabel, key: "↵")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(pasteLabel)
+
+                if model.previewableSelectionURL != nil {
+                    Button {
+                        boardContext.requestPreview()
+                    } label: {
+                        FooterChip(title: "Preview", key: "␣")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Preview")
+                }
 
                 Button {
                     model.copySelection()
                 } label: {
-                    HStack(spacing: 5) {
-                        Text("Actions")
-                            .font(.system(size: 11.5, weight: .medium))
-                        HStack(spacing: 2) {
-                            Text("⌘")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("K")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.25))
-                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
+                    FooterChip(title: "Actions", key: "⌘K")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Actions")
             }
         }
         .padding(.horizontal, 14)
         .frame(height: 32)
         .background(Color.secondary.opacity(0.04))
+    }
+}
+
+/// A footer affordance's label beside its key hint — the one capsule shape
+/// `ClipboardFooterBar`'s three buttons share, so their fonts and paddings
+/// can never drift apart from each other.
+private struct FooterChip: View {
+    let title: String
+    let key: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
+            Text(key)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.25))
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(Capsule())
     }
 }
