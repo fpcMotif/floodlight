@@ -49,13 +49,16 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
         let urls = paths.map { URL(fileURLWithPath: $0) }
         guard !urls.isEmpty else { return false }
         pasteboard.clearContents()
+        // writeObjects first so filenames/own-write attach to that item.
+        // Setting those types first, then writeObjects, creates a second
+        // file-url item and a terminal paste concatenates the path twice.
+        guard pasteboard.writeObjects(urls as [NSURL]) else { return false }
         pasteboard.setData(Data(), forType: .floodlightOwnWrite)
-        let filenames = urls.map(\.path)
         pasteboard.setPropertyList(
-            filenames,
+            urls.map(\.path),
             forType: ClipboardFileReference.filenamesType
         )
-        return pasteboard.writeObjects(urls as [NSURL])
+        return true
     }
 
     static func writeImage(png: Data?, tiff: Data?, to pasteboard: NSPasteboard) -> Bool {

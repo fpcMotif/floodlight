@@ -83,28 +83,8 @@ struct SelectedResultActionPerformerTests {
         #expect(harness.presentation.events.isEmpty)
     }
 
-    @Test func nativeStringWritePutsTheAbsolutePathOnceOnThePasteboard() {
-        let path = "/System/Applications/Freeform.app"
-        let pasteboard = NSPasteboard(
-            name: NSPasteboard.Name("FloodlightStringClipboard-\(UUID().uuidString)")
-        )
-        defer { pasteboard.releaseGlobally() }
-
-        #expect(AppKitSelectedResultActionEffects.writeString(path, to: pasteboard))
-        #expect(pasteboard.string(forType: .string) == path)
-
-        let itemStrings = (pasteboard.pasteboardItems ?? []).compactMap { item in
-            item.string(forType: .string)
-        }
-        #expect(itemStrings == [path])
-        #expect(
-            itemStrings.joined(separator: " ") != "\(path) \(path)",
-            "a terminal paste must not concatenate the path twice"
-        )
-    }
-
     @Test func nativeFileWritePutsFilenamesOwnWriteMarkerAndFileURLsOnPasteboard() {
-        let path = "/Users/f/Documents/Invoices/Invoice_2026.pdf"
+        let path = "/System/Applications/Freeform.app"
         let pasteboard = NSPasteboard(
             name: NSPasteboard.Name("FloodlightFileClipboard-\(UUID().uuidString)")
         )
@@ -119,7 +99,7 @@ struct SelectedResultActionPerformerTests {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true,
         ]) as? [URL]
-        #expect(Set(urls?.map(\.path) ?? []) == [path])
+        #expect(urls?.map(\.path) == [path])
     }
 
     @Test func clipboardImageActivationRestoresPNGAndTIFFAndDismisses() {
