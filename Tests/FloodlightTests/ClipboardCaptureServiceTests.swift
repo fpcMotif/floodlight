@@ -427,6 +427,29 @@ struct ClipboardCaptureServiceTests {
         harness.service.poll()
         #expect(harness.store.isEmpty)
     }
+
+    @Test func retentionRoundTripsForever() {
+        let harness = makeHarness()
+
+        harness.service.retention = .forever
+
+        #expect(harness.service.retention == .forever)
+    }
+
+    @Test func startDoesNotPruneOldEntriesWhenRetentionIsForever() async throws {
+        let harness = makeHarness()
+        let sixtyDaysAgo = Date.now.addingTimeInterval(-60 * 86_400)
+        harness.store.record(text: "Keep me", date: sixtyDaysAgo)
+        harness.service.retention = .forever
+
+        harness.service.start()
+        defer { harness.service.stop() }
+        // Scheduled pruning runs off the main actor; give a regression time to delete the entry.
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(harness.store.count == 1)
+        #expect(harness.store.mostRecentEntry?.text == "Keep me")
+    }
 }
 
 private enum ClipboardCaptureImageFixtures {

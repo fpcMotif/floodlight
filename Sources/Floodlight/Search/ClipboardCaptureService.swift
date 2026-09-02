@@ -154,6 +154,9 @@ final class ClipboardCaptureService {
     var retention: ClipboardRetention {
         get {
             let days = defaults.integer(forKey: Self.retentionDaysDefaultsKey)
+            if days == -1 {
+                return .forever
+            }
             if days > 0 {
                 return .days(days)
             }
@@ -286,6 +289,7 @@ final class ClipboardCaptureService {
 
     private func pruneOnSchedule() {
         let retention = retention
+        guard retention != .forever else { return }
         Task.detached(priority: .utility) { [store] in
             store.prune(retention: retention)
         }
