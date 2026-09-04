@@ -118,7 +118,7 @@ struct ClipboardInspectorPane: View {
                         .background(Color.secondary.opacity(0.12))
                         .clipShape(Capsule())
                 }
-                numberedCodeBlock(detail.body)
+                numberedCodeBlock(detail.body, lineCount: detail.lineCount)
             }
 
         case .text, .image, .video, .file:
@@ -131,29 +131,12 @@ struct ClipboardInspectorPane: View {
         }
     }
 
-    private func numberedCodeBlock(_ body: String) -> some View {
-        let lines = ClipboardInspector.codeLines(body)
-        let gutterWidth = CGFloat(String(lines.count).count) * 7 + 6
-        return VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(index + 1)")
-                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: gutterWidth, alignment: .trailing)
-                    Text(line.isEmpty ? " " : line)
-                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-        }
-        .textSelection(.enabled)
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    private func numberedCodeBlock(_ body: String, lineCount: Int) -> some View {
+        let limit = FileTextPreviewDecoder.maxPreviewLines
+        return NumberedCodeLines(
+            lines: ClipboardInspector.codeLines(body, limit: limit),
+            isTruncated: lineCount > limit
+        )
     }
 
     private func filePreview(_ detail: ClipboardInspector.FileDetail) -> some View {
@@ -345,49 +328,24 @@ private struct FileMediaPreview: View {
     }
 }
 
-private struct FileTextPreviewContainer: View {
-    let url: URL
-    let isCode: Bool
-    @State private var preview: FileTextPreview?
-
-    init(url: URL, isCode: Bool) {
-        self.url = url
-        self.isCode = isCode
-        _preview = State(
-            initialValue: FileTextPreviewCache.shared.immediatePreview(for: url, isCode: isCode)
-        )
+/// Truncation footer shared by the numbered-code and readable-text file
+/// previews below.
+private struct TruncationFooter: View {
+    var body: some View {
+        Text("Preview truncated")
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .padding(.top, 2)
     }
+}
+
+/// The gutter-plus-monospace-line layout shared by pasted-code previews and
+/// file-backed code previews.
+private struct NumberedCodeLines: View {
+    let lines: [String]
+    let isTruncated: Bool
 
     var body: some View {
-        Group {
-            if let preview {
-                if preview.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.tertiary)
-                        Text("Empty file")
-                            .font(.system(size: 11.5, weight: .regular))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                } else if isCode {
-                    numberedCodePreview(preview.lines, isTruncated: preview.isTruncated)
-                } else {
-                    readableTextPreview(preview.lines, isTruncated: preview.isTruncated)
-                }
-            }
-        }
-        .task(id: url) {
-            guard preview == nil else { return }
-            preview = await FileTextPreviewCache.shared.preview(for: url, isCode: isCode)
-        }
-    }
-
-    private func numberedCodePreview(_ lines: [String], isTruncated: Bool) -> some View {
         let gutterWidth = CGFloat(String(lines.count).count) * 7 + 6
         return VStack(alignment: .leading, spacing: 3) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
@@ -404,10 +362,7 @@ private struct FileTextPreviewContainer: View {
                 }
             }
             if isTruncated {
-                Text("Truncated…")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
+                TruncationFooter()
             }
         }
         .textSelection(.enabled)
@@ -415,29 +370,98 @@ private struct FileTextPreviewContainer: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(isTruncated ? "Code preview, truncated" : "Code preview")
+    }
+}
+
+private struct FileTextPreviewContainer: View {
+    private enum LoadState: Equatable {
+        case loading
+        case unavailable
+        case loaded(FileTextPreview)
+    }
+
+    let url: URL
+    let isCode: Bool
+    @State private var state: LoadState
+
+    init(url: URL, isCode: Bool) {
+        self.url = url
+        self.isCode = isCode
+        if let preview = FileTextPreviewCache.shared.immediatePreview(for: url) {
+            _state = State(initialValue: .loaded(preview))
+        } else {
+            _state = State(initialValue: .loading)
+        }
+    }
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading:
+                // A real placeholder, never `EmptyView`: SwiftUI does not run
+                // `.task` on a view with no node, so the earlier `if let` with
+                // nothing to show at first appearance never read the file.
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.secondary.opacity(0.06))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .overlay(ProgressView().controlSize(.small))
+                    .accessibilityLabel("Loading preview")
+            case .unavailable:
+                // Only reachable after the task has run, so the missing host
+                // view no longer matters.
+                EmptyView()
+            case let .loaded(preview):
+                if preview.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.tertiary)
+                        Text("Empty file")
+                            .font(.system(size: 11.5, weight: .regular))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Empty file")
+                } else if isCode {
+                    NumberedCodeLines(lines: preview.lines, isTruncated: preview.isTruncated)
+                } else {
+                    readableTextPreview(preview.lines, isTruncated: preview.isTruncated)
+                }
+            }
+        }
+        .task(id: url) {
+            guard case .loading = state else { return }
+            let preview = await FileTextPreviewCache.shared.preview(for: url)
+            guard !Task.isCancelled else { return }
+            state = preview.map(LoadState.loaded) ?? .unavailable
+        }
     }
 
     private func readableTextPreview(_ lines: [String], isTruncated: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                Text(line.isEmpty ? " " : line)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
+            Text(lines.joined(separator: "\n"))
+                .font(.system(size: 12))
+                .lineSpacing(3)
+                .foregroundStyle(.primary)
+                .lineLimit(FileTextPreviewDecoder.maxPreviewLines)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if isTruncated {
-                Text("Truncated…")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
+                TruncationFooter()
             }
         }
-        .textSelection(.enabled)
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(isTruncated ? "Text preview, truncated" : "Text preview")
     }
 }
 
