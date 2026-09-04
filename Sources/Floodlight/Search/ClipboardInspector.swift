@@ -41,6 +41,8 @@ enum ClipboardInspector: Equatable {
         let contentType: ContentType
         let isVideo: Bool
         let isImage: Bool
+        let isText: Bool
+        let isCode: Bool
     }
 
     struct TextDetail: Equatable {
@@ -68,6 +70,8 @@ enum ClipboardInspector: Equatable {
         let byteCount: UInt64?
         let isVideo: Bool
         let isImage: Bool
+        let isText: Bool
+        let isCode: Bool
         let sourceApp: String
         let sourceAppBundleID: String?
         let createdAt: Date
@@ -132,6 +136,8 @@ enum ClipboardInspector: Equatable {
                     byteCount: fileExists ? fileByteCount(at: fileURL) : nil,
                     isVideo: classification.isVideo,
                     isImage: classification.isImage,
+                    isText: classification.isText,
+                    isCode: classification.isCode,
                     sourceApp: sourceApp,
                     sourceAppBundleID: entry.sourceAppBundleID,
                     createdAt: entry.createdAt,
@@ -177,6 +183,8 @@ enum ClipboardInspector: Equatable {
                 byteCount: fileExists ? fileByteCount(at: url) : nil,
                 isVideo: classification.isVideo,
                 isImage: classification.isImage,
+                isText: classification.isText,
+                isCode: classification.isCode,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,
@@ -244,19 +252,65 @@ enum ClipboardInspector: Equatable {
     private static func classifyFile(url: URL, ext: String) -> FileClassification {
         let imageExtensions: Set = [
             "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "tif", "bmp", "avif", "ico",
-            "icns",
-            "svg",
+            "icns", "svg",
         ]
         let videoExtensions: Set = [
             "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "ts", "mpg", "mpeg",
         ]
+        let codeExtensions: Set = [
+            "json", "py", "swift", "js", "mjs", "cjs", "ts", "mts", "cts", "jsx", "tsx",
+            "rs", "go", "c", "cpp", "cc", "cxx", "h", "hpp", "hh", "hxx", "m", "mm",
+            "cs", "java", "kt", "kts", "rb", "php", "sh", "bash", "zsh", "fish", "sql",
+            "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss", "less", "lua",
+            "vim", "r", "dart", "zig", "nim", "graphql", "gql", "proto",
+        ]
+        let textExtensions: Set = [
+            "md", "markdown", "mdown", "mkdn", "txt", "text", "log", "csv", "tsv",
+            "rtf", "env", "ini", "conf", "cfg", "properties",
+        ]
         if imageExtensions.contains(ext) {
-            return FileClassification(contentType: .image, isVideo: false, isImage: true)
+            return FileClassification(
+                contentType: .image,
+                isVideo: false,
+                isImage: true,
+                isText: false,
+                isCode: false
+            )
         }
         if videoExtensions.contains(ext) {
-            return FileClassification(contentType: .video, isVideo: true, isImage: false)
+            return FileClassification(
+                contentType: .video,
+                isVideo: true,
+                isImage: false,
+                isText: false,
+                isCode: false
+            )
         }
-        return FileClassification(contentType: .file, isVideo: false, isImage: false)
+        if codeExtensions.contains(ext) {
+            return FileClassification(
+                contentType: .code,
+                isVideo: false,
+                isImage: false,
+                isText: true,
+                isCode: true
+            )
+        }
+        if textExtensions.contains(ext) {
+            return FileClassification(
+                contentType: .text,
+                isVideo: false,
+                isImage: false,
+                isText: true,
+                isCode: false
+            )
+        }
+        return FileClassification(
+            contentType: .file,
+            isVideo: false,
+            isImage: false,
+            isText: false,
+            isCode: false
+        )
     }
 
     static func parseLocalPath(_ text: String) -> URL? {
@@ -410,8 +464,9 @@ enum ClipboardInspector: Equatable {
         case "mp4", "mov", "m4v", "webm", "mkv", "avi": return "Video"
         case "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "svg": return "Image"
         case "json": return "JSON"
+        case "md", "markdown", "mdown", "mkdn": return "Markdown"
+        case "txt", "text": return "Plain Text"
         case "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh": return "Source Code"
-        case "pdf": return "PDF"
         case "zip", "tar", "gz", "dmg": return "Archive"
         case "": return "File"
         default: return ext.uppercased()

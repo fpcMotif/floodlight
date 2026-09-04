@@ -160,6 +160,10 @@ struct ClipboardInspectorPane: View {
         VStack(alignment: .leading, spacing: 8) {
             if detail.isImage || detail.isVideo {
                 FileMediaPreview(url: detail.fileURL)
+                    .id(detail.fileURL)
+            } else if detail.isText {
+                FileTextPreviewContainer(url: detail.fileURL, isCode: detail.isCode)
+                    .id(detail.fileURL)
             }
             Text(detail.name)
                 .font(FloodlightMetrics.Typography.topHitTitle)
@@ -293,39 +297,147 @@ struct ClipboardInspectorPane: View {
 private struct FileMediaPreview: View {
     let url: URL
     @State private var thumbnail: NSImage?
-    @State private var isVideo = false
+    @State private var isVideo: Bool
+
+    init(url: URL) {
+        self.url = url
+        _thumbnail = State(
+            initialValue: FileThumbnailCache.shared.immediateImageThumbnail(for: url)
+        )
+        _isVideo = State(initialValue: FileThumbnailCache.isVideo(url))
+    }
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            RoundedRectangle(
+                cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+                style: .continuous
+            )
+            .fill(Color.secondary.opacity(0.06))
+            .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 180)
+
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 180)
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+                            style: .continuous
+                        )
+                    )
+                if isVideo {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .shadow(radius: 4)
+                }
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .task(id: url) {
+            guard thumbnail == nil else { return }
+            thumbnail = await FileThumbnailCache.shared.thumbnail(for: url)
+        }
+    }
+}
+
+private struct FileTextPreviewContainer: View {
+    let url: URL
+    let isCode: Bool
+    @State private var preview: FileTextPreview?
+
+    init(url: URL, isCode: Bool) {
+        self.url = url
+        self.isCode = isCode
+        _preview = State(
+            initialValue: FileTextPreviewCache.shared.immediatePreview(for: url, isCode: isCode)
+        )
+    }
 
     var body: some View {
         Group {
-            if let thumbnail {
-                ZStack(alignment: .center) {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 180)
-                        .clipShape(
-                            RoundedRectangle(
-                                cornerRadius: FloodlightMetrics.resultRowCornerRadius,
-                                style: .continuous
-                            )
-                        )
-                    if isVideo {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .shadow(radius: 4)
+            if let preview {
+                if preview.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.tertiary)
+                        Text("Empty file")
+                            .font(.system(size: 11.5, weight: .regular))
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                } else if isCode {
+                    numberedCodePreview(preview.lines, isTruncated: preview.isTruncated)
+                } else {
+                    readableTextPreview(preview.lines, isTruncated: preview.isTruncated)
                 }
             }
         }
         .task(id: url) {
-            isVideo = FileThumbnailCache.isVideo(url)
-            if let cached = FileThumbnailCache.shared.cachedThumbnail(for: url) {
-                thumbnail = cached
-            } else {
-                thumbnail = await FileThumbnailCache.shared.thumbnail(for: url)
+            guard preview == nil else { return }
+            preview = await FileTextPreviewCache.shared.preview(for: url, isCode: isCode)
+        }
+    }
+
+    private func numberedCodePreview(_ lines: [String], isTruncated: Bool) -> some View {
+        let gutterWidth = CGFloat(String(lines.count).count) * 7 + 6
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(index + 1)")
+                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: gutterWidth, alignment: .trailing)
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            if isTruncated {
+                Text("Truncated…")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
             }
         }
+        .textSelection(.enabled)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func readableTextPreview(_ lines: [String], isTruncated: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line.isEmpty ? " " : line)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if isTruncated {
+                Text("Truncated…")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 

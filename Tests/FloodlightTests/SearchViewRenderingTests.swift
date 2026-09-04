@@ -222,6 +222,64 @@ struct SearchViewRenderingTests {
         )
     }
 
+    @Test func copiedPNGPathRendersItsImageInTheInspector() async throws {
+        let url = tree.root.appendingPathComponent("copied-path-preview.png")
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 80,
+            pixelsHigh: 60,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let markerColor = NSColor(deviceRed: 0, green: 1, blue: 0, alpha: 1)
+        for pixelY in 0..<60 {
+            for pixelX in 0..<80 {
+                bitmap.setColor(markerColor, atX: pixelX, y: pixelY)
+            }
+        }
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: url)
+
+        let snapshot = ClipboardInspector.snapshot(for: ClipboardEntry(
+            id: "copied-path-image",
+            text: url.path,
+            createdAt: .now,
+            sourceAppBundleID: "com.apple.finder"
+        ))
+        let hosting = layout(
+            ClipboardInspectorPane(snapshot: snapshot),
+            width: FloodlightMetrics.clipboardInspectorWidth,
+            height: FloodlightMetrics.expandedPanelHeight
+        )
+
+        try await waitUntil("copied PNG pixels appear in the inspector") {
+            hosting.layoutSubtreeIfNeeded()
+            guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
+            else { return false }
+            hosting.cacheDisplay(in: hosting.bounds, to: representation)
+            guard let data = representation.bitmapData else { return false }
+            let bytesPerPixel = representation.bitsPerPixel / 8
+            guard bytesPerPixel >= 3 else { return false }
+            for pixelY in 0..<representation.pixelsHigh {
+                for pixelX in 0..<representation.pixelsWide {
+                    let offset = pixelY * representation.bytesPerRow + pixelX * bytesPerPixel
+                    let first = Int(data[offset])
+                    let green = Int(data[offset + 1])
+                    let third = Int(data[offset + 2])
+                    if green > 140, green > first + 80, green > third + 80 {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+    }
+
     @Test func clipboardInspectorPanesRenderForEachEntryKind() throws {
         let created = Date(timeIntervalSince1970: 1_785_250_800)
         let width = FloodlightMetrics.clipboardInspectorWidth

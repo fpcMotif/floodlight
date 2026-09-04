@@ -128,6 +128,23 @@ final class FileThumbnailCache {
         cache.object(forKey: url.path as NSString)
     }
 
+    /// File-image previews are needed during the inspector's first layout.
+    /// Decode them in-process and cache the downsampled result immediately;
+    /// videos still use the asynchronous Quick Look/AVFoundation path below.
+    func immediateImageThumbnail(for url: URL, maxDimension: CGFloat = 320) -> NSImage? {
+        let path = url.path
+        if let cached = cache.object(forKey: path as NSString) {
+            return cached
+        }
+        guard Self.isImage(url),
+              let image = FileThumbnailDecoder.decodeImage(at: url, maxDimension: maxDimension)
+        else {
+            return nil
+        }
+        cache.setObject(image, forKey: path as NSString)
+        return image
+    }
+
     func thumbnail(for url: URL, maxDimension: CGFloat = 320) async -> NSImage? {
         let path = url.path
         if let cached = cache.object(forKey: path as NSString) {

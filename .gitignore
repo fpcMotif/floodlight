@@ -13,3 +13,4 @@ docs/dist/
 docs/node_modules/
 Floodlight.xcodeproj/xcuserdata/
 *.xcuserstate
+*.bc
