@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor
 final class OnboardingFlowState {
+    let fullDiskAccessCoordinator: FullDiskAccessGrantCoordinator
     private let session: OnboardingSession
     private let selectShortcut: (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome
     private let openSpotlightSettings: () -> Void
@@ -11,11 +12,23 @@ final class OnboardingFlowState {
     init(
         session: OnboardingSession,
         selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
-        openSpotlightSettings: @escaping () -> Void
+        openSpotlightSettings: @escaping () -> Void,
+        fullDiskAccessCoordinator: FullDiskAccessGrantCoordinator? = nil
     ) {
         self.session = session
         self.selectShortcut = selectShortcut
         self.openSpotlightSettings = openSpotlightSettings
+        self
+            .fullDiskAccessCoordinator = fullDiskAccessCoordinator ??
+            FullDiskAccessGrantCoordinator(
+                fullDiskAccessProvider: { [weak session] in
+                    session?.refreshFullDiskAccess()
+                    return session?.hasFullDiskAccess ?? FloodlightFullDiskAccess.isGranted()
+                },
+                onGranted: { [weak session] in
+                    session?.refreshFullDiskAccess()
+                }
+            )
     }
 
     func handleShortcutSelection(_ shortcut: FloodlightShortcut) {
@@ -44,6 +57,10 @@ final class OnboardingFlowState {
         openSpotlightSettings()
     }
 
+    func beginFullDiskAccessGrant() {
+        fullDiskAccessCoordinator.beginGrantFlow()
+    }
+
     func retryPendingShortcut() {
         guard let pendingShortcut else { return }
         guard pendingShortcut != session.activeShortcut else {
@@ -69,6 +86,7 @@ final class OnboardingFlowState {
 
     func markFinished() {
         didFinish = true
+        fullDiskAccessCoordinator.dismiss()
     }
 
     private func refusalMessage(

@@ -211,19 +211,39 @@ struct OnboardingView: View {
                                 .buttonStyle(.bordered)
                         }
                     } else {
-                        Button("Grant access", action: onOpenFullDiskAccess)
-                            .buttonStyle(.bordered)
-                            .tint(Color.floodlightSetupAccent)
+                        HStack(spacing: 8) {
+                            inlineDraggableBadge
+                            Button("Grant access", action: onOpenFullDiskAccess)
+                                .buttonStyle(.bordered)
+                                .tint(Color.floodlightSetupAccent)
+                        }
                     }
                 }
 
-                Text("Required for complete results. macOS remembers this approval.")
+                Text("Drag Floodlight into System Settings, or click Grant access.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, 12)
             }
         }
+    }
+
+    private var inlineDraggableBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Text("Drag")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .draggable(Bundle.main.bundleURL)
+        .help("Drag Floodlight directly into System Settings > Full Disk Access")
     }
 
     private var blocklistSection: some View {

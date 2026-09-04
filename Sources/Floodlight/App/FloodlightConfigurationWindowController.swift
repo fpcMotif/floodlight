@@ -98,10 +98,9 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
             onOpenSpotlightSettings: { [weak self] in
                 self?.flow.beginSpotlightReplacement()
             },
-            // Wrapped rather than passed as `Self.openFullDiskAccess`: an
-            // unapplied method reference carries no isolation, so it will not
-            // convert to the callback's `@MainActor @Sendable` type.
-            onOpenFullDiskAccess: { Self.openFullDiskAccess() },
+            onOpenFullDiskAccess: { [weak self] in
+                self?.flow.beginFullDiskAccessGrant()
+            },
             onFinish: { [weak self] in self?.finish() }
         )
         window.contentViewController = NSHostingController(rootView: view)
@@ -124,6 +123,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     }
 
     func windowWillClose(_ notification: Notification) {
+        flow.fullDiskAccessCoordinator.dismiss()
         guard !flow.didFinish else { return }
         onDismissed()
     }
@@ -131,6 +131,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     func windowDidBecomeKey(_ notification: Notification) {
         session.refreshFullDiskAccess()
         flow.retryPendingShortcut()
+        flow.fullDiskAccessCoordinator.poll()
     }
 
     private func handleLaunchAtLogin(_ enabled: Bool) {
@@ -148,6 +149,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     }
 
     func finish() {
+        flow.fullDiskAccessCoordinator.dismiss()
         if presentation == .onboarding {
             session.complete()
         }
