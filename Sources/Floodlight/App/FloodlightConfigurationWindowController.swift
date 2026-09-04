@@ -88,6 +88,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.delegate = self
         window.center()
+        flow.fullDiskAccessCoordinator.parentWindowProvider = { [weak window] in window?.frame }
 
         let view = OnboardingView(
             presentation: presentation,

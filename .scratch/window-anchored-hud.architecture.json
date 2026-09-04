@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Window-Anchored Full Disk Access HUD",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "geometry-and-docking",
+        "label": "Geometry & Magnetic Docking",
+        "focus": ["locator", "window_server", "policy", "panel"],
+        "note": "Track System Settings on screen and calculate the attached edge dock position."
+      },
+      {
+        "id": "drag-and-grant",
+        "label": "Drag-and-Drop Authorization",
+        "focus": ["onboarding_ui", "coordinator", "hud_view", "system_settings", "tcc_subsystem", "probe"],
+        "note": "Short 50pt upward drag directly triggers Touch ID auth and TCC grant detection."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "onboarding_ui",
+      "type": "frontend",
+      "label": "Settings Surface",
+      "sublabel": "OnboardingView",
+      "pos": [60, 120],
+      "size": [150, 56]
+    },
+    {
+      "id": "probe",
+      "type": "security",
+      "label": "TCC Probe",
+      "sublabel": "TCC.db FileHandle",
+      "pos": [60, 280],
+      "size": [150, 56],
+      "tag": "readability"
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Grant Coordinator",
+      "sublabel": "state machine & ticker",
+      "pos": [340, 120],
+      "size": [150, 56]
+    },
+    {
+      "id": "locator",
+      "type": "backend",
+      "label": "Window Locator",
+      "sublabel": "Quartz Window Services",
+      "pos": [340, 280],
+      "size": [150, 56]
+    },
+    {
+      "id": "policy",
+      "type": "backend",
+      "label": "Anchor Policy",
+      "sublabel": "docking & clamping",
+      "pos": [340, 440],
+      "size": [150, 56]
+    },
+    {
+      "id": "hud_view",
+      "type": "frontend",
+      "label": "Guidance HUD View",
+      "sublabel": "draggable app tile",
+      "pos": [620, 120],
+      "size": [150, 56],
+      "tag": "public.file-url"
+    },
+    {
+      "id": "window_server",
+      "type": "cloud",
+      "label": "Quartz WindowServer",
+      "sublabel": "kCGWindowBounds",
+      "pos": [620, 280],
+      "size": [150, 56]
+    },
+    {
+      "id": "panel",
+      "type": "frontend",
+      "label": "Guidance Panel",
+      "sublabel": "floating NSPanel",
+      "pos": [620, 440],
+      "size": [150, 56]
+    },
+    {
+      "id": "system_settings",
+      "type": "external",
+      "label": "System Settings",
+      "sublabel": "Full Disk Access list",
+      "pos": [900, 120],
+      "size": [150, 56],
+      "tag": "drop target"
+    },
+    {
+      "id": "tcc_subsystem",
+      "type": "security",
+      "label": "macOS TCC Daemon",
+      "sublabel": "SystemPolicyAllFiles",
+      "pos": [900, 280],
+      "size": [150, 56]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Floodlight Application Process",
+      "wraps": ["onboarding_ui", "probe", "coordinator", "locator", "policy", "hud_view", "panel"]
+    },
+    {
+      "kind": "region",
+      "label": "macOS System Services",
+      "wraps": ["window_server", "system_settings", "tcc_subsystem"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "ui-to-coord",
+      "from": "onboarding_ui",
+      "to": "coordinator",
+      "label": "Grant access"
+    },
+    {
+      "id": "coord-to-probe",
+      "from": "coordinator",
+      "to": "probe",
+      "label": "poll TCC",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "coord-to-locator",
+      "from": "coordinator",
+      "to": "locator",
+      "label": "track target",
+      "labelDy": 24
+    },
+    {
+      "id": "coord-to-hud",
+      "from": "coordinator",
+      "to": "hud_view",
+      "label": "presents HUD"
+    },
+    {
+      "id": "locator-to-ws",
+      "from": "locator",
+      "to": "window_server",
+      "label": "CGWindowList"
+    },
+    {
+      "id": "locator-to-policy",
+      "from": "locator",
+      "to": "policy",
+      "label": "Cocoa rect",
+      "labelDy": 24
+    },
+    {
+      "id": "policy-to-panel",
+      "from": "policy",
+      "to": "panel",
+      "label": "docked frame"
+    },
+    {
+      "id": "hud-to-settings",
+      "from": "hud_view",
+      "to": "system_settings",
+      "label": "~50pt drop",
+      "variant": "emphasis"
+    },
+    {
+      "id": "settings-to-tcc",
+      "from": "system_settings",
+      "to": "tcc_subsystem",
+      "label": "Touch ID auth",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Target Detection",
+      "items": [
+        "Quartz WindowServer detects System Settings on screen",
+        "Translates inverted top-left Quartz coordinates to Cocoa bottom-left"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Magnetic Docking",
+      "items": [
+        "Anchor policy docks HUD to bottom edge with 20pt overlap",
+        "Clamps to visibleFrame so HUD never slips behind Dock",
+        "Tracks window movement during periodic polling ticker"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "1-Gesture Grant",
+      "items": [
+        "Draggable tile vends public.file-url for Floodlight.app",
+        "Drag distance reduced from ~400pt to ~50pt straight upward",
+        "Probe detects TCC grant and auto-dismisses in 1.5s"
+      ]
+    }
+  ]
+}

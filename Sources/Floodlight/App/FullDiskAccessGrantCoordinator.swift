@@ -29,10 +29,15 @@ package enum FullDiskAccessDragItem {
 @MainActor
 package final class FullDiskAccessGrantCoordinator {
     package private(set) var phase: FullDiskAccessGrantPhase = .idle
+    package var activeGuidancePanel: FullDiskAccessGuidancePanel? {
+        panel
+    }
 
     private let openSettings: () -> Void
     private let fullDiskAccessProvider: () -> Bool
     private let bundleURL: () -> URL
+    private let targetWindowLocator: () -> NSRect?
+    package var parentWindowProvider: (() -> NSRect?)?
     private let onGranted: () -> Void
     private let onDismissed: () -> Void
     private let autoPresentPanel: Bool
@@ -52,6 +57,10 @@ package final class FullDiskAccessGrantCoordinator {
         bundleURL: @escaping () -> URL = {
             Bundle.main.bundleURL
         },
+        targetWindowLocator: @escaping () -> NSRect? = {
+            SystemSettingsWindowLocator.locateWindow()
+        },
+        parentWindowProvider: (() -> NSRect?)? = nil,
         onGranted: @escaping () -> Void = {},
         onDismissed: @escaping () -> Void = {},
         autoPresentPanel: Bool = true
@@ -59,6 +68,8 @@ package final class FullDiskAccessGrantCoordinator {
         self.openSettings = openSettings
         self.fullDiskAccessProvider = fullDiskAccessProvider
         self.bundleURL = bundleURL
+        self.targetWindowLocator = targetWindowLocator
+        self.parentWindowProvider = parentWindowProvider
         self.onGranted = onGranted
         self.onDismissed = onDismissed
         self.autoPresentPanel = autoPresentPanel
@@ -99,6 +110,13 @@ package final class FullDiskAccessGrantCoordinator {
 
         if fullDiskAccessProvider() {
             handleGrantDetected()
+            return
+        }
+
+        if autoPresentPanel, let panel {
+            let targetRect = targetWindowLocator()
+            let parentRect = parentWindowProvider?()
+            panel.updateAnchorFrame(targetRect: targetRect, parentRect: parentRect)
         }
     }
 
@@ -176,7 +194,9 @@ package final class FullDiskAccessGrantCoordinator {
             )
             panel = guidancePanel
         }
-        panel?.show()
+        let targetRect = targetWindowLocator()
+        let parentRect = parentWindowProvider?()
+        panel?.show(targetRect: targetRect, parentRect: parentRect)
     }
 
     private static func openSystemSettingsFullDiskAccess() {

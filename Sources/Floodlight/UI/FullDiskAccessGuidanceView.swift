@@ -154,21 +154,31 @@ package final class FullDiskAccessGuidancePanel: NSPanel {
         updateContent(phase: phase)
     }
 
-    package func show() {
-        if let screen = NSScreen.main {
-            let visibleFrame = screen.visibleFrame
-            let panelWidth: CGFloat = 380
-            let panelHeight: CGFloat = 110
-            let originX = visibleFrame.midX - (panelWidth / 2)
-            let originY = visibleFrame.minY + 80
-            setFrame(
-                NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight),
-                display: true
-            )
-        } else {
-            center()
-        }
+    package func show(targetRect: NSRect? = nil, parentRect: NSRect? = nil) {
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        let frame = GuidancePanelAnchorPolicy.computeFrame(
+            targetWindow: targetRect,
+            parentWindow: parentRect,
+            screen: screen,
+            panelSize: NSSize(width: 380, height: 110)
+        )
+        setFrame(frame, display: true)
         orderFrontRegardless()
+    }
+
+    package func updateAnchorFrame(targetRect: NSRect?, parentRect: NSRect?, animate: Bool = true) {
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        let newFrame = GuidancePanelAnchorPolicy.computeFrame(
+            targetWindow: targetRect,
+            parentWindow: parentRect,
+            screen: screen,
+            panelSize: NSSize(width: 380, height: 110)
+        )
+        if abs(newFrame.origin.x - frame.origin.x) > 4 || abs(newFrame.origin.y - frame.origin.y) >
+            4
+        {
+            setFrame(newFrame, display: true, animate: animate)
+        }
     }
 
     private func updateContent(phase: FullDiskAccessGrantPhase) {
