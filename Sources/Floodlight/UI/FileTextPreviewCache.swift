@@ -4,16 +4,6 @@ struct FileTextPreview: Equatable, Sendable {
     let lines: [String]
     let isTruncated: Bool
     let isEmpty: Bool
-
-    init(
-        lines: [String],
-        isTruncated: Bool,
-        isEmpty: Bool
-    ) {
-        self.lines = lines
-        self.isTruncated = isTruncated
-        self.isEmpty = isEmpty
-    }
 }
 
 enum FileTextPreviewDecoder {
@@ -127,11 +117,10 @@ enum FileTextPreviewDecoder {
         }
         if payload.count >= 2 {
             let tail = Array(payload.suffix(2))
-            let codeUnit: UInt16
-            if isLittleEndianUTF16 {
-                codeUnit = UInt16(tail[0]) | (UInt16(tail[1]) << 8)
+            let codeUnit: UInt16 = if isLittleEndianUTF16 {
+                UInt16(tail[0]) | (UInt16(tail[1]) << 8)
             } else {
-                codeUnit = (UInt16(tail[0]) << 8) | UInt16(tail[1])
+                (UInt16(tail[0]) << 8) | UInt16(tail[1])
             }
             if (0xD800...0xDBFF).contains(codeUnit) {
                 payload.removeLast(2)
