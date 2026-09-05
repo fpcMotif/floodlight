@@ -543,7 +543,8 @@ struct FileTextPreviewTests {
             sourceAppBundleID: detail.sourceAppBundleID,
             createdAt: detail.createdAt,
             formattedDate: detail.formattedDate,
-            fileURL: detail.fileURL
+            fileURL: detail.fileURL,
+            pinnedAt: detail.pinnedAt
         ))
     }
 }

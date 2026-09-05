@@ -643,6 +643,18 @@ extension SearchCoordinator {
         }
     }
 
+    /// Whether the selected clipboard row is pinned — the Actions menu
+    /// reads it to offer "Pin" or "Unpin".
+    var isSelectionPinned: Bool {
+        guard isClipboardMode, let selectedItem else { return false }
+        return selectedItem.isPinned
+    }
+
+    /// The selection's on-disk location, for "Show in Finder".
+    var selectionFileURL: URL? {
+        selectedItem?.fileURL
+    }
+
     /// Inspector snapshot for the selected Clipboard History entry.
     var clipboardInspector: ClipboardInspector? {
         guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)

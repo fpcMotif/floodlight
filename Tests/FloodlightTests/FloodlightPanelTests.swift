@@ -118,6 +118,8 @@ struct FloodlightPanelTests {
             .panelCommand(for: "\r", shiftHeld: false) == .revealSelection)
         #expect(FloodlightPanelController
             .panelCommand(for: "\n", shiftHeld: false) == .revealSelection)
+        #expect(FloodlightPanelController
+            .panelCommand(for: "k", shiftHeld: false) == .openActions)
     }
 
     @Test func shiftDistinguishesRebuildIndexFromRevealSelection() {

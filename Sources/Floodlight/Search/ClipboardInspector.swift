@@ -60,6 +60,7 @@ enum ClipboardInspector: Equatable {
         let sourceAppBundleID: String?
         let createdAt: Date
         let formattedDate: String
+        let pinnedAt: Date?
     }
 
     struct FileDetail: Equatable {
@@ -77,6 +78,7 @@ enum ClipboardInspector: Equatable {
         let createdAt: Date
         let formattedDate: String
         let fileURL: URL
+        let pinnedAt: Date?
     }
 
     struct ImageDetail: Equatable {
@@ -90,6 +92,7 @@ enum ClipboardInspector: Equatable {
         let sourceAppBundleID: String?
         let createdAt: Date
         let formattedDate: String
+        let pinnedAt: Date?
     }
 
     case text(TextDetail)
@@ -142,7 +145,8 @@ enum ClipboardInspector: Equatable {
                     sourceAppBundleID: entry.sourceAppBundleID,
                     createdAt: entry.createdAt,
                     formattedDate: formattedDate,
-                    fileURL: fileURL
+                    fileURL: fileURL,
+                    pinnedAt: entry.pinnedAt
                 ))
             }
 
@@ -165,7 +169,8 @@ enum ClipboardInspector: Equatable {
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,
-                formattedDate: formattedDate
+                formattedDate: formattedDate,
+                pinnedAt: entry.pinnedAt
             ))
 
         case .file:
@@ -189,7 +194,8 @@ enum ClipboardInspector: Equatable {
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,
                 formattedDate: formattedDate,
-                fileURL: url
+                fileURL: url,
+                pinnedAt: entry.pinnedAt
             ))
 
         case .image:
@@ -207,7 +213,8 @@ enum ClipboardInspector: Equatable {
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,
-                formattedDate: formattedDate
+                formattedDate: formattedDate,
+                pinnedAt: entry.pinnedAt
             ))
         }
     }
@@ -429,21 +436,19 @@ enum ClipboardInspector: Equatable {
         return Array(lines)
     }
 
+    /// Locale-aware: a 12-hour locale sees "Today at 3:03 PM", a 24-hour one
+    /// "Today at 15:03". Seconds are dropped — the list already shows the
+    /// entry's age, and a wall-clock second is never what the user recalls.
     static func formattedDetailedDate(_ date: Date) -> String {
         let calendar = Calendar.current
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm:ss"
-        let timeStr = timeFormatter.string(from: date)
-
+        let time = date.formatted(date: .omitted, time: .shortened)
         if calendar.isDateInToday(date) {
-            return "Today at \(timeStr)"
-        } else if calendar.isDateInYesterday(date) {
-            return "Yesterday at \(timeStr)"
-        } else {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "MMM d, yyyy 'at' HH:mm:ss"
-            return dateFormatter.string(from: date)
+            return "Today at \(time)"
         }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday at \(time)"
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private static func imageFormatName(width: Int, height: Int) -> String {
@@ -481,14 +486,6 @@ enum ClipboardInspector: Equatable {
     }
 
     private static func sourceAppDisplayName(for bundleID: String?) -> String {
-        guard let bundleID, !bundleID.isEmpty else { return "Clipboard" }
-        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            let name = appURL.deletingPathExtension().lastPathComponent
-            if !name.isEmpty { return name }
-        }
-        guard let lastComponent = bundleID.split(separator: ".").last, !lastComponent.isEmpty else {
-            return bundleID
-        }
-        return String(lastComponent)
+        ClipboardSourceApp.displayName(for: bundleID)
     }
 }

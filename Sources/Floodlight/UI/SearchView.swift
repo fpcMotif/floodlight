@@ -98,7 +98,7 @@ private struct SearchBar: View {
 
             FloodlightTextField(
                 text: $model.query,
-                placeholder: "Floodlight",
+                placeholder: model.isClipboardMode ? "Filter clipboard" : "Floodlight",
                 focusGeneration: model.focusGeneration,
                 onSubmit: model.openSelection,
                 onCommandSubmit: model.revealSelection,
@@ -119,6 +119,16 @@ private struct SearchBar: View {
         }
         .padding(.horizontal, 20)
         .frame(height: FloodlightMetrics.searchHeight, alignment: .center)
+        .background {
+            // Clipboard mode's board body is an opaque well; only the field
+            // above it sits directly over glass and needs this wash to
+            // stay legible over bright windows behind the panel (#57
+            // review).
+            if model.isClipboardMode {
+                Color(nsColor: .windowBackgroundColor)
+                    .opacity(FloodlightMetrics.clipboardFieldTintOpacity)
+            }
+        }
         .transaction { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
@@ -191,15 +201,23 @@ private struct SearchResultsSection: View {
 
     var body: some View {
         if !model.query.isEmpty || model.isClipboardMode {
-            Divider().opacity(0.45)
-            // Web mode publishes no filter options — rendering the bar
-            // anyway leaves an empty strip between the field and the rows.
-            // Its height goes to the results, so the panel never resizes.
-            if showsFilterBar {
-                SearchFilterBar(model: model)
+            if model.isClipboardMode {
+                // No divider here: the well's own top edge — where its
+                // opaque fill starts — is the separation from the tinted
+                // search row above it (#57 "glass field, solid well").
+                clipboardWell
+            } else {
+                Divider().opacity(0.45)
+                // Web mode publishes no filter options — rendering the bar
+                // anyway leaves an empty strip between the field and the
+                // rows. Its height goes to the results, so the panel never
+                // resizes.
+                if showsFilterBar {
+                    SearchFilterBar(model: model)
+                }
+                resultsContent
+                    .frame(height: resultsHeight)
             }
-            resultsContent
-                .frame(height: resultsHeight)
         }
     }
 
@@ -208,10 +226,49 @@ private struct SearchResultsSection: View {
     }
 
     private var resultsHeight: CGFloat {
-        FloodlightMetrics.expandedPanelHeight
+        // Clipboard mode has no divider under the search row to subtract —
+        // it subtracts the well's own bottom inset instead, since that
+        // space also sits outside the content this height is sized for.
+        let reservedAboveResults: CGFloat = model.isClipboardMode
+            ? FloodlightMetrics.clipboardWellInset
+            : 1
+        return FloodlightMetrics.panelHeight(hasQuery: true, isClipboardMode: model.isClipboardMode)
             - FloodlightMetrics.searchHeight
-            - 1
+            - reservedAboveResults
             - (showsFilterBar ? FloodlightMetrics.filterBarHeight : 0)
+    }
+
+    /// The board body (#57 review): filter bar, list/inspector, footer
+    /// divider, and footer sit on one opaque "well" — a solid fill with a
+    /// hairline inside stroke, inset from the panel's glass on its leading,
+    /// trailing, and bottom edges only, so its top edge reads as the seam
+    /// between the tinted field above and the solid board below.
+    private var clipboardWell: some View {
+        VStack(spacing: 0) {
+            if showsFilterBar {
+                SearchFilterBar(model: model)
+            }
+            resultsContent
+                .frame(height: resultsHeight)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(wellShape)
+        .overlay(
+            wellShape.strokeBorder(
+                Color.primary.opacity(FloodlightMetrics.clipboardWellStrokeOpacity),
+                lineWidth: 1
+            )
+        )
+        .padding(.leading, FloodlightMetrics.clipboardWellInset)
+        .padding(.trailing, FloodlightMetrics.clipboardWellInset)
+        .padding(.bottom, FloodlightMetrics.clipboardWellInset)
+    }
+
+    private var wellShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: FloodlightMetrics.clipboardWellCornerRadius,
+            style: .continuous
+        )
     }
 
     @ViewBuilder
@@ -235,19 +292,9 @@ private struct SearchResultsSection: View {
                 Divider().opacity(0.45)
                 ClipboardFooterBar(model: model, boardContext: boardContext)
             }
-            .background(ClipboardBoardBacking())
         } else {
             ResultList(model: model)
         }
-    }
-}
-
-/// High-contrast backing for the board (#57): a window-background tint over
-/// the glass.
-private struct ClipboardBoardBacking: View {
-    var body: some View {
-        Color(nsColor: .windowBackgroundColor)
-            .opacity(FloodlightMetrics.clipboardBackingOpacity)
     }
 }
 
@@ -518,28 +565,41 @@ private struct ClipboardFooterBar: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(pasteLabel)
 
-                if model.previewableSelectionURL != nil {
-                    Button {
-                        boardContext.requestPreview()
-                    } label: {
-                        FooterChip(title: "Preview", key: "␣")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Preview")
+                // Always laid out: arrowing from a previewable entry to a
+                // plain one must not slide the other chips sideways.
+                Button {
+                    boardContext.requestPreview()
+                } label: {
+                    FooterChip(title: "Preview", key: "␣")
                 }
+                .buttonStyle(.plain)
+                .disabled(!canPreview)
+                .opacity(canPreview ? 1 : FloodlightMetrics.footerChipDisabledOpacity)
+                .accessibilityLabel("Preview")
 
                 Button {
-                    model.copySelection()
+                    boardContext.requestActions()
                 } label: {
                     FooterChip(title: "Actions", key: "⌘K")
                 }
                 .buttonStyle(.plain)
+                .background(
+                    ClipboardActionsMenuAnchor(
+                        model: model,
+                        boardContext: boardContext,
+                        pasteLabel: pasteLabel
+                    )
+                )
                 .accessibilityLabel("Actions")
             }
         }
         .padding(.horizontal, 14)
-        .frame(height: 32)
+        .frame(height: FloodlightMetrics.clipboardFooterHeight)
         .background(Color.secondary.opacity(0.04))
+    }
+
+    private var canPreview: Bool {
+        model.previewableSelectionURL != nil
     }
 }
 

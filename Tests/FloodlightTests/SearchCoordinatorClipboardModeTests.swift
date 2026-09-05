@@ -99,7 +99,9 @@ struct SearchCoordinatorClipboardModeTests {
         coordinator.handleTab()
         #expect(coordinator.results.count == 1)
         #expect(coordinator.results[0].title == "Invoice_2026.pdf")
-        #expect(coordinator.results[0].subtitle == path)
+        // The row's subtitle is "App · age · ParentFolder", not the full
+        // path — that lives in the inspector beside the list.
+        #expect(coordinator.results[0].subtitle == "Clipboard · just now · Invoices")
 
         coordinator.openSelection()
 
@@ -142,7 +144,9 @@ struct SearchCoordinatorClipboardModeTests {
         coordinator.handleTab()
         #expect(coordinator.results.count == 1)
         #expect(coordinator.results[0].title == "CleanShot 2026-09-01 at 15.30.png")
-        #expect(coordinator.results[0].subtitle.hasPrefix("2880×1800"))
+        // The row's subtitle is "App · age · dimensions"; the dimensions
+        // are the trailing detail, not the leading one.
+        #expect(coordinator.results[0].subtitle.hasSuffix("2880×1800"))
 
         coordinator.openSelection()
 
@@ -238,7 +242,7 @@ struct SearchCoordinatorClipboardModeTests {
 
         // Pinned item (e1) moves to top
         #expect(coordinator.results.map(\.id) == ["clipboard:\(e1.id)", "clipboard:\(e2.id)"])
-        #expect(coordinator.results[0].title.hasPrefix("📌 "))
+        #expect(coordinator.results[0].isPinned)
 
         // Toggle pin again unpins it
         coordinator.togglePinSelection()

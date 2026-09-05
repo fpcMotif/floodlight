@@ -266,7 +266,10 @@ final class FloodlightPanelController {
                 )
                 self.resize(to: NSSize(
                     width: width,
-                    height: FloodlightMetrics.panelHeight(hasQuery: hasQuery)
+                    height: FloodlightMetrics.panelHeight(
+                        hasQuery: hasQuery,
+                        isClipboardMode: self.model.isClipboardMode
+                    )
                 ))
                 self.observeModelForPanelSize()
             }
@@ -375,6 +378,9 @@ final class FloodlightPanelController {
         case .deleteSelection:
             guard model.isClipboardMode else { return false }
             model.deleteSelection()
+        case .openActions:
+            guard model.isClipboardMode else { return false }
+            boardContext.requestActions()
         case .unmatched:
             return false
         }
@@ -389,6 +395,7 @@ final class FloodlightPanelController {
         case togglePreview
         case togglePin
         case deleteSelection
+        case openActions
         case unmatched
     }
 
@@ -408,6 +415,8 @@ final class FloodlightPanelController {
             .togglePin
         case "d":
             .deleteSelection
+        case "k":
+            .openActions
         default:
             .unmatched
         }

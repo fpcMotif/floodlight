@@ -56,7 +56,7 @@ struct FloodlightPanelStressTests {
         #expect(FloodlightPanelController
             .panelCommand(for: ".", shiftHeld: false) == .togglePin)
 
-        let knownCommands: Set = ["c", "d", "l", "r", "y"]
+        let knownCommands: Set = ["c", "d", "k", "l", "r", "y"]
         for character in "abcdefghijklmnopqrstuvwxyz" {
             let ch = String(character)
             if knownCommands.contains(ch) {

@@ -167,10 +167,10 @@ struct SearchViewRenderingTests {
         let image = try render(
             SearchView(model: coordinator),
             width: FloodlightMetrics.clipboardPanelWidth,
-            height: FloodlightMetrics.expandedPanelHeight
+            height: FloodlightMetrics.clipboardPanelHeight
         )
         #expect(image.width == Int(FloodlightMetrics.clipboardPanelWidth))
-        #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
+        #expect(image.height == Int(FloodlightMetrics.clipboardPanelHeight))
     }
 
     @Test func compactClipboardRowsRenderLongTitlesAndPathsWithoutGrowing() throws {
@@ -218,7 +218,7 @@ struct SearchViewRenderingTests {
                 boardContext: ClipboardBoardContext(pasteTargetAppName: "Safari")
             ),
             width: FloodlightMetrics.clipboardPanelWidth,
-            height: FloodlightMetrics.expandedPanelHeight
+            height: FloodlightMetrics.clipboardPanelHeight
         )
     }
 

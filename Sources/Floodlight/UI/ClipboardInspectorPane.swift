@@ -148,40 +148,38 @@ struct ClipboardInspectorPane: View {
                 FileTextPreviewContainer(url: detail.fileURL, isCode: detail.isCode)
                     .id(detail.fileURL)
             }
-            Text(detail.name)
-                .font(FloodlightMetrics.Typography.topHitTitle)
-                .foregroundStyle(.primary)
-                .lineLimit(2)
+            previewTitle(detail.name)
         }
     }
 
     private func imagePreview(_ detail: ClipboardInspector.ImageDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let data = detail.previewPNG, let image = NSImage(data: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 180)
-                    .clipShape(
-                        RoundedRectangle(
-                            cornerRadius: FloodlightMetrics.resultRowCornerRadius,
-                            style: .continuous
-                        )
-                    )
+                MediaWell {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                }
             }
-            Text(detail.name)
-                .font(FloodlightMetrics.Typography.rowTitle)
-                .foregroundStyle(.primary)
-                .lineLimit(2)
+            previewTitle(detail.name)
         }
+    }
+
+    /// The file or image name under its preview. One font for every kind —
+    /// a folder and a screenshot are the same rank of thing here.
+    private func previewTitle(_ name: String) -> some View {
+        Text(name)
+            .font(FloodlightMetrics.Typography.inspectorTitle)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
     }
 
     // MARK: - Information Section
 
     private func informationSection(_ snapshot: ClipboardInspector) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             Text("Information")
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(FloodlightMetrics.Typography.inspectorSectionLabel)
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 2)
 
@@ -203,6 +201,7 @@ struct ClipboardInspectorPane: View {
                     infoRow(label: "Lines", value: "\(detail.lineCount)")
                 }
                 infoRow(label: "Copied", value: detail.formattedDate)
+                pinnedRow(detail.pinnedAt)
 
             case let .file(detail):
                 infoRow(label: "Source") {
@@ -216,6 +215,7 @@ struct ClipboardInspectorPane: View {
                     )
                 }
                 infoRow(label: "Copied", value: detail.formattedDate)
+                pinnedRow(detail.pinnedAt)
                 infoRow(label: "Path", value: detail.path)
 
             case let .image(detail):
@@ -230,33 +230,53 @@ struct ClipboardInspectorPane: View {
                 )
                 infoRow(label: "Format", value: detail.format)
                 infoRow(label: "Copied", value: detail.formattedDate)
+                pinnedRow(detail.pinnedAt)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pinnedRow(_ pinnedAt: Date?) -> some View {
+        if let pinnedAt {
+            infoRow(label: "Pinned") {
+                HStack(spacing: 5) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(ClipboardInspector.formattedDetailedDate(pinnedAt))
+                        .font(FloodlightMetrics.Typography.inspectorRow)
+                        .foregroundStyle(.primary)
+                }
             }
         }
     }
 
     private func infoRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
+        infoRow(label: label) {
             Text(value)
-                .font(.system(size: 12))
+                .font(FloodlightMetrics.Typography.inspectorRow)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
     }
 
+    /// Labels sit in a fixed right-aligned column, values start where the
+    /// labels end — the Finder Get Info layout. A right-aligned value at
+    /// the far edge of a 480 pt column left a gap the eye had to jump.
     private func infoRow(label: String, @ViewBuilder content: () -> some View) -> some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
-                .font(.system(size: 12))
+                .font(FloodlightMetrics.Typography.inspectorRow)
                 .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
+                .frame(width: Self.infoLabelWidth, alignment: .trailing)
             content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityElement(children: .combine)
     }
+
+    private static let infoLabelWidth: CGFloat = 84
 
     private func sourceAppValue(name: String, bundleID: String?) -> some View {
         HStack(spacing: 6) {
@@ -271,8 +291,35 @@ struct ClipboardInspectorPane: View {
                     .foregroundStyle(.secondary)
             }
             Text(name)
-                .font(.system(size: 12))
+                .font(FloodlightMetrics.Typography.inspectorRow)
                 .foregroundStyle(.primary)
+        }
+    }
+}
+
+/// The rounded backing every media preview sits on, so a transparent PNG
+/// or a letterboxed thumbnail reads as a picture on a surface rather than
+/// pixels floating over the inspector.
+private struct MediaWell<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            RoundedRectangle(
+                cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+                style: .continuous
+            )
+            .fill(Color.secondary.opacity(0.06))
+            .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 180)
+
+            content()
+                .frame(maxWidth: .infinity, maxHeight: 180)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: FloodlightMetrics.resultRowCornerRadius,
+                        style: .continuous
+                    )
+                )
         }
     }
 }
@@ -291,30 +338,18 @@ private struct FileMediaPreview: View {
     }
 
     var body: some View {
-        ZStack(alignment: .center) {
-            RoundedRectangle(
-                cornerRadius: FloodlightMetrics.resultRowCornerRadius,
-                style: .continuous
-            )
-            .fill(Color.secondary.opacity(0.06))
-            .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 180)
-
+        MediaWell {
             if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 180)
-                    .clipShape(
-                        RoundedRectangle(
-                            cornerRadius: FloodlightMetrics.resultRowCornerRadius,
-                            style: .continuous
-                        )
-                    )
-                if isVideo {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .shadow(radius: 4)
+                ZStack {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                    if isVideo {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(radius: 4)
+                    }
                 }
             } else {
                 ProgressView()

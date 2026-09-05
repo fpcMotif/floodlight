@@ -129,7 +129,7 @@ struct SelectedResultActionPerformerTests {
         let harness = makeHarness()
         let item = SearchItem(
             id: "clipboard:image-2",
-            title: "📌 AppMockup_Dark_v2.png",
+            title: "AppMockup_Dark_v2.png",
             subtitle: "1440×900 · 1h",
             kind: .clipboard,
             action: .copyImage(id: "image-2"),

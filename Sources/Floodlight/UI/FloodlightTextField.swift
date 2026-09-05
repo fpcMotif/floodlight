@@ -96,6 +96,18 @@ struct FloodlightTextField: NSViewRepresentable {
             textField.stringValue = text
         }
 
+        // The placeholder changes with the mode ("Filter clipboard" on the
+        // board), so it has to follow the prop, not only the first make.
+        if textField.placeholderAttributedString?.string != placeholder {
+            textField.placeholderAttributedString = NSAttributedString(
+                string: placeholder,
+                attributes: [
+                    .font: textField.font as Any,
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                ]
+            )
+        }
+
         if context.coordinator.lastFocusGeneration != focusGeneration {
             context.coordinator.lastFocusGeneration = focusGeneration
             context.coordinator.shouldCollapseSelectionAfterNextEdit = true

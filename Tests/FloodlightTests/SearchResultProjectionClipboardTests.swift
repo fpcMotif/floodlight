@@ -40,7 +40,8 @@ struct SearchResultProjectionClipboardTests {
 
         let firstRow = publication.visibleRows[0]
         #expect(firstRow.id == "clipboard:entry-1")
-        #expect(firstRow.title == "📌 Pinned multi-line address line 2")
+        #expect(firstRow.title == "Pinned multi-line address line 2")
+        #expect(firstRow.isPinned)
         #expect(firstRow.subtitle == "Notes · 18m")
         #expect(firstRow.kind == .clipboard)
         #expect(firstRow.action == .copy("Pinned multi-line\naddress line 2"))
@@ -87,15 +88,17 @@ struct SearchResultProjectionClipboardTests {
         let fileRow = publication.visibleRows[0]
         #expect(fileRow.id == "clipboard:file-1")
         #expect(fileRow.title == "Invoice_2026.pdf")
-        #expect(fileRow.subtitle == path)
+        #expect(fileRow.subtitle == "Clipboard · 2m · Invoices")
+        #expect(!fileRow.isPinned)
         #expect(fileRow.kind == .clipboard)
         #expect(fileRow.fileURL == URL(fileURLWithPath: path))
         #expect(fileRow.iconSource == .inferred)
         #expect(fileRow.action == .copyFiles([path]))
 
         let folderRow = publication.visibleRows[1]
-        #expect(folderRow.title == "📌 floodlight")
-        #expect(folderRow.subtitle == folderPath)
+        #expect(folderRow.title == "floodlight")
+        #expect(folderRow.isPinned)
+        #expect(folderRow.subtitle == "Clipboard · 2m · devv")
         #expect(folderRow.fileURL == URL(fileURLWithPath: folderPath))
         #expect(folderRow.action == .copyFiles([folderPath]))
     }
@@ -147,15 +150,16 @@ struct SearchResultProjectionClipboardTests {
         let imageRow = publication.visibleRows[0]
         #expect(imageRow.id == "clipboard:image-1")
         #expect(imageRow.title == "CleanShot 2026-09-01 at 15.30.png")
-        #expect(imageRow.subtitle == "2880×1800 · 2m")
+        #expect(imageRow.subtitle == "Clipboard · 2m · 2880×1800")
         #expect(imageRow.kind == .clipboard)
         #expect(imageRow.fileSize == 1_400_000)
         #expect(imageRow.iconSource == .thumbnail(thumbnail))
         #expect(imageRow.action == .copyImage(id: "image-1"))
 
         let pinnedRow = publication.visibleRows[1]
-        #expect(pinnedRow.title == "📌 AppMockup_Dark_v2.png")
-        #expect(pinnedRow.subtitle == "1440×900 · 2m")
+        #expect(pinnedRow.title == "AppMockup_Dark_v2.png")
+        #expect(pinnedRow.isPinned)
+        #expect(pinnedRow.subtitle == "Clipboard · 2m · 1440×900")
         #expect(pinnedRow.fileSize == 480_000)
         #expect(pinnedRow.action == .copyImage(id: "image-2"))
     }
