@@ -336,7 +336,7 @@ struct OnboardingView: View {
                         Text("7 days").tag(7)
                         Text("30 days").tag(30)
                         Text("90 days").tag(90)
-                        Text("Forever").tag(-1)
+                        Text("Forever").tag(ClipboardRetention.forever.defaultsValue)
                     }
                     .labelsHidden()
                     .frame(width: 110)

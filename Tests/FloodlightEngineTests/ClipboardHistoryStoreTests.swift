@@ -179,6 +179,35 @@ struct ClipboardHistoryStoreTests {
         #expect(remaining.first { $0.id == recent.id }?.isPinned == false)
     }
 
+    /// The retention-aware overload, which is the one the capture service calls.
+    /// The test above covers the cutoff arithmetic; these two cover the step
+    /// that derives the cutoff, where `.forever` has to mean "no cutoff at all"
+    /// rather than "a cutoff of now" — the difference between keeping history
+    /// forever and deleting all of it.
+    @Test func retentionPruningDerivesCutoffFromFiniteRetention() {
+        let store = ClipboardHistoryStore.inMemory()
+        let day: TimeInterval = 86_400
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        _ = store.record(text: "Old", date: now.addingTimeInterval(-10 * day))
+        _ = store.record(text: "Recent", date: now.addingTimeInterval(-2 * day))
+
+        store.prune(retention: .days(7), now: now)
+
+        #expect(store.search(query: "").map(\.text) == ["Recent"])
+    }
+
+    @Test func foreverRetentionPrunesNothing() {
+        let store = ClipboardHistoryStore.inMemory()
+        let day: TimeInterval = 86_400
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        _ = store.record(text: "Ancient", date: now.addingTimeInterval(-3_650 * day))
+        _ = store.record(text: "Recent", date: now.addingTimeInterval(-2 * day))
+
+        store.prune(retention: .forever, now: now)
+
+        #expect(store.search(query: "").map(\.text) == ["Recent", "Ancient"])
+    }
+
     // MARK: - Two-Tier Search (Short Query vs FTS5)
 
     @Test func emptyQueryReturnsAllInOrder() {
