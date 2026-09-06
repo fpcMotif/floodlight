@@ -65,7 +65,11 @@ enum SearchResultProjection {
         let selection: SearchResultSelection?
         let progress: SearchResultProgress
         let filterContinuity: FilterContinuity
-        let rootURL: URL?
+        /// The folder row for a path-like query, already resolved against the
+        /// committed scope by whoever built this context. Projection never
+        /// touches the disk itself: it is a pure function of its inputs, and
+        /// it runs several times per keystroke.
+        let resolvedFolderRow: SearchItem?
 
         init(
             query: String,
@@ -75,7 +79,7 @@ enum SearchResultProjection {
             selection: SearchResultSelection?,
             progress: SearchResultProgress,
             filterContinuity: FilterContinuity = .reconcileWhenSettled,
-            rootURL: URL? = nil
+            resolvedFolderRow: SearchItem? = nil
         ) {
             self.query = query
             self.candidates = candidates
@@ -84,7 +88,7 @@ enum SearchResultProjection {
             self.selection = selection
             self.progress = progress
             self.filterContinuity = filterContinuity
-            self.rootURL = rootURL
+            self.resolvedFolderRow = resolvedFolderRow
         }
     }
 
@@ -471,8 +475,8 @@ enum SearchResultProjection {
         if let item = context.keywordRegistry.addressedResult(for: context.query) {
             output.append(item)
         }
-        if let pathResult = PathNavigator.resolve(query: context.query, rootURL: context.rootURL) {
-            output.append(pathResult.folderItem)
+        if let folderRow = context.resolvedFolderRow {
+            output.append(folderRow)
         }
         output.append(contentsOf: context.candidates)
 

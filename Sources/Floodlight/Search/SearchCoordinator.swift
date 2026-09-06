@@ -2,6 +2,21 @@ import FloodlightEngine
 import Foundation
 import Observation
 
+/// One query's worth of deep path navigation, resolved off the main actor
+/// and reused by every projection of that query. Not to be confused with
+/// the engine's `ResolvedPath`, which is what a single lookup returns: this
+/// is that lookup's folder row plus the query and scope it is only valid
+/// for.
+private struct CachedPathResolution: Sendable {
+    let query: String
+    let rootURL: URL
+    let folderRow: SearchItem?
+
+    func matches(query: String, rootURL: URL) -> Bool {
+        self.query == query && self.rootURL == rootURL
+    }
+}
+
 @MainActor
 @Observable
 final class SearchCoordinator {
@@ -82,6 +97,13 @@ final class SearchCoordinator {
     private let actionPerformer: SelectedResultActionPerformer
     @ObservationIgnored
     private let onDismiss: @MainActor () -> Void
+    @ObservationIgnored
+    private let pathResolver: any PathResolving
+    /// The one path resolution the current query paid for, tagged with the
+    /// query and the committed scope it belongs to. Every projection of that
+    /// query reads it instead of listing directories again.
+    @ObservationIgnored
+    private var pathResolution: CachedPathResolution?
     private var publication: SearchResultPublication
     @ObservationIgnored
     private var sourceWarmUpComplete = false
@@ -106,6 +128,7 @@ final class SearchCoordinator {
         runningApplicationActivator: any RunningApplicationActivating =
             WorkspaceRunningApplicationActivator(),
         actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
+        pathResolver: any PathResolving = FileSystemPathResolver(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
@@ -113,6 +136,7 @@ final class SearchCoordinator {
         self.clipboardStore = clipboardStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
+        self.pathResolver = pathResolver
         self.onDismiss = onDismiss
         let assistantRunSession = AssistantRunSession(runner: assistantRunner)
         self.assistantRunSession = assistantRunSession
@@ -257,6 +281,7 @@ final class SearchCoordinator {
         isResetting = true
         query = ""
         isResetting = false
+        pathResolution = nil
         publication = idleLocalPublication()
     }
 
@@ -486,10 +511,15 @@ final class SearchCoordinator {
                 try await sourceSearch.changeScope(to: url)
                 rootURL = url.standardizedFileURL
                 UserDefaults.standard.set(rootURL.path, forKey: "index-root")
+                await reresolvePathForCommittedScope()
             } catch {
                 NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)
             }
         }
+    }
+
+    private var currentQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func scheduleSearch(immediate: Bool = false) {
@@ -537,11 +567,34 @@ final class SearchCoordinator {
             ),
             filterContinuity: .preserve
         )
+        let resolver = pathResolver
+        let scopeRoot = rootURL
+        let previousResolution = pathResolution
         searchTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { return }
+            // The path lookup and the Source Search pass start together and
+            // are both awaited before the first snapshot publishes, so the
+            // folder row still lands with the first results — the listings
+            // just no longer happen on the main actor, four times over.
+            async let resolution = Self.resolvePath(
+                reusing: previousResolution,
+                query: requestQuery,
+                rootURL: scopeRoot,
+                resolver: resolver
+            )
             let snapshots = await sourceSearch.search(requestQuery, immediate: immediate)
+            let resolved = await resolution
             guard !Task.isCancelled else { return }
+            // Cancellation alone does not make the store safe — a superseded
+            // task can still be scheduled onto the main actor before it
+            // observes the flag — so only a resolution still answering the
+            // live query under the committed scope is kept, and every read
+            // re-checks the same pair. A scope committed since this pass
+            // started has already resolved the query itself.
+            if resolved.matches(query: currentQuery, rootURL: rootURL) {
+                pathResolution = resolved
+            }
             for await snapshot in snapshots {
                 guard !Task.isCancelled else { return }
                 publish(snapshot, query: requestQuery)
@@ -597,16 +650,17 @@ final class SearchCoordinator {
             name: $0.title,
             id: $0.id
         ) }
+        let projectedQuery = query ?? currentQuery
         return SearchResultProjection.project(
             .local(.init(
-                query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
+                query: projectedQuery,
                 candidates: validCandidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,
                 progress: progress,
                 filterContinuity: filterContinuity,
-                rootURL: rootURL
+                resolvedFolderRow: resolvedFolderRow(for: projectedQuery)
             ))
         )
     }
@@ -622,6 +676,69 @@ final class SearchCoordinator {
                 totalMatches: [:],
                 pendingKinds: sourceWarmUpComplete ? [] : [.application, .systemSetting]
             ),
+            filterContinuity: .preserve
+        )
+    }
+}
+
+/// Deep path navigation: one lookup per query change, off the main actor,
+/// reused by every projection of that query. The two pieces of state it
+/// needs — the resolver and the resolution — are stored on the coordinator
+/// itself; everything that reads or refreshes them lives here.
+extension SearchCoordinator {
+    /// One directory lookup per query change, not one per pass: a resolution
+    /// already made for this query under this scope is handed back as it
+    /// stands, so re-presenting the panel on an unchanged query is free.
+    private nonisolated static func resolvePath(
+        reusing previous: CachedPathResolution?,
+        query: String,
+        rootURL: URL,
+        resolver: any PathResolving
+    ) async -> CachedPathResolution {
+        if let previous, previous.matches(query: query, rootURL: rootURL) { return previous }
+        let resolved = await resolver.resolve(query: query, rootURL: rootURL)
+        return CachedPathResolution(
+            query: query,
+            rootURL: rootURL,
+            folderRow: resolved?.folderItem
+        )
+    }
+
+    /// The folder row for `query`, but only when it was resolved for that
+    /// query against the scope in force now (ADR 0007). Anything else — a
+    /// query the user has moved past, a scope that has since been committed
+    /// — projects without a folder row rather than resolving one here.
+    private func resolvedFolderRow(for query: String) -> SearchItem? {
+        guard let pathResolution, pathResolution.matches(query: query, rootURL: rootURL)
+        else {
+            return nil
+        }
+        return pathResolution.folderRow
+    }
+
+    /// A scope-relative path resolves against the committed scope (ADR 0007),
+    /// so the resolution made under the old root is void and the live query
+    /// earns a fresh one. Only the path is re-resolved and republished — the
+    /// Search Execution in flight is left alone, so a query that is not
+    /// path-like costs nothing here and sees nothing change.
+    fileprivate func reresolvePathForCommittedScope() async {
+        pathResolution = nil
+        let liveQuery = currentQuery
+        guard case .local = mode, !liveQuery.isEmpty else { return }
+        let scopeRoot = rootURL
+        let resolved = await Self.resolvePath(
+            reusing: nil,
+            query: liveQuery,
+            rootURL: scopeRoot,
+            resolver: pathResolver
+        )
+        guard resolved.matches(query: currentQuery, rootURL: rootURL) else { return }
+        pathResolution = resolved
+        publication = projectLocal(
+            candidates: publication.sourceCandidates,
+            selectedFilter: selectedFilter,
+            selection: publication.selection,
+            progress: publication.progress,
             filterContinuity: .preserve
         )
     }

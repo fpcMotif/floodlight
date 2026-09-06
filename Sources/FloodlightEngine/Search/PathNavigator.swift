@@ -14,6 +14,49 @@ package struct ResolvedPath: Equatable, Sendable {
     }
 }
 
+/// The filesystem half of deep path navigation, behind a seam.
+///
+/// `PathNavigator.resolve` lists directories and stats candidates
+/// synchronously. Result Projection used to call it directly, which put that
+/// I/O on the main actor once per projection — about four times per
+/// keystroke for the same query. Going through this protocol lets the
+/// coordinator resolve a query once, off the main actor, and lets a test
+/// count what a query costs by handing over a file system it owns.
+package protocol PathResolving: Sendable {
+    func resolve(query: String, rootURL: URL?) async -> ResolvedPath?
+}
+
+package struct FileSystemPathResolver: PathResolving {
+    private let makeFileManager: @Sendable () -> FileManager
+    private let homeURL: URL?
+
+    /// A `FileManager` factory rather than an instance: resolution runs on
+    /// whatever executor `@concurrent` lands it on, and a `FileManager` is
+    /// only safe to use from one of those at a time. Each resolution makes
+    /// one, uses it, and drops it.
+    package init(
+        fileManager: @escaping @Sendable () -> FileManager = { FileManager() },
+        homeURL: URL? = nil
+    ) {
+        makeFileManager = fileManager
+        self.homeURL = homeURL
+    }
+
+    /// `@concurrent` is deliberate. Under approachable concurrency a plain
+    /// nonisolated async method inherits its caller's actor, which here is
+    /// the main actor — exactly the thread this work exists to leave. The
+    /// call stays in the caller's task, so cancellation still applies.
+    @concurrent
+    package func resolve(query: String, rootURL: URL?) async -> ResolvedPath? {
+        PathNavigator.resolve(
+            query: query,
+            rootURL: rootURL,
+            homeURL: homeURL,
+            fileManager: makeFileManager()
+        )
+    }
+}
+
 package enum PathNavigator {
     package static func resolve(
         query: String,
