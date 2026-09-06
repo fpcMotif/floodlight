@@ -139,14 +139,17 @@ package final class ApplicationCatalog: Catalog {
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
-            if self.blocklistStore.isBlocked(name: application.name, id: application.id) {
-                return nil
-            }
             guard let score = Self.score(
                 of: application,
                 normalizedQuery: normalizedQuery,
                 asciiQuery: asciiQuery
             ) else {
+                return nil
+            }
+            if self.blocklistStore.isBlocked(
+                normalizedName: application.normalizedName,
+                id: application.id
+            ) {
                 return nil
             }
             return SearchItem(
@@ -179,10 +182,10 @@ package final class ApplicationCatalog: Catalog {
         var matches: [SearchItem] = []
         matches.reserveCapacity(min(currentApps.count, 64))
 
+        // Mask, then matcher, then blocklist. Asking last is what makes the
+        // blocklist cheap: it is consulted for the handful of applications the
+        // query actually matched, not for every one it did not.
         for application in currentApps {
-            if blocklistStore.isBlocked(name: application.name, id: application.id) {
-                continue
-            }
             guard application.characterMask & queryCharacterMask == queryCharacterMask else {
                 continue
             }
@@ -191,6 +194,12 @@ package final class ApplicationCatalog: Catalog {
                 normalizedQuery: normalizedQuery,
                 asciiQuery: asciiQuery
             ) else {
+                continue
+            }
+            if blocklistStore.isBlocked(
+                normalizedName: application.normalizedName,
+                id: application.id
+            ) {
                 continue
             }
             let boost = boosts[application.id] ?? 0

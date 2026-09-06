@@ -388,14 +388,13 @@ final class SearchCoordinator {
         actionPerformer.activate(item, query: query)
     }
 
+    /// Adds the rule, then republishes so the row leaves without re-running
+    /// the query. `projectLocal` applies the rule it just wrote.
     func excludeFromSearch(_ item: SearchItem) {
         blocklistStore.block(id: item.id)
         blocklistStore.block(name: item.title)
-        let updatedCandidates = publication.sourceCandidates.filter {
-            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
-        }
         publication = projectLocal(
-            candidates: updatedCandidates,
+            candidates: publication.sourceCandidates,
             selectedFilter: selectedFilter,
             selection: publication.selection?.id == item.id ? nil : publication.selection,
             progress: publication.progress
@@ -593,10 +592,14 @@ final class SearchCoordinator {
         progress: SearchResultProgress,
         filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
     ) -> SearchResultPublication {
-        let validCandidates = candidates.filter { !blocklistStore.isBlocked(
-            name: $0.title,
-            id: $0.id
-        ) }
+        // Search sources apply the blocklist to the pages they return, but a
+        // pass already in flight when a rule is written was computed without
+        // it — and the sources that never consult the blocklist at all have no
+        // other gate. Filtering here is what stops either landing an excluded
+        // row back on screen.
+        let validCandidates = candidates.filter {
+            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
+        }
         return SearchResultProjection.project(
             .local(.init(
                 query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),

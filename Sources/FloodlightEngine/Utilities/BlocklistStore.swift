@@ -47,10 +47,7 @@ package final class BlocklistStore: @unchecked Sendable {
             rules.insert(rule)
             switch rule {
             case let .name(name):
-                normalizedBlockedNames.insert(name.folding(
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    locale: .current
-                ))
+                normalizedBlockedNames.insert(FuzzyMatcher.normalized(name))
             case let .id(id):
                 blockedIDs.insert(id)
             }
@@ -60,25 +57,17 @@ package final class BlocklistStore: @unchecked Sendable {
             rules.remove(rule)
             switch rule {
             case let .name(name):
-                normalizedBlockedNames.remove(name.folding(
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    locale: .current
-                ))
+                normalizedBlockedNames.remove(FuzzyMatcher.normalized(name))
             case let .id(id):
                 blockedIDs.remove(id)
             }
         }
 
-        func isBlocked(name: String, id: String) -> Bool {
-            if blockedIDs.contains(id) { return true }
-            if !normalizedBlockedNames.isEmpty {
-                let normalized = name.folding(
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    locale: .current
-                )
-                if normalizedBlockedNames.contains(normalized) { return true }
-            }
-            return false
+        /// The one predicate. Rules are stored folded, so a caller that has
+        /// already folded — the catalog, which normalizes at discovery — asks
+        /// this directly and folds nothing per query.
+        func isBlocked(normalizedName: String, id: String) -> Bool {
+            blockedIDs.contains(id) || normalizedBlockedNames.contains(normalizedName)
         }
     }
 
@@ -141,8 +130,30 @@ package final class BlocklistStore: @unchecked Sendable {
         persist(rulesToPersist)
     }
 
+    /// Whether a candidate is excluded, for callers holding only a display
+    /// name — the publication path, which sees a page of results rather than
+    /// the catalog behind them.
+    ///
+    /// Folding allocates, and this runs per candidate per keystroke, so it is
+    /// skipped entirely when no name rule exists to match. An id rule still
+    /// answers without it.
     package func isBlocked(name: String, id: String) -> Bool {
-        state.withLock { $0.isBlocked(name: name, id: id) }
+        state.withLock { state in
+            if state.blockedIDs.contains(id) { return true }
+            guard !state.normalizedBlockedNames.isEmpty else { return false }
+            return state.isBlocked(normalizedName: FuzzyMatcher.normalized(name), id: id)
+        }
+    }
+
+    /// The same question from a caller that already holds the folded name.
+    ///
+    /// `normalizedName` must come from `FuzzyMatcher.normalized` — the same
+    /// call the store folds its own name rules with, which is what keeps name
+    /// rules case- and diacritic-insensitive without folding anything on the
+    /// query path. The catalog asks this one, after the mask and the matcher
+    /// have already rejected everything the query never matched.
+    package func isBlocked(normalizedName: String, id: String) -> Bool {
+        state.withLock { $0.isBlocked(normalizedName: normalizedName, id: id) }
     }
 
     private func persist(_ rules: [BlocklistRule]) {

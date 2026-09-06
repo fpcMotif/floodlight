@@ -152,6 +152,63 @@ struct CatalogTests {
         #expect(catalog.immediatePage(for: "clash").items.isEmpty)
     }
 
+    @Test func blocklistExcludesApplicationFromTheIndexedPass() async throws {
+        let suiteName = "FloodlightBlocklistIndexedTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "FloodlightBlocklistIndexedTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let blocklist = BlocklistStore(defaults: defaults)
+        blocklist.block(name: "Clash")
+
+        let claude = URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true)
+        let clash = URL(fileURLWithPath: "/Applications/Clash.app", isDirectory: true)
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: blocklist,
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [(name: "Claude", url: claude), (name: "Clash", url: clash)] }
+        )
+        try await catalog.start()
+
+        try await assertEventually("The marker index did not return Claude") {
+            try await catalog.indexedItems(for: "cl").contains { $0.fileURL == claude }
+        }
+        let indexed = try await catalog.indexedItems(for: "cl")
+        #expect(!indexed.contains { $0.fileURL == clash })
+        #expect(try await catalog.indexedItems(for: "clash").isEmpty)
+    }
+
+    @Test func blocklistNameRulesMatchRegardlessOfCaseAndDiacritics() throws {
+        let suiteName = "FloodlightBlocklistFoldingTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let blocklist = BlocklistStore(defaults: defaults)
+        blocklist.block(name: "CLÁSH")
+
+        let discovery = ApplicationDiscoveryFixture([
+            (name: "Claude", url: URL(fileURLWithPath: "/Applications/Claude.app")),
+            (name: "Clash", url: URL(fileURLWithPath: "/Applications/Clash.app")),
+        ])
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: blocklist,
+            discoveryProvider: { discovery.snapshot() }
+        )
+
+        let immediate = catalog.immediatePage(for: "cl").items
+        #expect(immediate.contains { $0.title == "Claude" })
+        #expect(!immediate.contains { $0.title == "Clash" })
+    }
+
     @Test func discoversSymlinkedSystemApplications() async throws {
         let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
         guard FileManager.default.fileExists(atPath: safariURL.path) else {
