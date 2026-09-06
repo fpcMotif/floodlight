@@ -5,51 +5,66 @@ import SQLite3
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 enum ClipboardHistorySQLite {
+    /// A SQLite call that reported failure, carrying the message SQLite gave for it.
+    struct Failure: Error, CustomStringConvertible {
+        let code: Int32
+        let message: String
+
+        var description: String {
+            "SQLite error \(code): \(message)"
+        }
+
+        /// A migration re-adding a column an older launch already added.
+        var isDuplicateColumn: Bool {
+            message.contains("duplicate column name")
+        }
+    }
+
     static let entryColumns = """
     id, text, created_at, source_app_bundle_id, pinned_at, kind, \
     image_hash, image_width, image_height, image_byte_count, thumbnail_png
     """
 
-    static func initializeSchema(db: OpaquePointer) {
-        let schemaSQL = """
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
+    private static let schemaSQL = """
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
 
-        CREATE TABLE IF NOT EXISTS clipboard_entries (
-            id TEXT PRIMARY KEY,
-            text TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            source_app_bundle_id TEXT,
-            pinned_at REAL,
-            kind TEXT NOT NULL DEFAULT 'text'
-        );
+    CREATE TABLE IF NOT EXISTS clipboard_entries (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        source_app_bundle_id TEXT,
+        pinned_at REAL,
+        kind TEXT NOT NULL DEFAULT 'text'
+    );
 
-        CREATE INDEX IF NOT EXISTS idx_clipboard_created_at ON clipboard_entries(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_clipboard_pinned_at ON clipboard_entries(pinned_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_clipboard_created_at ON clipboard_entries(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_clipboard_pinned_at ON clipboard_entries(pinned_at ASC);
 
-        CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(
-            text,
-            content='clipboard_entries',
-            content_rowid='rowid',
-            tokenize='trigram'
-        );
+    CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(
+        text,
+        content='clipboard_entries',
+        content_rowid='rowid',
+        tokenize='trigram'
+    );
+    """
 
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_ai AFTER INSERT ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;
+    static func initializeSchema(db: OpaquePointer) throws {
+        try exec(db, schemaSQL)
+        try migrateImageColumns(db: db)
+        try recreateFTSTriggers(db: db)
+    }
 
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_ad AFTER DELETE ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(clipboard_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_au AFTER UPDATE ON clipboard_entries BEGIN
-            INSERT INTO clipboard_fts(clipboard_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-            INSERT INTO clipboard_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;
-        """
-        sqlite3_exec(db, schemaSQL, nil, nil, nil)
-        migrateImageColumns(db: db)
-        recreateFTSTriggers(db: db)
+    /// Runs `sql`, throwing the message SQLite reported instead of discarding it.
+    static func exec(_ db: OpaquePointer, _ sql: String) throws {
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(db, sql, nil, nil, &errorMessage)
+        defer { sqlite3_free(errorMessage) }
+        guard result == SQLITE_OK else {
+            let message = errorMessage.map { String(cString: $0) }
+                ?? String(cString: sqlite3_errmsg(db))
+            throw Failure(code: result, message: message)
+        }
     }
 
     static func loadInitialWindow(
@@ -172,6 +187,16 @@ enum ClipboardHistorySQLite {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Binds `value` with the transient destructor so SQLite copies the bytes at
+    /// bind time — the Swift string's buffer only lives for the duration of this call.
+    static func bindText(_ stmt: OpaquePointer?, index: Int32, value: String?) {
+        guard let value else {
+            sqlite3_bind_null(stmt, index)
+            return
+        }
+        sqlite3_bind_text(stmt, index, value, -1, sqliteTransient)
+    }
+
     static func bindBlob(_ stmt: OpaquePointer?, index: Int32, data: Data?) {
         guard let data, !data.isEmpty else {
             sqlite3_bind_null(stmt, index)
@@ -195,16 +220,11 @@ enum ClipboardHistorySQLite {
         return Data(bytes: bytes, count: count)
     }
 
-    private static func migrateImageColumns(db: OpaquePointer) {
-        // Ignore duplicate-column failures on databases that already have these columns.
-        sqlite3_exec(
-            db,
-            "ALTER TABLE clipboard_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';",
-            nil,
-            nil,
-            nil
-        )
+    /// Adds the columns later releases introduced. A column an earlier launch
+    /// already added is success; anything else is a database we cannot prepare.
+    private static func migrateImageColumns(db: OpaquePointer) throws {
         for columnSQL in [
+            "ALTER TABLE clipboard_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';",
             "ALTER TABLE clipboard_entries ADD COLUMN image_hash TEXT;",
             "ALTER TABLE clipboard_entries ADD COLUMN image_width INTEGER;",
             "ALTER TABLE clipboard_entries ADD COLUMN image_height INTEGER;",
@@ -213,14 +233,20 @@ enum ClipboardHistorySQLite {
             "ALTER TABLE clipboard_entries ADD COLUMN png_data BLOB;",
             "ALTER TABLE clipboard_entries ADD COLUMN tiff_data BLOB;",
         ] {
-            sqlite3_exec(db, columnSQL, nil, nil, nil)
+            do {
+                try exec(db, columnSQL)
+            } catch let failure as Failure where failure.isDuplicateColumn {
+                continue
+            }
         }
     }
 
-    private static func recreateFTSTriggers(db: OpaquePointer) {
-        sqlite3_exec(db, "DROP TRIGGER IF EXISTS clipboard_entries_ai;", nil, nil, nil)
-        sqlite3_exec(db, "DROP TRIGGER IF EXISTS clipboard_entries_ad;", nil, nil, nil)
-        sqlite3_exec(db, "DROP TRIGGER IF EXISTS clipboard_entries_au;", nil, nil, nil)
+    private static func recreateFTSTriggers(db: OpaquePointer) throws {
+        try exec(db, """
+        DROP TRIGGER IF EXISTS clipboard_entries_ai;
+        DROP TRIGGER IF EXISTS clipboard_entries_ad;
+        DROP TRIGGER IF EXISTS clipboard_entries_au;
+        """)
         let triggerSQL = """
         CREATE TRIGGER IF NOT EXISTS clipboard_entries_ai AFTER INSERT ON clipboard_entries BEGIN
             INSERT INTO clipboard_fts(rowid, text) VALUES (
@@ -261,6 +287,6 @@ enum ClipboardHistorySQLite {
             );
         END;
         """
-        sqlite3_exec(db, triggerSQL, nil, nil, nil)
+        try exec(db, triggerSQL)
     }
 }

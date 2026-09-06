@@ -637,7 +637,9 @@ extension SearchCoordinator {
     }
 
     func clearHistory() {
-        clipboardStore.clear()
+        // A failed delete leaves the board populated on purpose: what is shown
+        // matches what is stored, and the store has already logged the reason.
+        guard clipboardStore.clear() else { return }
         if isClipboardMode {
             publishClipboardModeResults()
         }
@@ -682,12 +684,14 @@ extension SearchCoordinator {
         )
     }
 
-    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Void) {
+    /// Republishes only when the store accepted the write, so a failed pin or
+    /// delete leaves the board showing what is still on disk.
+    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Bool) {
         guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
         else {
             return
         }
-        mutate(entryID)
+        guard mutate(entryID) else { return }
         publishClipboardModeResults()
     }
 
