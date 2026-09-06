@@ -45,8 +45,8 @@ struct RecentStoreConcurrencyTests {
         store.record("app:one")
         waitUntil("the first launch is recorded") { store.boost(for: "app:one") > 0 }
 
-        // One launch (200) plus a full-strength recency term (4_000).
-        #expect(store.boost(for: "app:one") == 4_200)
+        // One launch (22) plus a full-strength recency term (444).
+        #expect(store.boost(for: "app:one") == 466)
     }
 
     @Test func boostGrowsWithLaunchesUntilItSaturates() throws {
@@ -56,12 +56,12 @@ struct RecentStoreConcurrencyTests {
         for count in 1...30 {
             store.record("app:hot")
             waitUntil("launch \(count) is recorded") {
-                store.boost(for: "app:hot") >= 4_000 + min(count, 25) * 200
+                store.boost(for: "app:hot") >= 444 + min(count, 25) * 555 / 25
             }
         }
 
         // Launches are capped at 25, so the 26th through 30th add nothing.
-        #expect(store.boost(for: "app:hot") == 4_000 + 25 * 200)
+        #expect(store.boost(for: "app:hot") == 444 + 555)
     }
 
     @Test func boostIsBoundedForEveryPossibleLaunchCount() throws {
@@ -69,7 +69,7 @@ struct RecentStoreConcurrencyTests {
         let store = RecentStore(defaults: defaults.defaults)
 
         try checkProperty(
-            "0 <= boost <= 9_000 for any number of launches",
+            "0 <= boost <= the ranking module's bound for any number of launches",
             Gen<Int>.int(in: 0...40),
             runs: 60
         ) { launches in
@@ -78,8 +78,31 @@ struct RecentStoreConcurrencyTests {
                 store.record(id)
             }
             let boost = store.boost(for: id)
-            return boost >= 0 && boost <= 25 * 200 + 4_000
+            return boost >= 0 && boost <= FuzzyMatcher.maximumLearningBoost
         }
+    }
+
+    @Test func aMinuteOfAgeDoesNotMoveTheBoost() throws {
+        // Two identical queries a minute apart must rank identically. Recency
+        // sheds a point about every two hours, so a minute never crosses a
+        // step — the order a person sees does not drift while they look at it.
+        let defaults = try IsolatedDefaults()
+        let now = Date.now.timeIntervalSinceReferenceDate
+
+        // Seeded through the persisted payload rather than `record`, which
+        // always stamps `.now`. Mirrors `RecentStore`'s key and Codable layout.
+        defaults.defaults.set(
+            Data("""
+            {"app:justNow":{"launches":5,"lastOpened":\(now)},\
+            "app:aMinuteAgo":{"launches":5,"lastOpened":\(now - 60)}}
+            """.utf8),
+            forKey: "recent-items-v1"
+        )
+
+        let store = RecentStore(defaults: defaults.defaults)
+
+        #expect(store.boost(for: "app:justNow") > 0)
+        #expect(store.boost(for: "app:justNow") == store.boost(for: "app:aMinuteAgo"))
     }
 
     @Test func distinctIdentifiersDoNotShareABoost() throws {
@@ -130,7 +153,7 @@ struct RecentStoreConcurrencyTests {
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        #expect(relaunched.boost(for: "app:persisted") == 4_600)
+        #expect(relaunched.boost(for: "app:persisted") == 510)
     }
 
     @Test func storesOnSeparateSuitesAreFullyIsolated() throws {
@@ -205,9 +228,9 @@ struct RecentStoreConcurrencyTests {
         }
 
         waitUntil("the contended identifier saturates", timeout: 15) {
-            store.boost(for: "app:contended") == 4_000 + 25 * 200
+            store.boost(for: "app:contended") == 444 + 555
         }
-        #expect(store.boost(for: "app:contended") == 9_000)
+        #expect(store.boost(for: "app:contended") == FuzzyMatcher.maximumLearningBoost)
     }
 
     @Test func concurrentReadsDuringWritesNeverObserveANegativeOrOversizedBoost() throws {
@@ -223,7 +246,7 @@ struct RecentStoreConcurrencyTests {
                 store.record("app:racing")
             } else {
                 let boost = store.boost(for: "app:racing")
-                if boost < 0 || boost > 9_000 {
+                if boost < 0 || boost > FuzzyMatcher.maximumLearningBoost {
                     violations.increment()
                 }
             }
@@ -263,7 +286,7 @@ struct RecentStoreConcurrencyTests {
 
         #expect(boosts.values.count == 12 * 25)
         #expect(
-            boosts.values.allSatisfy { $0 == 4_200 },
+            boosts.values.allSatisfy { $0 == 466 },
             "every freshly-constructed store should agree on the persisted boost"
         )
     }
@@ -284,7 +307,7 @@ struct RecentStoreConcurrencyTests {
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        #expect(relaunched.boost(for: "app:monotonic") == 4_000 + 10 * 200)
+        #expect(relaunched.boost(for: "app:monotonic") == 444 + 10 * 555 / 25)
     }
 
     @Test func aStoreBuiltBeforeThePreviousWriteLandsOverwritesIt() throws {
@@ -319,7 +342,7 @@ struct RecentStoreConcurrencyTests {
         // Three launches happened; two are recorded. Lost update, by design
         // of the whole-dictionary write.
         #expect(Self.persistedLaunches(in: defaults.defaults, for: "app:clobbered") == 2)
-        #expect(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered") == 4_400)
+        #expect(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered") == 488)
     }
 
     @Test func recordingIsAsynchronousSoAnImmediateReadCanMissIt() throws {
@@ -334,7 +357,7 @@ struct RecentStoreConcurrencyTests {
         waitUntil("the write eventually lands") { store.boost(for: "app:async") > 0 }
 
         #expect(
-            immediate == 0 || immediate == 4_200,
+            immediate == 0 || immediate == 466,
             "an immediate read must either miss the write entirely or see it whole, never a partial value"
         )
     }

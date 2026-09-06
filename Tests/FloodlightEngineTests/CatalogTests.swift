@@ -278,6 +278,168 @@ struct CatalogTests {
         }
     }
 
+    // MARK: - Source Selection Learning
+
+    /// Someone types the start of the name they mean. Whatever else they open
+    /// all day, the app they typed the start of comes first — a correction is
+    /// what the ranking falls back to, never what it prefers.
+    @Test func aSaturatedTypoMatchStaysBelowAnUnlaunchedNamePrefixMatch() throws {
+        let suiteName = "FloodlightLearningPrefixTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = Self.temporarySupportURL("FloodlightLearningPrefixTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        // "disc" reaches Discord by name prefix and Disk Cleaner only by
+        // correcting the "c" to a "k".
+        let discord = Self.application(named: "Discord")
+        let diskCleaner = Self.application(named: "Disk Cleaner")
+
+        let recentStore = RecentStore(defaults: defaults)
+        Self.saturateLaunches(of: Self.identifier(of: diskCleaner), in: recentStore)
+
+        let catalog = ApplicationCatalog(
+            recentStore: recentStore,
+            supportURL: supportURL,
+            discoveryProvider: { [discord, diskCleaner] }
+        )
+
+        #expect(catalog.immediatePage(for: "disc").items.map(\.title)
+            == ["Discord", "Disk Cleaner"])
+    }
+
+    /// The same rule one shape down: a word prefix is still something the
+    /// person typed, so it outranks a correction however hot the correction is.
+    @Test func aSaturatedTypoMatchStaysBelowAnUnlaunchedWordPrefixMatch() throws {
+        let suiteName = "FloodlightLearningWordPrefixTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = Self.temporarySupportURL("FloodlightLearningWordPrefixTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let googleChrome = Self.application(named: "Google Chrome")
+        let chromaEditor = Self.application(named: "Chroma Editor")
+
+        let recentStore = RecentStore(defaults: defaults)
+        Self.saturateLaunches(of: Self.identifier(of: chromaEditor), in: recentStore)
+
+        let catalog = ApplicationCatalog(
+            recentStore: recentStore,
+            supportURL: supportURL,
+            discoveryProvider: { [googleChrome, chromaEditor] }
+        )
+
+        #expect(catalog.immediatePage(for: "chrome").items.map(\.title)
+            == ["Google Chrome", "Chroma Editor"])
+    }
+
+    /// Learning is confined, not cancelled: among results that matched the
+    /// same way it still decides the order, and visibly so.
+    @Test func applicationsThatMatchedTheSameWayAreOrderedByLaunchHistory() throws {
+        let suiteName = "FloodlightLearningSameShapeTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = Self.temporarySupportURL("FloodlightLearningSameShapeTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        // "not" is a name prefix of both, so nothing but learning separates
+        // them.
+        let notes = Self.application(named: "Notes")
+        let notion = Self.application(named: "Notion")
+
+        let recentStore = RecentStore(defaults: defaults)
+        let catalog = ApplicationCatalog(
+            recentStore: recentStore,
+            supportURL: supportURL,
+            discoveryProvider: { [notes, notion] }
+        )
+
+        #expect(catalog.immediatePage(for: "not").items.map(\.title) == ["Notes", "Notion"])
+
+        Self.saturateLaunches(of: Self.identifier(of: notion), in: recentStore)
+
+        #expect(catalog.immediatePage(for: "not").items.map(\.title) == ["Notion", "Notes"])
+    }
+
+    /// `immediatePage` reads the whole boost map at once, `indexedItems` looks
+    /// each identifier up on its own. They have to land on the same number, or
+    /// rows reshuffle under the person's cursor as the slower pass arrives.
+    @Test func bothPassesAgreeOnScoreForAnApplicationWithLaunchHistory() async throws {
+        let suiteName = "FloodlightLearningPassParityTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = Self.temporarySupportURL("FloodlightLearningPassParityTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let orbital = Self.application(named: "Orbital Launcher")
+
+        let recentStore = RecentStore(defaults: defaults)
+        Self.saturateLaunches(of: Self.identifier(of: orbital), in: recentStore)
+
+        let catalog = ApplicationCatalog(
+            recentStore: recentStore,
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [orbital] }
+        )
+        try await catalog.start()
+
+        for query in ["orbital", "launcher"] {
+            try await assertEventually("The marker index did not return Orbital Launcher") {
+                try await catalog.indexedItems(for: query).contains { $0.fileURL == orbital.url }
+            }
+
+            let immediate = try #require(
+                catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
+                "\(query)"
+            )
+            let indexed = try await catalog.indexedItems(for: query)
+                .first { $0.fileURL == orbital.url }
+            #expect(try #require(indexed, "\(query)").score == immediate.score, "\(query)")
+        }
+    }
+
+    private static func application(named name: String) -> (name: String, url: URL) {
+        (
+            name: name,
+            url: URL(fileURLWithPath: "/Applications/\(name).app", isDirectory: true)
+        )
+    }
+
+    /// Mirrors the identifier `ApplicationCatalog` derives for a discovered app,
+    /// which is the key learning is recorded under.
+    private static func identifier(of application: (name: String, url: URL)) -> String {
+        "application:\(application.url.path)"
+    }
+
+    private static func temporarySupportURL(_ label: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(label)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// Drives `id` to the largest launch history the store will award.
+    ///
+    /// `record` returns before the entry is readable, so this polls rather
+    /// than assuming the writes have landed.
+    private static func saturateLaunches(
+        of id: String,
+        in store: RecentStore,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        for _ in 0..<25 {
+            store.record(id)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if store.boost(for: id) == FuzzyMatcher.maximumLearningBoost { return }
+            usleep(2_000)
+        }
+        Issue.record(
+            "launch history never saturated for \(id)",
+            sourceLocation: sourceLocation
+        )
+    }
+
     @Test func applicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
         let suiteName = "FloodlightZeroEvidenceTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

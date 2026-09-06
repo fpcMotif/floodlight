@@ -24,6 +24,49 @@ package enum FuzzyMatcher {
     /// The lowest score that counts as a confident match.
     package static let confidentMatchThreshold = 7_000
 
+    /// The base score of each match shape, before its own penalty.
+    ///
+    /// A shape's published score is its base less a small penalty — candidate
+    /// length for a name prefix, word or acronym offset, edit count for a typo
+    /// — so the bases are spaced far enough apart that a stronger shape always
+    /// outranks a weaker one. `maximumLearningBoost` depends on that spacing.
+    package enum ShapeScore {
+        package static let exact = 20_000
+        package static let namePrefix = 15_000
+        package static let wordPrefix = 12_000
+        package static let acronym = 10_000
+        package static let typo = 9_000
+
+        /// Each further edit drops a typo match a full step down the ladder.
+        package static let typoEditPenalty = 1_000
+
+        /// The most edits `editBudget(forQueryLength:)` ever allows.
+        package static let maximumTypoEdits = 2
+
+        // periphery:ignore - The ladder exists so the ranking invariant test
+        // reads the same numbers the matcher scores with, rather than a copy.
+        /// Every base a match can land on, strongest first.
+        ///
+        /// A typo always carries at least one edit, so the typo tier enters the
+        /// ladder already penalised — 8,000 and 7,000, never 9,000.
+        package static let ladder: [Int] =
+            [exact, namePrefix, wordPrefix, acronym]
+                + (1...maximumTypoEdits).map { typo - $0 * typoEditPenalty }
+    }
+
+    /// The most any learning signal may add on top of a shape score.
+    ///
+    /// Source Selection Learning orders results that matched *the same way*; it
+    /// must never lift a weaker shape above a stronger one. The narrowest gap in
+    /// `ShapeScore.ladder` is the 1,000 between adjacent typo edit counts, so a
+    /// boost strictly below that can reorder within a shape and nothing more.
+    /// `SearchItemRankingTests` asserts the relationship, and `RecentStore`
+    /// scales its recency and launch components into this bound: five parts
+    /// launch count, saturating at 25 launches, to four parts recency, decaying
+    /// to nothing over about six weeks. Widening either scale means revisiting
+    /// the other, which is why both are described here.
+    package static let maximumLearningBoost = 999
+
     // periphery:ignore - Test-only boundary that normalizes raw query text.
     static func match(query: String, candidate: String) -> MatchEvidence? {
         match(
@@ -67,11 +110,14 @@ package enum FuzzyMatcher {
             return nil
         }
         if candidateChars == queryChars {
-            return MatchEvidence(shape: .exact, score: 20_000)
+            return MatchEvidence(shape: .exact, score: ShapeScore.exact)
         }
 
         if candidateChars.starts(with: queryChars) {
-            return MatchEvidence(shape: .namePrefix, score: 15_000 - candidateChars.count)
+            return MatchEvidence(
+                shape: .namePrefix,
+                score: ShapeScore.namePrefix - candidateChars.count
+            )
         }
 
         let words = extractWords(from: candidateChars)
@@ -98,11 +144,11 @@ package enum FuzzyMatcher {
         assert(candidate.allSatisfy { $0 < 0x80 })
 
         if candidate == query {
-            return MatchEvidence(shape: .exact, score: 20_000)
+            return MatchEvidence(shape: .exact, score: ShapeScore.exact)
         }
 
         if candidate.starts(with: query) {
-            return MatchEvidence(shape: .namePrefix, score: 15_000 - candidate.count)
+            return MatchEvidence(shape: .namePrefix, score: ShapeScore.namePrefix - candidate.count)
         }
 
         let words = extractWordsASCII(from: candidate)
@@ -131,7 +177,7 @@ package enum FuzzyMatcher {
         for word in words where word.offset > 0 && word.chars.starts(with: queryChars) {
             return MatchEvidence(
                 shape: .wordPrefix(offset: word.offset),
-                score: 12_000 - word.offset
+                score: ShapeScore.wordPrefix - word.offset
             )
         }
         return nil
@@ -144,7 +190,7 @@ package enum FuzzyMatcher {
         for word in words where word.offset > 0 && word.bytes.starts(with: query) {
             return MatchEvidence(
                 shape: .wordPrefix(offset: word.offset),
-                score: 12_000 - word.offset
+                score: ShapeScore.wordPrefix - word.offset
             )
         }
         return nil
@@ -161,7 +207,7 @@ package enum FuzzyMatcher {
         for start in 0...(initials.count - queryChars.count)
             where initials[start..<(start + queryChars.count)].elementsEqual(queryChars)
         {
-            return MatchEvidence(shape: .acronym(offset: start), score: 10_000 - start)
+            return MatchEvidence(shape: .acronym(offset: start), score: ShapeScore.acronym - start)
         }
         return nil
     }
@@ -177,7 +223,7 @@ package enum FuzzyMatcher {
         for start in 0...(initials.count - query.count)
             where initials[start..<(start + query.count)].elementsEqual(query)
         {
-            return MatchEvidence(shape: .acronym(offset: start), score: 10_000 - start)
+            return MatchEvidence(shape: .acronym(offset: start), score: ShapeScore.acronym - start)
         }
         return nil
     }
@@ -218,7 +264,7 @@ package enum FuzzyMatcher {
         guard let typo = bestTypo else { return nil }
         return MatchEvidence(
             shape: .typo(edits: typo.edits, offset: typo.offset),
-            score: 9_000 - (typo.edits * 1_000) - typo.offset
+            score: ShapeScore.typo - (typo.edits * ShapeScore.typoEditPenalty) - typo.offset
         )
     }
 
@@ -258,7 +304,7 @@ package enum FuzzyMatcher {
         guard let typo = bestTypo else { return nil }
         return MatchEvidence(
             shape: .typo(edits: typo.edits, offset: typo.offset),
-            score: 9_000 - (typo.edits * 1_000) - typo.offset
+            score: ShapeScore.typo - (typo.edits * ShapeScore.typoEditPenalty) - typo.offset
         )
     }
 

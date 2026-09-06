@@ -1,3 +1,4 @@
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -9,6 +10,10 @@ import Testing
 /// observably identical to the full sort it replaces, so these tests compare
 /// it against `sorted(by:).prefix(limit)` rather than against a hand-written
 /// expectation.
+///
+/// Selection publishes whatever order the scores describe, so the last test
+/// here guards the scores themselves: the spacing between match shapes has to
+/// stay wider than anything Source Selection Learning adds on top of them.
 struct SearchItemRankingTests {
     @Test func topRankedMatchesFullSortThenPrefix() {
         for candidateCount in [0, 1, 2, 7, 12, 13, 64, 257] {
@@ -71,6 +76,83 @@ struct SearchItemRankingTests {
         #expect(page.totalMatched == 40)
         #expect(page.items.map(\.id) == items.sorted(by: SearchItemRanking.ranksBefore).prefix(5)
             .map(\.id))
+    }
+
+    // MARK: - The learning boost against the match-shape ladder
+
+    /// `SearchModelInvariantTests` keeps the *bands* far enough apart that no
+    /// match score crosses one. This keeps the match *shapes* far enough apart
+    /// that no learning boost crosses one.
+    ///
+    /// Learning orders results that matched the same way, so its whole range
+    /// has to fit inside the narrowest step of the shape ladder. Otherwise an
+    /// app someone opens constantly, reached only by correcting their typo,
+    /// climbs over the app whose name they actually typed the start of.
+    @Test func theLearningBoostIsSmallerThanEveryGapBetweenMatchShapes() throws {
+        struct Shape: Sendable {
+            let name: String
+            let baseScore: Int
+        }
+
+        let shapeNames = [
+            "exact",
+            "namePrefix",
+            "wordPrefix",
+            "acronym",
+            "typo(1 edit)",
+            "typo(2 edits)",
+        ]
+        let ladder = FuzzyMatcher.ShapeScore.ladder
+        #expect(
+            ladder.count == shapeNames.count,
+            "A new match shape needs a name and a gap check here"
+        )
+
+        let shapes = zip(shapeNames, ladder).map(Shape.init)
+        let maxBoost = FuzzyMatcher.maximumLearningBoost
+
+        // Two shapes may be deliberately tied, the way `calculator` and
+        // `application` are tied in the band ladder — but only on purpose,
+        // declared here, never by drifting into each other.
+        let declaredExemptions: Set<String> = []
+
+        for (higher, lower) in zip(shapes, shapes.dropFirst()) {
+            let pairKey = "\(higher.name)-\(lower.name)"
+            if declaredExemptions.contains(pairKey) {
+                #expect(
+                    higher.baseScore == lower.baseScore,
+                    "Exempt pair \(pairKey) must be explicitly tied"
+                )
+                continue
+            }
+
+            #expect(
+                higher.baseScore - lower.baseScore > maxBoost,
+                "Shape gap between \(higher.name) (\(higher.baseScore)) and \(lower.name) (\(lower.baseScore)) must exceed the maximum learning boost \(maxBoost)"
+            )
+
+            try checkProperty(
+                "no learning boost can lift \(lower.name) above \(higher.name)",
+                Gen<Int>.int(in: 0...maxBoost),
+                Gen<Int>.int(in: 0...maxBoost),
+                runs: 200
+            ) { higherBoost, lowerBoost in
+                // Published exactly as `ApplicationCatalog` publishes them:
+                // band base, plus the shape's score, plus the boost.
+                let higherItem = makeItem(
+                    id: "higher:\(higher.name)",
+                    title: "higher",
+                    score: SearchItemRanking.application + higher.baseScore + higherBoost
+                )
+                let lowerItem = makeItem(
+                    id: "lower:\(lower.name)",
+                    title: "lower",
+                    score: SearchItemRanking.application + lower.baseScore + lowerBoost
+                )
+                return SearchItemRanking.ranksBefore(higherItem, lowerItem)
+                    && !SearchItemRanking.ranksBefore(lowerItem, higherItem)
+            }
+        }
     }
 
     private func makeItems(count: Int) -> [SearchItem] {
