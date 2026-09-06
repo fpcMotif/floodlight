@@ -1,4 +1,5 @@
 import Darwin
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -613,7 +614,7 @@ struct FFFIndexTests {
         pollInterval: Duration = .milliseconds(25),
         _ condition: () async throws -> Bool
     ) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         repeat {
             if try await condition() {
                 return true

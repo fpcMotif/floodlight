@@ -73,7 +73,7 @@ struct EndToEndSearchTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
@@ -597,7 +597,7 @@ struct EndToEndSearchTests {
         coordinator.query = "bulk-file-7-42"
         let immediateElapsed = start.duration(to: .now)
         #expect(
-            immediateElapsed < .milliseconds(250),
+            immediateElapsed < TestBudget.duration(.milliseconds(250)),
             "the immediate pass must never block on the index"
         )
 

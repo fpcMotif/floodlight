@@ -1,5 +1,6 @@
 import AppKit
 import FloodlightEngine
+import FloodlightTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -506,7 +507,7 @@ struct FileTextPreviewTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () throws -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if try condition() { return }
             try await Task.sleep(for: .milliseconds(5))

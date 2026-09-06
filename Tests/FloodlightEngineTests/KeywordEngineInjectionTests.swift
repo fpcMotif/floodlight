@@ -51,6 +51,45 @@ struct KeywordEngineInjectionTests {
         catalogRegistry.addressedResult(for: query).map { [$0] } ?? []
     }
 
+    /// The engine's `search_query` value, exactly as it sits in the URL.
+    ///
+    /// Read off the raw query rather than through `queryItems`, which
+    /// applies its own normalization on top.
+    private func encodedSearchTerm(of remainder: String) -> String? {
+        guard let item = webEngine.makeSearchItem(remainder: remainder),
+              let url = openedURL(of: item),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let rawQuery = components.percentEncodedQuery,
+              rawQuery.hasPrefix("search_query=")
+        else {
+            return nil
+        }
+        return String(rawQuery.dropFirst("search_query=".count))
+    }
+
+    /// Percent-decodes to bytes rather than to a `String`.
+    ///
+    /// `String.removingPercentEncoding` is not a faithful inverse of the
+    /// encoder: its UTF-8 decode drops a leading byte-order mark, so a
+    /// remainder of `"\u{FEFF}"` comes back empty and the round trip looks
+    /// broken when the URL is in fact exact. Bytes have no such opinion.
+    private func percentDecodedBytes(_ encoded: String) -> [UInt8]? {
+        var bytes: [UInt8] = []
+        var rest = Substring(encoded)
+        while let character = rest.first {
+            guard character == "%" else {
+                bytes.append(contentsOf: character.utf8)
+                rest = rest.dropFirst()
+                continue
+            }
+            let hex = rest.dropFirst().prefix(2)
+            guard hex.count == 2, let byte = UInt8(hex, radix: 16) else { return nil }
+            bytes.append(byte)
+            rest = rest.dropFirst(3)
+        }
+        return bytes
+    }
+
     // MARK: - The subprocess boundary
 
     @Test func theRemainderIsAlwaysExactlyOneUnmodifiedArgument() throws {
@@ -206,19 +245,25 @@ struct KeywordEngineInjectionTests {
             else {
                 return true
             }
-            guard let item = webEngine.makeSearchItem(remainder: remainder),
-                  let url = openedURL(of: item),
-                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                  let rawQuery = components.percentEncodedQuery,
-                  rawQuery.hasPrefix("search_query=")
-            else {
-                return false
-            }
-            // Decoded from the raw query rather than through `queryItems`,
-            // which applies its own normalization on top.
-            let encodedValue = String(rawQuery.dropFirst("search_query=".count))
-            return encodedValue.removingPercentEncoding == remainder
+            guard let encodedValue = encodedSearchTerm(of: remainder) else { return false }
+            return percentDecodedBytes(encodedValue) == Array(remainder.utf8)
         }
+    }
+
+    /// A leading BOM survives into the URL like any other character.
+    ///
+    /// It is called out because the *decoding* side does not agree: on some
+    /// Foundation versions `String.removingPercentEncoding` decodes the
+    /// bytes as UTF-8 through a path that swallows a leading U+FEFF, so a
+    /// String-level round trip reports a loss the query string does not
+    /// have. The encoder is the side this codebase owns, and it is exact.
+    @Test func aLeadingByteOrderMarkIsEncodedRatherThanDropped() throws {
+        let item = try #require(webEngine.makeSearchItem(remainder: "\u{FEFF}lofi"))
+        let url = try #require(openedURL(of: item))
+        #expect(url.absoluteString.hasSuffix("search_query=%EF%BB%BFlofi"))
+
+        let encoded = try #require(encodedSearchTerm(of: "\u{FEFF}"))
+        #expect(percentDecodedBytes(encoded) == [0xEF, 0xBB, 0xBF])
     }
 
     @Test func aQueryRemainderCannotInjectAdditionalURLParameters() throws {

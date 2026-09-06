@@ -1,3 +1,4 @@
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -45,7 +46,7 @@ private final class BlockingApplicationDiscovery: @unchecked Sendable {
     }
 
     func waitUntilStarted(timeout: TimeInterval) -> Bool {
-        started.wait(timeout: .now() + timeout) == .success
+        started.wait(timeout: .now() + TestBudget.seconds(timeout)) == .success
     }
 
     func resume(count: Int = 1) {
@@ -63,7 +64,7 @@ private final class CatalogTestSignal: @unchecked Sendable {
     }
 
     func wait(timeout: TimeInterval) -> Bool {
-        semaphore.wait(timeout: .now() + timeout) == .success
+        semaphore.wait(timeout: .now() + TestBudget.seconds(timeout)) == .success
     }
 }
 
@@ -236,7 +237,7 @@ struct CatalogTests {
         let page = catalog.immediatePage(for: "claude")
         let elapsed = start.duration(to: .now)
 
-        #expect(elapsed < .milliseconds(100))
+        #expect(elapsed < TestBudget.duration(.milliseconds(100)))
         #expect(page.totalMatched >= page.items.count)
         if FileManager.default.fileExists(atPath: "/Applications/Claude.app") {
             #expect(page.items.first?.fileURL?.lastPathComponent == "Claude.app")
@@ -512,7 +513,7 @@ struct CatalogTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         repeat {
             if try await condition() {
                 return

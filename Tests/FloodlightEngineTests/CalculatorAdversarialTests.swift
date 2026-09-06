@@ -304,7 +304,7 @@ struct CalculatorAdversarialTests {
         let start = ContinuousClock.now
         #expect(Calculator.evaluate(expr) == Double(count * (count + 1) / 2))
         #expect(
-            start.duration(to: .now) < .seconds(1),
+            start.duration(to: .now) < TestBudget.duration(.seconds(1)),
             "a \(count)-term chain must evaluate in well under a second"
         )
     }

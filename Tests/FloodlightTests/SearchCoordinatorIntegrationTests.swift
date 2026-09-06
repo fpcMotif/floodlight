@@ -44,13 +44,16 @@ class SearchCoordinatorIntegrationTestCase {
         )
     }
 
+    /// `timeout` is in ordinary-build seconds; `TestBudget` widens it for a
+    /// sanitized run, where the coordinator's pipeline needs several times
+    /// longer to reach the same state.
     func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
@@ -64,12 +67,45 @@ class SearchCoordinatorIntegrationTestCase {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
+    }
+
+    /// Polls until `report` has something to say, and hands that back.
+    ///
+    /// `waitUntil` answers "did this become true?", and nothing keeps it
+    /// true afterwards: returning from it is an `await`, so the state the
+    /// condition observed can have moved on by the time the *next* line
+    /// reads it again. Anything asserted about a transient state — or any
+    /// action that has to be taken while it holds — belongs inside `report`,
+    /// which runs in the same main-actor step that found the condition, and
+    /// so cannot be overtaken by the pipeline it is watching.
+    func waitForMoment<Report>(
+        _ moment: String,
+        timeout: TimeInterval = 5,
+        _ report: () -> Report?
+    ) async throws -> Report {
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
+        while Date() < deadline {
+            if let reported = report() { return reported }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw MomentNeverArrived(moment: moment)
+    }
+
+    /// Thrown rather than recorded, so the assertions that were going to
+    /// read the report do not then run against a moment that never happened
+    /// and turn one failure into three.
+    struct MomentNeverArrived: Error, CustomStringConvertible {
+        let moment: String
+
+        var description: String {
+            "never became true: \(moment)"
+        }
     }
 
     /// Lets the debounced indexed pass run to completion.

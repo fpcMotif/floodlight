@@ -468,11 +468,13 @@ struct SelectedResultActionPerformerTests {
         )
     }
 
+    /// `timeout` is in ordinary-build seconds; `TestBudget` widens it for a
+    /// sanitized run, where 2s is not enough for work that does complete.
     private func waitUntil(
         timeout: TimeInterval = 2,
         _ condition: () async -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
