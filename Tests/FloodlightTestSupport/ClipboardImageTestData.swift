@@ -11,4 +11,16 @@ package enum ClipboardImageTestData {
     /// SHA-256 of `png`, computed independently of the production hasher.
     package static let pngSHA256 =
         "ec65c8798ecf95902413c40f7b9e6d4b0068885f5f324aba1f9ba1c8e14aea61"
+
+    /// Where `SearchCoordinator` materializes a captured image for Quick Look.
+    ///
+    /// Spelled out rather than asked of the production builder: what the tests
+    /// pin is that the path does not move, and deriving it from the code under
+    /// test would pin nothing. One independent spelling, though — not one per
+    /// suite.
+    package static func previewURL(entryID: String, pathExtension: String = "png") -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("FloodlightClipboardPreviews", isDirectory: true)
+            .appendingPathComponent("\(entryID).\(pathExtension)")
+    }
 }

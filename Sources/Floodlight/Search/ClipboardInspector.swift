@@ -72,12 +72,20 @@ enum ClipboardInspector: Equatable {
     }
 
     struct ImageDetail: Equatable {
+        /// The Clipboard History entry this describes — what the pane keys
+        /// its full-image load and its decoded-image cache on.
+        let entryID: String
         let name: String
         let width: Int
         let height: Int
         let byteCount: Int
-        let format: String
-        let previewPNG: Data?
+        /// The stored 128 pt thumbnail, which is what the pane can draw the
+        /// instant the selection moves.
+        let thumbnailPNG: Data?
+        /// A full-size payload exists for this entry. The snapshot says so
+        /// rather than carrying the payload: a 15 MB screenshot read on
+        /// every republication is what made arrowing stutter (#72).
+        let hasFullImage: Bool
         let sourceApp: String
         let sourceAppBundleID: String?
         let formattedDate: String
@@ -88,9 +96,14 @@ enum ClipboardInspector: Equatable {
     case file(FileDetail)
     case image(ImageDetail)
 
+    /// Everything the inspector pane renders, derived from the entry alone.
+    /// `hasFullImage` is a fact about the store the caller has already
+    /// established cheaply — the snapshot never reads an image payload
+    /// itself, which is what keeps it affordable to recompute whenever the
+    /// selection moves.
     static func snapshot(
         for entry: ClipboardEntry,
-        imagePNG: Data? = nil
+        hasFullImage: Bool = false
     ) -> ClipboardInspector {
         let sourceApp = sourceAppDisplayName(for: entry.sourceAppBundleID)
         let formattedDate = formattedDetailedDate(entry.createdAt)
@@ -99,25 +112,12 @@ enum ClipboardInspector: Equatable {
         case .text:
             let text = entry.text
             if let fileURL = parseLocalPath(text) {
-                let name = fileURL.lastPathComponent
-                let ext = fileURL.pathExtension.lowercased()
-                let fileExists = FileManager.default.fileExists(atPath: fileURL.path)
-                let classification = classifyFile(ext: ext)
-
-                return .file(FileDetail(
-                    name: name.isEmpty ? text : name,
+                return .file(fileDetail(
+                    entry: entry,
+                    url: fileURL,
                     path: text,
-                    type: fileType(for: fileURL),
-                    byteCount: fileExists ? fileByteCount(at: fileURL) : nil,
-                    isVideo: classification.isVideo,
-                    isImage: classification.isImage,
-                    isText: classification.isText,
-                    isCode: classification.isCode,
                     sourceApp: sourceApp,
-                    sourceAppBundleID: entry.sourceAppBundleID,
-                    formattedDate: formattedDate,
-                    fileURL: fileURL,
-                    pinnedAt: entry.pinnedAt
+                    formattedDate: formattedDate
                 ))
             }
 
@@ -142,45 +142,66 @@ enum ClipboardInspector: Equatable {
             ))
 
         case .file:
-            let url = URL(fileURLWithPath: entry.text)
-            let name = url.lastPathComponent
-            let ext = url.pathExtension.lowercased()
-            let classification = classifyFile(ext: ext)
-            let fileExists = FileManager.default.fileExists(atPath: url.path)
-
-            return .file(FileDetail(
-                name: name.isEmpty ? entry.text : name,
+            return .file(fileDetail(
+                entry: entry,
+                url: URL(fileURLWithPath: entry.text),
                 path: entry.text,
-                type: fileType(for: url),
-                byteCount: fileExists ? fileByteCount(at: url) : nil,
-                isVideo: classification.isVideo,
-                isImage: classification.isImage,
-                isText: classification.isText,
-                isCode: classification.isCode,
                 sourceApp: sourceApp,
-                sourceAppBundleID: entry.sourceAppBundleID,
-                formattedDate: formattedDate,
-                fileURL: url,
-                pinnedAt: entry.pinnedAt
+                formattedDate: formattedDate
             ))
 
         case .image:
             let width = entry.image?.width ?? 0
             let height = entry.image?.height ?? 0
 
+            let thumbnail = entry.image?.thumbnailPNGData
+
             return .image(ImageDetail(
+                entryID: entry.id,
                 name: entry.text.isEmpty ? "Image" : entry.text,
                 width: width,
                 height: height,
                 byteCount: entry.image?.byteCount ?? 0,
-                format: "PNG Image",
-                previewPNG: imagePNG ?? entry.image?.thumbnailPNGData,
+                thumbnailPNG: thumbnail.flatMap { $0.isEmpty ? nil : $0 },
+                hasFullImage: hasFullImage,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 formattedDate: formattedDate,
                 pinnedAt: entry.pinnedAt
             ))
         }
+    }
+
+    /// The one place a `FileDetail` is built.
+    ///
+    /// Both paths that produce one — a `.file` entry, and a `.text` entry whose
+    /// body parses as a local path — describe the same thing and differ only in
+    /// where the URL and the displayed path come from.
+    private static func fileDetail(
+        entry: ClipboardEntry,
+        url: URL,
+        path: String,
+        sourceApp: String,
+        formattedDate: String
+    ) -> FileDetail {
+        let name = url.lastPathComponent
+        let classification = classifyFile(ext: url.pathExtension.lowercased())
+        let fileExists = FileManager.default.fileExists(atPath: url.path)
+        return FileDetail(
+            name: name.isEmpty ? path : name,
+            path: path,
+            type: fileType(for: url),
+            byteCount: fileExists ? fileByteCount(at: url) : nil,
+            isVideo: classification.isVideo,
+            isImage: classification.isImage,
+            isText: classification.isText,
+            isCode: classification.isCode,
+            sourceApp: sourceApp,
+            sourceAppBundleID: entry.sourceAppBundleID,
+            formattedDate: formattedDate,
+            fileURL: url,
+            pinnedAt: entry.pinnedAt
+        )
     }
 
     private static func classifyText(_ text: String) -> TextClassification {

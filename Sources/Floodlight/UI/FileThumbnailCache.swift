@@ -46,6 +46,35 @@ enum FileThumbnailDecoder {
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
+    /// Header-only probe: reads the pixel dimensions ImageIO already parsed
+    /// off the file's metadata, without decoding a single pixel. Lets a
+    /// preview reserve the right box before the real thumbnail is ready.
+    /// ImageIO can't read SVG headers, and decoding one just to measure it
+    /// gives up the whole point of a cheap probe, so SVG returns nil here —
+    /// callers fall back to the full decode for that extension.
+    static func pixelSize(at url: URL) -> CGSize? {
+        guard isImage(url), url.pathExtension.lowercased() != "svg" else { return nil }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+              as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+              width > 0, height > 0
+        else {
+            return nil
+        }
+
+        // `decodeImage` always passes kCGImageSourceCreateThumbnailWithTransform,
+        // which bakes EXIF orientation into the decoded pixels: orientations
+        // 5-8 rotate 90 degrees, so width and height swap. Match that here,
+        // or a rotated photo reserves a placeholder the wrong shape.
+        let orientation = properties[kCGImagePropertyOrientation] as? Int
+        if let orientation, (5...8).contains(orientation) {
+            return CGSize(width: height, height: width)
+        }
+        return CGSize(width: width, height: height)
+    }
+
     static func quickLookThumbnail(at url: URL, maxDimension: CGFloat) async -> NSImage? {
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
@@ -111,34 +140,37 @@ final class FileThumbnailCache {
     static let shared = FileThumbnailCache()
 
     private let cache = NSCache<NSString, NSImage>()
+    private let pixelSizeCache = NSCache<NSString, NSValue>()
 
     init() {
         cache.countLimit = 128
-    }
-
-    nonisolated static func isImage(_ url: URL) -> Bool {
-        FileThumbnailDecoder.isImage(url)
+        pixelSizeCache.countLimit = 128
     }
 
     nonisolated static func isVideo(_ url: URL) -> Bool {
         FileThumbnailDecoder.isVideo(url)
     }
 
-    /// File-image previews are needed during the inspector's first layout.
-    /// Decode them in-process and cache the downsampled result immediately;
-    /// videos still use the asynchronous Quick Look/AVFoundation path below.
-    func immediateImageThumbnail(for url: URL, maxDimension: CGFloat = 320) -> NSImage? {
+    func cachedThumbnail(for url: URL) -> NSImage? {
+        cache.object(forKey: url.path as NSString)
+    }
+
+    /// A decoded thumbnail already knows its own size; short of that, probe
+    /// the header rather than wait on a full async decode. Memoized so a
+    /// view that re-lays-out against the same URL doesn't reopen the file
+    /// on every pass — a failed probe included, stored as `.zero`, since a
+    /// corrupt image would otherwise be reopened on every pass forever.
+    func placeholderPixelSize(for url: URL) -> CGSize? {
         let path = url.path
         if let cached = cache.object(forKey: path as NSString) {
-            return cached
+            return cached.size
         }
-        guard Self.isImage(url),
-              let image = FileThumbnailDecoder.decodeImage(at: url, maxDimension: maxDimension)
-        else {
-            return nil
+        if let probed = pixelSizeCache.object(forKey: path as NSString) {
+            return probed.sizeValue == .zero ? nil : probed.sizeValue
         }
-        cache.setObject(image, forKey: path as NSString)
-        return image
+        let size = FileThumbnailDecoder.pixelSize(at: url)
+        pixelSizeCache.setObject(NSValue(size: size ?? .zero), forKey: path as NSString)
+        return size
     }
 
     func thumbnail(for url: URL, maxDimension: CGFloat = 320) async -> NSImage? {

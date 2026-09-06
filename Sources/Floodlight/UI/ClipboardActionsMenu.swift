@@ -42,7 +42,7 @@ struct ClipboardMenuAction {
                 title: "Quick Look",
                 keyEquivalent: " ",
                 modifiers: [],
-                isEnabled: model.previewableSelectionURL != nil,
+                isEnabled: model.isSelectionPreviewable,
                 startsGroup: true,
                 handler: { boardContext.requestPreview() }
             ),

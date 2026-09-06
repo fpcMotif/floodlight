@@ -1,4 +1,4 @@
-import Darwin
+import FloodlightTestSupport
 import Foundation
 import XCTest
 @testable import FloodlightEngine
@@ -76,23 +76,5 @@ final class ClipboardHistoryPerformanceTests: XCTestCase {
 
         // Bounded budget: hot-path clipboard search should remain under 2ms even in debug/CI
         XCTAssertLessThan(medianMicroseconds, 2_000)
-    }
-
-    private func median(_ values: [Double]) -> Double {
-        guard !values.isEmpty else { return 0 }
-        let sorted = values.sorted()
-        let count = sorted.count
-        if count.isMultiple(of: 2) {
-            return (sorted[count / 2 - 1] + sorted[count / 2]) / 2.0
-        }
-        return sorted[count / 2]
-    }
-
-    private func processCPUTime() -> Double {
-        var rusage = rusage()
-        guard getrusage(RUSAGE_SELF, &rusage) == 0 else { return 0 }
-        let user = Double(rusage.ru_utime.tv_sec) + Double(rusage.ru_utime.tv_usec) / 1_000_000.0
-        let system = Double(rusage.ru_stime.tv_sec) + Double(rusage.ru_stime.tv_usec) / 1_000_000.0
-        return user + system
     }
 }

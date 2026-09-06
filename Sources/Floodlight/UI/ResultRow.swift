@@ -214,7 +214,7 @@ private struct ResultIcon: View {
             case let .engine(symbol, tint):
                 symbolTile(symbol, tint: tint.color)
             case let .thumbnail(data):
-                if let image = NSImage(data: data) {
+                if let image = thumbnail(data) {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
@@ -252,6 +252,17 @@ private struct ResultIcon: View {
                 fileIcon = loadedIcon
             }
         }
+    }
+
+    /// Clipboard thumbnails go through the shared cache, so the inspector
+    /// beside the list and every re-evaluation of this row reuse one decode
+    /// rather than running `NSImage(data:)` per body pass. Anything else
+    /// carrying thumbnail bytes has no entry to key on and decodes as before.
+    private func thumbnail(_ data: Data) -> NSImage? {
+        guard let entryID = SearchResultProjection.clipboardEntryID(from: item.id) else {
+            return NSImage(data: data)
+        }
+        return ClipboardImageCache.shared.thumbnail(entryID: entryID, data: data)
     }
 
     /// An SF Symbol on a brand-tinted continuous-curve tile — the icon for
