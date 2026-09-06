@@ -396,18 +396,26 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
                         score: 100
                     ),
                 ],
-                indexedDelay: .milliseconds(300)
+                indexedDelay: TestBudget.duration(.milliseconds(300))
             )
         )
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.start()
 
+        // Four applications is the immediate pass alone; the indexed pass
+        // adds a fifth and closes the window for good, so arrowing down
+        // happens in the step that sees four rather than on the line after.
         coordinator.query = "app"
-        try await waitUntil("the immediate applications arrive", timeout: 10) {
-            coordinator.results.filter { $0.kind == .application }.count == 4
+        let chosen = try await waitForMoment(
+            "the immediate applications arrive",
+            timeout: 10
+        ) { () -> SearchItem.ID? in
+            guard coordinator.results.count(where: { $0.kind == .application }) == 4 else {
+                return nil
+            }
+            coordinator.moveSelection(by: 2)
+            return coordinator.selectedID
         }
-        coordinator.moveSelection(by: 2)
-        let chosen = coordinator.selectedID
         #expect(chosen == "app:2")
 
         try await settle(coordinator)
