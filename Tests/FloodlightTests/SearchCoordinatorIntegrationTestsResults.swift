@@ -121,21 +121,27 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
 
         coordinator.start()
         coordinator.query = "xcode"
-        // The chip is only expected to read "loading" *while* source work is
-        // pending, so it is read in the same main-actor step that finds the
-        // work pending. Read on the next line instead, it is a second, later
-        // observation, and on a loaded runner the window closes in between.
-        let loadingWhilePending = try await waitForMoment(
-            "warm-up completes while source work remains pending"
-        ) { () -> Bool? in
-            guard coordinator.isSearching,
-                  coordinator.results.contains(where: { $0.id == application.id })
+        // The row the warm-up hands over and the chip's total have to arrive
+        // in one publication — a row on screen beside a chip still reading
+        // zero would be the incoherence this guards against — and the chip
+        // stays marked loading until the catalog's own pass finishes rather
+        // than presenting that total as final.
+        //
+        // Both are read in the step that first sees the row. Read on the line
+        // after and the pass may already have settled: `isSearching` outlives
+        // the chip's pending state by a few tens of milliseconds, which is
+        // exactly the gap a loaded runner lands in.
+        let onArrival = try await waitForMoment("the warmed-up row arrives") {
+            () -> (count: Int, isLoading: Bool)? in
+            guard coordinator.results.contains(where: { $0.id == application.id }),
+                  let chip = coordinator.filterOptions.first(where: { $0.filter == .applications })
             else {
                 return nil
             }
-            return coordinator.filterOptions.first { $0.filter == .applications }?.isLoading
+            return (chip.count, chip.isLoading)
         }
-        #expect(loadingWhilePending)
+        #expect(onArrival.count == 37)
+        #expect(onArrival.isLoading)
 
         try await waitUntil("warm-up and the active query settle") {
             !coordinator.isSearching
