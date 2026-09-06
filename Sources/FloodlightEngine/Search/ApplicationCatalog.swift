@@ -113,14 +113,13 @@ package final class ApplicationCatalog: Catalog {
             FloodlightPerformance.end("ApplicationDiscovery", id: signpost)
         }
         try await index.start()
-        for _ in 0..<200 {
-            let progress = try await index.progress()
-            if !progress.isScanning {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        _ = try await index.waitForScan(timeoutMilliseconds: Self.scanWaitBudgetMilliseconds)
     }
+
+    /// Launch must not hang behind a marker-tree scan that is not finishing.
+    /// Applications stay searchable through the catalog's own snapshot until
+    /// the index catches up, so giving up here costs ranking, not results.
+    private static let scanWaitBudgetMilliseconds: UInt64 = 2_000
 
     package func indexedItems(for query: String, limit: Int = 12) async throws -> [SearchItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -174,7 +173,7 @@ package final class ApplicationCatalog: Catalog {
         let normalizedQuery = FuzzyMatcher.normalized(query)
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
-        let queryCharacterMask = Self.characterMask(normalizedQuery)
+        let queryCharacterMask = FuzzyMatcher.characterMask(normalizedQuery)
 
         let currentApps = state.withLock { $0.applications }
         let boosts = recentStore.boostMap()
@@ -441,24 +440,6 @@ package final class ApplicationCatalog: Catalog {
         applications.append((displayName, standardized))
     }
 
-    private static func characterMask(_ value: String) -> UInt64 {
-        value.utf8.reduce(into: 0) { mask, byte in
-            let bit: UInt64? = switch byte {
-            case 0x61...0x7A:
-                UInt64(byte - 0x61)
-            case 0x41...0x5A:
-                UInt64(byte - 0x41)
-            case 0x30...0x39:
-                UInt64(byte - 0x30 + 26)
-            default:
-                nil
-            }
-            if let bit {
-                mask |= 1 << bit
-            }
-        }
-    }
-
     private static func assignMarkerNames(
         to applications: [(name: String, url: URL)]
     ) -> [Application] {
@@ -473,7 +454,7 @@ package final class ApplicationCatalog: Catalog {
             let normalized = FuzzyMatcher.normalized(application.name)
             let utf8Bytes = Array(normalized.utf8)
             let asciiCandidate = utf8Bytes.allSatisfy { $0 < 0x80 } ? utf8Bytes : nil
-            let mask = characterMask(normalized)
+            let mask = FuzzyMatcher.characterMask(normalized)
             return Application(
                 name: application.name,
                 url: application.url,

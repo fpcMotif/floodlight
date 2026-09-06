@@ -35,7 +35,7 @@ package final class SystemCatalog: Catalog {
             words = normalizedCandidate
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
                 .map(String.init)
-            characterMask = SystemCatalog.characterMask(normalizedCandidate)
+            characterMask = FuzzyMatcher.characterMask(normalizedCandidate)
             url = URL(string: "x-apple.systempreferences:\(pane)")
         }
     }
@@ -344,7 +344,7 @@ package final class SystemCatalog: Catalog {
         let normalizedQuery = FuzzyMatcher.normalized(query)
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
-        let queryCharacterMask = Self.characterMask(normalizedQuery)
+        let queryCharacterMask = FuzzyMatcher.characterMask(normalizedQuery)
         let requiresWordPrefix = normalizedQuery.utf8.count < 4
         let matches = settings.withLock { allSettings -> [SearchItem] in
             var matches: [SearchItem] = []
@@ -432,24 +432,6 @@ package final class SystemCatalog: Catalog {
             return String(remainder[..<sepIndex])
         }
         return String(remainder)
-    }
-
-    private static func characterMask(_ value: String) -> UInt64 {
-        value.utf8.reduce(into: 0) { mask, byte in
-            let bit: UInt64? = switch byte {
-            case 0x61...0x7A:
-                UInt64(byte - 0x61)
-            case 0x41...0x5A:
-                UInt64(byte - 0x41)
-            case 0x30...0x39:
-                UInt64(byte - 0x30 + 26)
-            default:
-                nil
-            }
-            if let bit {
-                mask |= 1 << bit
-            }
-        }
     }
 
     private static func discoverInstalledSettings() -> [DiscoveredSetting] {

@@ -89,7 +89,7 @@ extension SearchMode {
         query: String,
         registry: KeywordEngineRegistry
     ) -> (mode: SearchMode, query: String) {
-        if let token = parseTokenAndRemainder(query),
+        if let token = KeywordEngineRegistry.parseAddress(query),
            token.typedKeyword.lowercased() == "clip"
         {
             let context = ClipboardContext(
@@ -145,39 +145,5 @@ extension SearchMode {
             "clip"
         }
         return query.isEmpty ? spelling : "\(spelling) \(query)"
-    }
-
-    private static func parseTokenAndRemainder(_ query: String) -> (
-        typedKeyword: String,
-        remainder: String
-    )? {
-        let end = query.endIndex
-        var keywordStart = query.startIndex
-        while keywordStart < end, query[keywordStart].isWhitespace {
-            query.formIndex(after: &keywordStart)
-        }
-        guard keywordStart < end else { return nil }
-        guard let separator = query[keywordStart...].firstIndex(where: \.isWhitespace) else {
-            return (String(query[keywordStart..<end]), "")
-        }
-
-        var remainderStart = separator
-        while remainderStart < end, query[remainderStart].isWhitespace {
-            query.formIndex(after: &remainderStart)
-        }
-        guard remainderStart < end else {
-            return (String(query[keywordStart..<separator]), "")
-        }
-
-        var remainderEnd = end
-        while remainderEnd > remainderStart {
-            let previous = query.index(before: remainderEnd)
-            guard query[previous].isWhitespace else { break }
-            remainderEnd = previous
-        }
-        return (
-            typedKeyword: String(query[keywordStart..<separator]),
-            remainder: String(query[remainderStart..<remainderEnd])
-        )
     }
 }
