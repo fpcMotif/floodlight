@@ -133,13 +133,6 @@ struct FullDiskAccessGrantTests {
         #expect(spy.onDismissedCallCount == 1)
     }
 
-    @Test func dragItemPayloadVendsAppBundleFileURL() {
-        let bundleURL = URL(fileURLWithPath: "/Applications/Floodlight.app")
-        let itemProvider = FullDiskAccessDragItem.itemProvider(for: bundleURL)
-
-        #expect(itemProvider.hasItemConformingToTypeIdentifier("public.file-url"))
-    }
-
     @Test func guidanceViewRendersInLightAndDarkMode() throws {
         let bundleURL = URL(fileURLWithPath: "/Applications/Floodlight.app")
         let view = FullDiskAccessGuidanceView(

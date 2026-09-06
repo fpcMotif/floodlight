@@ -14,23 +14,17 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         var db: OpaquePointer?
         var pinnedEntries: [ClipboardEntry]
         var recentEntries: [ClipboardEntry]
-        var totalCount: Int
     }
 
     private let stateLock: OSAllocatedUnfairLock<State>
 
     package static func inMemory() -> ClipboardHistoryStore {
         (try? ClipboardHistoryStore(databasePath: ":memory:")) ??
-            ClipboardHistoryStore(fallback: ())
+            ClipboardHistoryStore(state: State(db: nil, pinnedEntries: [], recentEntries: []))
     }
 
-    private init(fallback: Void) {
-        stateLock = OSAllocatedUnfairLock(initialState: State(
-            db: nil,
-            pinnedEntries: [],
-            recentEntries: [],
-            totalCount: 0
-        ))
+    private init(state: State) {
+        stateLock = OSAllocatedUnfairLock(initialState: state)
     }
 
     package convenience init(databaseURL: URL? = nil) throws {
@@ -51,7 +45,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         try self.init(databasePath: path)
     }
 
-    package init(databasePath: String) throws {
+    package convenience init(databasePath: String) throws {
         var dbPointer: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         let openResult = sqlite3_open_v2(databasePath, &dbPointer, flags, nil)
@@ -66,17 +60,12 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         }
 
         ClipboardHistorySQLite.initializeSchema(db: db)
-        let (pinned, recent, total) = ClipboardHistorySQLite.loadInitialWindow(
+        let (pinned, recent) = ClipboardHistorySQLite.loadInitialWindow(
             db: db,
             recentLimit: Self.inMemoryRecentWindowLimit
         )
 
-        stateLock = OSAllocatedUnfairLock(initialState: State(
-            db: db,
-            pinnedEntries: pinned,
-            recentEntries: recent,
-            totalCount: total
-        ))
+        self.init(state: State(db: db, pinnedEntries: pinned, recentEntries: recent))
     }
 
     deinit {
@@ -86,34 +75,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 state.db = nil
             }
         }
-    }
-
-    // MARK: - Properties
-
-    package var count: Int {
-        stateLock.withLock { $0.totalCount }
-    }
-
-    package var isEmpty: Bool {
-        count == 0
-    }
-
-    package var mostRecentEntry: ClipboardEntry? {
-        stateLock.withLock { state in
-            state.recentEntries.first ?? state.pinnedEntries.max { $0.createdAt < $1.createdAt }
-        }
-    }
-
-    package var pinnedEntries: [ClipboardEntry] {
-        stateLock.withLock { $0.pinnedEntries }
-    }
-
-    package var unpinnedEntries: [ClipboardEntry] {
-        stateLock.withLock { $0.recentEntries }
-    }
-
-    package var allEntries: [ClipboardEntry] {
-        search(query: "")
     }
 
     package func entry(id: String) -> ClipboardEntry? {
@@ -255,7 +216,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
                 state.recentEntries.removeLast()
             }
-            state.totalCount += 1
             return entry
         }
     }
@@ -332,7 +292,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
                 state.recentEntries.removeLast()
             }
-            state.totalCount += 1
 
             return entry
         }
@@ -485,14 +444,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
             guard sqlite3_step(stmt) == SQLITE_DONE else { return }
 
-            let removedFromPinned = state.pinnedEntries.firstIndex(where: { $0.id == id })
-                .map { state.pinnedEntries.remove(at: $0) } != nil
-            let removedFromRecent = state.recentEntries.firstIndex(where: { $0.id == id })
-                .map { state.recentEntries.remove(at: $0) } != nil
-
-            if removedFromPinned || removedFromRecent {
-                state.totalCount = max(0, state.totalCount - 1)
-            }
+            state.pinnedEntries.removeAll { $0.id == id }
+            state.recentEntries.removeAll { $0.id == id }
         }
     }
 
@@ -503,7 +456,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             sqlite3_exec(db, "DELETE FROM clipboard_entries;", nil, nil, nil)
             state.pinnedEntries.removeAll()
             state.recentEntries.removeAll()
-            state.totalCount = 0
         }
     }
 
@@ -522,7 +474,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             guard sqlite3_step(stmt) == SQLITE_DONE else { return }
 
             state.recentEntries.removeAll { $0.createdAt < cutoff }
-            state.totalCount = ClipboardHistorySQLite.queryTotalCount(db: db)
         }
     }
 

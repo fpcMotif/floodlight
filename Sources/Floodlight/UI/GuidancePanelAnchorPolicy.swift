@@ -74,8 +74,7 @@ package enum SystemSettingsWindowLocator {
     }
 
     package static func locateWindow(
-        processNames: [String] = ["System Settings", "System Preferences"],
-        bundleIDs: [String] = ["com.apple.systempreferences"]
+        processNames: [String] = ["System Settings", "System Preferences"]
     ) -> NSRect? {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let infoList = CGWindowListCopyWindowInfo(

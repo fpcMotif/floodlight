@@ -636,13 +636,6 @@ extension SearchCoordinator {
         mutateSelectedClipboardEntry { clipboardStore.delete(id: $0) }
     }
 
-    func clearHistory() {
-        clipboardStore.clear()
-        if isClipboardMode {
-            publishClipboardModeResults()
-        }
-    }
-
     /// Whether the selected clipboard row is pinned — the Actions menu
     /// reads it to offer "Pin" or "Unpin".
     var isSelectionPinned: Bool {
@@ -674,7 +667,6 @@ extension SearchCoordinator {
         searchTask = nil
         publication = SearchResultProjection.project(
             .clipboard(.init(
-                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
                 entries: clipboardStore.search(query: query),
                 selectedFilter: selectedFilter ?? self.selectedFilter,
                 selection: selection ?? publication.selection

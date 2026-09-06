@@ -131,8 +131,6 @@ struct FileThumbnailCacheTests {
         let cache = FileThumbnailCache()
         let firstLookup = await cache.thumbnail(for: url)
         let first = try #require(firstLookup)
-        let cached = try #require(cache.cachedThumbnail(for: url))
-        #expect(first === cached)
 
         let secondLookup = await cache.thumbnail(for: url)
         let second = try #require(secondLookup)

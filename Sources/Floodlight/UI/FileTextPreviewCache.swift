@@ -136,9 +136,14 @@ enum FileTextPreviewDecoder {
 final class FileTextPreviewCache {
     static let shared = FileTextPreviewCache()
 
+    /// The fields are read only through the synthesized Hashable conformance the
+    /// cache dictionary keys on, which the index records as no reference at all.
     private struct CacheKey: Hashable {
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let path: String
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let modificationDate: Date
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let fileSize: UInt64
     }
 

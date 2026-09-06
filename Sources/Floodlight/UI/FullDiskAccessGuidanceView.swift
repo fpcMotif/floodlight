@@ -122,7 +122,6 @@ package struct FullDiskAccessGuidanceView: View {
 @MainActor
 package final class FullDiskAccessGuidancePanel: NSPanel {
     private let coordinator: FullDiskAccessGrantCoordinator
-    private let appURL: URL
     private var hostingView: NSHostingView<FullDiskAccessGuidanceView>?
 
     package init(
@@ -130,7 +129,6 @@ package final class FullDiskAccessGuidancePanel: NSPanel {
         appURL: URL
     ) {
         self.coordinator = coordinator
-        self.appURL = appURL
 
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 110),

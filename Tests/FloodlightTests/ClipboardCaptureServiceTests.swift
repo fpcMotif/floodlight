@@ -1,5 +1,6 @@
 import AppKit
 import FloodlightEngine
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import Floodlight

@@ -8,27 +8,11 @@ package enum FullDiskAccessGrantPhase: Equatable, Sendable {
     case dismissed
 }
 
-package enum FullDiskAccessDragItem {
-    package static func itemProvider(for url: URL) -> NSItemProvider {
-        if let provider = NSItemProvider(contentsOf: url) {
-            return provider
-        }
-        let provider = NSItemProvider()
-        provider.registerFileRepresentation(
-            forTypeIdentifier: "public.file-url",
-            fileOptions: [],
-            visibility: .all
-        ) { completion in
-            completion(url, true, nil)
-            return nil
-        }
-        return provider
-    }
-}
-
 @MainActor
 package final class FullDiskAccessGrantCoordinator {
     package private(set) var phase: FullDiskAccessGrantPhase = .idle
+    // periphery:ignore - test seam: the anchor-tracking test reads the live
+    // panel's frame after a poll; production drives the panel only from here.
     package var activeGuidancePanel: FullDiskAccessGuidancePanel? {
         panel
     }

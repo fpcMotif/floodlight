@@ -166,14 +166,6 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         )
     }
 
-    private static func openFullDiskAccess() {
-        openSystemSettings(
-            primary:
-            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
-            fallback: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-        )
-    }
-
     private static func openSystemSettings(primary: String, fallback: String) {
         guard let primaryURL = URL(string: primary),
               !NSWorkspace.shared.open(primaryURL),

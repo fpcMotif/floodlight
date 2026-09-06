@@ -55,7 +55,7 @@ enum ClipboardHistorySQLite {
     static func loadInitialWindow(
         db: OpaquePointer,
         recentLimit: Int
-    ) -> (pinned: [ClipboardEntry], recent: [ClipboardEntry], total: Int) {
+    ) -> (pinned: [ClipboardEntry], recent: [ClipboardEntry]) {
         var pinned: [ClipboardEntry] = []
         var recent: [ClipboardEntry] = []
 
@@ -92,16 +92,7 @@ enum ClipboardHistorySQLite {
             }
         }
 
-        return (pinned, recent, queryTotalCount(db: db))
-    }
-
-    static func queryTotalCount(db: OpaquePointer) -> Int {
-        let countSQL = "SELECT COUNT(*) FROM clipboard_entries;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, countSQL, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int64(stmt, 0))
+        return (pinned, recent)
     }
 
     static func readEntry(from stmt: OpaquePointer?) -> ClipboardEntry? {

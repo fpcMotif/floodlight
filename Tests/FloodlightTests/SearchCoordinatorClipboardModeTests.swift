@@ -267,22 +267,6 @@ struct SearchCoordinatorClipboardModeTests {
         #expect(coordinator.results[0].id == "clipboard:\(e1.id)")
     }
 
-    @Test func clearHistoryWipesAllRows() async throws {
-        let store = ClipboardHistoryStore.inMemory()
-        _ = store.record(text: "One")
-        _ = store.record(text: "Two")
-
-        let coordinator = try await makeCoordinator(clipboardStore: store)
-        coordinator.query = "clip"
-        coordinator.handleTab()
-
-        #expect(coordinator.results.count == 2)
-
-        coordinator.clearHistory()
-
-        #expect(coordinator.results.isEmpty)
-    }
-
     // MARK: - Exiting clipboard mode
 
     @Test func escapeExitsClipboardModeAndRestoresFieldQuery() async throws {

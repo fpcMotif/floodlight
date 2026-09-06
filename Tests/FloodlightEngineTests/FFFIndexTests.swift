@@ -193,13 +193,13 @@ struct FFFIndexTests {
         #expect(applicationSearchItem.title == "Sample Launcher")
         #expect(applicationSearchItem.id == "application:\(downloadedApplication.path)")
 
-        let ancestorResults = try await index.searchDirectories("Reference")
+        let ancestorResults = try await directories(in: index, matching: "Reference")
         #expect(ancestorResults.contains { sameFileURL($0.url, ancestorOnlyFolder) })
 
         let folderResults = try await index.search("Projects")
         #expect(folderResults
             .contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
-        let directoryOnlyResults = try await index.searchDirectories("Projects")
+        let directoryOnlyResults = try await directories(in: index, matching: "Projects")
         #expect(directoryOnlyResults.contains {
             $0.isDirectory && $0.url.lastPathComponent == "Projects"
         })
@@ -279,7 +279,7 @@ struct FFFIndexTests {
             "A created file and its containing folder were not added to the live index"
         ) {
             let files = try await index.searchFiles("fresh-report")
-            let folders = try await index.searchDirectories("Live Projects")
+            let folders = try await directories(in: index, matching: "Live Projects")
             return files.contains { sameFileURL($0.url, createdFile) }
                 && folders.contains {
                     sameFileURL($0.url, createdFolder)
@@ -302,13 +302,13 @@ struct FFFIndexTests {
         let movedFile = renamedFolder.appendingPathComponent(renamedFile.lastPathComponent)
         try fileManager.moveItem(at: createdFolder, to: renamedFolder)
         try await assertEventually("Renaming a folder did not remove its old path") {
-            let results = try await index.searchDirectories("Live Projects")
+            let results = try await directories(in: index, matching: "Live Projects")
             return !results.contains {
                 sameFileURL($0.url, createdFolder)
             }
         }
         try await assertEventually("Renaming a folder did not add its new path") {
-            try await index.searchDirectories("Archived Projects").contains {
+            try await directories(in: index, matching: "Archived Projects").contains {
                 sameFileURL($0.url, renamedFolder)
             }
         }
@@ -322,7 +322,7 @@ struct FFFIndexTests {
         try await assertEventually(
             "Deleting a folder did not evict it and its descendants from the live index"
         ) {
-            let folders = try await index.searchDirectories("Archived Projects")
+            let folders = try await directories(in: index, matching: "Archived Projects")
             let files = try await index.searchFiles("renamed-report")
             return !folders.contains {
                 sameFileURL($0.url, renamedFolder)
@@ -506,13 +506,13 @@ struct FFFIndexTests {
         let movedFile = movedFolder.appendingPathComponent(seededFile.lastPathComponent)
         try fileManager.moveItem(at: seededFolder, to: movedFolder)
         try await assertEventually("Moving an initially indexed folder left its old path behind") {
-            let folders = try await index.searchDirectories("A Seeded Folder")
+            let folders = try await directories(in: index, matching: "A Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return !folders.contains { sameFileURL($0.url, seededFolder) }
                 && !files.contains { sameFileURL($0.url, seededFile) }
         }
         try await assertEventually("Moving an initially indexed folder did not add its new path") {
-            let folders = try await index.searchDirectories("Moved Seeded Folder")
+            let folders = try await directories(in: index, matching: "Moved Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return folders.contains { sameFileURL($0.url, movedFolder) }
                 && files.contains { sameFileURL($0.url, movedFile) }
@@ -529,11 +529,20 @@ struct FFFIndexTests {
 
         try fileManager.removeItem(at: movedFolder)
         try await assertEventually("Deleting the moved folder left indexed descendants behind") {
-            let folders = try await index.searchDirectories("Moved Seeded Folder")
+            let folders = try await directories(in: index, matching: "Moved Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return !folders.contains { sameFileURL($0.url, movedFolder) }
                 && !files.contains { sameFileURL($0.url, movedFile) }
         }
+    }
+
+    /// The app searches files and folders together; the live-index assertions
+    /// only need the folder half of that result.
+    private func directories(
+        in index: FFFIndex,
+        matching query: String
+    ) async throws -> [FFFSearchResult] {
+        try await index.search(query).filter(\.isDirectory)
     }
 
     private func assertEventually(

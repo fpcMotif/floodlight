@@ -241,65 +241,6 @@ package final class FFFIndex: @unchecked Sendable {
         }
     }
 
-    package func searchDirectories(
-        _ query: String,
-        limit: UInt32 = 24
-    ) async throws -> [FFFSearchResult] {
-        let requestGeneration = reserveSearchGeneration()
-        return try await perform {
-            guard self.isLatestSearch(requestGeneration) else {
-                throw CancellationError()
-            }
-            guard let handle = self.handle else {
-                throw FFFIndexError.message("The FFF index has not started.")
-            }
-
-            let envelope = query.withCString {
-                fff_search_directories(handle, $0, nil, 0, 0, limit)
-            }
-            guard let envelope else { throw FFFIndexError.invalidResult }
-            defer { fff_free_result(envelope) }
-
-            guard envelope.pointee.success else {
-                throw FFFIndexError.message(Self.errorMessage(from: envelope))
-            }
-            guard let raw = envelope.pointee.handle else { return [] }
-
-            let result = raw.assumingMemoryBound(to: FffDirSearchResult.self)
-            defer { fff_free_dir_search_result(result) }
-
-            return (0..<result.pointee.count).compactMap { index in
-                guard let item = fff_dir_search_result_get_item(result, index),
-                      let namePointer = item.pointee.dir_name,
-                      let pathPointer = item.pointee.relative_path
-                else {
-                    return nil
-                }
-
-                let relativePath = String(cString: pathPointer)
-                if relativePath.split(separator: "/")
-                    .contains(where: { $0.lowercased().hasSuffix(".app") })
-                {
-                    return nil
-                }
-
-                let scorePointer = fff_dir_search_result_get_score(result, index)
-                return FFFSearchResult(
-                    name: String(cString: namePointer),
-                    relativePath: relativePath,
-                    url: self.rootURL.appendingPathComponent(
-                        relativePath,
-                        isDirectory: true
-                    ),
-                    isDirectory: true,
-                    score: Int(scorePointer?.pointee.total ?? 0),
-                    modified: 0,
-                    size: 0
-                )
-            }
-        }
-    }
-
     private func reserveSearchGeneration() -> UInt64 {
         searchGenerationLock.lock()
         defer { searchGenerationLock.unlock() }

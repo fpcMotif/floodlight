@@ -26,7 +26,6 @@ struct SearchResultProjectionClipboardTests {
 
         let publication = SearchResultProjection.project(
             .clipboard(.init(
-                query: "inv",
                 entries: [pinned, unpinned],
                 selection: nil,
                 now: now
@@ -76,7 +75,6 @@ struct SearchResultProjectionClipboardTests {
 
         let publication = SearchResultProjection.project(
             .clipboard(.init(
-                query: "invoice",
                 entries: [file, folder],
                 selection: nil,
                 now: now
@@ -138,7 +136,6 @@ struct SearchResultProjectionClipboardTests {
 
         let publication = SearchResultProjection.project(
             .clipboard(.init(
-                query: "screenshot",
                 entries: [image, pinned],
                 selection: nil,
                 now: now
@@ -195,7 +192,6 @@ struct SearchResultProjectionClipboardTests {
 
         let all = SearchResultProjection.project(
             .clipboard(.init(
-                query: "invoice",
                 entries: entries,
                 selectedFilter: .all,
                 selection: nil,
@@ -215,7 +211,6 @@ struct SearchResultProjectionClipboardTests {
 
         let textOnly = SearchResultProjection.project(
             .clipboard(.init(
-                query: "invoice",
                 entries: entries,
                 selectedFilter: .text,
                 selection: nil,
@@ -228,7 +223,6 @@ struct SearchResultProjectionClipboardTests {
 
         let filesOnly = SearchResultProjection.project(
             .clipboard(.init(
-                query: "invoice",
                 entries: entries,
                 selectedFilter: .files,
                 selection: nil,
@@ -239,7 +233,6 @@ struct SearchResultProjectionClipboardTests {
 
         let imagesOnly = SearchResultProjection.project(
             .clipboard(.init(
-                query: "invoice",
                 entries: entries,
                 selectedFilter: .images,
                 selection: nil,

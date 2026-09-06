@@ -9,15 +9,11 @@ enum ClipboardInspector: Equatable {
         case link = "Link"
         case code = "Code"
         case color = "Color"
-        case image = "Image"
-        case video = "Video"
-        case file = "File"
     }
 
     struct TextClassification: Equatable {
         let contentType: ContentType
         let domain: String?
-        let colorHex: String?
         let codeLanguage: String?
         let colorComponents: ColorComponents?
     }
@@ -38,7 +34,6 @@ enum ClipboardInspector: Equatable {
     }
 
     struct FileClassification: Equatable {
-        let contentType: ContentType
         let isVideo: Bool
         let isImage: Bool
         let isText: Bool
@@ -46,19 +41,16 @@ enum ClipboardInspector: Equatable {
     }
 
     struct TextDetail: Equatable {
-        let title: String
         let body: String
         let contentType: ContentType
         let characterCount: Int
         let wordCount: Int
         let lineCount: Int
         let domain: String?
-        let colorHex: String?
         let codeLanguage: String?
         let colorComponents: ColorComponents?
         let sourceApp: String
         let sourceAppBundleID: String?
-        let createdAt: Date
         let formattedDate: String
         let pinnedAt: Date?
     }
@@ -67,7 +59,6 @@ enum ClipboardInspector: Equatable {
         let name: String
         let path: String
         let type: String
-        let contentType: ContentType
         let byteCount: UInt64?
         let isVideo: Bool
         let isImage: Bool
@@ -75,7 +66,6 @@ enum ClipboardInspector: Equatable {
         let isCode: Bool
         let sourceApp: String
         let sourceAppBundleID: String?
-        let createdAt: Date
         let formattedDate: String
         let fileURL: URL
         let pinnedAt: Date?
@@ -90,7 +80,6 @@ enum ClipboardInspector: Equatable {
         let previewPNG: Data?
         let sourceApp: String
         let sourceAppBundleID: String?
-        let createdAt: Date
         let formattedDate: String
         let pinnedAt: Date?
     }
@@ -98,22 +87,6 @@ enum ClipboardInspector: Equatable {
     case text(TextDetail)
     case file(FileDetail)
     case image(ImageDetail)
-
-    var sourceApp: String {
-        switch self {
-        case let .text(detail): detail.sourceApp
-        case let .file(detail): detail.sourceApp
-        case let .image(detail): detail.sourceApp
-        }
-    }
-
-    var sourceAppBundleID: String? {
-        switch self {
-        case let .text(detail): detail.sourceAppBundleID
-        case let .file(detail): detail.sourceAppBundleID
-        case let .image(detail): detail.sourceAppBundleID
-        }
-    }
 
     static func snapshot(
         for entry: ClipboardEntry,
@@ -129,13 +102,12 @@ enum ClipboardInspector: Equatable {
                 let name = fileURL.lastPathComponent
                 let ext = fileURL.pathExtension.lowercased()
                 let fileExists = FileManager.default.fileExists(atPath: fileURL.path)
-                let classification = classifyFile(url: fileURL, ext: ext)
+                let classification = classifyFile(ext: ext)
 
                 return .file(FileDetail(
                     name: name.isEmpty ? text : name,
                     path: text,
                     type: fileType(for: fileURL),
-                    contentType: classification.contentType,
                     byteCount: fileExists ? fileByteCount(at: fileURL) : nil,
                     isVideo: classification.isVideo,
                     isImage: classification.isImage,
@@ -143,7 +115,6 @@ enum ClipboardInspector: Equatable {
                     isCode: classification.isCode,
                     sourceApp: sourceApp,
                     sourceAppBundleID: entry.sourceAppBundleID,
-                    createdAt: entry.createdAt,
                     formattedDate: formattedDate,
                     fileURL: fileURL,
                     pinnedAt: entry.pinnedAt
@@ -156,19 +127,16 @@ enum ClipboardInspector: Equatable {
             let lineCount = countLines(text)
 
             return .text(TextDetail(
-                title: previewTitle(for: text),
                 body: text,
                 contentType: classification.contentType,
                 characterCount: characterCount,
                 wordCount: wordCount,
                 lineCount: lineCount,
                 domain: classification.domain,
-                colorHex: classification.colorHex,
                 codeLanguage: classification.codeLanguage,
                 colorComponents: classification.colorComponents,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
-                createdAt: entry.createdAt,
                 formattedDate: formattedDate,
                 pinnedAt: entry.pinnedAt
             ))
@@ -177,14 +145,13 @@ enum ClipboardInspector: Equatable {
             let url = URL(fileURLWithPath: entry.text)
             let name = url.lastPathComponent
             let ext = url.pathExtension.lowercased()
-            let classification = classifyFile(url: url, ext: ext)
+            let classification = classifyFile(ext: ext)
             let fileExists = FileManager.default.fileExists(atPath: url.path)
 
             return .file(FileDetail(
                 name: name.isEmpty ? entry.text : name,
                 path: entry.text,
                 type: fileType(for: url),
-                contentType: classification.contentType,
                 byteCount: fileExists ? fileByteCount(at: url) : nil,
                 isVideo: classification.isVideo,
                 isImage: classification.isImage,
@@ -192,7 +159,6 @@ enum ClipboardInspector: Equatable {
                 isCode: classification.isCode,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
-                createdAt: entry.createdAt,
                 formattedDate: formattedDate,
                 fileURL: url,
                 pinnedAt: entry.pinnedAt
@@ -201,18 +167,16 @@ enum ClipboardInspector: Equatable {
         case .image:
             let width = entry.image?.width ?? 0
             let height = entry.image?.height ?? 0
-            let format = imageFormatName(width: width, height: height)
 
             return .image(ImageDetail(
                 name: entry.text.isEmpty ? "Image" : entry.text,
                 width: width,
                 height: height,
                 byteCount: entry.image?.byteCount ?? 0,
-                format: format,
+                format: "PNG Image",
                 previewPNG: imagePNG ?? entry.image?.thumbnailPNGData,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
-                createdAt: entry.createdAt,
                 formattedDate: formattedDate,
                 pinnedAt: entry.pinnedAt
             ))
@@ -224,25 +188,22 @@ enum ClipboardInspector: Equatable {
             return TextClassification(
                 contentType: .link,
                 domain: domain,
-                colorHex: nil,
                 codeLanguage: nil,
                 colorComponents: nil
             )
         }
-        if let hex = parseHexColor(text) {
+        if let colorComponents = parseHexColorComponents(text) {
             return TextClassification(
                 contentType: .color,
                 domain: nil,
-                colorHex: hex,
                 codeLanguage: nil,
-                colorComponents: parseHexColorComponents(text)
+                colorComponents: colorComponents
             )
         }
         if let code = parseCodeHint(text) {
             return TextClassification(
                 contentType: .code,
                 domain: nil,
-                colorHex: nil,
                 codeLanguage: code,
                 colorComponents: nil
             )
@@ -250,13 +211,12 @@ enum ClipboardInspector: Equatable {
         return TextClassification(
             contentType: .text,
             domain: nil,
-            colorHex: nil,
             codeLanguage: nil,
             colorComponents: nil
         )
     }
 
-    private static func classifyFile(url: URL, ext: String) -> FileClassification {
+    private static func classifyFile(ext: String) -> FileClassification {
         let imageExtensions: Set = [
             "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "tif", "bmp", "avif", "ico",
             "icns", "svg",
@@ -277,7 +237,6 @@ enum ClipboardInspector: Equatable {
         ]
         if imageExtensions.contains(ext) {
             return FileClassification(
-                contentType: .image,
                 isVideo: false,
                 isImage: true,
                 isText: false,
@@ -286,7 +245,6 @@ enum ClipboardInspector: Equatable {
         }
         if videoExtensions.contains(ext) {
             return FileClassification(
-                contentType: .video,
                 isVideo: true,
                 isImage: false,
                 isText: false,
@@ -295,7 +253,6 @@ enum ClipboardInspector: Equatable {
         }
         if codeExtensions.contains(ext) {
             return FileClassification(
-                contentType: .code,
                 isVideo: false,
                 isImage: false,
                 isText: true,
@@ -304,7 +261,6 @@ enum ClipboardInspector: Equatable {
         }
         if textExtensions.contains(ext) {
             return FileClassification(
-                contentType: .text,
                 isVideo: false,
                 isImage: false,
                 isText: true,
@@ -312,7 +268,6 @@ enum ClipboardInspector: Equatable {
             )
         }
         return FileClassification(
-            contentType: .file,
             isVideo: false,
             isImage: false,
             isText: false,
@@ -449,17 +404,6 @@ enum ClipboardInspector: Equatable {
             return "Yesterday at \(time)"
         }
         return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private static func imageFormatName(width: Int, height: Int) -> String {
-        "PNG Image"
-    }
-
-    private static func previewTitle(for text: String) -> String {
-        let singleLine = text.split(whereSeparator: \.isNewline)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        return singleLine.isEmpty ? "(Empty text)" : singleLine
     }
 
     private static func fileType(for url: URL) -> String {

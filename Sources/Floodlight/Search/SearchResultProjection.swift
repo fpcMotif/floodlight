@@ -97,20 +97,17 @@ enum SearchResultProjection {
     }
 
     struct ClipboardContext: Equatable {
-        let query: String
         let entries: [ClipboardEntry]
         let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
         let now: Date
 
         init(
-            query: String,
             entries: [ClipboardEntry],
             selectedFilter: SearchResultFilter = .all,
             selection: SearchResultSelection?,
             now: Date = .now
         ) {
-            self.query = query
             self.entries = entries
             self.selectedFilter = selectedFilter
             self.selection = selection

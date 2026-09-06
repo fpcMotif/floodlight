@@ -89,7 +89,11 @@ struct ClipboardBoardDesignTests {
         let row = try #require(coordinator.results.first)
         let inspector = try #require(coordinator.clipboardInspector)
         #expect(row.subtitle.hasPrefix("Finder · "))
-        #expect(inspector.sourceApp == "Finder")
+        guard case let .text(detail) = inspector else {
+            Issue.record("expected a text inspector snapshot")
+            return
+        }
+        #expect(detail.sourceApp == "Finder")
     }
 
     // MARK: - Pinned state

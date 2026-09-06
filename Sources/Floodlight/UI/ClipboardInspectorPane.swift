@@ -1,5 +1,4 @@
 import AppKit
-import FloodlightEngine
 import SwiftUI
 
 struct ClipboardInspectorPane: View {
@@ -121,7 +120,7 @@ struct ClipboardInspectorPane: View {
                 numberedCodeBlock(detail.body, lineCount: detail.lineCount)
             }
 
-        case .text, .image, .video, .file:
+        case .text:
             Text(detail.body)
                 .font(.system(size: 12.5, weight: .regular))
                 .foregroundStyle(.primary)

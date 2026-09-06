@@ -30,7 +30,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot")
             return
         }
-        #expect(jsonDetail.contentType == .code)
         #expect(jsonDetail.isCode)
         #expect(jsonDetail.isText)
         #expect(jsonDetail.type == "JSON")
@@ -45,7 +44,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot")
             return
         }
-        #expect(pyDetail.contentType == .code)
         #expect(pyDetail.isCode)
         #expect(pyDetail.isText)
         #expect(pyDetail.type == "Python Script" || pyDetail.type == "Source Code")
@@ -60,7 +58,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot")
             return
         }
-        #expect(mdDetail.contentType == .text)
         #expect(!mdDetail.isCode)
         #expect(mdDetail.isText)
         #expect(mdDetail.type == "Markdown")
@@ -75,7 +72,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot")
             return
         }
-        #expect(txtDetail.contentType == .text)
         #expect(!txtDetail.isCode)
         #expect(txtDetail.isText)
         #expect(txtDetail.type == "Plain Text")
@@ -90,7 +86,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot")
             return
         }
-        #expect(pdfDetail.contentType == .file)
         #expect(!pdfDetail.isCode)
         #expect(!pdfDetail.isText)
         #expect(pdfDetail.type == "PDF")
@@ -106,7 +101,6 @@ struct FileTextPreviewTests {
             Issue.record("expected file snapshot for local json path")
             return
         }
-        #expect(detail.contentType == .code)
         #expect(detail.isCode)
         #expect(detail.isText)
     }
@@ -533,7 +527,6 @@ struct FileTextPreviewTests {
             name: detail.name,
             path: detail.path,
             type: detail.type,
-            contentType: detail.contentType,
             byteCount: detail.byteCount,
             isVideo: detail.isVideo,
             isImage: detail.isImage,
@@ -541,7 +534,6 @@ struct FileTextPreviewTests {
             isCode: false,
             sourceApp: detail.sourceApp,
             sourceAppBundleID: detail.sourceAppBundleID,
-            createdAt: detail.createdAt,
             formattedDate: detail.formattedDate,
             fileURL: detail.fileURL,
             pinnedAt: detail.pinnedAt

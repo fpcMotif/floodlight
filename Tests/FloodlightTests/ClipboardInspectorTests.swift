@@ -21,8 +21,7 @@ struct ClipboardInspectorTests {
         }
         #expect(detail.body == "Pinned multi-line\naddress line 2")
         #expect(detail.sourceApp == "Notes")
-        #expect(detail.createdAt == created)
-        #expect(detail.title == "Pinned multi-line address line 2")
+        #expect(detail.formattedDate == ClipboardInspector.formattedDetailedDate(created))
     }
 
     @Test func fileSnapshotShowsNamePathAndSource() {
@@ -46,7 +45,6 @@ struct ClipboardInspectorTests {
         #expect(detail.path == path)
         #expect(detail.type == "PDF")
         #expect(detail.sourceApp == "Finder")
-        #expect(detail.createdAt == created)
         #expect(detail.fileURL == URL(fileURLWithPath: path))
     }
 
@@ -81,7 +79,6 @@ struct ClipboardInspectorTests {
         #expect(detail.byteCount == 1_400_000)
         #expect(detail.previewPNG == png)
         #expect(detail.sourceApp == "CleanShotX")
-        #expect(detail.createdAt == created)
     }
 
     @Test func urlSnapshotClassifiesAsLinkAndExtractsDomain() {
@@ -102,7 +99,7 @@ struct ClipboardInspectorTests {
         #expect(detail.characterCount > 0)
     }
 
-    @Test func hexColorSnapshotClassifiesAsColorAndExtractsHex() {
+    @Test func hexColorSnapshotClassifiesAsColor() {
         let entry = ClipboardEntry(
             id: "color-1",
             text: "#3498db",
@@ -115,7 +112,6 @@ struct ClipboardInspectorTests {
             return
         }
         #expect(detail.contentType == .color)
-        #expect(detail.colorHex == "#3498DB")
     }
 
     @Test func hexColorSnapshotExposesRGBComponents() {
@@ -131,7 +127,6 @@ struct ClipboardInspectorTests {
             return
         }
         #expect(detail.contentType == .color)
-        #expect(detail.colorHex == "#3498DB")
         #expect(
             detail.colorComponents == ClipboardInspector.ColorComponents(
                 red: 52,
@@ -201,7 +196,6 @@ struct ClipboardInspectorTests {
             Issue.record("expected file snapshot for video")
             return
         }
-        #expect(detail.contentType == .video)
         #expect(detail.isVideo)
         #expect(!detail.isImage)
     }
