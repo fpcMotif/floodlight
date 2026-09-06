@@ -19,7 +19,7 @@ struct RecentStoreConcurrencyTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if condition() { return }
             usleep(2_000)
@@ -253,7 +253,13 @@ struct RecentStoreConcurrencyTests {
         let defaults = try IsolatedDefaults()
         let seed = RecentStore(defaults: defaults.defaults)
         seed.record("app:seeded")
-        waitUntil("the seed lands") { seed.boost(for: "app:seeded") > 0 }
+        // Every store built below decodes the *persisted* blob, so the wait
+        // has to be on that. The seed's own in-memory boost is up to date the
+        // instant `record` returns and says nothing about whether the write
+        // has landed — which is exactly the window the readers would race.
+        waitUntil("the seed reaches the defaults") {
+            Self.persistedLaunches(in: defaults.defaults, for: "app:seeded") == 1
+        }
 
         let boosts = ConcurrentBag<Int>()
         hammerConcurrently(concurrency: 12, iterations: 25) { _, _ in

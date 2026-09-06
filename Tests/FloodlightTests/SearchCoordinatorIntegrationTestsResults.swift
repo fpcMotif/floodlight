@@ -48,7 +48,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         let applications = ScriptedCatalog(.init(
             immediate: [],
             indexed: [SearchFixtures.application(id: "app:late", name: "Late", score: 120_000)],
-            indexedDelay: .milliseconds(80)
+            indexedDelay: TestBudget.duration(.milliseconds(80))
         ))
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.query = "late"
@@ -71,7 +71,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         let applications = ScriptedCatalog(.init(
             immediate: [SearchFixtures.application(name: "Xcode")],
             indexed: [SearchFixtures.application(name: "Xcode")],
-            indexedDelay: .milliseconds(120)
+            indexedDelay: TestBudget.duration(.milliseconds(120))
         ))
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.start()
@@ -79,14 +79,26 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == false
         }
 
+        // Standing on "PDFs" is only meaningful while the search is still
+        // running, so the filter is chosen inside the same main-actor step
+        // that finds the pass unsettled — not on the line after a wait that
+        // has already handed control back to the pipeline.
         coordinator.query = "xcode"
-        try await waitUntil("a non-settled snapshot arrives") {
-            coordinator.isSearching
-                && coordinator.results.contains { $0.kind == .application }
+        let standing = try await waitForMoment("a non-settled snapshot arrives") {
+            () -> (selected: SearchResultFilter, offered: Bool)? in
+            guard coordinator.isSearching,
+                  coordinator.results.contains(where: { $0.kind == .application })
+            else {
+                return nil
+            }
+            coordinator.selectFilter(.pdfs)
+            return (
+                selected: coordinator.selectedFilter,
+                offered: coordinator.filterOptions.contains { $0.filter == .pdfs }
+            )
         }
-        coordinator.selectFilter(.pdfs)
-        #expect(coordinator.selectedFilter == .pdfs)
-        #expect(coordinator.filterOptions.contains { $0.filter == .pdfs })
+        #expect(standing.selected == .pdfs)
+        #expect(standing.offered)
 
         try await settle(coordinator)
 
@@ -101,19 +113,35 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         let applications = ScriptedCatalog(.init(
             immediate: [],
             totalMatched: 37,
-            indexedDelay: .milliseconds(150),
-            startDelay: .milliseconds(100),
+            indexedDelay: TestBudget.duration(.milliseconds(150)),
+            startDelay: TestBudget.duration(.milliseconds(100)),
             immediateAfterStart: [application]
         ))
         let coordinator = try await makeCoordinator(applications: applications)
 
         coordinator.start()
         coordinator.query = "xcode"
-        try await waitUntil("warm-up completes while source work remains pending") {
-            coordinator.isSearching
-                && coordinator.results.contains { $0.id == application.id }
+        // The row the warm-up hands over and the chip's total have to arrive
+        // in one publication — a row on screen beside a chip still reading
+        // zero would be the incoherence this guards against — and the chip
+        // stays marked loading until the catalog's own pass finishes rather
+        // than presenting that total as final.
+        //
+        // Both are read in the step that first sees the row. Read on the line
+        // after and the pass may already have settled: `isSearching` outlives
+        // the chip's pending state by a few tens of milliseconds, which is
+        // exactly the gap a loaded runner lands in.
+        let onArrival = try await waitForMoment("the warmed-up row arrives") {
+            () -> (count: Int, isLoading: Bool)? in
+            guard coordinator.results.contains(where: { $0.id == application.id }),
+                  let chip = coordinator.filterOptions.first(where: { $0.filter == .applications })
+            else {
+                return nil
+            }
+            return (chip.count, chip.isLoading)
         }
-        #expect(coordinator.filterOptions.first { $0.filter == .applications }?.isLoading == true)
+        #expect(onArrival.count == 37)
+        #expect(onArrival.isLoading)
 
         try await waitUntil("warm-up and the active query settle") {
             !coordinator.isSearching
@@ -220,7 +248,8 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
                             name: "Indexed \(index)"
                         ),
                     ],
-                    indexedDelay: .milliseconds(index.isMultiple(of: 7) ? 40 : 0)
+                    indexedDelay: TestBudget
+                        .duration(.milliseconds(index.isMultiple(of: 7) ? 40 : 0))
                 ),
                 forQuery: "q\(index)"
             )
@@ -231,7 +260,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             coordinator.query = "q\(index)"
         }
         try await settle(coordinator)
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(300)))
 
         #expect(coordinator.results.contains { $0.id == "app:199" })
         #expect(coordinator.results.allSatisfy { item in
@@ -249,7 +278,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         let applications = ScriptedCatalog(
             .init(
                 immediate: [SearchFixtures.application(name: "Xcode", score: 120_000)],
-                indexedDelay: .milliseconds(200)
+                indexedDelay: TestBudget.duration(.milliseconds(200))
             )
         )
         let coordinator = try await makeCoordinator(applications: applications)

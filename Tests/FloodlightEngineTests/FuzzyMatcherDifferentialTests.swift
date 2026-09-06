@@ -450,7 +450,7 @@ struct FuzzyMatcherDifferentialTests {
             _ = FuzzyMatcher.score(normalizedQuery: query, normalizedCandidate: candidate)
         }
         let elapsed = start.duration(to: .now)
-        #expect(elapsed < .seconds(2))
+        #expect(elapsed < TestBudget.duration(.seconds(2)))
     }
 
     @Test func theASCIIPathHandlesLongStringsWithoutBlowingUp() {
@@ -465,7 +465,7 @@ struct FuzzyMatcherDifferentialTests {
         let elapsed = start.duration(to: .now)
 
         #expect(score != nil)
-        #expect(elapsed < .seconds(5))
+        #expect(elapsed < TestBudget.duration(.seconds(5)))
     }
 
     @Test func scoringSurvivesConcurrentUseFromManyThreads() {

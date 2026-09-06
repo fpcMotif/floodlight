@@ -1,4 +1,5 @@
 import Darwin
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -164,7 +165,7 @@ struct FFFIndexTests {
         for _ in 0..<100 {
             let progress = try await index.progress()
             if !progress.isScanning { break }
-            try await Task.sleep(for: .milliseconds(25))
+            try await Task.sleep(for: TestBudget.duration(.milliseconds(25)))
         }
 
         let fileResults = try await index.search("needle")
@@ -622,7 +623,7 @@ struct FFFIndexTests {
         pollInterval: Duration = .milliseconds(25),
         _ condition: () async throws -> Bool
     ) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         repeat {
             if try await condition() {
                 return true

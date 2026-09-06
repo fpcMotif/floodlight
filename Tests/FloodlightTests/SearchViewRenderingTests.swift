@@ -49,7 +49,7 @@ struct SearchViewRenderingTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
@@ -411,7 +411,7 @@ struct SearchViewRenderingTests {
             width: FloodlightMetrics.panelWidth,
             height: FloodlightMetrics.expandedPanelHeight
         )
-        #expect(start.duration(to: .now) < .seconds(10))
+        #expect(start.duration(to: .now) < TestBudget.duration(.seconds(10)))
     }
 
     @Test func thePanelRendersEveryResultKind() throws {

@@ -580,7 +580,10 @@ struct CalculatorDifferentialTests {
         let elapsed = start.duration(to: .now)
 
         #expect(value == Double(terms))
-        #expect(elapsed < .seconds(2), "flat expression parsing should stay linear")
+        #expect(
+            elapsed < TestBudget.duration(.seconds(2)),
+            "flat expression parsing should stay linear"
+        )
     }
 
     @Test func everyAdversarialStringIsHandledWithoutCrashing() {

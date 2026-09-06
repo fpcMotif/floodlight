@@ -44,13 +44,16 @@ class SearchCoordinatorIntegrationTestCase {
         )
     }
 
+    /// `timeout` is in ordinary-build seconds; `TestBudget` widens it for a
+    /// sanitized run, where the coordinator's pipeline needs several times
+    /// longer to reach the same state.
     func waitUntil(
         _ description: String,
         timeout: TimeInterval = 5,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
@@ -64,12 +67,45 @@ class SearchCoordinatorIntegrationTestCase {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("never became true: \(description)", sourceLocation: sourceLocation)
+    }
+
+    /// Polls until `report` has something to say, and hands that back.
+    ///
+    /// `waitUntil` answers "did this become true?", and nothing keeps it
+    /// true afterwards: returning from it is an `await`, so the state the
+    /// condition observed can have moved on by the time the *next* line
+    /// reads it again. Anything asserted about a transient state — or any
+    /// action that has to be taken while it holds — belongs inside `report`,
+    /// which runs in the same main-actor step that found the condition, and
+    /// so cannot be overtaken by the pipeline it is watching.
+    func waitForMoment<Report>(
+        _ moment: String,
+        timeout: TimeInterval = 5,
+        _ report: () -> Report?
+    ) async throws -> Report {
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
+        while Date() < deadline {
+            if let reported = report() { return reported }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw MomentNeverArrived(moment: moment)
+    }
+
+    /// Thrown rather than recorded, so the assertions that were going to
+    /// read the report do not then run against a moment that never happened
+    /// and turn one failure into three.
+    struct MomentNeverArrived: Error, CustomStringConvertible {
+        let moment: String
+
+        var description: String {
+            "never became true: \(moment)"
+        }
     }
 
     /// Lets the debounced indexed pass run to completion.
@@ -210,7 +246,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         try await settle(coordinator)
         // Give the abandoned "a" pass more than enough time to land.
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(500)))
 
         #expect(coordinator.results.contains { $0.id == "app:fresh" })
         #expect(
@@ -284,7 +320,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         #expect(coordinator.selectedFilter == .all)
         #expect(!coordinator.isSearching)
 
-        try await Task.sleep(for: .milliseconds(600))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(600)))
         #expect(
             coordinator.results.isEmpty,
             "a cancelled search must not repopulate the panel after a reset"
@@ -360,18 +396,26 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
                         score: 100
                     ),
                 ],
-                indexedDelay: .milliseconds(300)
+                indexedDelay: TestBudget.duration(.milliseconds(300))
             )
         )
         let coordinator = try await makeCoordinator(applications: applications)
         coordinator.start()
 
+        // Four applications is the immediate pass alone; the indexed pass
+        // adds a fifth and closes the window for good, so arrowing down
+        // happens in the step that sees four rather than on the line after.
         coordinator.query = "app"
-        try await waitUntil("the immediate applications arrive", timeout: 10) {
-            coordinator.results.filter { $0.kind == .application }.count == 4
+        let chosen = try await waitForMoment(
+            "the immediate applications arrive",
+            timeout: 10
+        ) { () -> SearchItem.ID? in
+            guard coordinator.results.count(where: { $0.kind == .application }) == 4 else {
+                return nil
+            }
+            coordinator.moveSelection(by: 2)
+            return coordinator.selectedID
         }
-        coordinator.moveSelection(by: 2)
-        let chosen = coordinator.selectedID
         #expect(chosen == "app:2")
 
         try await settle(coordinator)

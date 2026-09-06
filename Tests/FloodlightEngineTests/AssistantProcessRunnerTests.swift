@@ -1,3 +1,4 @@
+import FloodlightTestSupport
 import Testing
 @testable import FloodlightEngine
 
@@ -39,7 +40,10 @@ struct AssistantProcessRunnerTests {
     }
 
     @Test func runDrainsSuccessfulOutputLargerThanAPipeBuffer() async throws {
-        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 256 * 1_024)
+        let runner = AssistantProcessRunner(
+            timeout: TestBudget.duration(.seconds(5)),
+            maxOutputBytes: 256 * 1_024
+        )
 
         let output = try await runner.run(command: "jot", arguments: ["-b", "x", "70000"])
 
@@ -47,7 +51,13 @@ struct AssistantProcessRunnerTests {
     }
 
     @Test func runRejectsOutputBeyondTheMemoryLimit() async throws {
-        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 1_024)
+        // The limit has to be what aborts this, so the watchdog stays well
+        // out of the way and the elapsed budget is stated as a fraction of
+        // it: a bare two seconds is not a claim about the limit at all on a
+        // loaded runner, where spawning the process has measured 3.3s by
+        // itself.
+        let timeout = TestBudget.duration(.seconds(20))
+        let runner = AssistantProcessRunner(timeout: timeout, maxOutputBytes: 1_024)
         let start = ContinuousClock.now
 
         do {
@@ -58,11 +68,14 @@ struct AssistantProcessRunnerTests {
         } catch {
             Issue.record("expected outputLimitExceeded, got \(error)")
         }
-        #expect(start.duration(to: .now) < .seconds(2))
+        #expect(start.duration(to: .now) < timeout / 2)
     }
 
     @Test func runAppliesOneLimitAcrossStdoutAndStderr() async throws {
-        let runner = AssistantProcessRunner(timeout: .seconds(5), maxOutputBytes: 1_024)
+        let runner = AssistantProcessRunner(
+            timeout: TestBudget.duration(.seconds(5)),
+            maxOutputBytes: 1_024
+        )
         let program = """
         BEGIN {
             for (i = 0; i < 400; i++) print "stdout"
@@ -81,7 +94,7 @@ struct AssistantProcessRunnerTests {
     }
 
     @Test func concurrentRunsNeverMixTheirOutput() async throws {
-        let runner = AssistantProcessRunner(timeout: .seconds(5))
+        let runner = AssistantProcessRunner(timeout: TestBudget.duration(.seconds(5)))
 
         let outputs = try await withThrowingTaskGroup(of: (Int, String).self) { group in
             for index in 0..<32 {
@@ -150,7 +163,7 @@ struct AssistantProcessRunnerTests {
         } catch AssistantProcessError.timedOut {
             // expected — and well under the process's own 30s sleep, so the
             // watchdog (not the process exiting on its own) caused this.
-            #expect(start.duration(to: .now) < .seconds(5))
+            #expect(start.duration(to: .now) < TestBudget.duration(.seconds(5)))
         } catch {
             Issue.record("expected timedOut, got \(error)")
         }

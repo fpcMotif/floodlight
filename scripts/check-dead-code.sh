@@ -38,20 +38,23 @@ periphery=$(resolve_tool periphery "$FLOODLIGHT_PERIPHERY_VERSION" version)
 # A store is recognised by its v5/units directory rather than by the path
 # existing: `.build/out` is present on every swift-build machine whether or
 # not an index was written into it, and scanning an empty store would report
-# everything as unused. The first live store wins, so a stale one left behind
-# by the other build system is never picked over the one just built.
+# everything as unused. Candidates are tried newest-first, so a stale store
+# left behind by the other build system is never picked over the one the
+# build that just ran wrote.
 find_index_store() {
+    newest=
     for candidate in \
         "$PROJECT_DIR/.build/debug/index/store" \
         "$PROJECT_DIR/.build/out" \
         "$PROJECT_DIR"/.build/*-apple-macosx/debug/index/store
     do
-        if [ -d "$candidate/v5/units" ]; then
-            echo "$candidate"
-            return 0
+        [ -d "$candidate/v5/units" ] || continue
+        if [ -z "$newest" ] || [ "$candidate/v5/units" -nt "$newest/v5/units" ]; then
+            newest="$candidate"
         fi
     done
-    return 1
+    [ -n "$newest" ] || return 1
+    echo "$newest"
 }
 
 if ! index_store=$(find_index_store); then
