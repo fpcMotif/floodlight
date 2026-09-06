@@ -438,6 +438,55 @@ package final class MutableDiscovery<Element>: @unchecked Sendable {
     }
 }
 
+/// A `FileManager` that counts the directory listings and existence checks
+/// made through it, so a test can assert that a keystroke costs at most one
+/// directory listing instead of re-walking the tree per character typed.
+package final class CountingFileManager: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var listingCount = 0
+    private var existenceCount = 0
+    private var mainThreadListings = 0
+
+    package var directoryListingCount: Int {
+        lock.withLock { listingCount }
+    }
+
+    package var existenceCheckCount: Int {
+        lock.withLock { existenceCount }
+    }
+
+    /// Listings that happened on the main thread. A search path that keeps
+    /// this at zero is one the user never waits on between keystrokes.
+    package var mainThreadListingCount: Int {
+        lock.withLock { mainThreadListings }
+    }
+
+    package func resetCounts() {
+        lock.withLock {
+            listingCount = 0
+            existenceCount = 0
+            mainThreadListings = 0
+        }
+    }
+
+    override package func contentsOfDirectory(atPath path: String) throws -> [String] {
+        let onMainThread = Thread.isMainThread
+        lock.withLock {
+            listingCount += 1
+            if onMainThread { mainThreadListings += 1 }
+        }
+        return try super.contentsOfDirectory(atPath: path)
+    }
+
+    override package func fileExists(
+        atPath path: String,
+        isDirectory: UnsafeMutablePointer<ObjCBool>?
+    ) -> Bool {
+        lock.withLock { existenceCount += 1 }
+        return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
+}
+
 package enum TestError: LocalizedError, Equatable {
     case scripted(String)
 

@@ -15,7 +15,7 @@ import Testing
 /// snapshot can land after the user has already typed something else.
 @MainActor
 class SearchCoordinatorIntegrationTestCase {
-    private let tree: TemporaryTree
+    let tree: TemporaryTree
 
     init() throws {
         tree = try TemporaryTree(label: "CoordinatorIntegration")
@@ -26,20 +26,25 @@ class SearchCoordinatorIntegrationTestCase {
         settings: ScriptedCatalog = ScriptedCatalog(),
         runner: ScriptedAssistantRunner = ScriptedAssistantRunner(),
         blocklist: BlocklistStore? = nil,
+        files: ScriptedFileSource = ScriptedFileSource(),
+        pathResolver: any PathResolving = FileSystemPathResolver(),
+        rootURL: URL? = nil,
+        wrapSourceSearch: (any SourceSearching) -> any SourceSearching = { $0 },
         onDismiss: @escaping @MainActor () -> Void = {}
     ) async throws -> SearchCoordinator {
         let isolated = try IsolatedDefaults()
         let blocklistStore = blocklist ?? BlocklistStore(defaults: isolated.defaults)
         return SearchCoordinator(
-            sourceSearch: SourceSearchEngine(
-                files: ScriptedFileSource(),
+            sourceSearch: wrapSourceSearch(SourceSearchEngine(
+                files: files,
                 applications: applications,
                 settings: settings
-            ),
+            )),
             recentStore: RecentStore(defaults: isolated.defaults),
             blocklistStore: blocklistStore,
-            rootURL: tree.root,
+            rootURL: rootURL ?? tree.root,
             assistantRunner: runner,
+            pathResolver: pathResolver,
             onDismiss: onDismiss
         )
     }

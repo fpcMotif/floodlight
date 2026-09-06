@@ -82,6 +82,11 @@ final class SearchCoordinator {
     private let actionPerformer: SelectedResultActionPerformer
     @ObservationIgnored
     private let onDismiss: @MainActor () -> Void
+    /// The one path resolution the current query paid for, tagged with the
+    /// query and the committed scope it belongs to. Every projection of that
+    /// query reads it instead of listing directories again.
+    @ObservationIgnored
+    private var pathCache: PathResolutionCache
     /// Result Publication is the one order results are published in (ADR
     /// 0002), and the two facts about the selection below belong to it: they
     /// are recomputed here, on every republication, rather than derived by
@@ -128,6 +133,7 @@ final class SearchCoordinator {
         runningApplicationActivator: any RunningApplicationActivating =
             WorkspaceRunningApplicationActivator(),
         actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
+        pathResolver: any PathResolving = FileSystemPathResolver(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
@@ -135,6 +141,7 @@ final class SearchCoordinator {
         self.clipboardStore = clipboardStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
+        pathCache = PathResolutionCache(resolver: pathResolver)
         self.onDismiss = onDismiss
         let assistantRunSession = AssistantRunSession(runner: assistantRunner)
         self.assistantRunSession = assistantRunSession
@@ -284,6 +291,7 @@ final class SearchCoordinator {
         isResetting = true
         query = ""
         isResetting = false
+        pathCache = pathCache.cleared()
         publication = idleLocalPublication()
     }
 
@@ -518,10 +526,15 @@ final class SearchCoordinator {
                 try await sourceSearch.changeScope(to: url)
                 rootURL = url.standardizedFileURL
                 UserDefaults.standard.set(rootURL.path, forKey: "index-root")
+                await reresolvePathForCommittedScope()
             } catch {
                 NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)
             }
         }
+    }
+
+    private var currentQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func scheduleSearch(immediate: Bool = false) {
@@ -567,13 +580,34 @@ final class SearchCoordinator {
                     ? [.application]
                     : [.application, .systemSetting]
             ),
-            filterContinuity: .preserve
+            filterContinuity: .preserve,
+            folderRow: pathCache.carriedFolderRow(for: requestQuery, rootURL: rootURL)
         )
+        let scopeRoot = rootURL
+        let previousCache = pathCache
         searchTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { return }
+            // The path lookup and the Source Search pass start together and
+            // are both awaited before the first snapshot publishes, so the
+            // folder row still lands with the first results — the listings
+            // just no longer happen on the main actor, four times over.
+            async let resolution = previousCache.resolving(
+                query: requestQuery,
+                rootURL: scopeRoot
+            )
             let snapshots = await sourceSearch.search(requestQuery, immediate: immediate)
+            let resolved = await resolution
             guard !Task.isCancelled else { return }
+            // Cancellation alone does not make the store safe — a superseded
+            // task can still be scheduled onto the main actor before it
+            // observes the flag — so only a resolution still answering the
+            // live query under the committed scope is kept, and every read
+            // re-checks the same pair. A scope committed since this pass
+            // started has already resolved the query itself.
+            if resolved.matches(query: currentQuery, rootURL: rootURL) {
+                pathCache = resolved
+            }
             for await snapshot in snapshots {
                 guard !Task.isCancelled else { return }
                 publish(snapshot, query: requestQuery)
@@ -617,13 +651,17 @@ final class SearchCoordinator {
         )
     }
 
+    /// `folderRow` overrides what the query tag would derive: `.some` supplies
+    /// the row, `nil` derives it. Only the interim publication passes one —
+    /// see `scheduleSearch`, where the tag has already moved on.
     private func projectLocal(
         query: String? = nil,
         candidates: [SearchItem],
         selectedFilter: SearchResultFilter,
         selection: SearchResultSelection?,
         progress: SearchResultProgress,
-        filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
+        filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled,
+        folderRow: SearchItem?? = nil
     ) -> SearchResultPublication {
         // Search sources apply the blocklist to the pages they return, but a
         // pass already in flight when a rule is written was computed without
@@ -633,16 +671,18 @@ final class SearchCoordinator {
         let validCandidates = candidates.filter {
             !blocklistStore.isBlocked(name: $0.title, id: $0.id)
         }
+        let projectedQuery = query ?? currentQuery
         return SearchResultProjection.project(
             .local(.init(
-                query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
+                query: projectedQuery,
                 candidates: validCandidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,
                 progress: progress,
                 filterContinuity: filterContinuity,
-                rootURL: rootURL
+                resolvedFolderRow: folderRow
+                    ?? pathCache.folderRow(for: projectedQuery, rootURL: rootURL)
             ))
         )
     }
@@ -767,4 +807,29 @@ extension SearchCoordinator {
 private struct SelectionSnapshotKey: Equatable {
     let item: SearchItem?
     let isClipboardMode: Bool
+}
+
+/// The one operation that is about the coordinator rather than the cache:
+/// re-resolving and republishing when the search scope is committed.
+fileprivate extension SearchCoordinator {
+    /// A scope-relative path resolves against the committed scope (ADR 0007),
+    /// so the resolution made under the old root is void and the live query
+    /// earns a fresh one. Only the path is re-resolved and republished — the
+    /// Search Execution in flight is left alone, so a query that is not
+    /// path-like costs nothing here and sees nothing change.
+    func reresolvePathForCommittedScope() async {
+        pathCache = pathCache.cleared()
+        let liveQuery = currentQuery
+        guard case .local = mode, !liveQuery.isEmpty else { return }
+        let resolved = await pathCache.resolving(query: liveQuery, rootURL: rootURL)
+        guard resolved.matches(query: currentQuery, rootURL: rootURL) else { return }
+        pathCache = resolved
+        publication = projectLocal(
+            candidates: publication.sourceCandidates,
+            selectedFilter: selectedFilter,
+            selection: publication.selection,
+            progress: publication.progress,
+            filterContinuity: .preserve
+        )
+    }
 }
