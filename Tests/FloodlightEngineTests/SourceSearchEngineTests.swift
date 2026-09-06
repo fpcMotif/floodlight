@@ -34,7 +34,7 @@ struct SourceSearchEngineTests {
     @Test func newerQueryFinishesAndSuppressesOlderExecution() async {
         let files = ScriptedFileSource(
             indexed: [SearchFixtures.file(name: "old")],
-            indexedDelay: .seconds(1)
+            indexedDelay: TestBudget.duration(.seconds(1))
         )
         let engine = SourceSearchEngine(
             files: files,
@@ -51,14 +51,17 @@ struct SourceSearchEngineTests {
     @Test func cancelledCallerCannotSupersedeCurrentExecution() async throws {
         let file = SearchFixtures.file(name: "current.txt")
         let engine = SourceSearchEngine(
-            files: ScriptedFileSource(indexed: [file], indexedDelay: .milliseconds(50)),
+            files: ScriptedFileSource(
+                indexed: [file],
+                indexedDelay: TestBudget.duration(.milliseconds(50))
+            ),
             applications: ScriptedCatalog(),
             settings: ScriptedCatalog()
         )
         var current = await engine.search("current", immediate: true).makeAsyncIterator()
         _ = await current.next()
         let stale = Task {
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: TestBudget.duration(.seconds(1)))
             return await engine.search("stale", immediate: true)
         }
         stale.cancel()
@@ -288,7 +291,7 @@ struct SourceSearchEngineTests {
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(
                 indexed: [file],
-                changeScopeDelay: .milliseconds(50)
+                changeScopeDelay: TestBudget.duration(.milliseconds(50))
             ),
             applications: ScriptedCatalog(),
             settings: ScriptedCatalog()
@@ -298,7 +301,7 @@ struct SourceSearchEngineTests {
         let scopeChange = Task {
             try await engine.changeScope(to: URL(fileURLWithPath: "/new-scope"))
         }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
         let newStream = Task { await engine.search("new", immediate: true) }
 
         try await scopeChange.value
@@ -320,16 +323,16 @@ struct SourceSearchEngineTests {
         applications.setBehavior(.init(immediate: [first]), forQuery: "first")
         applications.setBehavior(.init(immediate: [second]), forQuery: "second")
         let engine = SourceSearchEngine(
-            files: ScriptedFileSource(changeScopeDelay: .milliseconds(100)),
+            files: ScriptedFileSource(changeScopeDelay: TestBudget.duration(.milliseconds(100))),
             applications: applications,
             settings: ScriptedCatalog()
         )
         let scopeChange = Task {
             try await engine.changeScope(to: URL(fileURLWithPath: "/new-scope"))
         }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
         let firstQuery = Task { await engine.search("first", immediate: true) }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
         let secondQuery = Task { await engine.search("second", immediate: true) }
 
         try await scopeChange.value
@@ -345,7 +348,7 @@ struct SourceSearchEngineTests {
     @Test func cancelledQueryWaitingOnScopeChangeDoesNotSuppressActiveQuery() async throws {
         let original = SearchFixtures.application(name: "Original")
         let engine = SourceSearchEngine(
-            files: ScriptedFileSource(changeScopeDelay: .milliseconds(100)),
+            files: ScriptedFileSource(changeScopeDelay: TestBudget.duration(.milliseconds(100))),
             applications: ScriptedCatalog(immediate: [original]),
             settings: ScriptedCatalog()
         )
@@ -354,9 +357,9 @@ struct SourceSearchEngineTests {
         let scopeChange = Task {
             try await engine.changeScope(to: URL(fileURLWithPath: "/new-scope"))
         }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
         let cancelled = Task { await engine.search("cancelled", immediate: true) }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
         cancelled.cancel()
 
         try await scopeChange.value
@@ -403,7 +406,7 @@ struct SourceSearchEngineTests {
 
     @Test func concurrentStartupFailureAndRetryRemainSingleFlight() async {
         let applications = ScriptedCatalog(.init(
-            startDelay: .milliseconds(30),
+            startDelay: TestBudget.duration(.milliseconds(30)),
             startError: Failure.expected,
             startFailures: 1
         ))
@@ -415,7 +418,7 @@ struct SourceSearchEngineTests {
         var callers: [Task<Void, Never>] = []
         for _ in 0..<60 {
             callers.append(Task { await engine.warmUp() })
-            try? await Task.sleep(for: .milliseconds(1))
+            try? await Task.sleep(for: TestBudget.duration(.milliseconds(1)))
         }
 
         for caller in callers {

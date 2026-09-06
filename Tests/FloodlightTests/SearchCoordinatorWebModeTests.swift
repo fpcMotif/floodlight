@@ -173,7 +173,7 @@ struct SearchCoordinatorWebModeTests {
         }
 
         coordinator.handleTab()
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(250)))
 
         #expect(coordinator.results.allSatisfy { $0.id.hasPrefix("web-mode:") })
         #expect(!coordinator.results.contains { $0.id == "app:late" })
@@ -204,7 +204,7 @@ struct SearchCoordinatorWebModeTests {
         try await waitUntil("the restored local execution settles") {
             !coordinator.isSearching && coordinator.results.contains { $0.id == "app:new" }
         }
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(250)))
 
         #expect(coordinator.results.contains { $0.id == "app:new" })
         #expect(!coordinator.results.contains { $0.id == "app:old" })

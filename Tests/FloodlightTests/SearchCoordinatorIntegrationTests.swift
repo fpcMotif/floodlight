@@ -246,7 +246,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
         try await settle(coordinator)
         // Give the abandoned "a" pass more than enough time to land.
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(500)))
 
         #expect(coordinator.results.contains { $0.id == "app:fresh" })
         #expect(
@@ -320,7 +320,7 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         #expect(coordinator.selectedFilter == .all)
         #expect(!coordinator.isSearching)
 
-        try await Task.sleep(for: .milliseconds(600))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(600)))
         #expect(
             coordinator.results.isEmpty,
             "a cancelled search must not repopulate the panel after a reset"

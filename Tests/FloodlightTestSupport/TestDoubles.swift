@@ -396,10 +396,11 @@ package actor ScriptedAssistantRunner: AssistantProcessRunning {
     }
 
     package func waitForPendingRun(timeout: TimeInterval = 5) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let budget = TestBudget.seconds(timeout)
+        let deadline = Date().addingTimeInterval(budget)
         while pending.isEmpty {
             if Date() >= deadline {
-                throw TestError.scripted("no assistant run started within \(timeout)s")
+                throw TestError.scripted("no assistant run started within \(budget)s")
             }
             try? await Task.sleep(for: .milliseconds(2))
         }

@@ -534,7 +534,7 @@ struct EndToEndSearchTests {
 
         coordinator.query = "quarterly-report"
         try await waitUntil("the search settles") { !coordinator.isSearching }
-        try await Task.sleep(for: .milliseconds(400))
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(400)))
 
         #expect(
             !(coordinator.results
