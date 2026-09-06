@@ -123,7 +123,16 @@ package final class FFFIndex: @unchecked Sendable {
             }
 
             let envelope = resolvedQuery.fffQuery.withCString {
-                fff_search_mixed(handle, $0, nil, 0, 0, limit, 100, 3)
+                fff_search_mixed(
+                    handle,
+                    $0,
+                    nil,
+                    FFFEngineParameter.automaticThreadCount,
+                    FFFEngineParameter.firstPageIndex,
+                    limit,
+                    FFFEngineParameter.defaultComboBoostMultiplier,
+                    FFFEngineParameter.minimumComboCount
+                )
             }
             guard let envelope else { throw FFFIndexError.invalidResult }
             defer { fff_free_result(envelope) }
@@ -148,8 +157,7 @@ package final class FFFIndex: @unchecked Sendable {
                 let relativePath = String(cString: pathPointer)
 
                 // Application bundles are provided by ApplicationCatalog as one result.
-                let components = relativePath.split(separator: "/")
-                if components.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") }) {
+                if Self.hasApplicationBundleComponent(in: relativePath) {
                     return nil
                 }
 
@@ -198,7 +206,16 @@ package final class FFFIndex: @unchecked Sendable {
             }
 
             let envelope = query.withCString {
-                fff_search(handle, $0, nil, 0, 0, limit, 100, 3)
+                fff_search(
+                    handle,
+                    $0,
+                    nil,
+                    FFFEngineParameter.automaticThreadCount,
+                    FFFEngineParameter.firstPageIndex,
+                    limit,
+                    FFFEngineParameter.defaultComboBoostMultiplier,
+                    FFFEngineParameter.minimumComboCount
+                )
             }
             guard let envelope else { throw FFFIndexError.invalidResult }
             defer { fff_free_result(envelope) }
@@ -220,9 +237,7 @@ package final class FFFIndex: @unchecked Sendable {
                 }
 
                 let relativePath = String(cString: pathPointer)
-                if relativePath.split(separator: "/").dropLast()
-                    .contains(where: { $0.lowercased().hasSuffix(".app") })
-                {
+                if Self.hasApplicationBundleComponent(in: relativePath) {
                     return nil
                 }
 
@@ -255,7 +270,14 @@ package final class FFFIndex: @unchecked Sendable {
             }
 
             let envelope = query.withCString {
-                fff_search_directories(handle, $0, nil, 0, 0, limit)
+                fff_search_directories(
+                    handle,
+                    $0,
+                    nil,
+                    FFFEngineParameter.automaticThreadCount,
+                    FFFEngineParameter.firstPageIndex,
+                    limit
+                )
             }
             guard let envelope else { throw FFFIndexError.invalidResult }
             defer { fff_free_result(envelope) }
@@ -277,9 +299,10 @@ package final class FFFIndex: @unchecked Sendable {
                 }
 
                 let relativePath = String(cString: pathPointer)
-                if relativePath.split(separator: "/")
-                    .contains(where: { $0.lowercased().hasSuffix(".app") })
-                {
+                if Self.hasApplicationBundleComponent(
+                    in: relativePath,
+                    includingLastComponent: true
+                ) {
                     return nil
                 }
 
@@ -313,28 +336,21 @@ package final class FFFIndex: @unchecked Sendable {
         return generation == latestSearchGeneration
     }
 
-    package func progress() async throws -> FFFIndexProgress {
+    /// Blocks the index queue until FFF settles its scan or
+    /// `timeoutMilliseconds` elapses, then reports where the index stands. A
+    /// zero timeout reads the current state without waiting.
+    ///
+    /// FFF arms its scanning signal inside the call that starts a scan, so a
+    /// wait issued straight after `start()`, `rescan()`, or `changeRoot(to:)`
+    /// cannot mistake "not begun yet" for "finished" — the race a Swift-side
+    /// sleep loop had to rule out by observing idleness twice.
+    package func waitForScan(timeoutMilliseconds: UInt64) async throws -> FFFIndexProgress {
         try await perform {
             guard let handle = self.handle else {
                 throw FFFIndexError.message("The FFF index has not started.")
             }
-
-            let envelope = fff_get_scan_progress(handle)
-            guard let envelope else { throw FFFIndexError.invalidResult }
-            defer { fff_free_result(envelope) }
-
-            guard envelope.pointee.success else {
-                throw FFFIndexError.message(Self.errorMessage(from: envelope))
-            }
-            guard let raw = envelope.pointee.handle else { throw FFFIndexError.invalidResult }
-
-            let progress = raw.assumingMemoryBound(to: FffScanProgress.self)
-            defer { fff_free_scan_progress(progress) }
-            return FFFIndexProgress(
-                scannedFiles: progress.pointee.scanned_files_count,
-                isScanning: progress.pointee.is_scanning,
-                isWatcherReady: progress.pointee.is_watcher_ready
-            )
+            try Self.requireSuccess(fff_wait_for_scan(handle, timeoutMilliseconds))
+            return try Self.scanProgress(handle)
         }
     }
 
@@ -353,16 +369,16 @@ package final class FFFIndex: @unchecked Sendable {
                 fff_live_grep(
                     handle,
                     $0,
-                    0,
-                    10 * 1_024 * 1_024,
-                    1,
-                    true,
-                    0,
+                    FFFEngineParameter.plainTextGrepMode,
+                    FFFEngineParameter.maxGrepFileSizeBytes,
+                    FFFEngineParameter.maxMatchesPerFile,
+                    FFFEngineParameter.smartCase,
+                    FFFEngineParameter.contentSearchFileOffset,
                     limit,
                     timeBudgetMilliseconds,
-                    0,
-                    0,
-                    false
+                    FFFEngineParameter.beforeContextLines,
+                    FFFEngineParameter.afterContextLines,
+                    FFFEngineParameter.classifyDefinitions
                 )
             }
             guard let envelope else { throw FFFIndexError.invalidResult }
@@ -386,9 +402,7 @@ package final class FFFIndex: @unchecked Sendable {
                 }
 
                 let relativePath = String(cString: pathPointer)
-                if relativePath.split(separator: "/").dropLast()
-                    .contains(where: { $0.lowercased().hasSuffix(".app") })
-                {
+                if Self.hasApplicationBundleComponent(in: relativePath) {
                     return nil
                 }
 
@@ -460,6 +474,71 @@ package final class FFFIndex: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// True when a component of `relativePath` names an application bundle.
+    /// The last component is skipped unless `includingLastComponent` is set:
+    /// a file inside a bundle is dropped, and so is a bundle directory itself.
+    ///
+    /// Walks the UTF-8 view rather than `split(separator:)` so filtering a page
+    /// of results does not allocate a component array per row.
+    private static func hasApplicationBundleComponent(
+        in relativePath: String,
+        includingLastComponent: Bool = false
+    ) -> Bool {
+        // FFF ends a directory's relative path with a separator. Without this
+        // the bundle's own name would read as an interior component and every
+        // `.app` directory would filter itself out of its own result page.
+        var utf8 = relativePath.utf8[...]
+        while utf8.last == UInt8(ascii: "/") {
+            utf8 = utf8.dropLast()
+        }
+        var componentStart = utf8.startIndex
+        var index = utf8.startIndex
+        while index != utf8.endIndex {
+            if utf8[index] == UInt8(ascii: "/") {
+                if namesApplicationBundle(utf8[componentStart..<index]) { return true }
+                componentStart = utf8.index(after: index)
+            }
+            index = utf8.index(after: index)
+        }
+        return includingLastComponent
+            && namesApplicationBundle(utf8[componentStart..<utf8.endIndex])
+    }
+
+    /// `.app`, matched without regard to case and without the allocation
+    /// `lowercased()` would make per result. ORing 0x20 lowercases an ASCII
+    /// letter and leaves `.` alone.
+    private static func namesApplicationBundle(_ component: String.UTF8View.SubSequence) -> Bool {
+        let suffix = [UInt8(ascii: "p"), UInt8(ascii: "p"), UInt8(ascii: "a"), UInt8(ascii: ".")]
+        guard component.count >= suffix.count else { return false }
+        var index = component.endIndex
+        for expected in suffix {
+            index = component.index(before: index)
+            guard component[index] | 0x20 == expected else { return false }
+        }
+        return true
+    }
+
+    private static func scanProgress(
+        _ handle: UnsafeMutableRawPointer
+    ) throws -> FFFIndexProgress {
+        let envelope = fff_get_scan_progress(handle)
+        guard let envelope else { throw FFFIndexError.invalidResult }
+        defer { fff_free_result(envelope) }
+
+        guard envelope.pointee.success else {
+            throw FFFIndexError.message(errorMessage(from: envelope))
+        }
+        guard let raw = envelope.pointee.handle else { throw FFFIndexError.invalidResult }
+
+        let progress = raw.assumingMemoryBound(to: FffScanProgress.self)
+        defer { fff_free_scan_progress(progress) }
+        return FFFIndexProgress(
+            scannedFiles: progress.pointee.scanned_files_count,
+            isScanning: progress.pointee.is_scanning,
+            isWatcherReady: progress.pointee.is_watcher_ready
+        )
     }
 
     private static func requireSuccess(_ envelope: UnsafeMutablePointer<FffResult>?) throws {
@@ -552,8 +631,7 @@ package final class FFFIndex: @unchecked Sendable {
             return nil
         }
 
-        let components = relativePath.split(separator: "/")
-        if components.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") }) {
+        if hasApplicationBundleComponent(in: relativePath) {
             return nil
         }
 
@@ -605,110 +683,31 @@ package final class FFFIndex: @unchecked Sendable {
     }
 }
 
-final class FFFFileSource: FileSource {
-    private struct State: Sendable {
-        var rootURL: URL
-        var hasStartedIndex = false
-    }
-
-    private let index: FFFIndex
-    private let state: OSAllocatedUnfairLock<State>
-
-    init(index: FFFIndex, rootURL: URL) {
-        self.index = index
-        state = OSAllocatedUnfairLock(initialState: State(rootURL: rootURL.standardizedFileURL))
-    }
-
-    func start() async throws {
-        try await index.start()
-        try await waitForScanCompletion()
-        state.withLock { $0.hasStartedIndex = true }
-    }
-
-    func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
-        try await index.search(query, limit: UInt32(limit)).map { $0.makeSearchItem() }
-    }
-
-    func contentItems(for query: String) async throws -> [SearchItem] {
-        try await index.searchContent(query).map { item in
-            SearchItem(
-                id: "content:\(item.url.path):\(item.line)",
-                title: item.name,
-                subtitle: "\(item.relativePath):\(item.line) · \(item.snippet)",
-                kind: .file,
-                action: .open(item.url),
-                score: SearchItemRanking.content,
-                fileURL: item.url
-            )
-        }
-    }
-
-    func changeScope(to url: URL) async throws {
-        let newRoot = url.standardizedFileURL
-        let (previousRoot, isStarted) = state.withLock { ($0.rootURL, $0.hasStartedIndex) }
-        try await index.changeRoot(to: newRoot)
-        do {
-            guard isStarted else {
-                state.withLock { $0.rootURL = newRoot }
-                return
-            }
-            try await waitForScanCompletion()
-            state.withLock { $0.rootURL = newRoot }
-        } catch {
-            try? await index.changeRoot(to: previousRoot)
-            try? await waitForScanCompletion()
-            throw error
-        }
-    }
-
-    func rebuild() async throws {
-        let currentRoot = state.withLock { $0.rootURL }
-        try await index.changeRoot(to: currentRoot)
-        try await waitForScanCompletion()
-    }
-
-    func track(query: String, selectedURL: URL) {
-        index.track(query: query, selectedURL: selectedURL)
-    }
-
-    /// FFF starts scans in the background. The FileSource contract is
-    /// stronger: startup, rebuild, and scope changes finish only when a query
-    /// can observe the new atomic snapshot.
-    private func waitForScanCompletion() async throws {
-        var consecutiveIdlePolls = 0
-        while consecutiveIdlePolls < 2 {
-            try Task.checkCancellation()
-            let progress = try await index.progress()
-            consecutiveIdlePolls = progress.isScanning ? 0 : consecutiveIdlePolls + 1
-            if consecutiveIdlePolls < 2 {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-        }
-    }
-}
-
-package extension SourceSearchEngine {
-    init(
-        rootURL: URL,
-        storageURL: URL,
-        applications: any Catalog,
-        settings: any Catalog,
-        logFilePath: String? = nil,
-        logLevel: String = "info"
-    ) {
-        self.init(
-            files: FFFFileSource(
-                index: FFFIndex(
-                    rootURL: rootURL,
-                    storageURL: storageURL,
-                    enableHomeDirectoryScanning: true,
-                    logFilePath: logFilePath,
-                    logLevel: logLevel
-                ),
-                rootURL: rootURL
-            ),
-            applications: applications,
-            settings: settings
-        )
-    }
+/// The numbers FFF's C API takes as bare integers, each with the meaning
+/// fff.h gives it, so a call site never reads `100, 3`.
+private enum FFFEngineParameter {
+    /// `max_threads`: zero lets FFF size its own pool.
+    static let automaticThreadCount: UInt32 = 0
+    /// `page_index`: Floodlight always asks for the first page.
+    static let firstPageIndex: UInt32 = 0
+    /// `combo_boost_multiplier`: percent; 100 is the engine default.
+    static let defaultComboBoostMultiplier: Int32 = 100
+    /// `min_combo_count`: runs shorter than three characters earn no boost.
+    static let minimumComboCount: UInt32 = 3
+    /// `mode`: plain text (SIMD), not regex or fuzzy.
+    static let plainTextGrepMode: UInt8 = 0
+    /// `max_file_size`: files above 10 MB are not searched.
+    static let maxGrepFileSizeBytes: UInt64 = 10 * 1_024 * 1_024
+    /// `max_matches_per_file`: one row per file keeps a result page varied.
+    static let maxMatchesPerFile: UInt32 = 1
+    /// `smart_case`: an all-lowercase query matches case-insensitively.
+    static let smartCase = true
+    /// `file_offset`: content search never pages.
+    static let contentSearchFileOffset: UInt32 = 0
+    /// `before_context`: a row shows the matched line only.
+    static let beforeContextLines: UInt32 = 0
+    /// `after_context`: a row shows the matched line only.
+    static let afterContextLines: UInt32 = 0
+    /// `classify_definitions`: Floodlight does not tag code definitions.
+    static let classifyDefinitions = false
 }

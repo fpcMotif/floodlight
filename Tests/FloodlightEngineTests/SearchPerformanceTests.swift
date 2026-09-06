@@ -287,7 +287,7 @@ final class SearchPerformanceTests: XCTestCase {
 
     private func waitForScan(_ index: FFFIndex) async throws -> UInt64 {
         for _ in 0..<10_000 {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             if !progress.isScanning {
                 return progress.scannedFiles
             }

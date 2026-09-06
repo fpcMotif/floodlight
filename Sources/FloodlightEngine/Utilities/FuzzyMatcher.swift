@@ -122,6 +122,26 @@ package enum FuzzyMatcher {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
+    /// The set of ASCII letters and digits `value` contains, packed into a 64-bit mask.
+    /// A query's mask must be a subset of a candidate's mask before the fuzzy scorer runs.
+    package static func characterMask(_ value: String) -> UInt64 {
+        value.utf8.reduce(into: 0) { mask, byte in
+            let bit: UInt64? = switch byte {
+            case 0x61...0x7A:
+                UInt64(byte - 0x61)
+            case 0x41...0x5A:
+                UInt64(byte - 0x41)
+            case 0x30...0x39:
+                UInt64(byte - 0x30 + 26)
+            default:
+                nil
+            }
+            if let bit {
+                mask |= 1 << bit
+            }
+        }
+    }
+
     // MARK: - Private Helpers
 
     private static func findWordPrefix(

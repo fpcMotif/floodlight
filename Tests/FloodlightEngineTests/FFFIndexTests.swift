@@ -162,7 +162,7 @@ struct FFFIndexTests {
         try await index.start()
 
         for _ in 0..<100 {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             if !progress.isScanning { break }
             try await Task.sleep(for: .milliseconds(25))
         }
@@ -235,7 +235,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage, homeURL: root)
         try await index.start()
         try await assertEventually("FFF did not finish the path-query fixture scan") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning
         }
 
@@ -266,7 +266,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's live watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -352,7 +352,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's content watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
         try await assertEventually("Initial file content was not searchable") {
@@ -431,7 +431,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's application-bundle watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -498,7 +498,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's seeded-folder watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -590,7 +590,7 @@ struct FFFIndexTests {
             enableHomeDirectoryScanning: true
         )
         try await allowed.start()
-        let progress = try await allowed.progress()
+        let progress = try await allowed.waitForScan(timeoutMilliseconds: 0)
         #expect(progress.scannedFiles >= 0)
     }
 

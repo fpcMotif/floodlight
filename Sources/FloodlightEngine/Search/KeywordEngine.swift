@@ -314,7 +314,9 @@ package struct KeywordEngineRegistry: Sendable {
         return engine.title
     }
 
-    private static func parseAddress(_ query: String) -> (
+    /// Splits `query` into its leading whitespace-delimited token and the
+    /// whitespace-trimmed remainder, or nil if `query` is blank.
+    package static func parseAddress(_ query: String) -> (
         typedKeyword: String,
         remainder: String
     )? {

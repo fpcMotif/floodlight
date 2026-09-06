@@ -2,6 +2,7 @@ import AppKit
 import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
+import os
 import Testing
 @testable import Floodlight
 
@@ -77,6 +78,23 @@ struct ClipboardBoardDesignTests {
         #expect(ClipboardSourceApp.displayName(for: "com.apple.screencaptureui") == "Screenshot")
         #expect(ClipboardSourceApp.displayName(for: "com.example.NoSuchApp") == "NoSuchApp")
         #expect(ClipboardSourceApp.displayName(for: "singleword") == "singleword")
+    }
+
+    @Test func anUnresolvableSourceAppCostsOneLookup() {
+        let lookups = OSAllocatedUnfairLock(initialState: 0)
+        let resolver = ClipboardSourceApp { _ in
+            lookups.withLock { $0 += 1 }
+            return nil
+        }
+
+        let first = resolver.resolution(for: "com.apple.screencaptureui")
+        let second = resolver.resolution(for: "com.apple.screencaptureui")
+        let lookupCount = lookups.withLock { $0 }
+
+        #expect(first?.name == "Screenshot")
+        #expect(first?.applicationURL == nil)
+        #expect(second?.name == "Screenshot")
+        #expect(lookupCount == 1)
     }
 
     @Test func theListAndTheInspectorAgreeOnTheSourceAppName() throws {
