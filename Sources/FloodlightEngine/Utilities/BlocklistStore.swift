@@ -57,6 +57,19 @@ package final class BlocklistStore: @unchecked Sendable {
         package func isBlocked(normalizedName: String, id: String) -> Bool {
             blockedIDs.contains(id) || normalizedBlockedNames.contains(normalizedName)
         }
+
+        /// Whether a candidate is excluded, for callers holding only a display
+        /// name — the publication path, which sees a page of results rather
+        /// than the catalog behind them.
+        ///
+        /// This folds, so it belongs where the count is a page of candidates.
+        /// The per-keystroke paths take the `normalizedName` overload instead
+        /// and fold nothing.
+        package func isBlocked(name: String, id: String) -> Bool {
+            if blockedIDs.contains(id) { return true }
+            guard !normalizedBlockedNames.isEmpty else { return false }
+            return normalizedBlockedNames.contains(FuzzyMatcher.normalized(name))
+        }
     }
 
     private struct State: Codable, Sendable {

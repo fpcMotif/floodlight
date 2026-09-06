@@ -388,21 +388,13 @@ final class SearchCoordinator {
         actionPerformer.activate(item, query: query)
     }
 
-    /// Adds the rule, then drops the row from what is already on screen.
-    ///
-    /// Search sources apply the blocklist themselves, so every later query
-    /// comes back without the excluded application; this one-shot filter of
-    /// the candidates already published is what makes the row leave now,
-    /// without re-running the query. It costs one pass at the moment a person
-    /// excludes something, never a keystroke.
+    /// Adds the rule, then republishes so the row leaves without re-running
+    /// the query. `projectLocal` applies the rule it just wrote.
     func excludeFromSearch(_ item: SearchItem) {
         blocklistStore.block(id: item.id)
         blocklistStore.block(name: item.title)
-        let updatedCandidates = publication.sourceCandidates.filter {
-            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
-        }
         publication = projectLocal(
-            candidates: updatedCandidates,
+            candidates: publication.sourceCandidates,
             selectedFilter: selectedFilter,
             selection: publication.selection?.id == item.id ? nil : publication.selection,
             progress: publication.progress
@@ -600,10 +592,20 @@ final class SearchCoordinator {
         progress: SearchResultProgress,
         filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
     ) -> SearchResultPublication {
-        SearchResultProjection.project(
+        // Search sources apply the blocklist to the pages they return, but a
+        // pass already in flight when a rule is written was computed without
+        // it — and the sources that never consult the blocklist at all have no
+        // other gate. Filtering here is what stops either landing an excluded
+        // row back on screen. One snapshot per publication, not one lock per
+        // candidate.
+        let blocklist = blocklistStore.snapshot()
+        let validCandidates = candidates.filter {
+            !blocklist.isBlocked(name: $0.title, id: $0.id)
+        }
+        return SearchResultProjection.project(
             .local(.init(
                 query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
-                candidates: candidates,
+                candidates: validCandidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,
