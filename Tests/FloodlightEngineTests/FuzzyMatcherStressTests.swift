@@ -58,7 +58,12 @@ struct FuzzyMatcherStressTests {
         let value = String(repeating: "ab", count: 5_000)
         let prefix = String(repeating: "ab", count: 100)
         let score = try #require(FuzzyMatcher.score(query: prefix, candidate: value))
-        #expect(score == 15_000 - value.count)
+        // The length penalty is capped, so a 10,000-character candidate sits at
+        // the bottom of the name-prefix band rather than far below the typos.
+        #expect(
+            score == FuzzyMatcher.ShapeScore.namePrefix
+                - FuzzyMatcher.ShapeScore.maximumShapePenalty
+        )
     }
 
     // MARK: - All-same-character candidates

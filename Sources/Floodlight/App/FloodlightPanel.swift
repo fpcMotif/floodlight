@@ -224,6 +224,7 @@ final class FloodlightPanelController {
         quickLook.close()
         panel.orderOut(nil)
         model.reset()
+        ClipboardImageCache.shared.removeFullImages()
     }
 
     private func positionOnActiveScreen() {
@@ -266,7 +267,10 @@ final class FloodlightPanelController {
                 )
                 self.resize(to: NSSize(
                     width: width,
-                    height: FloodlightMetrics.panelHeight(hasQuery: hasQuery)
+                    height: FloodlightMetrics.panelHeight(
+                        hasQuery: hasQuery,
+                        isClipboardMode: self.model.isClipboardMode
+                    )
                 ))
                 self.observeModelForPanelSize()
             }
@@ -318,7 +322,7 @@ final class FloodlightPanelController {
             if Self.shouldHandleSpaceAsPreview(
                 isClipboardMode: model.isClipboardMode,
                 query: model.query,
-                hasPreviewableSelection: model.previewableSelectionURL != nil
+                hasPreviewableSelection: model.isSelectionPreviewable
             ) {
                 togglePreview()
                 return nil
@@ -375,6 +379,9 @@ final class FloodlightPanelController {
         case .deleteSelection:
             guard model.isClipboardMode else { return false }
             model.deleteSelection()
+        case .openActions:
+            guard model.isClipboardMode else { return false }
+            boardContext.requestActions()
         case .unmatched:
             return false
         }
@@ -389,6 +396,7 @@ final class FloodlightPanelController {
         case togglePreview
         case togglePin
         case deleteSelection
+        case openActions
         case unmatched
     }
 
@@ -408,6 +416,8 @@ final class FloodlightPanelController {
             .togglePin
         case "d":
             .deleteSelection
+        case "k":
+            .openActions
         default:
             .unmatched
         }

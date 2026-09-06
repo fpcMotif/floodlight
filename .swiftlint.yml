@@ -11,6 +11,10 @@
 
 excluded:
   - .build
+  # Claude Code keeps its git worktrees here, each with its own .build and
+  # checkouts. SwiftFormat skips hidden directories on its own; SwiftLint
+  # walks them unless told not to.
+  - .claude
   - .delta
   - .scratch
   - .tools

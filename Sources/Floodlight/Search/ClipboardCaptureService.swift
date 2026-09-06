@@ -153,20 +153,10 @@ final class ClipboardCaptureService {
 
     var retention: ClipboardRetention {
         get {
-            let days = defaults.integer(forKey: Self.retentionDaysDefaultsKey)
-            if days > 0 {
-                return .days(days)
-            }
-            return .days(30)
+            let stored = defaults.integer(forKey: Self.retentionDaysDefaultsKey)
+            return ClipboardRetention(defaultsValue: stored)
         }
-        set {
-            switch newValue {
-            case let .days(days):
-                defaults.set(days, forKey: Self.retentionDaysDefaultsKey)
-            case .forever:
-                defaults.set(-1, forKey: Self.retentionDaysDefaultsKey)
-            }
-        }
+        set { defaults.set(newValue.defaultsValue, forKey: Self.retentionDaysDefaultsKey) }
     }
 
     func start() {
@@ -288,6 +278,33 @@ final class ClipboardCaptureService {
         let retention = retention
         Task.detached(priority: .utility) { [store] in
             store.prune(retention: retention)
+        }
+    }
+}
+
+/// How the retention lives in UserDefaults, in the one place that knows.
+///
+/// A day count, with -1 standing in for `.forever` — the onboarding picker
+/// binds an `Int` tag, and `integer(forKey:)` cannot tell an absent key from a
+/// stored 0. Everything that is neither a positive count nor that sentinel is
+/// the default: an unset key, a cleared domain, and a value from a build that
+/// predates `.forever` all read back the same way.
+extension ClipboardRetention {
+    init(defaultsValue: Int) {
+        switch defaultsValue {
+        case -1:
+            self = .forever
+        case let days where days > 0:
+            self = .days(days)
+        default:
+            self = .days(30)
+        }
+    }
+
+    var defaultsValue: Int {
+        switch self {
+        case let .days(days): days
+        case .forever: -1
         }
     }
 }

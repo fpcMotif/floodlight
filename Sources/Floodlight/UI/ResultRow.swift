@@ -57,6 +57,12 @@ struct ResultRow: View, Equatable {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .accessibilityLabel("Pinned")
+                    }
                     if !isTopHit, !isCompact {
                         Text(item.kind.label)
                             .font(FloodlightMetrics.Typography.badge)
@@ -107,8 +113,8 @@ struct ResultRow: View, Equatable {
         .onHover { isHovered = $0 }
     }
 
-    /// Compact rows (the clipboard board's list column) drop the
-    /// modified-date and Top Hit segments — the inspector beside them
+    /// Compact rows (the clipboard board's list column) drop the byte-size,
+    /// modified-date, and Top Hit segments — the inspector beside them
     /// already shows that metadata in full, and the 360 pt column has no
     /// room for both without truncating the subtitle itself.
     private var subtitleLine: some View {
@@ -117,12 +123,12 @@ struct ResultRow: View, Equatable {
                 .lineLimit(1)
                 .truncationMode(isCompact ? .middle : .tail)
 
-            if let fileSize = item.fileSize, fileSize > 0 {
-                Text("·")
-                Text(fileSize.formatted(.byteCount(style: .file)))
-            }
-
             if !isCompact {
+                if let fileSize = item.fileSize, fileSize > 0 {
+                    Text("·")
+                    Text(fileSize.formatted(.byteCount(style: .file)))
+                }
+
                 if let modifiedAt = item.modifiedAt {
                     Text("·")
                     Text(ResultShowcase.formattedModifiedDate(modifiedAt))
@@ -208,7 +214,7 @@ private struct ResultIcon: View {
             case let .engine(symbol, tint):
                 symbolTile(symbol, tint: tint.color)
             case let .thumbnail(data):
-                if let image = NSImage(data: data) {
+                if let image = thumbnail(data) {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
@@ -246,6 +252,17 @@ private struct ResultIcon: View {
                 fileIcon = loadedIcon
             }
         }
+    }
+
+    /// Clipboard thumbnails go through the shared cache, so the inspector
+    /// beside the list and every re-evaluation of this row reuse one decode
+    /// rather than running `NSImage(data:)` per body pass. Anything else
+    /// carrying thumbnail bytes has no entry to key on and decodes as before.
+    private func thumbnail(_ data: Data) -> NSImage? {
+        guard let entryID = SearchResultProjection.clipboardEntryID(from: item.id) else {
+            return NSImage(data: data)
+        }
+        return ClipboardImageCache.shared.thumbnail(entryID: entryID, data: data)
     }
 
     /// An SF Symbol on a brand-tinted continuous-curve tile — the icon for

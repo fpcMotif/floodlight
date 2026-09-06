@@ -218,8 +218,16 @@ package struct AssistantProcessRunner: AssistantProcessRunning {
                 let watchdog = Task {
                     try? await Task.sleep(for: timeout)
                     guard !Task.isCancelled, process.isRunning else { return }
-                    process.terminate()
+                    // Claim the outcome before signalling. `terminate()` can
+                    // have the process reaped and its termination handler
+                    // resuming with a plain non-zero exit before the next
+                    // line runs — and since only the first resolution wins,
+                    // that reports a watchdog kill as the CLI failing on its
+                    // own ("That ask failed" instead of "That ask took too
+                    // long"). The window is small enough to hide until the
+                    // machine is loaded.
                     resumeOnce(continuation, with: .failure(AssistantProcessError.timedOut))
+                    process.terminate()
 
                     // Best-effort escalation for a CLI that traps SIGTERM —
                     // doesn't block the caller, who already has their answer.

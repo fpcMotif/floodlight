@@ -49,7 +49,7 @@ struct SearchViewRenderingTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(5))
@@ -167,10 +167,10 @@ struct SearchViewRenderingTests {
         let image = try render(
             SearchView(model: coordinator),
             width: FloodlightMetrics.clipboardPanelWidth,
-            height: FloodlightMetrics.expandedPanelHeight
+            height: FloodlightMetrics.clipboardPanelHeight
         )
         #expect(image.width == Int(FloodlightMetrics.clipboardPanelWidth))
-        #expect(image.height == Int(FloodlightMetrics.expandedPanelHeight))
+        #expect(image.height == Int(FloodlightMetrics.clipboardPanelHeight))
     }
 
     @Test func compactClipboardRowsRenderLongTitlesAndPathsWithoutGrowing() throws {
@@ -218,7 +218,7 @@ struct SearchViewRenderingTests {
                 boardContext: ClipboardBoardContext(pasteTargetAppName: "Safari")
             ),
             width: FloodlightMetrics.clipboardPanelWidth,
-            height: FloodlightMetrics.expandedPanelHeight
+            height: FloodlightMetrics.clipboardPanelHeight
         )
     }
 
@@ -325,7 +325,7 @@ struct SearchViewRenderingTests {
                         thumbnailPNGData: ClipboardImageTestData.thumbnail
                     )
                 ),
-                imagePNG: ClipboardImageTestData.png
+                hasFullImage: true
             )),
             width: width,
             height: height
@@ -411,7 +411,7 @@ struct SearchViewRenderingTests {
             width: FloodlightMetrics.panelWidth,
             height: FloodlightMetrics.expandedPanelHeight
         )
-        #expect(start.duration(to: .now) < .seconds(10))
+        #expect(start.duration(to: .now) < TestBudget.duration(.seconds(10)))
     }
 
     @Test func thePanelRendersEveryResultKind() throws {

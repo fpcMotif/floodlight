@@ -13,6 +13,9 @@ final class ClipboardBoardContext {
     var pasteTargetAppName: String?
     @ObservationIgnored
     var previewHandler: (@MainActor () -> Void)?
+    /// Installed by the footer's Actions chip; ⌘K and a click both call it.
+    @ObservationIgnored
+    var actionsHandler: (@MainActor () -> Void)?
 
     init(pasteTargetAppName: String? = nil) {
         self.pasteTargetAppName = pasteTargetAppName
@@ -20,6 +23,10 @@ final class ClipboardBoardContext {
 
     func requestPreview() {
         previewHandler?()
+    }
+
+    func requestActions() {
+        actionsHandler?()
     }
 
     /// Floodlight never pastes into itself, so its own bundle yields `nil`.

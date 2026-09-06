@@ -54,8 +54,8 @@ final class OnboardingSession {
     var clipboardRetentionDays: Int {
         get {
             _ = clipboardVersion
-            let val = defaults.integer(forKey: ClipboardCaptureService.retentionDaysDefaultsKey)
-            return val > 0 ? val : (val == -1 ? -1 : 30)
+            let stored = defaults.integer(forKey: ClipboardCaptureService.retentionDaysDefaultsKey)
+            return ClipboardRetention(defaultsValue: stored).defaultsValue
         }
         set {
             defaults.set(newValue, forKey: ClipboardCaptureService.retentionDaysDefaultsKey)
@@ -141,7 +141,7 @@ final class OnboardingSession {
     }
 
     func clearClipboardHistory() {
-        clipboardStore.clear()
+        guard clipboardStore.clear() else { return }
         clipboardVersion += 1
     }
 

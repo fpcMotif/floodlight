@@ -82,7 +82,34 @@ final class SearchCoordinator {
     private let actionPerformer: SelectedResultActionPerformer
     @ObservationIgnored
     private let onDismiss: @MainActor () -> Void
-    private var publication: SearchResultPublication
+    /// The one path resolution the current query paid for, tagged with the
+    /// query and the committed scope it belongs to. Every projection of that
+    /// query reads it instead of listing directories again.
+    @ObservationIgnored
+    private var pathCache: PathResolutionCache
+    /// Result Publication is the one order results are published in (ADR
+    /// 0002), and the two facts about the selection below belong to it: they
+    /// are recomputed here, on every republication, rather than derived by
+    /// whichever view body happens to ask (#72).
+    private var publication: SearchResultPublication {
+        didSet { refreshSelectionSnapshot() }
+    }
+
+    /// Inspector snapshot for the selected Clipboard History entry, or `nil`
+    /// outside clipboard mode.
+    private(set) var clipboardInspector: ClipboardInspector?
+
+    /// Whether Space and the board's Preview chip have anything to show for
+    /// the current selection. A published boolean, not a getter that stats
+    /// the disk and writes a temporary file mid-layout.
+    private(set) var isSelectionPreviewable = false
+
+    /// The selection the two values above were computed for. A republication
+    /// whose selected row comes back byte-for-byte identical recomputes
+    /// nothing; anything that changes the row — a new rank under a new query,
+    /// a pin, a delete — does.
+    @ObservationIgnored
+    private var selectionSnapshotKey: SelectionSnapshotKey?
     @ObservationIgnored
     private var sourceWarmUpComplete = false
     @ObservationIgnored
@@ -106,6 +133,7 @@ final class SearchCoordinator {
         runningApplicationActivator: any RunningApplicationActivating =
             WorkspaceRunningApplicationActivator(),
         actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
+        pathResolver: any PathResolving = FileSystemPathResolver(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
         self.sourceSearch = sourceSearch
@@ -113,6 +141,7 @@ final class SearchCoordinator {
         self.clipboardStore = clipboardStore
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
+        pathCache = PathResolutionCache(resolver: pathResolver)
         self.onDismiss = onDismiss
         let assistantRunSession = AssistantRunSession(runner: assistantRunner)
         self.assistantRunSession = assistantRunSession
@@ -149,6 +178,11 @@ final class SearchCoordinator {
                 )
             ))
         )
+        // `didSet` does not fire for the assignment that initializes a
+        // property, so the first publication would otherwise never reach
+        // `refreshSelectionSnapshot`. It agrees with the stored defaults
+        // today; relying on that silently is how it stops agreeing.
+        refreshSelectionSnapshot()
     }
 
     /// The live wiring: search scope from preferences, index and catalogs over
@@ -257,6 +291,7 @@ final class SearchCoordinator {
         isResetting = true
         query = ""
         isResetting = false
+        pathCache = pathCache.cleared()
         publication = idleLocalPublication()
     }
 
@@ -388,14 +423,13 @@ final class SearchCoordinator {
         actionPerformer.activate(item, query: query)
     }
 
+    /// Adds the rule, then republishes so the row leaves without re-running
+    /// the query. `projectLocal` applies the rule it just wrote.
     func excludeFromSearch(_ item: SearchItem) {
         blocklistStore.block(id: item.id)
         blocklistStore.block(name: item.title)
-        let updatedCandidates = publication.sourceCandidates.filter {
-            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
-        }
         publication = projectLocal(
-            candidates: updatedCandidates,
+            candidates: publication.sourceCandidates,
             selectedFilter: selectedFilter,
             selection: publication.selection?.id == item.id ? nil : publication.selection,
             progress: publication.progress
@@ -415,6 +449,12 @@ final class SearchCoordinator {
     /// The previewable file URL of the current selection, or `nil` if the
     /// selection has no file URL or isn't previewable. The shell uses this to
     /// drive QuickLook without re-deriving previewability itself.
+    ///
+    /// For a captured image this *materializes* the temporary file Quick Look
+    /// reads, so it is an action, not a question: ask `isSelectionPreviewable`
+    /// to decide whether the affordance is live, and call this only once the
+    /// user has actually pressed Space or Preview. Browsing entries then
+    /// leaves nothing behind (#72).
     var previewableSelectionURL: URL? {
         guard let selectedItem else { return nil }
         if selectedItem.isPreviewable, let fileURL = selectedItem.fileURL {
@@ -486,10 +526,15 @@ final class SearchCoordinator {
                 try await sourceSearch.changeScope(to: url)
                 rootURL = url.standardizedFileURL
                 UserDefaults.standard.set(rootURL.path, forKey: "index-root")
+                await reresolvePathForCommittedScope()
             } catch {
                 NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)
             }
         }
+    }
+
+    private var currentQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func scheduleSearch(immediate: Bool = false) {
@@ -535,13 +580,34 @@ final class SearchCoordinator {
                     ? [.application]
                     : [.application, .systemSetting]
             ),
-            filterContinuity: .preserve
+            filterContinuity: .preserve,
+            folderRow: pathCache.carriedFolderRow(for: requestQuery, rootURL: rootURL)
         )
+        let scopeRoot = rootURL
+        let previousCache = pathCache
         searchTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { return }
+            // The path lookup and the Source Search pass start together and
+            // are both awaited before the first snapshot publishes, so the
+            // folder row still lands with the first results — the listings
+            // just no longer happen on the main actor, four times over.
+            async let resolution = previousCache.resolving(
+                query: requestQuery,
+                rootURL: scopeRoot
+            )
             let snapshots = await sourceSearch.search(requestQuery, immediate: immediate)
+            let resolved = await resolution
             guard !Task.isCancelled else { return }
+            // Cancellation alone does not make the store safe — a superseded
+            // task can still be scheduled onto the main actor before it
+            // observes the flag — so only a resolution still answering the
+            // live query under the committed scope is kept, and every read
+            // re-checks the same pair. A scope committed since this pass
+            // started has already resolved the query itself.
+            if resolved.matches(query: currentQuery, rootURL: rootURL) {
+                pathCache = resolved
+            }
             for await snapshot in snapshots {
                 guard !Task.isCancelled else { return }
                 publish(snapshot, query: requestQuery)
@@ -585,28 +651,38 @@ final class SearchCoordinator {
         )
     }
 
+    /// `folderRow` overrides what the query tag would derive: `.some` supplies
+    /// the row, `nil` derives it. Only the interim publication passes one —
+    /// see `scheduleSearch`, where the tag has already moved on.
     private func projectLocal(
         query: String? = nil,
         candidates: [SearchItem],
         selectedFilter: SearchResultFilter,
         selection: SearchResultSelection?,
         progress: SearchResultProgress,
-        filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
+        filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled,
+        folderRow: SearchItem?? = nil
     ) -> SearchResultPublication {
-        let validCandidates = candidates.filter { !blocklistStore.isBlocked(
-            name: $0.title,
-            id: $0.id
-        ) }
+        // Search sources apply the blocklist to the pages they return, but a
+        // pass already in flight when a rule is written was computed without
+        // it — and the sources that never consult the blocklist at all have no
+        // other gate. Filtering here is what stops either landing an excluded
+        // row back on screen.
+        let validCandidates = candidates.filter {
+            !blocklistStore.isBlocked(name: $0.title, id: $0.id)
+        }
+        let projectedQuery = query ?? currentQuery
         return SearchResultProjection.project(
             .local(.init(
-                query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
+                query: projectedQuery,
                 candidates: validCandidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,
                 progress: progress,
                 filterContinuity: filterContinuity,
-                rootURL: rootURL
+                resolvedFolderRow: folderRow
+                    ?? pathCache.folderRow(for: projectedQuery, rootURL: rootURL)
             ))
         )
     }
@@ -636,22 +712,16 @@ extension SearchCoordinator {
         mutateSelectedClipboardEntry { clipboardStore.delete(id: $0) }
     }
 
-    func clearHistory() {
-        clipboardStore.clear()
-        if isClipboardMode {
-            publishClipboardModeResults()
-        }
+    /// Whether the selected clipboard row is pinned — the Actions menu
+    /// reads it to offer "Pin" or "Unpin".
+    var isSelectionPinned: Bool {
+        guard isClipboardMode, let selectedItem else { return false }
+        return selectedItem.isPinned
     }
 
-    /// Inspector snapshot for the selected Clipboard History entry.
-    var clipboardInspector: ClipboardInspector? {
-        guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
-        else {
-            return nil
-        }
-        guard let entry = clipboardStore.entry(id: entryID) else { return nil }
-        let png = entry.kind == .image ? clipboardStore.imageData(for: entryID)?.png : nil
-        return ClipboardInspector.snapshot(for: entry, imagePNG: png)
+    /// The selection's on-disk location, for "Show in Finder".
+    var selectionFileURL: URL? {
+        selectedItem?.fileURL
     }
 
     fileprivate func publishClipboardModeResults(
@@ -662,7 +732,6 @@ extension SearchCoordinator {
         searchTask = nil
         publication = SearchResultProjection.project(
             .clipboard(.init(
-                query: query.trimmingCharacters(in: .whitespacesAndNewlines),
                 entries: clipboardStore.search(query: query),
                 selectedFilter: selectedFilter ?? self.selectedFilter,
                 selection: selection ?? publication.selection
@@ -670,18 +739,99 @@ extension SearchCoordinator {
         )
     }
 
-    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Void) {
+    /// Republishes only when the store accepted the write, so a failed pin or
+    /// delete leaves the board showing what is still on disk.
+    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Bool) {
         guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
         else {
             return
         }
-        mutate(entryID)
+        guard mutate(entryID) else { return }
         publishClipboardModeResults()
     }
 
     private func clipboardEntryID(from item: SearchItem) -> String? {
-        let prefix = "clipboard:"
-        guard item.id.hasPrefix(prefix) else { return nil }
-        return String(item.id.dropFirst(prefix.count))
+        SearchResultProjection.clipboardEntryID(from: item.id)
+    }
+
+    /// Recomputes the inspector snapshot and previewability for whatever is
+    /// selected now. Both were getters until #72, so a view body asking
+    /// either question read a multi-megabyte image out of SQLite, or created
+    /// a directory and wrote a file — on every keystroke, mid-layout.
+    fileprivate func refreshSelectionSnapshot() {
+        let key = SelectionSnapshotKey(item: selectedItem, isClipboardMode: isClipboardMode)
+        guard key != selectionSnapshotKey else { return }
+        selectionSnapshotKey = key
+
+        guard key.isClipboardMode,
+              let item = key.item,
+              let entryID = clipboardEntryID(from: item),
+              let entry = clipboardStore.entry(id: entryID)
+        else {
+            clipboardInspector = nil
+            isSelectionPreviewable = key.item?.isPreviewable ?? false
+            return
+        }
+
+        // What the board needs to know is that a full-size payload exists,
+        // never yet what it contains — and the entry already says so.
+        // `recordImage` refuses to write an image row without a payload and
+        // stores that payload's size, so a non-zero byte count *is* the
+        // existence check. Asking SQLite again would be a query per selection
+        // move for a fact already in hand.
+        let hasFullImage = entry.kind == .image && (entry.image?.byteCount ?? 0) > 0
+        clipboardInspector = ClipboardInspector.snapshot(for: entry, hasFullImage: hasFullImage)
+        isSelectionPreviewable = Self.isPreviewable(
+            item: item,
+            entry: entry,
+            hasFullImage: hasFullImage
+        )
+    }
+
+    /// Previewability without touching the disk again: a path-backed row
+    /// already carries the `fileURL` the projection resolved for it, and a
+    /// captured image is previewable while it still has pixels to write —
+    /// the full payload, or failing that the stored thumbnail.
+    private static func isPreviewable(
+        item: SearchItem,
+        entry: ClipboardEntry,
+        hasFullImage: Bool
+    ) -> Bool {
+        if item.isPreviewable { return true }
+        guard entry.kind == .image else { return false }
+        return hasFullImage || entry.image?.thumbnailPNGData.isEmpty == false
+    }
+}
+
+/// What the published selection snapshot depends on. Comparing the selected
+/// row wholesale is what lets a pin toggle or a delete refresh the inspector
+/// without the coordinator keeping a second notion of "did this change".
+private struct SelectionSnapshotKey: Equatable {
+    let item: SearchItem?
+    let isClipboardMode: Bool
+}
+
+/// The one operation that is about the coordinator rather than the cache:
+/// re-resolving and republishing when the search scope is committed.
+fileprivate extension SearchCoordinator {
+    /// A scope-relative path resolves against the committed scope (ADR 0007),
+    /// so the resolution made under the old root is void and the live query
+    /// earns a fresh one. Only the path is re-resolved and republished — the
+    /// Search Execution in flight is left alone, so a query that is not
+    /// path-like costs nothing here and sees nothing change.
+    func reresolvePathForCommittedScope() async {
+        pathCache = pathCache.cleared()
+        let liveQuery = currentQuery
+        guard case .local = mode, !liveQuery.isEmpty else { return }
+        let resolved = await pathCache.resolving(query: liveQuery, rootURL: rootURL)
+        guard resolved.matches(query: currentQuery, rootURL: rootURL) else { return }
+        pathCache = resolved
+        publication = projectLocal(
+            candidates: publication.sourceCandidates,
+            selectedFilter: selectedFilter,
+            selection: publication.selection,
+            progress: publication.progress,
+            filterContinuity: .preserve
+        )
     }
 }

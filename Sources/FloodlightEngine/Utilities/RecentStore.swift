@@ -59,10 +59,33 @@ package final class RecentStore: Sendable {
         }
     }
 
+    /// Launches stop adding anything beyond this many.
+    package static let launchSaturation = 25
+
+    /// Recency fades to nothing over this window — about six weeks.
+    private static let recencyWindow: TimeInterval = 3_600_000
+
+    /// The two components divide the bound five parts launches to four parts
+    /// recency, the ratio they have always had. Only the range changed: the
+    /// total stays within `FuzzyMatcher.maximumLearningBoost`, so learning
+    /// orders results that matched the same way and never promotes a weaker
+    /// match shape past a stronger one.
+    package static let maximumLaunchComponent = FuzzyMatcher.maximumLearningBoost * 5 / 9
+    package static let maximumRecencyComponent =
+        FuzzyMatcher.maximumLearningBoost - maximumLaunchComponent
+
+    /// Recency sheds one point per step, so it holds still between steps
+    /// rather than sliding on every read — two identical queries a minute
+    /// apart rank identically.
+    private static let recencyStep =
+        recencyWindow / TimeInterval(maximumRecencyComponent)
+
     private static func boost(for entry: Entry, now: Date) -> Int {
         let age = max(0, now.timeIntervalSince(entry.lastOpened))
-        let recency = max(0, 4_000 - Int(age / 900))
-        return min(entry.launches, 25) * 200 + recency
+        let recency = max(0, maximumRecencyComponent - Int(age / recencyStep))
+        let launches = min(entry.launches, launchSaturation)
+            * maximumLaunchComponent / launchSaturation
+        return launches + recency
     }
 
     private func persist(_ entries: [String: Entry]) {

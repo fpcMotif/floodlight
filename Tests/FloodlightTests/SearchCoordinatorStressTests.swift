@@ -30,7 +30,7 @@ struct SearchCoordinatorStressTests {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () async throws -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         while Date() < deadline {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(5))

@@ -65,7 +65,11 @@ enum SearchResultProjection {
         let selection: SearchResultSelection?
         let progress: SearchResultProgress
         let filterContinuity: FilterContinuity
-        let rootURL: URL?
+        /// The folder row for a path-like query, already resolved against the
+        /// committed scope by whoever built this context. Projection never
+        /// touches the disk itself: it is a pure function of its inputs, and
+        /// it runs several times per keystroke.
+        let resolvedFolderRow: SearchItem?
 
         init(
             query: String,
@@ -75,7 +79,7 @@ enum SearchResultProjection {
             selection: SearchResultSelection?,
             progress: SearchResultProgress,
             filterContinuity: FilterContinuity = .reconcileWhenSettled,
-            rootURL: URL? = nil
+            resolvedFolderRow: SearchItem? = nil
         ) {
             self.query = query
             self.candidates = candidates
@@ -84,7 +88,7 @@ enum SearchResultProjection {
             self.selection = selection
             self.progress = progress
             self.filterContinuity = filterContinuity
-            self.rootURL = rootURL
+            self.resolvedFolderRow = resolvedFolderRow
         }
     }
 
@@ -97,20 +101,17 @@ enum SearchResultProjection {
     }
 
     struct ClipboardContext: Equatable {
-        let query: String
         let entries: [ClipboardEntry]
         let selectedFilter: SearchResultFilter
         let selection: SearchResultSelection?
         let now: Date
 
         init(
-            query: String,
             entries: [ClipboardEntry],
             selectedFilter: SearchResultFilter = .all,
             selection: SearchResultSelection?,
             now: Date = .now
         ) {
-            self.query = query
             self.entries = entries
             self.selectedFilter = selectedFilter
             self.selection = selection
@@ -258,6 +259,21 @@ enum SearchResultProjection {
         }
     }
 
+    /// The row id a Clipboard History entry gets, and the way back out of
+    /// it. The coordinator strips the prefix to reach the store, and the
+    /// board's image caches key on what it strips to, so the spelling lives
+    /// here once rather than at every site that builds or parses it.
+    static func clipboardRowID(for entryID: String) -> String {
+        clipboardRowIDPrefix + entryID
+    }
+
+    static func clipboardEntryID(from rowID: String) -> String? {
+        guard rowID.hasPrefix(clipboardRowIDPrefix) else { return nil }
+        return String(rowID.dropFirst(clipboardRowIDPrefix.count))
+    }
+
+    private static let clipboardRowIDPrefix = "clipboard:"
+
     private static func buildClipboardRow(
         entry: ClipboardEntry,
         index: Int,
@@ -265,7 +281,7 @@ enum SearchResultProjection {
     ) -> SearchItem {
         switch entry.kind {
         case .file:
-            buildClipboardFileRow(entry: entry, index: index)
+            buildClipboardFileRow(entry: entry, index: index, now: now)
         case .text:
             buildClipboardTextRow(entry: entry, index: index, now: now)
         case .image:
@@ -281,15 +297,23 @@ enum SearchResultProjection {
         let text = entry.text
         if let localURL = ClipboardInspector.parseLocalPath(text) {
             let name = localURL.lastPathComponent
-            let preview = name.isEmpty ? text : name
-            let title = entry.isPinned ? "📌 \(preview)" : preview
-            let app = appDisplayName(for: entry.sourceAppBundleID)
-            let time = formattedRelativeTime(since: entry.createdAt, now: now)
-            let subtitle = "\(app) · \(time)"
+            let title = name.isEmpty ? text : name
+            let subtitle = clipboardSubtitle(
+                entry: entry,
+                now: now,
+                detail: parentFolderName(of: localURL)
+            )
             let ext = localURL.pathExtension.lowercased()
-            let iconSource: SearchItemIconSource = if entry.isPinned {
-                .engine(symbol: "pin.fill", tint: .orange)
-            } else if ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "svg"].contains(ext) {
+            let iconSource: SearchItemIconSource = if [
+                "png",
+                "jpg",
+                "jpeg",
+                "heic",
+                "webp",
+                "gif",
+                "tiff",
+                "svg",
+            ].contains(ext) {
                 .engine(symbol: "photo", tint: .cyan)
             } else if ["mp4", "mov", "m4v", "webm", "mkv", "avi"].contains(ext) {
                 .engine(symbol: "video.fill", tint: .purple)
@@ -298,7 +322,7 @@ enum SearchResultProjection {
             }
             let exists = FileManager.default.fileExists(atPath: localURL.path)
             return SearchItem(
-                id: "clipboard:\(entry.id)",
+                id: clipboardRowID(for: entry.id),
                 title: title,
                 subtitle: subtitle,
                 kind: .clipboard,
@@ -306,18 +330,14 @@ enum SearchResultProjection {
                 iconSource: iconSource,
                 score: SearchItemRanking.calculator - index,
                 fileURL: exists ? localURL : nil,
-                modifiedAt: entry.createdAt
+                modifiedAt: entry.createdAt,
+                isPinned: entry.isPinned
             )
         }
 
-        let preview = previewTitle(for: text)
-        let title = entry.isPinned ? "📌 \(preview)" : preview
-        let app = appDisplayName(for: entry.sourceAppBundleID)
-        let time = formattedRelativeTime(since: entry.createdAt, now: now)
-        let subtitle = "\(app) · \(time)"
-        let iconSource: SearchItemIconSource = if entry.isPinned {
-            .engine(symbol: "pin.fill", tint: .orange)
-        } else if ClipboardInspector.parseURL(text) != nil {
+        let title = previewTitle(for: text)
+        let subtitle = clipboardSubtitle(entry: entry, now: now, detail: nil)
+        let iconSource: SearchItemIconSource = if ClipboardInspector.parseURL(text) != nil {
             .engine(symbol: "link", tint: .blue)
         } else if ClipboardInspector.parseHexColor(text) != nil {
             .engine(symbol: "paintpalette.fill", tint: .purple)
@@ -327,36 +347,41 @@ enum SearchResultProjection {
             .engine(symbol: "doc.text", tint: .gray)
         }
         return SearchItem(
-            id: "clipboard:\(entry.id)",
+            id: clipboardRowID(for: entry.id),
             title: title,
             subtitle: subtitle,
             kind: .clipboard,
             action: .copy(text),
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
-            modifiedAt: entry.createdAt
+            modifiedAt: entry.createdAt,
+            isPinned: entry.isPinned
         )
     }
 
     private static func buildClipboardFileRow(
         entry: ClipboardEntry,
-        index: Int
+        index: Int,
+        now: Date
     ) -> SearchItem {
         let path = entry.text
-        let name = URL(fileURLWithPath: path).lastPathComponent
-        let preview = name.isEmpty ? path : name
-        let title = entry.isPinned ? "📌 \(preview)" : preview
         let fileURL = URL(fileURLWithPath: path)
+        let name = fileURL.lastPathComponent
 
         return SearchItem(
-            id: "clipboard:\(entry.id)",
-            title: title,
-            subtitle: path,
+            id: clipboardRowID(for: entry.id),
+            title: name.isEmpty ? path : name,
+            subtitle: clipboardSubtitle(
+                entry: entry,
+                now: now,
+                detail: parentFolderName(of: fileURL)
+            ),
             kind: .clipboard,
             action: .copyFiles([path]),
             iconSource: .inferred,
             score: SearchItemRanking.calculator - index,
-            fileURL: fileURL
+            fileURL: fileURL,
+            isPinned: entry.isPinned
         )
     }
 
@@ -365,14 +390,8 @@ enum SearchResultProjection {
         index: Int,
         now: Date
     ) -> SearchItem {
-        let preview = entry.text.isEmpty ? "Image" : entry.text
-        let title = entry.isPinned ? "📌 \(preview)" : preview
-        let dimensions = if let image = entry.image {
-            "\(image.width)×\(image.height)"
-        } else {
-            "Image"
-        }
-        let time = formattedRelativeTime(since: entry.createdAt, now: now)
+        let title = entry.text.isEmpty ? "Image" : entry.text
+        let dimensions = entry.image.map { "\($0.width)×\($0.height)" }
         let iconSource: SearchItemIconSource = if let thumbnail = entry.image?.thumbnailPNGData,
                                                   !thumbnail.isEmpty
         {
@@ -382,15 +401,36 @@ enum SearchResultProjection {
         }
 
         return SearchItem(
-            id: "clipboard:\(entry.id)",
+            id: clipboardRowID(for: entry.id),
             title: title,
-            subtitle: "\(dimensions) · \(time)",
+            subtitle: clipboardSubtitle(entry: entry, now: now, detail: dimensions),
             kind: .clipboard,
             action: .copyImage(id: entry.id),
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
-            fileSize: entry.image.map { UInt64($0.byteCount) }
+            fileSize: entry.image.map { UInt64($0.byteCount) },
+            isPinned: entry.isPinned
         )
+    }
+
+    /// Every clipboard row reads the same way — source app, then age, then
+    /// one kind-specific detail (parent folder, image dimensions) — so the
+    /// eye finds the same fact in the same place on every row. The full
+    /// path and byte size live in the inspector beside the list.
+    private static func clipboardSubtitle(
+        entry: ClipboardEntry,
+        now: Date,
+        detail: String?
+    ) -> String {
+        let app = appDisplayName(for: entry.sourceAppBundleID)
+        let time = formattedRelativeTime(since: entry.createdAt, now: now)
+        guard let detail, !detail.isEmpty else { return "\(app) · \(time)" }
+        return "\(app) · \(time) · \(detail)"
+    }
+
+    private static func parentFolderName(of url: URL) -> String? {
+        let parent = url.deletingLastPathComponent().lastPathComponent
+        return parent == "/" || parent.isEmpty ? nil : parent
     }
 
     private static func previewTitle(for text: String) -> String {
@@ -401,11 +441,7 @@ enum SearchResultProjection {
     }
 
     private static func appDisplayName(for bundleID: String?) -> String {
-        guard let bundleID, !bundleID.isEmpty else { return "Clipboard" }
-        if let lastComponent = bundleID.split(separator: ".").last, !lastComponent.isEmpty {
-            return String(lastComponent)
-        }
-        return bundleID
+        ClipboardSourceApp.displayName(for: bundleID)
     }
 
     private static func formattedRelativeTime(since date: Date, now: Date) -> String {
@@ -451,8 +487,8 @@ enum SearchResultProjection {
         if let item = context.keywordRegistry.addressedResult(for: context.query) {
             output.append(item)
         }
-        if let pathResult = PathNavigator.resolve(query: context.query, rootURL: context.rootURL) {
-            output.append(pathResult.folderItem)
+        if let folderRow = context.resolvedFolderRow {
+            output.append(folderRow)
         }
         output.append(contentsOf: context.candidates)
 

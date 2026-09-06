@@ -1,5 +1,6 @@
 import AppKit
 import FloodlightEngine
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import Floodlight
@@ -426,6 +427,45 @@ struct ClipboardCaptureServiceTests {
         )
         harness.service.poll()
         #expect(harness.store.isEmpty)
+    }
+
+    @Test func retentionRoundTripsForever() {
+        let harness = makeHarness()
+
+        harness.service.retention = .forever
+
+        #expect(harness.service.retention == .forever)
+    }
+
+    /// The other direction. Without it, a getter that answered `.forever` for
+    /// every stored value — pruning silently off for everyone — still passes.
+    @Test func retentionRoundTripsDays() {
+        let harness = makeHarness()
+
+        harness.service.retention = .days(7)
+
+        #expect(harness.service.retention == .days(7))
+    }
+
+    @Test func retentionFallsBackToThirtyDaysWhenUnset() {
+        let harness = makeHarness()
+
+        #expect(harness.service.retention == .days(30))
+    }
+
+    /// What `pruneOnSchedule` hands the store, asserted without the scheduling.
+    /// The timer only decides *when* this runs; the retention decides what it
+    /// does, so driving the prune directly is the whole claim — and it holds
+    /// with no Timer, no NSWorkspace observers and no sleep to race.
+    @Test func pruningWithAForeverRetentionKeepsEntriesOlderThanAnyWindow() {
+        let harness = makeHarness()
+        harness.store.record(text: "Keep me", date: .now.addingTimeInterval(-60 * 86_400))
+        harness.service.retention = .forever
+
+        harness.store.prune(retention: harness.service.retention)
+
+        #expect(harness.store.count == 1)
+        #expect(harness.store.mostRecentEntry?.text == "Keep me")
     }
 }
 

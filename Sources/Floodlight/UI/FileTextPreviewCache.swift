@@ -1,35 +1,25 @@
 import Foundation
 
-package struct FileTextPreview: Equatable, Sendable {
-    package let isCode: Bool
-    package let lines: [String]
-    package let isTruncated: Bool
-    package let isEmpty: Bool
-
-    package init(
-        isCode: Bool,
-        lines: [String],
-        isTruncated: Bool,
-        isEmpty: Bool
-    ) {
-        self.isCode = isCode
-        self.lines = lines
-        self.isTruncated = isTruncated
-        self.isEmpty = isEmpty
-    }
+struct FileTextPreview: Equatable, Sendable {
+    let lines: [String]
+    let isTruncated: Bool
+    let isEmpty: Bool
 }
 
-package enum FileTextPreviewDecoder {
-    package static let maxPreviewBytes = 64 * 1_024
-    package static let maxPreviewLines = 200
+enum FileTextPreviewDecoder {
+    static let maxPreviewBytes = 64 * 1_024
+    static let maxPreviewLines = 200
 
-    package static func decode(
+    static func decode(
         at url: URL,
-        isCode: Bool,
         maxBytes: Int = maxPreviewBytes,
         maxLines: Int = maxPreviewLines
     ) -> FileTextPreview? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true
+        else {
+            return nil
+        }
         guard let fileHandle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? fileHandle.close() }
 
@@ -41,32 +31,41 @@ package enum FileTextPreviewDecoder {
         }
 
         if rawData.isEmpty {
-            return FileTextPreview(
-                isCode: isCode,
-                lines: [],
-                isTruncated: false,
-                isEmpty: true
-            )
+            return FileTextPreview(lines: [], isTruncated: false, isEmpty: true)
         }
 
         let isByteTruncated = rawData.count > maxBytes
-        let dataToDecode = isByteTruncated ? rawData.prefix(maxBytes) : rawData
+        var dataToDecode = isByteTruncated ? Data(rawData.prefix(maxBytes)) : rawData
+        if isByteTruncated {
+            dataToDecode = trimmingIncompleteTrailingCharacter(dataToDecode)
+        }
 
-        guard let text = decodeString(from: Data(dataToDecode)) else {
+        guard let text = decodeString(from: dataToDecode) else {
             return nil
         }
 
+        // UTF-8 input was already screened for NUL bytes; this catches the
+        // UTF-16 branches, where every ASCII character carries a zero byte.
         if text.contains("\0") {
             return nil
         }
 
+        if text.isEmpty {
+            return FileTextPreview(lines: [], isTruncated: false, isEmpty: true)
+        }
+
         let allLines = ClipboardInspector.codeLines(text, limit: maxLines + 1)
         let isLineTruncated = allLines.count > maxLines
-        let lines = isLineTruncated ? Array(allLines.prefix(maxLines)) : allLines
+        var lines = isLineTruncated ? Array(allLines.prefix(maxLines)) : allLines
+        if isByteTruncated, !isLineTruncated, lines.count > 1 {
+            // The byte cutoff lands mid-line rather than mid-character (that
+            // case is handled above): the last line is partial, not real
+            // content, so it is dropped rather than shown truncated mid-word.
+            lines.removeLast()
+        }
         let isTruncated = isByteTruncated || isLineTruncated
 
         return FileTextPreview(
-            isCode: isCode,
             lines: lines,
             isTruncated: isTruncated,
             isEmpty: lines.isEmpty
@@ -90,24 +89,70 @@ package enum FileTextPreviewDecoder {
         }
         return String(data: data, encoding: .utf8)
     }
+
+    /// Byte-truncating at `maxBytes` can land in the middle of a multibyte
+    /// character, and strict decoding would then reject the whole prefix.
+    /// Trim the tail back to a character boundary; this may also drop one
+    /// complete trailing character, which is harmless in a preview that is
+    /// already marked truncated.
+    private static func trimmingIncompleteTrailingCharacter(_ data: Data) -> Data {
+        let isLittleEndianUTF16 = data.starts(with: [0xFF, 0xFE])
+        let isBigEndianUTF16 = data.starts(with: [0xFE, 0xFF])
+        guard isLittleEndianUTF16 || isBigEndianUTF16 else {
+            var trimmed = data
+            var droppedContinuationBytes = 0
+            while droppedContinuationBytes < 3, let last = trimmed.last, last & 0xC0 == 0x80 {
+                trimmed.removeLast()
+                droppedContinuationBytes += 1
+            }
+            if let last = trimmed.last, last & 0xC0 == 0xC0 {
+                trimmed.removeLast()
+            }
+            return trimmed
+        }
+
+        var payload = Data(data.dropFirst(2))
+        if !payload.count.isMultiple(of: 2) {
+            payload.removeLast()
+        }
+        if payload.count >= 2 {
+            let tail = Array(payload.suffix(2))
+            let codeUnit: UInt16 = if isLittleEndianUTF16 {
+                UInt16(tail[0]) | (UInt16(tail[1]) << 8)
+            } else {
+                (UInt16(tail[0]) << 8) | UInt16(tail[1])
+            }
+            if (0xD800...0xDBFF).contains(codeUnit) {
+                payload.removeLast(2)
+            }
+        }
+        var result = Data(data.prefix(2))
+        result.append(payload)
+        return result
+    }
 }
 
 @MainActor
 final class FileTextPreviewCache {
     static let shared = FileTextPreviewCache()
 
+    /// The fields are read only through the synthesized Hashable conformance the
+    /// cache dictionary keys on, which the index records as no reference at all.
     private struct CacheKey: Hashable {
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let path: String
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let modificationDate: Date
+        // periphery:ignore - read only by the synthesized Hashable conformance
         let fileSize: UInt64
     }
 
-    private var cache: [CacheKey: FileTextPreview] = [:]
+    private var cache: [CacheKey: FileTextPreview?] = [:]
 
     init() {}
 
     private func makeKey(for url: URL) -> CacheKey? {
-        let standardized = url.standardizedFileURL.path
+        let standardized = url.standardizedFileURL.resolvingSymlinksInPath().path
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: standardized)
         else {
             return nil
@@ -117,27 +162,29 @@ final class FileTextPreviewCache {
         return CacheKey(path: standardized, modificationDate: modificationDate, fileSize: fileSize)
     }
 
-    func immediatePreview(for url: URL, isCode: Bool) -> FileTextPreview? {
+    func immediatePreview(for url: URL) -> FileTextPreview? {
         guard let key = makeKey(for: url) else { return nil }
-        return cache[key]
+        return cache[key] ?? nil
     }
 
-    func preview(for url: URL, isCode: Bool) async -> FileTextPreview? {
+    func preview(for url: URL) async -> FileTextPreview? {
         guard let key = makeKey(for: url) else { return nil }
-        if let existing = cache[key] {
-            return existing
+        if let cached = cache[key] {
+            return cached
         }
 
+        // The bounded read still touches the disk; keep it off the main
+        // actor so a slow volume never stalls the panel's layout pass.
         let preview = await Task.detached(priority: .userInitiated) {
-            FileTextPreviewDecoder.decode(at: url, isCode: isCode)
+            FileTextPreviewDecoder.decode(at: url)
         }.value
 
-        if let preview {
-            if cache.count >= 128 {
-                cache.removeAll(keepingCapacity: true)
-            }
-            cache[key] = preview
+        if cache.count >= 128 {
+            cache.removeAll(keepingCapacity: true)
         }
+        // `.some(nil)` records an unreadable file so it is not re-read on
+        // every reselection; a bare `nil` here would erase the key instead.
+        cache[key] = .some(preview)
         return preview
     }
 }

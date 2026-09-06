@@ -418,7 +418,10 @@ struct SearchModelInvariantTests {
             "application-pathNavigation",
         ]
 
-        let maxAchievableMatchScore = 20_000
+        // The best shape a match can reach, plus everything learning may add
+        // on top of it — the whole of what rides above a band's base score.
+        let maxAchievableMatchScore =
+            FuzzyMatcher.ShapeScore.exact + FuzzyMatcher.maximumLearningBoost
 
         for (higher, lower) in zip(tiers, tiers.dropFirst()) {
             let pairKey = "\(higher.name)-\(lower.name)"

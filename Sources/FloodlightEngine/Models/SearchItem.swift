@@ -276,6 +276,9 @@ package struct SearchItem: Identifiable, Hashable, Sendable {
     package let fileURL: URL?
     package let modifiedAt: Date?
     package let fileSize: UInt64?
+    /// Set on pinned Clipboard History rows. The list shows a pin glyph
+    /// beside the title; the title itself stays the entry's own text.
+    package let isPinned: Bool
     private let normalizedFileExtension: String
 
     package init(
@@ -288,7 +291,8 @@ package struct SearchItem: Identifiable, Hashable, Sendable {
         score: Int,
         fileURL: URL? = nil,
         modifiedAt: Date? = nil,
-        fileSize: UInt64? = nil
+        fileSize: UInt64? = nil,
+        isPinned: Bool = false
     ) {
         self.id = id ?? "\(kind.rawValue):\(title):\(subtitle)"
         self.title = title
@@ -300,6 +304,7 @@ package struct SearchItem: Identifiable, Hashable, Sendable {
         self.fileURL = fileURL
         self.modifiedAt = modifiedAt
         self.fileSize = fileSize
+        self.isPinned = isPinned
         normalizedFileExtension = kind == .file
             ? fileURL?.pathExtension.lowercased() ?? ""
             : ""

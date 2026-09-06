@@ -18,8 +18,10 @@ final class AppIconCache {
             return cached
         }
 
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        else {
+        // The resolver behind this remembers the identifiers Launch Services
+        // cannot place, so an entry whose icon will never resolve — a
+        // screenshot's — costs one lookup per launch, not one per render.
+        guard let appURL = ClipboardSourceApp.applicationURL(for: bundleID) else {
             return nil
         }
         let image = NSWorkspace.shared.icon(forFile: appURL.path)

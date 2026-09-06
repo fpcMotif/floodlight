@@ -99,7 +99,9 @@ struct SearchCoordinatorClipboardModeTests {
         coordinator.handleTab()
         #expect(coordinator.results.count == 1)
         #expect(coordinator.results[0].title == "Invoice_2026.pdf")
-        #expect(coordinator.results[0].subtitle == path)
+        // The row's subtitle is "App · age · ParentFolder", not the full
+        // path — that lives in the inspector beside the list.
+        #expect(coordinator.results[0].subtitle == "Clipboard · just now · Invoices")
 
         coordinator.openSelection()
 
@@ -142,7 +144,9 @@ struct SearchCoordinatorClipboardModeTests {
         coordinator.handleTab()
         #expect(coordinator.results.count == 1)
         #expect(coordinator.results[0].title == "CleanShot 2026-09-01 at 15.30.png")
-        #expect(coordinator.results[0].subtitle.hasPrefix("2880×1800"))
+        // The row's subtitle is "App · age · dimensions"; the dimensions
+        // are the trailing detail, not the leading one.
+        #expect(coordinator.results[0].subtitle.hasSuffix("2880×1800"))
 
         coordinator.openSelection()
 
@@ -238,7 +242,7 @@ struct SearchCoordinatorClipboardModeTests {
 
         // Pinned item (e1) moves to top
         #expect(coordinator.results.map(\.id) == ["clipboard:\(e1.id)", "clipboard:\(e2.id)"])
-        #expect(coordinator.results[0].title.hasPrefix("📌 "))
+        #expect(coordinator.results[0].isPinned)
 
         // Toggle pin again unpins it
         coordinator.togglePinSelection()
@@ -261,22 +265,6 @@ struct SearchCoordinatorClipboardModeTests {
 
         #expect(coordinator.results.count == 1)
         #expect(coordinator.results[0].id == "clipboard:\(e1.id)")
-    }
-
-    @Test func clearHistoryWipesAllRows() async throws {
-        let store = ClipboardHistoryStore.inMemory()
-        _ = store.record(text: "One")
-        _ = store.record(text: "Two")
-
-        let coordinator = try await makeCoordinator(clipboardStore: store)
-        coordinator.query = "clip"
-        coordinator.handleTab()
-
-        #expect(coordinator.results.count == 2)
-
-        coordinator.clearHistory()
-
-        #expect(coordinator.results.isEmpty)
     }
 
     // MARK: - Exiting clipboard mode
@@ -504,6 +492,130 @@ struct SearchCoordinatorClipboardModeTests {
             .first { $0.id == "clipboard:\(missingEntry.id)" })
         coordinator.select(missingItem)
         #expect(coordinator.previewableSelectionURL == nil)
+    }
+
+    // MARK: - Published inspector snapshot and previewability (#72)
+
+    @Test func imageSelectionPublishesItsSnapshotWithoutTouchingThePayload() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let entry = try #require(store.recordImage(
+            pngData: ClipboardImageTestData.png,
+            tiffData: nil,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 2_880,
+            height: 1_800,
+            displayName: "Screenshot"
+        ))
+        let previewURL = ClipboardImageTestData.previewURL(entryID: entry.id)
+        try? FileManager.default.removeItem(at: previewURL)
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        guard case let .image(detail) = coordinator.clipboardInspector else {
+            Issue.record("selecting an image entry should publish an image snapshot")
+            return
+        }
+        #expect(detail.entryID == entry.id)
+        #expect(detail.width == 2_880)
+        #expect(detail.height == 1_800)
+        #expect(detail.thumbnailPNG == ClipboardImageTestData.thumbnail)
+        #expect(detail.hasFullImage)
+        #expect(coordinator.isSelectionPreviewable)
+
+        // Browsing writes nothing. The temporary file belongs to the preview
+        // action, and only once the user actually takes it.
+        #expect(!FileManager.default.fileExists(atPath: previewURL.path))
+
+        #expect(coordinator.previewableSelectionURL == previewURL)
+        #expect(FileManager.default.fileExists(atPath: previewURL.path))
+        try? FileManager.default.removeItem(at: previewURL)
+    }
+
+    @Test func anImageWithNoStoredPayloadPublishesItsThumbnailAlone() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        // Only a TIFF representation was captured, so `hasFullImage` has to
+        // come from the store rather than from the entry's own metadata.
+        _ = try #require(store.recordImage(
+            pngData: nil,
+            tiffData: ClipboardImageTestData.tiff,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 64,
+            height: 32,
+            displayName: "Screenshot"
+        ))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        guard case let .image(detail) = coordinator.clipboardInspector else {
+            Issue.record("selecting an image entry should publish an image snapshot")
+            return
+        }
+        #expect(detail.hasFullImage)
+        #expect(detail.thumbnailPNG == ClipboardImageTestData.thumbnail)
+    }
+
+    @Test func previewabilityAgreesWithWhatThePreviewActionCanOpen() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let shotURL = tree.root.appendingPathComponent("shot.png")
+        try Data("shot-bytes".utf8).write(to: shotURL)
+        _ = try #require(store.record(text: "just some copied words"))
+        _ = try #require(store.record(text: "/definitely/missing/file.png"))
+        _ = try #require(store.record(text: shotURL.path))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        // The Actions menu reads the published flag and Space materializes
+        // the URL; the two must never disagree about the same row.
+        for _ in 0..<coordinator.results.count {
+            #expect(
+                coordinator.isSelectionPreviewable == (coordinator.previewableSelectionURL != nil)
+            )
+            coordinator.moveSelection(by: 1)
+        }
+    }
+
+    @Test func pinningTheSelectionRepublishesItsInspectorSnapshot() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = try #require(store.record(text: "Acme billing address"))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        guard case let .text(before) = coordinator.clipboardInspector else {
+            Issue.record("the text entry should be inspected")
+            return
+        }
+        #expect(before.pinnedAt == nil)
+
+        coordinator.togglePinSelection()
+        guard case let .text(after) = coordinator.clipboardInspector else {
+            Issue.record("pinning should leave the entry inspected")
+            return
+        }
+        #expect(after.pinnedAt != nil)
+    }
+
+    @Test func leavingClipboardModeClearsThePublishedSelectionFacts() async throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoice.pdf"))
+
+        let coordinator = try await makeCoordinator(clipboardStore: store)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+        #expect(coordinator.clipboardInspector != nil)
+        #expect(coordinator.isSelectionPreviewable)
+
+        coordinator.handleEscape()
+        #expect(!coordinator.isClipboardMode)
+        #expect(coordinator.clipboardInspector == nil)
+        #expect(!coordinator.isSelectionPreviewable)
     }
 }
 

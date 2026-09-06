@@ -22,7 +22,7 @@ private final class BlockingSystemCatalogDiscovery: @unchecked Sendable {
     }
 
     func waitUntilStarted(timeout: TimeInterval) -> Bool {
-        started.wait(timeout: .now() + timeout) == .success
+        started.wait(timeout: .now() + TestBudget.seconds(timeout)) == .success
     }
 
     func resume() {
@@ -38,7 +38,7 @@ private final class SystemCatalogTestSignal: @unchecked Sendable {
     }
 
     func wait(timeout: TimeInterval) -> Bool {
-        semaphore.wait(timeout: .now() + timeout) == .success
+        semaphore.wait(timeout: .now() + TestBudget.seconds(timeout)) == .success
     }
 }
 
@@ -556,7 +556,10 @@ struct SystemCatalogInvariantTests {
 
         #expect(page.items.count == 24)
         #expect(page.totalMatched > 9_000)
-        #expect(elapsed < .milliseconds(500), "per-keystroke search budget")
+        #expect(
+            elapsed < TestBudget.duration(.milliseconds(500)),
+            "per-keystroke search budget"
+        )
     }
 
     @Test func concurrentSearchesAndRefreshesAgreeAndNeverTrap() async {

@@ -68,8 +68,12 @@ package struct FFFContentMatch: Equatable, Sendable {
 
 /// The current state of the asynchronous FFF scan and filesystem watcher.
 package struct FFFIndexProgress: Equatable, Sendable {
+    // periphery:ignore - production polls only isScanning; the scan benchmark
+    // reports this count, and the index does not see test targets.
     package let scannedFiles: UInt64
     package let isScanning: Bool
+    // periphery:ignore - the live-watcher tests must not touch the tree before
+    // FSEvents is armed, and the index does not see test targets.
     package let isWatcherReady: Bool
 
     package init(scannedFiles: UInt64, isScanning: Bool, isWatcherReady: Bool) {

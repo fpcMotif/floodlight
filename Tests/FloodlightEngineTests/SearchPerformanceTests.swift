@@ -54,6 +54,60 @@ final class SearchPerformanceTests: XCTestCase {
         XCTAssertLessThan(microsecondsPerQuery, 1_000)
     }
 
+    func testFastApplicationSearchWithPopulatedBlocklistPerformanceBudget() {
+        let suiteName = "FloodlightPerformanceTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create isolated defaults")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let blocklist = BlocklistStore(defaults: defaults)
+        blocklist.block(name: "Chess")
+        blocklist.block(id: "application:/Applications/Xcode.app")
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: blocklist
+        )
+        let queries = [
+            "a",
+            "cl",
+            "claude",
+            "calendar",
+            "xcode",
+            "safari",
+            "notes",
+            "terminal",
+        ]
+
+        for query in queries {
+            _ = catalog.immediatePage(for: query).items
+        }
+
+        let iterations = 80
+        var samples: [Double] = []
+        var resultCount = 0
+
+        for _ in 0..<9 {
+            let sample = measure(iterations: iterations, queries: queries) { query in
+                catalog.immediatePage(for: query).items
+            }
+            samples.append(sample.microsecondsPerQuery)
+            resultCount += sample.resultCount
+        }
+        let microsecondsPerQuery = median(samples)
+
+        print(
+            "FLOODLIGHT_BENCH blocklisted_application_search_us="
+                + String(format: "%.3f", microsecondsPerQuery)
+                + " results=\(resultCount)"
+        )
+        XCTAssertLessThan(microsecondsPerQuery, 1_000)
+    }
+
     func testNewSearchFeaturePerformanceBaselines() async throws {
         let catalog = SystemCatalog()
         try await catalog.start()
@@ -287,7 +341,7 @@ final class SearchPerformanceTests: XCTestCase {
 
     private func waitForScan(_ index: FFFIndex) async throws -> UInt64 {
         for _ in 0..<10_000 {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             if !progress.isScanning {
                 return progress.scannedFiles
             }

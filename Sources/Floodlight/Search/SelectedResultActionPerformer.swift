@@ -244,7 +244,7 @@ final class SelectedResultActionPerformer {
         case let .copyFiles(paths):
             paths.first ?? item.fileURL?.path ?? item.subtitle
         case .copyImage:
-            item.title.hasPrefix("📌 ") ? String(item.title.dropFirst(2)) : item.title
+            item.title
         case let .open(url):
             url.isFileURL ? url.path : url.absoluteString
         case .askAssistant:

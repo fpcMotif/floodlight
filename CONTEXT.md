@@ -80,5 +80,5 @@ The background observation and filtering process that records new system pastebo
 _Avoid_: Pasteboard watcher, clipboard listener
 
 **Clipboard Inspector**:
-The detail pane in Clipboard mode that shows the selected Clipboard Entry’s full text, a large image preview, or file metadata such as name, path, source, and copy time.
+The detail pane in Clipboard mode that shows the selected Clipboard Entry’s full text, a large image preview, a bounded inline text or code preview for readable files, or file metadata such as name, path, source, and copy time.
 _Avoid_: Preview sidebar, detail view

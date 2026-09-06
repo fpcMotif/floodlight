@@ -1,4 +1,5 @@
 import Darwin
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import FloodlightEngine
@@ -162,9 +163,9 @@ struct FFFIndexTests {
         try await index.start()
 
         for _ in 0..<100 {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             if !progress.isScanning { break }
-            try await Task.sleep(for: .milliseconds(25))
+            try await Task.sleep(for: TestBudget.duration(.milliseconds(25)))
         }
 
         let fileResults = try await index.search("needle")
@@ -193,13 +194,13 @@ struct FFFIndexTests {
         #expect(applicationSearchItem.title == "Sample Launcher")
         #expect(applicationSearchItem.id == "application:\(downloadedApplication.path)")
 
-        let ancestorResults = try await index.searchDirectories("Reference")
+        let ancestorResults = try await directories(in: index, matching: "Reference")
         #expect(ancestorResults.contains { sameFileURL($0.url, ancestorOnlyFolder) })
 
         let folderResults = try await index.search("Projects")
         #expect(folderResults
             .contains { $0.isDirectory && $0.url.lastPathComponent == "Projects" })
-        let directoryOnlyResults = try await index.searchDirectories("Projects")
+        let directoryOnlyResults = try await directories(in: index, matching: "Projects")
         #expect(directoryOnlyResults.contains {
             $0.isDirectory && $0.url.lastPathComponent == "Projects"
         })
@@ -235,7 +236,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage, homeURL: root)
         try await index.start()
         try await assertEventually("FFF did not finish the path-query fixture scan") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning
         }
 
@@ -266,7 +267,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's live watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -279,7 +280,7 @@ struct FFFIndexTests {
             "A created file and its containing folder were not added to the live index"
         ) {
             let files = try await index.searchFiles("fresh-report")
-            let folders = try await index.searchDirectories("Live Projects")
+            let folders = try await directories(in: index, matching: "Live Projects")
             return files.contains { sameFileURL($0.url, createdFile) }
                 && folders.contains {
                     sameFileURL($0.url, createdFolder)
@@ -302,13 +303,13 @@ struct FFFIndexTests {
         let movedFile = renamedFolder.appendingPathComponent(renamedFile.lastPathComponent)
         try fileManager.moveItem(at: createdFolder, to: renamedFolder)
         try await assertEventually("Renaming a folder did not remove its old path") {
-            let results = try await index.searchDirectories("Live Projects")
+            let results = try await directories(in: index, matching: "Live Projects")
             return !results.contains {
                 sameFileURL($0.url, createdFolder)
             }
         }
         try await assertEventually("Renaming a folder did not add its new path") {
-            try await index.searchDirectories("Archived Projects").contains {
+            try await directories(in: index, matching: "Archived Projects").contains {
                 sameFileURL($0.url, renamedFolder)
             }
         }
@@ -322,7 +323,7 @@ struct FFFIndexTests {
         try await assertEventually(
             "Deleting a folder did not evict it and its descendants from the live index"
         ) {
-            let folders = try await index.searchDirectories("Archived Projects")
+            let folders = try await directories(in: index, matching: "Archived Projects")
             let files = try await index.searchFiles("renamed-report")
             return !folders.contains {
                 sameFileURL($0.url, renamedFolder)
@@ -352,7 +353,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's content watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
         try await assertEventually("Initial file content was not searchable") {
@@ -431,7 +432,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's application-bundle watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -498,7 +499,7 @@ struct FFFIndexTests {
         let index = FFFIndex(rootURL: root, storageURL: storage)
         try await index.start()
         try await assertEventually("FFF's seeded-folder watcher did not become ready") {
-            let progress = try await index.progress()
+            let progress = try await index.waitForScan(timeoutMilliseconds: 0)
             return !progress.isScanning && progress.isWatcherReady
         }
 
@@ -506,13 +507,13 @@ struct FFFIndexTests {
         let movedFile = movedFolder.appendingPathComponent(seededFile.lastPathComponent)
         try fileManager.moveItem(at: seededFolder, to: movedFolder)
         try await assertEventually("Moving an initially indexed folder left its old path behind") {
-            let folders = try await index.searchDirectories("A Seeded Folder")
+            let folders = try await directories(in: index, matching: "A Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return !folders.contains { sameFileURL($0.url, seededFolder) }
                 && !files.contains { sameFileURL($0.url, seededFile) }
         }
         try await assertEventually("Moving an initially indexed folder did not add its new path") {
-            let folders = try await index.searchDirectories("Moved Seeded Folder")
+            let folders = try await directories(in: index, matching: "Moved Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return folders.contains { sameFileURL($0.url, movedFolder) }
                 && files.contains { sameFileURL($0.url, movedFile) }
@@ -529,11 +530,20 @@ struct FFFIndexTests {
 
         try fileManager.removeItem(at: movedFolder)
         try await assertEventually("Deleting the moved folder left indexed descendants behind") {
-            let folders = try await index.searchDirectories("Moved Seeded Folder")
+            let folders = try await directories(in: index, matching: "Moved Seeded Folder")
             let files = try await index.searchFiles("seed-record")
             return !folders.contains { sameFileURL($0.url, movedFolder) }
                 && !files.contains { sameFileURL($0.url, movedFile) }
         }
+    }
+
+    /// The app searches files and folders together; the live-index assertions
+    /// only need the folder half of that result.
+    private func directories(
+        in index: FFFIndex,
+        matching query: String
+    ) async throws -> [FFFSearchResult] {
+        try await index.search(query).filter(\.isDirectory)
     }
 
     private func assertEventually(
@@ -590,7 +600,7 @@ struct FFFIndexTests {
             enableHomeDirectoryScanning: true
         )
         try await allowed.start()
-        let progress = try await allowed.progress()
+        let progress = try await allowed.waitForScan(timeoutMilliseconds: 0)
         #expect(progress.scannedFiles >= 0)
     }
 
@@ -613,7 +623,7 @@ struct FFFIndexTests {
         pollInterval: Duration = .milliseconds(25),
         _ condition: () async throws -> Bool
     ) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
         repeat {
             if try await condition() {
                 return true

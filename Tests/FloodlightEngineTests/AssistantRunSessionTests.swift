@@ -153,17 +153,23 @@ struct AssistantRunSessionTests {
         AssistantRequest(itemID: itemID, command: "claude", arguments: arguments)
     }
 
+    /// `timeout` is in ordinary-build seconds; `TestBudget` widens it for a
+    /// sanitized run. The default matches the rest of the suite — the 2s this
+    /// file used to carry was an outlier, and a main-actor task waiting behind
+    /// the concurrency stress tests on a saturated runner needs longer than
+    /// that just to be scheduled.
     private func waitUntil(
         _ description: String,
-        timeout: TimeInterval = 2,
+        timeout: TimeInterval = 5,
         _ condition: () async -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let budget = TestBudget.seconds(timeout)
+        let deadline = Date().addingTimeInterval(budget)
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        Issue.record("never became true: \(description)")
+        Issue.record("never became true after \(budget)s: \(description)")
     }
 }
 

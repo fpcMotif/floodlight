@@ -122,6 +122,36 @@ struct FileThumbnailCacheTests {
         _ = await FileThumbnailDecoder.thumbnail(at: url, maxDimension: 64)
     }
 
+    // MARK: - Pixel size probe
+
+    @Test func pixelSizeReturnsTrueDimensionsForNonSquareImage() throws {
+        let url = tree.root.appendingPathComponent("swatch.png")
+        try makePNG(at: url)
+
+        let size = try #require(FileThumbnailDecoder.pixelSize(at: url))
+        #expect(size.width == 24)
+        #expect(size.height == 16)
+    }
+
+    @Test func pixelSizeYieldsNilForMissingFile() {
+        let url = tree.root.appendingPathComponent("nope.png")
+        #expect(FileThumbnailDecoder.pixelSize(at: url) == nil)
+    }
+
+    @Test func pixelSizeYieldsNilForUnsupportedExtension() throws {
+        let url = tree.root.appendingPathComponent("notes.txt")
+        try Data("hello".utf8).write(to: url)
+
+        #expect(FileThumbnailDecoder.pixelSize(at: url) == nil)
+    }
+
+    @Test func pixelSizeYieldsNilForSVG() throws {
+        let url = tree.root.appendingPathComponent("icon.svg")
+        try makeSVG(at: url)
+
+        #expect(FileThumbnailDecoder.pixelSize(at: url) == nil)
+    }
+
     // MARK: - Cache
 
     @Test func cacheReturnsTheSameObjectOnSecondLookup() async throws {
@@ -131,19 +161,40 @@ struct FileThumbnailCacheTests {
         let cache = FileThumbnailCache()
         let firstLookup = await cache.thumbnail(for: url)
         let first = try #require(firstLookup)
-        let cached = try #require(cache.cachedThumbnail(for: url))
-        #expect(first === cached)
 
         let secondLookup = await cache.thumbnail(for: url)
         let second = try #require(secondLookup)
         #expect(first === second)
     }
 
+    // MARK: - Placeholder pixel size
+
+    @Test func placeholderPixelSizeProbesAnUndecodedImage() throws {
+        let url = tree.root.appendingPathComponent("swatch.png")
+        try makePNG(at: url)
+
+        let cache = FileThumbnailCache()
+        let size = try #require(cache.placeholderPixelSize(for: url))
+        #expect(size.width == 24)
+        #expect(size.height == 16)
+    }
+
+    @Test func placeholderPixelSizePrefersTheDecodedThumbnailSize() async throws {
+        let url = tree.root.appendingPathComponent("swatch.png")
+        try makePNG(at: url)
+
+        let cache = FileThumbnailCache()
+        let thumbnail = try #require(await cache.thumbnail(for: url, maxDimension: 8))
+        let placeholder = try #require(cache.placeholderPixelSize(for: url))
+        #expect(placeholder == thumbnail.size)
+        #expect(placeholder != CGSize(width: 24, height: 16))
+    }
+
     // MARK: - Extension classification
 
     @Test func extensionClassificationIsCaseInsensitive() {
-        #expect(FileThumbnailCache.isImage(URL(fileURLWithPath: "/tmp/A.PNG")))
+        #expect(FileThumbnailDecoder.isImage(URL(fileURLWithPath: "/tmp/A.PNG")))
         #expect(FileThumbnailCache.isVideo(URL(fileURLWithPath: "/tmp/b.MOV")))
-        #expect(!FileThumbnailCache.isImage(URL(fileURLWithPath: "/tmp/c.txt")))
+        #expect(!FileThumbnailDecoder.isImage(URL(fileURLWithPath: "/tmp/c.txt")))
     }
 }

@@ -129,7 +129,7 @@ struct SelectedResultActionPerformerTests {
         let harness = makeHarness()
         let item = SearchItem(
             id: "clipboard:image-2",
-            title: "📌 AppMockup_Dark_v2.png",
+            title: "AppMockup_Dark_v2.png",
             subtitle: "1440×900 · 1h",
             kind: .clipboard,
             action: .copyImage(id: "image-2"),
@@ -468,16 +468,21 @@ struct SelectedResultActionPerformerTests {
         )
     }
 
+    /// `timeout` is in ordinary-build seconds; `TestBudget` widens it for a
+    /// sanitized run. The default matches the rest of the suite — the 2s this
+    /// file used to carry was an outlier that a shared CI runner, saturated
+    /// by the concurrency stress tests, walked past on work that does land.
     private func waitUntil(
-        timeout: TimeInterval = 2,
+        timeout: TimeInterval = 5,
         _ condition: () async -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let budget = TestBudget.seconds(timeout)
+        let deadline = Date().addingTimeInterval(budget)
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        Issue.record("condition was never satisfied within \(timeout)s")
+        Issue.record("condition was never satisfied within \(budget)s")
     }
 }
 
