@@ -11,6 +11,19 @@ package extension ClipboardHistoryStore {
         search(query: "").isEmpty
     }
 
+    /// The two halves of the in-memory mirror, as a consistency test needs to
+    /// see them: whether a write that SQLite refused nonetheless moved a row
+    /// between them. Read through `search` like the rest of this file, so a
+    /// fixture that drops the table underneath the store still gets the
+    /// mirror's answer rather than a query failure.
+    var pinnedEntries: [ClipboardEntry] {
+        search(query: "").filter(\.isPinned)
+    }
+
+    var unpinnedEntries: [ClipboardEntry] {
+        search(query: "").filter { !$0.isPinned }
+    }
+
     /// The newest unpinned entry, else the newest pinned one — "what was just
     /// recorded" from a test's point of view.
     var mostRecentEntry: ClipboardEntry? {

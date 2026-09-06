@@ -10,6 +10,11 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
     package static let inMemoryRecentWindowLimit = 1_000
     package static let searchResultLimit = 200
 
+    /// How long a statement waits for another connection's write lock before
+    /// giving up. Long enough to outlast a concurrent write, short enough that
+    /// a genuinely stuck database still fails rather than hanging a keystroke.
+    private static let busyTimeoutMilliseconds: Int32 = 2_000
+
     private struct State: @unchecked Sendable {
         var db: OpaquePointer?
         var pinnedEntries: [ClipboardEntry]
@@ -17,6 +22,11 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
     }
 
     private let stateLock: OSAllocatedUnfairLock<State>
+
+    private static let log = Logger(
+        subsystem: "com.floodlight.app",
+        category: "clipboard-history"
+    )
 
     package static func inMemory() -> ClipboardHistoryStore {
         (try? ClipboardHistoryStore(databasePath: ":memory:")) ??
@@ -52,6 +62,10 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         guard openResult == SQLITE_OK, let db = dbPointer else {
             let errorMsg = dbPointer.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
             if let dbPointer { sqlite3_close(dbPointer) }
+            Self.logFailure(
+                operation: "database open",
+                message: "\(errorMsg) — falling back to in-memory history"
+            )
             throw NSError(
                 domain: "ClipboardHistoryStore",
                 code: Int(openResult),
@@ -59,7 +73,25 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             )
         }
 
-        ClipboardHistorySQLite.initializeSchema(db: db)
+        // A second connection holding the write lock is a transient condition,
+        // not a broken database — wait for it rather than treating the schema
+        // step below as unrecoverable and dropping the user's history into an
+        // in-memory store for the rest of the session.
+        sqlite3_busy_timeout(db, Self.busyTimeoutMilliseconds)
+
+        // A database we cannot prepare is not a database we should write to: throw,
+        // and let the caller fall back to the in-memory store it already builds.
+        do {
+            try ClipboardHistorySQLite.initializeSchema(db: db)
+        } catch {
+            Self.logFailure(
+                operation: "schema initialization",
+                message: "\(error) — falling back to in-memory history"
+            )
+            sqlite3_close(db)
+            throw error
+        }
+
         let (pinned, recent) = ClipboardHistorySQLite.loadInitialWindow(
             db: db,
             recentLimit: Self.inMemoryRecentWindowLimit
@@ -95,7 +127,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return ClipboardHistorySQLite.readEntry(from: stmt)
         }
@@ -185,32 +217,21 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             )
             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?);
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
-                return nil
+            let accepted = Self.write(db: db, sql: insertSQL, operation: "record image") { stmt in
+                ClipboardHistorySQLite.bindText(stmt, index: 1, value: entry.id)
+                ClipboardHistorySQLite.bindText(stmt, index: 2, value: entry.text)
+                ClipboardHistorySQLite.bindText(stmt, index: 3, value: entry.kind.rawValue)
+                sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
+                ClipboardHistorySQLite.bindText(stmt, index: 5, value: entry.sourceAppBundleID)
+                ClipboardHistorySQLite.bindText(stmt, index: 6, value: hash)
+                sqlite3_bind_int64(stmt, 7, Int64(width))
+                sqlite3_bind_int64(stmt, 8, Int64(height))
+                sqlite3_bind_int64(stmt, 9, Int64(primary.count))
+                ClipboardHistorySQLite.bindBlob(stmt, index: 10, data: thumbnailPNGData)
+                ClipboardHistorySQLite.bindBlob(stmt, index: 11, data: png)
+                ClipboardHistorySQLite.bindBlob(stmt, index: 12, data: tiff)
             }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (entry.id as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (entry.text as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (entry.kind.rawValue as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
-            if let bundleID = entry.sourceAppBundleID {
-                sqlite3_bind_text(stmt, 5, (bundleID as NSString).utf8String, -1, nil)
-            } else {
-                sqlite3_bind_null(stmt, 5)
-            }
-            sqlite3_bind_text(stmt, 6, (hash as NSString).utf8String, -1, nil)
-            sqlite3_bind_int64(stmt, 7, Int64(width))
-            sqlite3_bind_int64(stmt, 8, Int64(height))
-            sqlite3_bind_int64(stmt, 9, Int64(primary.count))
-            ClipboardHistorySQLite.bindBlob(stmt, index: 10, data: thumbnailPNGData)
-            ClipboardHistorySQLite.bindBlob(stmt, index: 11, data: png)
-            ClipboardHistorySQLite.bindBlob(stmt, index: 12, data: tiff)
-
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                return nil
-            }
+            guard accepted else { return nil }
 
             state.recentEntries.insert(entry, at: 0)
             if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
@@ -227,7 +248,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             let png = ClipboardHistorySQLite.readBlob(stmt, index: 0)
             let tiff = ClipboardHistorySQLite.readBlob(stmt, index: 1)
@@ -268,25 +289,14 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             INSERT INTO clipboard_entries (id, text, kind, created_at, source_app_bundle_id, pinned_at)
             VALUES (?, ?, ?, ?, ?, NULL);
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
-                return nil
+            let accepted = Self.write(db: db, sql: insertSQL, operation: "record") { stmt in
+                ClipboardHistorySQLite.bindText(stmt, index: 1, value: entry.id)
+                ClipboardHistorySQLite.bindText(stmt, index: 2, value: entry.text)
+                ClipboardHistorySQLite.bindText(stmt, index: 3, value: entry.kind.rawValue)
+                sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
+                ClipboardHistorySQLite.bindText(stmt, index: 5, value: entry.sourceAppBundleID)
             }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (entry.id as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (entry.text as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (entry.kind.rawValue as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
-            if let bundleID = entry.sourceAppBundleID {
-                sqlite3_bind_text(stmt, 5, (bundleID as NSString).utf8String, -1, nil)
-            } else {
-                sqlite3_bind_null(stmt, 5)
-            }
-
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                return nil
-            }
+            guard accepted else { return nil }
 
             state.recentEntries.insert(entry, at: 0)
             if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
@@ -331,7 +341,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, ftsSQL, -1, &stmt, nil) == SQLITE_OK {
                 defer { sqlite3_finalize(stmt) }
-                sqlite3_bind_text(stmt, 1, (escaped as NSString).utf8String, -1, nil)
+                ClipboardHistorySQLite.bindText(stmt, index: 1, value: escaped)
                 sqlite3_bind_int(stmt, 2, Int32(Self.searchResultLimit))
 
                 var results: [ClipboardEntry] = []
@@ -367,20 +377,56 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         return "\(image.width)×\(image.height)".localizedCaseInsensitiveContains(query)
     }
 
+    // MARK: - Writes
+
+    /// Runs one write statement and reports whether SQLite accepted it, logging the
+    /// message when it did not. The in-memory mirror is the caller's to update, and
+    /// only once this has returned `true`.
+    private static func write(
+        db: OpaquePointer,
+        sql: String,
+        operation: String,
+        bind: (OpaquePointer?) -> Void
+    ) -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            logFailure(operation: operation, message: String(cString: sqlite3_errmsg(db)))
+            return false
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        bind(stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            logFailure(operation: operation, message: String(cString: sqlite3_errmsg(db)))
+            return false
+        }
+        return true
+    }
+
+    /// The one place a write failure is worded, so every path says why the
+    /// board did not move in the same shape.
+    private static func logFailure(operation: String, message: String) {
+        log.error(
+            "Clipboard history \(operation, privacy: .public) failed: \(message, privacy: .public)"
+        )
+    }
+
     // MARK: - Pinning
 
-    package func pin(id: String, date: Date = .now) {
+    @discardableResult
+    package func pin(id: String, date: Date = .now) -> Bool {
         stateLock.withLock { state in
-            guard let db = state.db else { return }
+            guard let db = state.db else { return false }
 
-            let sql = "UPDATE clipboard_entries SET pinned_at = ? WHERE id = ?;"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
-            guard sqlite3_step(stmt) == SQLITE_DONE else { return }
+            let accepted = Self.write(
+                db: db,
+                sql: "UPDATE clipboard_entries SET pinned_at = ? WHERE id = ?;",
+                operation: "pin"
+            ) { stmt in
+                sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+                ClipboardHistorySQLite.bindText(stmt, index: 2, value: id)
+            }
+            guard accepted else { return false }
 
             if let idx = state.recentEntries.firstIndex(where: { $0.id == id }) {
                 let unpinned = state.recentEntries.remove(at: idx)
@@ -393,20 +439,23 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 state.pinnedEntries
                     .sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             }
+            return true
         }
     }
 
-    package func unpin(id: String) {
+    @discardableResult
+    package func unpin(id: String) -> Bool {
         stateLock.withLock { state in
-            guard let db = state.db else { return }
+            guard let db = state.db else { return false }
 
-            let sql = "UPDATE clipboard_entries SET pinned_at = NULL WHERE id = ?;"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
-            guard sqlite3_step(stmt) == SQLITE_DONE else { return }
+            let accepted = Self.write(
+                db: db,
+                sql: "UPDATE clipboard_entries SET pinned_at = NULL WHERE id = ?;",
+                operation: "unpin"
+            ) { stmt in
+                ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
+            }
+            guard accepted else { return false }
 
             if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let pinned = state.pinnedEntries.remove(at: idx)
@@ -416,69 +465,83 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                     state.recentEntries.removeLast()
                 }
             }
+            return true
         }
     }
 
-    package func togglePin(id: String, date: Date = .now) {
+    @discardableResult
+    package func togglePin(id: String, date: Date = .now) -> Bool {
         let isCurrentlyPinned = stateLock.withLock { state in
             state.pinnedEntries.contains { $0.id == id }
         }
-        if isCurrentlyPinned {
-            unpin(id: id)
-        } else {
-            pin(id: id, date: date)
-        }
+        return isCurrentlyPinned ? unpin(id: id) : pin(id: id, date: date)
     }
 
     // MARK: - Deletion & Clear
 
-    package func delete(id: String) {
+    @discardableResult
+    package func delete(id: String) -> Bool {
         stateLock.withLock { state in
-            guard let db = state.db else { return }
+            guard let db = state.db else { return false }
 
-            let sql = "DELETE FROM clipboard_entries WHERE id = ?;"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
-            guard sqlite3_step(stmt) == SQLITE_DONE else { return }
+            let accepted = Self.write(
+                db: db,
+                sql: "DELETE FROM clipboard_entries WHERE id = ?;",
+                operation: "delete"
+            ) { stmt in
+                ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
+            }
+            guard accepted else { return false }
 
             state.pinnedEntries.removeAll { $0.id == id }
             state.recentEntries.removeAll { $0.id == id }
+            return true
         }
     }
 
-    package func clear() {
+    @discardableResult
+    package func clear() -> Bool {
         stateLock.withLock { state in
-            guard let db = state.db else { return }
+            guard let db = state.db else { return false }
 
-            sqlite3_exec(db, "DELETE FROM clipboard_entries;", nil, nil, nil)
+            let accepted = Self.write(
+                db: db,
+                sql: "DELETE FROM clipboard_entries;",
+                operation: "clear"
+            ) { _ in }
+            guard accepted else { return false }
+
             state.pinnedEntries.removeAll()
             state.recentEntries.removeAll()
+            return true
         }
     }
 
     // MARK: - Retention Pruning
 
-    package func prune(olderThan cutoff: Date) {
+    @discardableResult
+    package func prune(olderThan cutoff: Date) -> Bool {
         stateLock.withLock { state in
-            guard let db = state.db else { return }
+            guard let db = state.db else { return false }
 
-            let sql = "DELETE FROM clipboard_entries WHERE pinned_at IS NULL AND created_at < ?;"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
-            guard sqlite3_step(stmt) == SQLITE_DONE else { return }
+            let accepted = Self.write(
+                db: db,
+                sql: "DELETE FROM clipboard_entries WHERE pinned_at IS NULL AND created_at < ?;",
+                operation: "prune"
+            ) { stmt in
+                sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
+            }
+            guard accepted else { return false }
 
             state.recentEntries.removeAll { $0.createdAt < cutoff }
+            return true
         }
     }
 
-    package func prune(retention: ClipboardRetention, now: Date = .now) {
-        guard let cutoff = retention.cutoffDate(from: now) else { return }
-        prune(olderThan: cutoff)
+    /// `.forever` has nothing to prune, which is success — there is no cutoff to run.
+    @discardableResult
+    package func prune(retention: ClipboardRetention, now: Date = .now) -> Bool {
+        guard let cutoff = retention.cutoffDate(from: now) else { return true }
+        return prune(olderThan: cutoff)
     }
 }

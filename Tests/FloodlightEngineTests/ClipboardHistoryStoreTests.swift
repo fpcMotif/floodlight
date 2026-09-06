@@ -5,8 +5,7 @@ import Testing
 
 struct ClipboardHistoryStoreTests {
     private func makeTemporaryDatabaseURL() throws -> (url: URL, cleanup: () -> Void) {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloodlightTests-\(UUID().uuidString)")
+        let tempDir = TemporaryDirectory.make(label: "FloodlightTests")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         let dbURL = tempDir.appendingPathComponent("test-clipboard.sqlite3")
         return (dbURL, {

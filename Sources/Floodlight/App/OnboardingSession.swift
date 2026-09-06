@@ -141,7 +141,7 @@ final class OnboardingSession {
     }
 
     func clearClipboardHistory() {
-        clipboardStore.clear()
+        guard clipboardStore.clear() else { return }
         clipboardVersion += 1
     }
 
