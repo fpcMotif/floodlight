@@ -82,12 +82,21 @@ enum ClipboardInspector: Equatable {
     }
 
     struct ImageDetail: Equatable {
+        /// The Clipboard History entry this describes — what the pane keys
+        /// its full-image load and its decoded-image cache on.
+        let entryID: String
         let name: String
         let width: Int
         let height: Int
         let byteCount: Int
         let format: String
-        let previewPNG: Data?
+        /// The stored 128 pt thumbnail, which is what the pane can draw the
+        /// instant the selection moves.
+        let thumbnailPNG: Data?
+        /// A full-size payload exists for this entry. The snapshot says so
+        /// rather than carrying the payload: a 15 MB screenshot read on
+        /// every republication is what made arrowing stutter (#72).
+        let hasFullImage: Bool
         let sourceApp: String
         let sourceAppBundleID: String?
         let createdAt: Date
@@ -115,9 +124,14 @@ enum ClipboardInspector: Equatable {
         }
     }
 
+    /// Everything the inspector pane renders, derived from the entry alone.
+    /// `hasFullImage` is a fact about the store the caller has already
+    /// established cheaply — the snapshot never reads an image payload
+    /// itself, which is what keeps it affordable to recompute whenever the
+    /// selection moves.
     static func snapshot(
         for entry: ClipboardEntry,
-        imagePNG: Data? = nil
+        hasFullImage: Bool = false
     ) -> ClipboardInspector {
         let sourceApp = sourceAppDisplayName(for: entry.sourceAppBundleID)
         let formattedDate = formattedDetailedDate(entry.createdAt)
@@ -203,13 +217,17 @@ enum ClipboardInspector: Equatable {
             let height = entry.image?.height ?? 0
             let format = imageFormatName(width: width, height: height)
 
+            let thumbnail = entry.image?.thumbnailPNGData
+
             return .image(ImageDetail(
+                entryID: entry.id,
                 name: entry.text.isEmpty ? "Image" : entry.text,
                 width: width,
                 height: height,
                 byteCount: entry.image?.byteCount ?? 0,
                 format: format,
-                previewPNG: imagePNG ?? entry.image?.thumbnailPNGData,
+                thumbnailPNG: thumbnail.flatMap { $0.isEmpty ? nil : $0 },
+                hasFullImage: hasFullImage,
                 sourceApp: sourceApp,
                 sourceAppBundleID: entry.sourceAppBundleID,
                 createdAt: entry.createdAt,

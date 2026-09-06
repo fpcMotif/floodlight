@@ -42,6 +42,24 @@ package struct ClipboardImagePayload: Equatable, Sendable {
     }
 }
 
+/// Which full-size representations an entry still holds — answered from the
+/// row without reading the blob itself. The entry's own metadata already
+/// carries the byte count, so this stays to the one question the row can be
+/// asked cheaply.
+package struct ClipboardImagePayloadInfo: Equatable, Sendable {
+    package let hasPNG: Bool
+    package let hasTIFF: Bool
+
+    package var hasPayload: Bool {
+        hasPNG || hasTIFF
+    }
+
+    package init(hasPNG: Bool, hasTIFF: Bool) {
+        self.hasPNG = hasPNG
+        self.hasTIFF = hasTIFF
+    }
+}
+
 /// One immutable captured or pinned Clipboard History entry.
 package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
     package let id: String

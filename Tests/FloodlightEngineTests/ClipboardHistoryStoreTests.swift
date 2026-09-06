@@ -503,6 +503,51 @@ struct ClipboardHistoryStoreTests {
         #expect(store.imageData(for: kept.id)?.tiff == tiff)
     }
 
+    @Test func imagePayloadInfoReportsPNGPresenceWithoutReadingBlob() throws {
+        let store = ClipboardHistoryStore.inMemory()
+
+        let entry = try #require(store.recordImage(
+            pngData: ClipboardImageTestData.png,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 2_880,
+            height: 1_800,
+            displayName: "CleanShot 2026-09-01 at 15.30.png"
+        ))
+
+        let info = try #require(store.imagePayloadInfo(for: entry.id))
+        #expect(info.hasPNG)
+        #expect(!info.hasTIFF)
+        #expect(info.hasPayload)
+    }
+
+    @Test func imagePayloadInfoReportsTIFFOnlyEntries() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let oversizedPNG = Data(repeating: 0x11, count: ClipboardHistoryStore.maxImageByteCount + 1)
+        let tiff = Data(repeating: 0x33, count: 16)
+
+        let entry = try #require(store.recordImage(
+            pngData: oversizedPNG,
+            tiffData: tiff,
+            thumbnailPNGData: ClipboardImageTestData.thumbnail,
+            width: 8,
+            height: 8,
+            displayName: "tiff-only.png"
+        ))
+
+        let info = try #require(store.imagePayloadInfo(for: entry.id))
+        #expect(!info.hasPNG)
+        #expect(info.hasTIFF)
+        #expect(info.hasPayload)
+    }
+
+    @Test func imagePayloadInfoReturnsNilForTextEntriesAndUnknownIDs() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let text = try #require(store.record(text: "Not an image"))
+
+        #expect(store.imagePayloadInfo(for: text.id) == nil)
+        #expect(store.imagePayloadInfo(for: "nonexistent-id") == nil)
+    }
+
     @Test func emptyImagePayloadsAreSkipped() {
         let store = ClipboardHistoryStore.inMemory()
         #expect(store.recordImage(
@@ -552,15 +597,20 @@ struct ClipboardHistoryStoreTests {
         #expect(!store.search(query: "").contains { $0.id == oldImage.id })
         #expect(store.search(query: "").first { $0.id == pinnedImage.id }?.kind == .image)
         #expect(store.imageData(for: oldImage.id) == nil)
+        // A pruned entry's row is gone entirely, so the cheap query agrees with the blob read.
+        #expect(store.imagePayloadInfo(for: oldImage.id) == nil)
         #expect(store.imageData(for: pinnedImage.id)?.png == Data(repeating: 0x02, count: 16))
+        #expect(store.imagePayloadInfo(for: pinnedImage.id)?.hasPNG == true)
 
         store.delete(id: recentImage.id)
         #expect(store.search(query: "").map(\.id) == [pinnedImage.id])
         #expect(store.imageData(for: recentImage.id) == nil)
+        #expect(store.imagePayloadInfo(for: recentImage.id) == nil)
 
         store.clear()
         #expect(store.isEmpty)
         #expect(store.imageData(for: pinnedImage.id) == nil)
+        #expect(store.imagePayloadInfo(for: pinnedImage.id) == nil)
     }
 
     @Test func diskStorePersistsImageKindThumbnailAndPayload() throws {

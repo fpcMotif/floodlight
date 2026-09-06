@@ -69,19 +69,70 @@ struct ClipboardInspectorTests {
             )
         )
 
-        let snapshot = ClipboardInspector.snapshot(for: entry, imagePNG: png)
+        let snapshot = ClipboardInspector.snapshot(for: entry, hasFullImage: true)
 
         guard case let .image(detail) = snapshot else {
             Issue.record("expected an image inspector snapshot")
             return
         }
+        #expect(detail.entryID == "image-1")
         #expect(detail.name == "Screenshot 2026-09-01.png")
         #expect(detail.width == 2_880)
         #expect(detail.height == 1_800)
         #expect(detail.byteCount == 1_400_000)
-        #expect(detail.previewPNG == png)
         #expect(detail.sourceApp == "CleanShotX")
         #expect(detail.createdAt == created)
+        // The snapshot carries the thumbnail and the fact that a full-size
+        // payload exists — never the payload itself (#72).
+        #expect(detail.thumbnailPNG == thumbnail)
+        #expect(detail.hasFullImage)
+        #expect(png.count == 64, "the full payload stays out of the snapshot")
+    }
+
+    @Test func imageSnapshotWithoutAFullPayloadStillCarriesItsThumbnail() {
+        let thumbnail = Data(repeating: 0xEF, count: 32)
+        let entry = ClipboardEntry(
+            id: "image-2",
+            text: "Screenshot.png",
+            kind: .image,
+            createdAt: .now,
+            image: ClipboardImageMetadata(
+                hash: "abc",
+                width: 64,
+                height: 32,
+                byteCount: 0,
+                thumbnailPNGData: thumbnail
+            )
+        )
+
+        guard case let .image(detail) = ClipboardInspector.snapshot(for: entry) else {
+            Issue.record("expected an image inspector snapshot")
+            return
+        }
+        #expect(detail.thumbnailPNG == thumbnail)
+        #expect(!detail.hasFullImage)
+    }
+
+    @Test func imageSnapshotTreatsAnEmptyThumbnailAsNoThumbnail() {
+        let entry = ClipboardEntry(
+            id: "image-3",
+            text: "Screenshot.png",
+            kind: .image,
+            createdAt: .now,
+            image: ClipboardImageMetadata(
+                hash: "abc",
+                width: 64,
+                height: 32,
+                byteCount: 0,
+                thumbnailPNGData: Data()
+            )
+        )
+
+        guard case let .image(detail) = ClipboardInspector.snapshot(for: entry) else {
+            Issue.record("expected an image inspector snapshot")
+            return
+        }
+        #expect(detail.thumbnailPNG == nil, "empty bytes would decode to nothing")
     }
 
     @Test func urlSnapshotClassifiesAsLinkAndExtractsDomain() {

@@ -325,7 +325,7 @@ struct SearchViewRenderingTests {
                         thumbnailPNGData: ClipboardImageTestData.thumbnail
                     )
                 ),
-                imagePNG: ClipboardImageTestData.png
+                hasFullImage: true
             )),
             width: width,
             height: height

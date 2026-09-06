@@ -4,6 +4,11 @@ import SwiftUI
 
 struct ClipboardInspectorPane: View {
     let snapshot: ClipboardInspector?
+    /// Reads a captured entry's full-size image bytes. Called off the main
+    /// actor, once per entry, and only after the thumbnail is already on
+    /// screen. Left unset by the rendering tests, which assert on what the
+    /// snapshot alone can draw.
+    var imagePayloadProvider: (@Sendable (String) -> Data?)?
 
     var body: some View {
         Group {
@@ -154,13 +159,8 @@ struct ClipboardInspectorPane: View {
 
     private func imagePreview(_ detail: ClipboardInspector.ImageDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let data = detail.previewPNG, let image = NSImage(data: data) {
-                MediaWell {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                }
-            }
+            CapturedImagePreview(detail: detail, payloadProvider: imagePayloadProvider)
+                .id(detail.entryID)
             previewTitle(detail.name)
         }
     }
@@ -324,17 +324,43 @@ private struct MediaWell<Content: View>: View {
     }
 }
 
+/// Holds a picture's shape while its pixels decode, so the real image
+/// filling in never resizes the pane under the reader's eye. With no shape
+/// to hold — a video, an unreadable file — it falls back to the well's own
+/// minimum height.
+private struct MediaPlaceholder: View {
+    let pixelSize: CGSize?
+
+    var body: some View {
+        Group {
+            if let pixelSize, pixelSize.width > 0, pixelSize.height > 0 {
+                Color.clear
+                    .aspectRatio(pixelSize.width / pixelSize.height, contentMode: .fit)
+            } else {
+                Color.clear
+            }
+        }
+        .overlay(ProgressView().controlSize(.small))
+        .accessibilityLabel("Loading preview")
+    }
+}
+
+/// A copied image or video file's preview. The header probe gives the
+/// placeholder the picture's real shape at once, and the pixels land
+/// asynchronously — as the video path always did. Decoding the file
+/// synchronously in this initializer to head off a flicker is what made
+/// arrowing onto a copied screenshot hitch instead (#72).
 private struct FileMediaPreview: View {
     let url: URL
     @State private var thumbnail: NSImage?
-    @State private var isVideo: Bool
+    private let placeholderSize: CGSize?
+    private let isVideo: Bool
 
     init(url: URL) {
         self.url = url
-        _thumbnail = State(
-            initialValue: FileThumbnailCache.shared.immediateImageThumbnail(for: url)
-        )
-        _isVideo = State(initialValue: FileThumbnailCache.isVideo(url))
+        _thumbnail = State(initialValue: FileThumbnailCache.shared.cachedThumbnail(for: url))
+        placeholderSize = FileThumbnailCache.shared.placeholderPixelSize(for: url)
+        isVideo = FileThumbnailCache.isVideo(url)
     }
 
     var body: some View {
@@ -352,14 +378,67 @@ private struct FileMediaPreview: View {
                     }
                 }
             } else {
-                ProgressView()
-                    .controlSize(.small)
+                MediaPlaceholder(pixelSize: placeholderSize)
             }
         }
         .task(id: url) {
             guard thumbnail == nil else { return }
             thumbnail = await FileThumbnailCache.shared.thumbnail(for: url)
         }
+    }
+}
+
+/// The board's captured-image preview: the stored thumbnail immediately,
+/// the full-resolution picture once it has been read and decoded off the
+/// main actor. Showing the real picture used to mean pulling the whole
+/// payload — up to 15 MB — out of SQLite and decoding it during layout, on
+/// every republication (#72).
+private struct CapturedImagePreview: View {
+    let detail: ClipboardInspector.ImageDetail
+    let payloadProvider: (@Sendable (String) -> Data?)?
+    @State private var fullImage: NSImage?
+
+    init(
+        detail: ClipboardInspector.ImageDetail,
+        payloadProvider: (@Sendable (String) -> Data?)?
+    ) {
+        self.detail = detail
+        self.payloadProvider = payloadProvider
+        _fullImage = State(
+            initialValue: ClipboardImageCache.shared.cachedFullImage(entryID: detail.entryID)
+        )
+    }
+
+    var body: some View {
+        Group {
+            if let image = fullImage ?? thumbnail {
+                MediaWell {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                }
+            } else if detail.hasFullImage {
+                MediaWell {
+                    MediaPlaceholder(
+                        pixelSize: CGSize(width: detail.width, height: detail.height)
+                    )
+                }
+            }
+        }
+        .task(id: detail.entryID) {
+            guard detail.hasFullImage, fullImage == nil, let payloadProvider else { return }
+            let entryID = detail.entryID
+            let image = await ClipboardImageCache.shared.fullImage(entryID: entryID) {
+                payloadProvider(entryID)
+            }
+            guard !Task.isCancelled else { return }
+            fullImage = image
+        }
+    }
+
+    private var thumbnail: NSImage? {
+        guard let data = detail.thumbnailPNG else { return nil }
+        return ClipboardImageCache.shared.thumbnail(entryID: detail.entryID, data: data)
     }
 }
 

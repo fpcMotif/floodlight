@@ -224,6 +224,7 @@ final class FloodlightPanelController {
         quickLook.close()
         panel.orderOut(nil)
         model.reset()
+        ClipboardImageCache.shared.removeFullImages()
     }
 
     private func positionOnActiveScreen() {
@@ -321,7 +322,7 @@ final class FloodlightPanelController {
             if Self.shouldHandleSpaceAsPreview(
                 isClipboardMode: model.isClipboardMode,
                 query: model.query,
-                hasPreviewableSelection: model.previewableSelectionURL != nil
+                hasPreviewableSelection: model.isSelectionPreviewable
             ) {
                 togglePreview()
                 return nil

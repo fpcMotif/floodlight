@@ -285,9 +285,14 @@ private struct SearchResultsSection: View {
                     ResultList(model: model)
                         .frame(width: FloodlightMetrics.clipboardListWidth)
                     Divider().opacity(0.45)
-                    ClipboardInspectorPane(snapshot: model.clipboardInspector)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.primary.opacity(0.03))
+                    ClipboardInspectorPane(
+                        snapshot: model.clipboardInspector,
+                        imagePayloadProvider: { [store = model.clipboardStore] entryID in
+                            store.imageData(for: entryID).flatMap { $0.png ?? $0.tiff }
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
+                    .background(Color.primary.opacity(0.03))
                 }
                 Divider().opacity(0.45)
                 ClipboardFooterBar(model: model, boardContext: boardContext)
@@ -598,8 +603,11 @@ private struct ClipboardFooterBar: View {
         .background(Color.secondary.opacity(0.04))
     }
 
+    /// The published flag, never `previewableSelectionURL` — asking that
+    /// here stats the disk and writes Quick Look's temporary file on every
+    /// pass of the footer's body (#72).
     private var canPreview: Bool {
-        model.previewableSelectionURL != nil
+        model.isSelectionPreviewable
     }
 }
 

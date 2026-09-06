@@ -276,6 +276,27 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
+    package func imagePayloadInfo(for id: String) -> ClipboardImagePayloadInfo? {
+        stateLock.withLock { state in
+            guard let db = state.db else { return nil }
+            // IS NOT NULL is answered from the record header, so this asks
+            // whether a payload exists without ever materializing the blob.
+            let sql = """
+            SELECT png_data IS NOT NULL, tiff_data IS NOT NULL
+            FROM clipboard_entries WHERE id = ? LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            let hasPNG = sqlite3_column_int64(stmt, 0) != 0
+            let hasTIFF = sqlite3_column_int64(stmt, 1) != 0
+            guard hasPNG || hasTIFF else { return nil }
+            return ClipboardImagePayloadInfo(hasPNG: hasPNG, hasTIFF: hasTIFF)
+        }
+    }
+
     private func insert(
         text: String,
         kind: ClipboardEntryKind,
