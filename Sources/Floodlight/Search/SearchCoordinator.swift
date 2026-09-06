@@ -388,6 +388,13 @@ final class SearchCoordinator {
         actionPerformer.activate(item, query: query)
     }
 
+    /// Adds the rule, then drops the row from what is already on screen.
+    ///
+    /// Search sources apply the blocklist themselves, so every later query
+    /// comes back without the excluded application; this one-shot filter of
+    /// the candidates already published is what makes the row leave now,
+    /// without re-running the query. It costs one pass at the moment a person
+    /// excludes something, never a keystroke.
     func excludeFromSearch(_ item: SearchItem) {
         blocklistStore.block(id: item.id)
         blocklistStore.block(name: item.title)
@@ -593,14 +600,10 @@ final class SearchCoordinator {
         progress: SearchResultProgress,
         filterContinuity: SearchResultProjection.FilterContinuity = .reconcileWhenSettled
     ) -> SearchResultPublication {
-        let validCandidates = candidates.filter { !blocklistStore.isBlocked(
-            name: $0.title,
-            id: $0.id
-        ) }
-        return SearchResultProjection.project(
+        SearchResultProjection.project(
             .local(.init(
                 query: query ?? self.query.trimmingCharacters(in: .whitespacesAndNewlines),
-                candidates: validCandidates,
+                candidates: candidates,
                 keywordRegistry: keywordRegistry,
                 selectedFilter: selectedFilter,
                 selection: selection,

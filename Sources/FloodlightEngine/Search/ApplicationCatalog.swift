@@ -128,6 +128,7 @@ package final class ApplicationCatalog: Catalog {
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
         let applicationsByMarker = snapshotApplicationsByMarker()
+        let blocklist = blocklistStore.snapshot()
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
         let indexed = try await index.searchFiles(
@@ -139,14 +140,14 @@ package final class ApplicationCatalog: Catalog {
             guard let application = applicationsByMarker[result.relativePath] else {
                 return nil
             }
-            if self.blocklistStore.isBlocked(name: application.name, id: application.id) {
-                return nil
-            }
             guard let score = Self.score(
                 of: application,
                 normalizedQuery: normalizedQuery,
                 asciiQuery: asciiQuery
             ) else {
+                return nil
+            }
+            if Self.isExcluded(application, by: blocklist) {
                 return nil
             }
             return SearchItem(
@@ -175,14 +176,15 @@ package final class ApplicationCatalog: Catalog {
 
         let currentApps = state.withLock { $0.applications }
         let boosts = recentStore.boostMap()
+        let blocklist = blocklistStore.snapshot()
 
         var matches: [SearchItem] = []
         matches.reserveCapacity(min(currentApps.count, 64))
 
+        // Mask, then matcher, then blocklist: the snapshot has already taken
+        // the lock once for the whole query, and this order keeps even its set
+        // lookups off the applications the query never matched.
         for application in currentApps {
-            if blocklistStore.isBlocked(name: application.name, id: application.id) {
-                continue
-            }
             guard application.characterMask & queryCharacterMask == queryCharacterMask else {
                 continue
             }
@@ -191,6 +193,9 @@ package final class ApplicationCatalog: Catalog {
                 normalizedQuery: normalizedQuery,
                 asciiQuery: asciiQuery
             ) else {
+                continue
+            }
+            if Self.isExcluded(application, by: blocklist) {
                 continue
             }
             let boost = boosts[application.id] ?? 0
@@ -241,6 +246,21 @@ package final class ApplicationCatalog: Catalog {
             )
         }
         return rawScore.map { SearchItemRanking.application + $0 }
+    }
+
+    /// Whether the blocklist excludes `application` from search.
+    ///
+    /// Both passes ask this of the same snapshot, so both compare against the
+    /// name normalization the catalog already computed at discovery — the one
+    /// thing the two paths must not disagree about.
+    private static func isExcluded(
+        _ application: Application,
+        by blocklist: BlocklistStore.Snapshot
+    ) -> Bool {
+        blocklist.isBlocked(
+            normalizedName: application.normalizedName,
+            id: application.id
+        )
     }
 
     private func enqueueDiscovery<Result: Sendable>(

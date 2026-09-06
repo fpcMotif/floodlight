@@ -38,6 +38,27 @@ package enum BlocklistRule: Codable, Hashable, Sendable {
 }
 
 package final class BlocklistStore: @unchecked Sendable {
+    /// The rules as a query needs them: sets a search source can test a
+    /// candidate against without taking the store's lock.
+    ///
+    /// A search source takes one of these per page request and asks it about
+    /// the handful of candidates that matched, so the lock is taken once per
+    /// query rather than once per application.
+    package struct Snapshot: Sendable {
+        fileprivate let blockedIDs: Set<String>
+        fileprivate let normalizedBlockedNames: Set<String>
+
+        /// Whether a candidate is excluded from search.
+        ///
+        /// `normalizedName` must come from `FuzzyMatcher.normalized`, which
+        /// folds with the options the store folds its name rules with — that
+        /// shared normalization is what keeps name rules case- and
+        /// diacritic-insensitive without folding anything on the query path.
+        package func isBlocked(normalizedName: String, id: String) -> Bool {
+            blockedIDs.contains(id) || normalizedBlockedNames.contains(normalizedName)
+        }
+    }
+
     private struct State: Codable, Sendable {
         var rules: Set<BlocklistRule> = []
         var normalizedBlockedNames: Set<String> = []
@@ -143,6 +164,15 @@ package final class BlocklistStore: @unchecked Sendable {
 
     package func isBlocked(name: String, id: String) -> Bool {
         state.withLock { $0.isBlocked(name: name, id: id) }
+    }
+
+    package func snapshot() -> Snapshot {
+        state.withLock {
+            Snapshot(
+                blockedIDs: $0.blockedIDs,
+                normalizedBlockedNames: $0.normalizedBlockedNames
+            )
+        }
     }
 
     private func persist(_ rules: [BlocklistRule]) {
