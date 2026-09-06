@@ -45,8 +45,9 @@ struct RecentStoreConcurrencyTests {
         store.record("app:one")
         waitUntil("the first launch is recorded") { store.boost(for: "app:one") > 0 }
 
-        // One launch (200) plus a full-strength recency term (4_000).
-        #expect(store.boost(for: "app:one") == 4_200)
+        // One launch, plus a full-strength recency term: recency dominates a
+        // single launch, which is the whole point of the split.
+        #expect(store.boost(for: "app:one") == Self.freshBoost(launches: 1))
     }
 
     @Test func boostGrowsWithLaunchesUntilItSaturates() throws {
@@ -56,12 +57,13 @@ struct RecentStoreConcurrencyTests {
         for count in 1...30 {
             store.record("app:hot")
             waitUntil("launch \(count) is recorded") {
-                store.boost(for: "app:hot") >= 4_000 + min(count, 25) * 200
+                store.boost(for: "app:hot") >= Self.freshBoost(launches: count)
             }
         }
 
         // Launches are capped at 25, so the 26th through 30th add nothing.
-        #expect(store.boost(for: "app:hot") == 4_000 + 25 * 200)
+        #expect(store.boost(for: "app:hot") == Self
+            .freshBoost(launches: RecentStore.launchSaturation))
     }
 
     @Test func boostIsBoundedForEveryPossibleLaunchCount() throws {
@@ -69,7 +71,7 @@ struct RecentStoreConcurrencyTests {
         let store = RecentStore(defaults: defaults.defaults)
 
         try checkProperty(
-            "0 <= boost <= 9_000 for any number of launches",
+            "0 <= boost <= the ranking module's bound for any number of launches",
             Gen<Int>.int(in: 0...40),
             runs: 60
         ) { launches in
@@ -78,8 +80,28 @@ struct RecentStoreConcurrencyTests {
                 store.record(id)
             }
             let boost = store.boost(for: id)
-            return boost >= 0 && boost <= 25 * 200 + 4_000
+            return boost >= 0 && boost <= FuzzyMatcher.maximumLearningBoost
         }
+    }
+
+    @Test func aMinuteOfAgeDoesNotMoveTheBoost() throws {
+        // Two identical queries a minute apart must rank identically. Recency
+        // sheds a point about every two hours, so a minute never crosses a
+        // step — the order a person sees does not drift while they look at it.
+        let defaults = try IsolatedDefaults()
+        let now = Date.now.timeIntervalSinceReferenceDate
+
+        // Seeded through the persisted payload rather than `record`, which
+        // always stamps `.now`.
+        try Self.seedPersisted([
+            "app:justNow": (launches: 5, lastOpened: now),
+            "app:aMinuteAgo": (launches: 5, lastOpened: now - 60),
+        ], in: defaults.defaults)
+
+        let store = RecentStore(defaults: defaults.defaults)
+
+        #expect(store.boost(for: "app:justNow") > 0)
+        #expect(store.boost(for: "app:justNow") == store.boost(for: "app:aMinuteAgo"))
     }
 
     @Test func distinctIdentifiersDoNotShareABoost() throws {
@@ -130,7 +152,7 @@ struct RecentStoreConcurrencyTests {
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        #expect(relaunched.boost(for: "app:persisted") == 4_600)
+        #expect(relaunched.boost(for: "app:persisted") == Self.freshBoost(launches: 3))
     }
 
     @Test func storesOnSeparateSuitesAreFullyIsolated() throws {
@@ -205,9 +227,10 @@ struct RecentStoreConcurrencyTests {
         }
 
         waitUntil("the contended identifier saturates", timeout: 15) {
-            store.boost(for: "app:contended") == 4_000 + 25 * 200
+            store.boost(for: "app:contended") == Self
+                .freshBoost(launches: RecentStore.launchSaturation)
         }
-        #expect(store.boost(for: "app:contended") == 9_000)
+        #expect(store.boost(for: "app:contended") == FuzzyMatcher.maximumLearningBoost)
     }
 
     @Test func concurrentReadsDuringWritesNeverObserveANegativeOrOversizedBoost() throws {
@@ -223,7 +246,7 @@ struct RecentStoreConcurrencyTests {
                 store.record("app:racing")
             } else {
                 let boost = store.boost(for: "app:racing")
-                if boost < 0 || boost > 9_000 {
+                if boost < 0 || boost > FuzzyMatcher.maximumLearningBoost {
                     violations.increment()
                 }
             }
@@ -269,7 +292,7 @@ struct RecentStoreConcurrencyTests {
 
         #expect(boosts.values.count == 12 * 25)
         #expect(
-            boosts.values.allSatisfy { $0 == 4_200 },
+            boosts.values.allSatisfy { $0 == Self.freshBoost(launches: 1) },
             "every freshly-constructed store should agree on the persisted boost"
         )
     }
@@ -290,7 +313,7 @@ struct RecentStoreConcurrencyTests {
         }
 
         let relaunched = RecentStore(defaults: defaults.defaults)
-        #expect(relaunched.boost(for: "app:monotonic") == 4_000 + 10 * 200)
+        #expect(relaunched.boost(for: "app:monotonic") == Self.freshBoost(launches: 10))
     }
 
     @Test func aStoreBuiltBeforeThePreviousWriteLandsOverwritesIt() throws {
@@ -325,7 +348,8 @@ struct RecentStoreConcurrencyTests {
         // Three launches happened; two are recorded. Lost update, by design
         // of the whole-dictionary write.
         #expect(Self.persistedLaunches(in: defaults.defaults, for: "app:clobbered") == 2)
-        #expect(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered") == 4_400)
+        #expect(RecentStore(defaults: defaults.defaults).boost(for: "app:clobbered") == Self
+            .freshBoost(launches: 2))
     }
 
     @Test func recordingIsAsynchronousSoAnImmediateReadCanMissIt() throws {
@@ -340,20 +364,50 @@ struct RecentStoreConcurrencyTests {
         waitUntil("the write eventually lands") { store.boost(for: "app:async") > 0 }
 
         #expect(
-            immediate == 0 || immediate == 4_200,
+            immediate == 0 || immediate == Self.freshBoost(launches: 1),
             "an immediate read must either miss the write entirely or see it whole, never a partial value"
         )
     }
 
+    /// What a just-recorded entry's boost comes to: a full-strength recency
+    /// term plus this launch count's share of the launch component.
+    ///
+    /// Built from the store's own constants rather than from literals. The
+    /// split between the two components is derived from
+    /// `FuzzyMatcher.maximumLearningBoost`, so re-sizing that bound moves every
+    /// expectation here with it instead of leaving a dozen stale numbers behind
+    /// for CI to find one at a time.
+    private static func freshBoost(launches: Int) -> Int {
+        RecentStore.maximumRecencyComponent
+            + min(launches, RecentStore.launchSaturation)
+            * RecentStore.maximumLaunchComponent / RecentStore.launchSaturation
+    }
+
+    /// `RecentStore`'s own defaults key and `Codable` layout, mirrored once for
+    /// the reader and writer below rather than spelled out at each call site.
+    private static let persistedKey = "recent-items-v1"
+
+    /// Writes the payload directly, for the entries `record` cannot make: it
+    /// always stamps `.now`, so anything with a chosen age has to be seeded.
+    /// The reading twin is `persistedLaunches`.
+    private static func seedPersisted(
+        _ entries: [String: (launches: Int, lastOpened: TimeInterval)],
+        in defaults: UserDefaults
+    ) throws {
+        let payload = entries.mapValues {
+            ["launches": $0.launches, "lastOpened": $0.lastOpened] as [String: Any]
+        }
+        try defaults.set(JSONSerialization.data(withJSONObject: payload), forKey: persistedKey)
+    }
+
     /// Reads the launch count straight out of the persisted payload, so a
     /// test can distinguish "written to memory" from "written to defaults".
-    /// Mirrors `RecentStore`'s own key and `Codable` layout.
     private static func persistedLaunches(
         in defaults: UserDefaults,
         for id: String
     ) -> Int? {
         guard
-            let data = defaults.data(forKey: "recent-items-v1"),
+            let data = defaults.data(forKey: persistedKey),
             let object = try? JSONSerialization.jsonObject(with: data),
             let root = object as? [String: Any],
             let entry = root[id] as? [String: Any]

@@ -269,22 +269,37 @@ struct FuzzyMatcherDifferentialTests {
         #expect(scattered == nil, "scattered characters must return nil")
     }
 
-    @Test func aVeryLongCandidateCanPushAGenuinePrefixMatchBelowConfidence() throws {
-        let shortCandidate = "wifi" + String(repeating: "x", count: 1_000)
-        #expect(try #require(
-            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: shortCandidate)
-        ) > FuzzyMatcher.confidentMatchThreshold)
+    /// Length costs a prefix match points, but only so many.
+    ///
+    /// It used to cost unboundedly — `15_000 - candidate.count` put an
+    /// 8,500-character name below the confidence threshold and a
+    /// 20,000-character one at a negative score, ranking a genuine prefix match
+    /// beneath a two-edit typo purely for being long. The penalty is capped
+    /// now, so length orders name prefixes among themselves and never carries
+    /// one out of its own band.
+    @Test func aVeryLongCandidateCostsAPrefixMatchOnlyTheCappedPenalty() throws {
+        func score(padding count: Int) throws -> Int {
+            try #require(FuzzyMatcher.score(
+                normalizedQuery: "wifi",
+                normalizedCandidate: "wifi" + String(repeating: "x", count: count)
+            ))
+        }
 
-        let hugeCandidate = "wifi" + String(repeating: "x", count: 8_500)
-        #expect(try #require(
-            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: hugeCandidate)
-        ) < FuzzyMatcher.confidentMatchThreshold)
+        let modest = try score(padding: 100)
+        let long = try score(padding: 1_000)
+        let absurd = try score(padding: 20_000)
 
-        // And past 15_000 characters the score turns negative outright.
-        let absurdCandidate = "wifi" + String(repeating: "x", count: 20_000)
-        #expect(try #require(
-            FuzzyMatcher.score(normalizedQuery: "wifi", normalizedCandidate: absurdCandidate)
-        ) < 0)
+        // Below the cap, length still separates two prefix matches.
+        #expect(modest > long)
+        // At and past it, it stops mattering: 1,000 characters and 20,000 are
+        // penalised identically.
+        #expect(long == absurd)
+        // And the floor of the band is where the worst case lands, never below.
+        #expect(absurd > FuzzyMatcher.confidentMatchThreshold)
+        #expect(
+            absurd == FuzzyMatcher.ShapeScore.namePrefix
+                - FuzzyMatcher.ShapeScore.maximumShapePenalty
+        )
     }
 
     // MARK: - Normalization

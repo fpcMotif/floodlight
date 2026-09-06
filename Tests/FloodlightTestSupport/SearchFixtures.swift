@@ -196,6 +196,21 @@ package enum SearchGenerators {
 
 // MARK: - Filesystem and defaults scaffolding
 
+/// A unique temporary path, unresolved and uncreated.
+///
+/// The plain half of the pair with `TemporaryTree`, for callers that want a
+/// path and nothing else. `TemporaryTree` canonicalizes through `realpath` and
+/// deletes itself in `deinit`; both matter to the index, and both are wrong for
+/// a caller that hands the path to something which stores it verbatim, or that
+/// wants to control when it goes away. Those callers kept re-deriving this
+/// expression instead of reaching for a tree that would change their behaviour.
+package enum TemporaryDirectory {
+    package static func make(label: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(label)-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
 /// A temporary directory that deletes itself, with helpers for building the
 /// small file trees the index and catalog tests need.
 package final class TemporaryTree {
