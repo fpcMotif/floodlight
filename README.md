@@ -173,7 +173,8 @@ FloodlightPanelController
   │       │   └─ SystemCatalog
   │       ├─ Calculator
   │       ├─ ClipboardSearch (Clipboard mode: rows, inspector, pin and preview facts)
-  │       │   └─ ClipboardHistoryStore (SQLite; ClipboardCaptureService writes it)
+  │       │   └─ ClipboardHistoryStore (SQLite; ClipboardCaptureService writes it;
+  │       │       classifies text once at record, ADR 0009)
   │       └─ SelectedResultActionPerformer (selected-result action policy)
   │           └─ SelectedResultActionEffects → NSPasteboard / NSWorkspace
   └─ QuickLookController

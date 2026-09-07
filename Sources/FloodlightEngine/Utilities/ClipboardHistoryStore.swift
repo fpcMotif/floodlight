@@ -19,6 +19,54 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         var db: OpaquePointer?
         var pinnedEntries: [ClipboardEntry]
         var recentEntries: [ClipboardEntry]
+        /// Every windowed entry's text — and an image's dimensions — with case
+        /// folded once, keyed by entry id, so a one- or two-character query
+        /// is a plain substring scan rather than a locale-aware comparison
+        /// per entry per keystroke (#73).
+        var searchKeys: [String: String]
+        var mutationVersion: UInt64 = 0
+
+        init(db: OpaquePointer?, pinnedEntries: [ClipboardEntry], recentEntries: [ClipboardEntry]) {
+            self.db = db
+            self.pinnedEntries = pinnedEntries
+            self.recentEntries = recentEntries
+            searchKeys = Dictionary(
+                uniqueKeysWithValues: (pinnedEntries + recentEntries).map {
+                    ($0.id, ClipboardHistoryStore.searchKey(for: $0))
+                }
+            )
+        }
+
+        /// A newly recorded entry heads the window. Whatever the window no
+        /// longer holds stays on disk, where the trigram index still finds it.
+        mutating func admit(_ entry: ClipboardEntry) {
+            recentEntries.insert(entry, at: 0)
+            searchKeys[entry.id] = ClipboardHistoryStore.searchKey(for: entry)
+            trimRecentWindow()
+        }
+
+        mutating func trimRecentWindow() {
+            while recentEntries.count > ClipboardHistoryStore.inMemoryRecentWindowLimit {
+                searchKeys[recentEntries.removeLast().id] = nil
+            }
+        }
+
+        mutating func remove(where shouldRemove: (ClipboardEntry) -> Bool) {
+            for entry in pinnedEntries where shouldRemove(entry) {
+                searchKeys[entry.id] = nil
+            }
+            for entry in recentEntries where shouldRemove(entry) {
+                searchKeys[entry.id] = nil
+            }
+            pinnedEntries.removeAll(where: shouldRemove)
+            recentEntries.removeAll(where: shouldRemove)
+        }
+
+        mutating func removeAll() {
+            pinnedEntries.removeAll()
+            recentEntries.removeAll()
+            searchKeys.removeAll()
+        }
     }
 
     private let stateLock: OSAllocatedUnfairLock<State>
@@ -109,6 +157,14 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
+    /// How many writes this store has accepted since it opened. A reader that
+    /// caches anything derived from the entries compares this before trusting
+    /// its cache: it moves on record, pin, unpin, delete, clear, and prune,
+    /// and on nothing else.
+    package var mutationVersion: UInt64 {
+        stateLock.withLock(\.mutationVersion)
+    }
+
     package func entry(id: String) -> ClipboardEntry? {
         stateLock.withLock { state in
             if let pinned = state.pinnedEntries.first(where: { $0.id == id }) {
@@ -118,18 +174,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 return recent
             }
             guard let db = state.db else { return nil }
-            let sql = """
-            SELECT \(ClipboardHistorySQLite.entryColumns)
-            FROM clipboard_entries
-            WHERE id = ?
-            LIMIT 1;
-            """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-            defer { sqlite3_finalize(stmt) }
-            ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
-            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-            return ClipboardHistorySQLite.readEntry(from: stmt)
+            return ClipboardHistorySQLite.fetchEntry(db: db, id: id)
         }
     }
 
@@ -233,10 +278,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             }
             guard accepted else { return nil }
 
-            state.recentEntries.insert(entry, at: 0)
-            if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
-                state.recentEntries.removeLast()
-            }
+            state.admit(entry)
+            state.mutationVersion &+= 1
             return entry
         }
     }
@@ -286,23 +329,26 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             )
 
             let insertSQL = """
-            INSERT INTO clipboard_entries (id, text, kind, created_at, source_app_bundle_id, pinned_at)
-            VALUES (?, ?, ?, ?, ?, NULL);
+            INSERT INTO clipboard_entries (
+                id, text, kind, created_at, source_app_bundle_id, pinned_at,
+                content_kind, content_detail
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?);
             """
+            let stored = entry.textContent?.storedForm
             let accepted = Self.write(db: db, sql: insertSQL, operation: "record") { stmt in
                 ClipboardHistorySQLite.bindText(stmt, index: 1, value: entry.id)
                 ClipboardHistorySQLite.bindText(stmt, index: 2, value: entry.text)
                 ClipboardHistorySQLite.bindText(stmt, index: 3, value: entry.kind.rawValue)
                 sqlite3_bind_double(stmt, 4, entry.createdAt.timeIntervalSince1970)
                 ClipboardHistorySQLite.bindText(stmt, index: 5, value: entry.sourceAppBundleID)
+                ClipboardHistorySQLite.bindText(stmt, index: 6, value: stored?.kind)
+                ClipboardHistorySQLite.bindText(stmt, index: 7, value: stored?.detail)
             }
             guard accepted else { return nil }
 
-            state.recentEntries.insert(entry, at: 0)
-            if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
-                state.recentEntries.removeLast()
-            }
-
+            state.admit(entry)
+            state.mutationVersion &+= 1
             return entry
         }
     }
@@ -320,48 +366,44 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             }
 
             if trimmed.utf8.count < 3 {
-                let pinnedMatches = state.pinnedEntries.filter {
-                    Self.matchesSearch($0, query: trimmed)
-                }
-                let recentMatches = state.recentEntries.filter {
-                    Self.matchesSearch($0, query: trimmed)
-                }
-                return pinnedMatches + recentMatches
+                return Self.windowMatches(in: state, query: trimmed)
             }
 
             // FTS5 trigram search for queries of 3 or more characters
             let escaped = "\"" + trimmed.replacingOccurrences(of: "\"", with: "\"\"") + "\""
-            let ftsSQL = """
-            SELECT \(ClipboardHistorySQLite.entryColumns)
-            FROM clipboard_entries
-            WHERE rowid IN (SELECT rowid FROM clipboard_fts WHERE clipboard_fts MATCH ?)
-            ORDER BY pinned_at IS NOT NULL DESC, pinned_at ASC, created_at DESC
-            LIMIT ?;
-            """
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, ftsSQL, -1, &stmt, nil) == SQLITE_OK {
-                defer { sqlite3_finalize(stmt) }
-                ClipboardHistorySQLite.bindText(stmt, index: 1, value: escaped)
-                sqlite3_bind_int(stmt, 2, Int32(Self.searchResultLimit))
-
-                var results: [ClipboardEntry] = []
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    if let entry = ClipboardHistorySQLite.readEntry(from: stmt) {
-                        results.append(entry)
-                    }
-                }
-                return results
+            if let matches = ClipboardHistorySQLite.fetchMatches(
+                db: db,
+                ftsQuery: escaped,
+                limit: Self.searchResultLimit
+            ) {
+                return matches
             }
 
             // Fallback to in-memory filter if FTS query preparation fails
-            let pinnedMatches = state.pinnedEntries.filter {
-                Self.matchesSearch($0, query: trimmed)
-            }
-            let recentMatches = state.recentEntries.filter {
-                Self.matchesSearch($0, query: trimmed)
-            }
-            return pinnedMatches + recentMatches
+            return Self.windowMatches(in: state, query: trimmed)
         }
+    }
+
+    /// Pinned entries first, then recent, each kept if its folded search key
+    /// contains the folded query — the substring scan a query too short for
+    /// the trigram index gets.
+    private static func windowMatches(in state: State, query: String) -> [ClipboardEntry] {
+        let folded = fold(query)
+        func matches(_ entry: ClipboardEntry) -> Bool {
+            state.searchKeys[entry.id]?.contains(folded) == true
+        }
+        return state.pinnedEntries.filter(matches) + state.recentEntries.filter(matches)
+    }
+
+    /// What a short query is matched against: the text, plus an image's
+    /// dimensions, with case folded the way the query will be.
+    private static func searchKey(for entry: ClipboardEntry) -> String {
+        guard let image = entry.image else { return fold(entry.text) }
+        return fold(entry.text) + " \(image.width)×\(image.height)"
+    }
+
+    private static func fold(_ text: String) -> String {
+        text.folding(options: .caseInsensitive, locale: .current)
     }
 
     private static func cappedImageData(_ data: Data?) -> Data? {
@@ -369,12 +411,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             return nil
         }
         return data
-    }
-
-    private static func matchesSearch(_ entry: ClipboardEntry, query: String) -> Bool {
-        if entry.text.localizedCaseInsensitiveContains(query) { return true }
-        guard let image = entry.image else { return false }
-        return "\(image.width)×\(image.height)".localizedCaseInsensitiveContains(query)
     }
 
     // MARK: - Writes
@@ -427,6 +463,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 ClipboardHistorySQLite.bindText(stmt, index: 2, value: id)
             }
             guard accepted else { return false }
+            state.mutationVersion &+= 1
 
             if let idx = state.recentEntries.firstIndex(where: { $0.id == id }) {
                 let unpinned = state.recentEntries.remove(at: idx)
@@ -456,14 +493,13 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 ClipboardHistorySQLite.bindText(stmt, index: 1, value: id)
             }
             guard accepted else { return false }
+            state.mutationVersion &+= 1
 
             if let idx = state.pinnedEntries.firstIndex(where: { $0.id == id }) {
                 let pinned = state.pinnedEntries.remove(at: idx)
                 state.recentEntries.append(pinned.withPinnedAt(nil))
                 state.recentEntries.sort { $0.createdAt > $1.createdAt }
-                if state.recentEntries.count > Self.inMemoryRecentWindowLimit {
-                    state.recentEntries.removeLast()
-                }
+                state.trimRecentWindow()
             }
             return true
         }
@@ -485,8 +521,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             }
             guard accepted else { return false }
 
-            state.pinnedEntries.removeAll { $0.id == id }
-            state.recentEntries.removeAll { $0.id == id }
+            state.remove { $0.id == id }
+            state.mutationVersion &+= 1
             return true
         }
     }
@@ -503,8 +539,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             ) { _ in }
             guard accepted else { return false }
 
-            state.pinnedEntries.removeAll()
-            state.recentEntries.removeAll()
+            state.removeAll()
+            state.mutationVersion &+= 1
             return true
         }
     }
@@ -525,7 +561,8 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
             }
             guard accepted else { return false }
 
-            state.recentEntries.removeAll { $0.createdAt < cutoff }
+            state.remove { !$0.isPinned && $0.createdAt < cutoff }
+            state.mutationVersion &+= 1
             return true
         }
     }

@@ -281,6 +281,137 @@ struct ClipboardSearchTests {
         #expect(search.materializePreviewURL() == movieURL)
     }
 
+    @Test func aCopiedPathToAMissingFileStillReadsAsAPathButOpensNothing() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = try #require(store.record(text: "/definitely/missing/Reports/report.pdf"))
+
+        let search = makeSearch(store: store)
+        let publication = publish(search)
+        let row = try row(titled: "report.pdf", in: publication)
+
+        // The row keeps saying what was copied…
+        #expect(row.fileURL == URL(fileURLWithPath: "/definitely/missing/Reports/report.pdf"))
+        #expect(row.subtitle == "Clipboard · just now · Reports")
+        #expect(row.iconSource == .inferred)
+        // …while the selection, the one place that stats the path, offers
+        // neither Quick Look nor "Show in Finder" for it.
+        #expect(publication.selection?.id == row.id)
+        #expect(!search.isSelectionPreviewable)
+        #expect(search.selectionFileURL == nil)
+        #expect(search.materializePreviewURL() == nil)
+        guard case let .file(detail) = search.inspector else {
+            Issue.record("a copied path is inspected as the file it names")
+            return
+        }
+        #expect(detail.name == "report.pdf")
+        #expect(detail.byteCount == nil)
+    }
+
+    // MARK: - Memoized rows (#73)
+
+    /// The rows are reused when nothing they depend on has changed, and
+    /// rebuilt the moment something has. A row's age is what makes the
+    /// difference observable: a reused row still says what the clock said
+    /// when it was built.
+    @Test func rowsAreReusedAcrossChipSwitchesAndRebuiltByAKeystrokeOrAWrite() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        // On a minute boundary, so every read below falls inside one minute
+        // until the last, which crosses it.
+        let minuteStart = Date(timeIntervalSinceReferenceDate: 780_000_000)
+        let snippet = try #require(store.record(
+            text: "Snippet",
+            date: minuteStart.addingTimeInterval(-30)
+        ))
+        _ = try #require(store.record(text: "Tick", date: minuteStart))
+        var now = minuteStart
+        let search = makeSearch(store: store, now: { now })
+        func ages(_ publication: SearchResultPublication) -> [String] {
+            publication.visibleRows.map(\.subtitle)
+        }
+
+        #expect(ages(publish(search)) == ["Clipboard · just now", "Clipboard · just now"])
+
+        // Fifty-nine seconds on, Snippet is 89 seconds old. A chip switch
+        // over the same query and history reuses the rows as they were built.
+        now = minuteStart.addingTimeInterval(59)
+        let chipSwitch = publish(search, filter: .text)
+        #expect(chipSwitch.selectedFilter == .text)
+        #expect(ages(chipSwitch) == ["Clipboard · just now", "Clipboard · just now"])
+
+        // A different query is a keystroke: the rows are rebuilt.
+        #expect(ages(publish(search, query: "Sni")) == ["Clipboard · 1m"])
+        // Back on the first query the memo is one deep, so this rebuilds too.
+        #expect(ages(publish(search)) == ["Clipboard · just now", "Clipboard · 1m"])
+
+        // A store write invalidates rows the same query would otherwise reuse.
+        store.pin(id: snippet.id)
+        let afterPin = publish(search)
+        #expect(afterPin.visibleRows.map(\.title) == ["Snippet", "Tick"])
+        #expect(afterPin.visibleRows[0].isPinned)
+        #expect(ages(afterPin) == ["Clipboard · 1m", "Clipboard · just now"])
+
+        // And so does the clock ticking into the next minute: Tick turns a
+        // minute old exactly then, which reused rows would not show.
+        now = minuteStart.addingTimeInterval(60)
+        #expect(ages(publish(search)) == ["Clipboard · 1m", "Clipboard · 1m"])
+    }
+
+    /// The icon, title, and subtitle a row gets are read off the
+    /// classification the store recorded with the entry; nothing here
+    /// classifies a fixture by hand.
+    @Test func rowsRecordedThroughTheStoreCarryTheirKindsIconTitleAndSubtitle() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        let recorded = Date(timeIntervalSince1970: 1_800_000_000)
+        _ = try #require(store.record(
+            text: "Acme billing address",
+            sourceAppBundleID: "com.apple.Notes",
+            date: recorded
+        ))
+        _ = try #require(store.record(text: "{\"name\": \"floodlight\"}", date: recorded))
+        _ = try #require(store.record(text: "#3498DB", date: recorded))
+        _ = try #require(store.record(text: "https://www.example.org/docs", date: recorded))
+        _ = try #require(store.record(text: "/Users/f/Screens/shot.png", date: recorded))
+
+        let search = makeSearch(store: store, now: { recorded.addingTimeInterval(120) })
+        let rows = publish(search).visibleRows
+
+        #expect(rows.map(\.title) == [
+            "shot.png",
+            "https://www.example.org/docs",
+            "#3498DB",
+            "{\"name\": \"floodlight\"}",
+            "Acme billing address",
+        ])
+        #expect(rows.map(\.iconSource) == [
+            .engine(symbol: "photo", tint: .cyan),
+            .engine(symbol: "link", tint: .blue),
+            .engine(symbol: "paintpalette.fill", tint: .purple),
+            .engine(symbol: "curlybraces", tint: .cyan),
+            .engine(symbol: "doc.text", tint: .gray),
+        ])
+        #expect(rows.map(\.subtitle) == [
+            "Clipboard · 2m · Screens",
+            "Clipboard · 2m",
+            "Clipboard · 2m",
+            "Clipboard · 2m",
+            "Notes · 2m",
+        ])
+    }
+
+    @Test func aCommandOnTheSelectionRepublishesFreshRows() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = try #require(store.record(text: "Keep"))
+        _ = try #require(store.record(text: "Drop"))
+
+        let search = makeSearch(store: store)
+        let before = publish(search)
+        #expect(before.visibleRows.map(\.title) == ["Drop", "Keep"])
+
+        #expect(search.deleteSelection())
+        let after = publish(search)
+        #expect(after.visibleRows.map(\.title) == ["Keep"])
+    }
+
     @Test func thePreviewDirectoryDefaultsToFloodlightsOwnFolderUnderTemporaryItems() throws {
         let store = ClipboardHistoryStore.inMemory()
         let entry = try #require(store.recordImage(

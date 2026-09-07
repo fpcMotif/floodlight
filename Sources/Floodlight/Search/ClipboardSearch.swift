@@ -70,6 +70,23 @@ final class ClipboardSearch {
     @ObservationIgnored
     private var selectedEntry: ClipboardEntry?
 
+    /// The rows of the last publication and what they were built from — one
+    /// query deep (#73). A chip switch or a re-entry into Clipboard mode over
+    /// unchanged history reuses them and reruns only the scoping; a
+    /// keystroke (a new query) or any store write (a new mutation version)
+    /// runs the whole projection again. Rows carry their age, so the key
+    /// also holds the clock to the minute: across a chip switch an age can
+    /// lag by less than the minute it is shown at, and never more.
+    private struct RowMemo {
+        let version: UInt64
+        let query: String
+        let minute: Int
+        let rows: [SearchItem]
+    }
+
+    @ObservationIgnored
+    private var rowMemo: RowMemo?
+
     /// `previewDirectory` is where the preview action materializes a captured
     /// image for Quick Look; `now` is the clock the rows' relative ages are
     /// read against. Both are injected so tests can pin them.
@@ -113,18 +130,52 @@ final class ClipboardSearch {
         selectedFilter: SearchResultFilter,
         selection: SearchResultSelection?
     ) -> SearchResultPublication {
-        let publication = SearchResultProjection.project(
-            .clipboard(.init(
-                entries: store.search(query: query),
-                selectedFilter: selectedFilter,
-                selection: selection,
-                now: now()
-            ))
+        let publication = project(
+            query: query,
+            selectedFilter: selectedFilter,
+            selection: selection
         )
         let selectedRow = publication.selection.flatMap { selection in
             publication.visibleRows.first { $0.id == selection.id }
         }
         selectionDidMove(to: selectedRow)
+        return publication
+    }
+
+    /// The whole projection — the store search and every row — unless the
+    /// last one was for this query over this history, in which case only
+    /// the scoping reruns over its rows. The mutation version is the only
+    /// fact about the store in the key: a stale row could only follow a
+    /// write the store did not count, and it counts them all.
+    private func project(
+        query: String,
+        selectedFilter: SearchResultFilter,
+        selection: SearchResultSelection?
+    ) -> SearchResultPublication {
+        let now = now()
+        // Read before the search: a write that lands between the two then
+        // costs one needless rebuild, where the other order would keep rows
+        // the write had already outdated.
+        let version = store.mutationVersion
+        let minute = Int((now.timeIntervalSinceReferenceDate / 60).rounded(.down))
+        if let memo = rowMemo, memo.version == version, memo.query == query,
+           memo.minute == minute
+        {
+            return SearchResultProjection.clipboardPublication(
+                rows: memo.rows,
+                selectedFilter: selectedFilter,
+                selection: selection
+            )
+        }
+        let publication = SearchResultProjection.project(
+            .clipboard(.init(
+                entries: store.search(query: query),
+                selectedFilter: selectedFilter,
+                selection: selection,
+                now: now
+            ))
+        )
+        rowMemo = RowMemo(version: version, query: query, minute: minute, rows: publication.allRows)
         return publication
     }
 
@@ -207,9 +258,9 @@ final class ClipboardSearch {
     /// and call this only once the user has actually pressed Space or
     /// Preview. Browsing entries then leaves nothing behind (#72).
     func materializePreviewURL() -> URL? {
-        guard let item = selectedItem else { return nil }
-        if item.isPreviewable, let fileURL = item.fileURL {
-            return fileURL
+        guard let item = selectedItem, isSelectionPreviewable else { return nil }
+        if let selectionFileURL {
+            return selectionFileURL
         }
         if case let .copyImage(entryID) = item.action {
             return materializeImagePreview(entryID: entryID)
@@ -273,24 +324,28 @@ final class ClipboardSearch {
         let hasFullImage = entry.kind == .image && (entry.image?.byteCount ?? 0) > 0
         inspector = ClipboardInspector.snapshot(for: entry, hasFullImage: hasFullImage)
         isSelectionPinned = entry.isPinned
-        isSelectionPreviewable = Self.isPreviewable(
-            item: item,
-            entry: entry,
-            hasFullImage: hasFullImage
-        )
-        selectionFileURL = item.fileURL
+
+        // Copied text that names a file carries its URL whether or not the
+        // file is still there, because history records what was copied
+        // (#73). This is the one stat on that path, paid per selection move
+        // rather than per row per keystroke: it decides whether Space and
+        // "Show in Finder" have anything to open. A copied file's row is
+        // taken as it comes, as it always was.
+        let fileURL: URL? = if case .path? = entry.textContent {
+            item.fileURL.flatMap { url in
+                FileManager.default.fileExists(atPath: url.path) ? url : nil
+            }
+        } else {
+            item.fileURL
+        }
+        selectionFileURL = fileURL
+        isSelectionPreviewable = fileURL != nil
+            || Self.hasImageToPreview(entry: entry, hasFullImage: hasFullImage)
     }
 
-    /// Previewability without touching the disk again: a path-backed row
-    /// already carries the `fileURL` the projection resolved for it, and a
-    /// captured image is previewable while it still has pixels to write —
+    /// A captured image is previewable while it still has pixels to write —
     /// the full payload, or failing that the stored thumbnail.
-    private static func isPreviewable(
-        item: SearchItem,
-        entry: ClipboardEntry,
-        hasFullImage: Bool
-    ) -> Bool {
-        if item.isPreviewable { return true }
+    private static func hasImageToPreview(entry: ClipboardEntry, hasFullImage: Bool) -> Bool {
         guard entry.kind == .image else { return false }
         return hasFullImage || entry.image?.thumbnailPNGData.isEmpty == false
     }

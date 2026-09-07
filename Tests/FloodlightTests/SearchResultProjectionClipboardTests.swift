@@ -1,9 +1,36 @@
 import FloodlightEngine
+import FloodlightTestSupport
 import Foundation
 import Testing
 @testable import Floodlight
 
 struct SearchResultProjectionClipboardTests {
+    /// The row title is the entry's text collapsed to one line. The
+    /// projection does that over UTF-8 bytes (#73); this is the Character
+    /// definition it must agree with, on every newline Swift knows and on
+    /// the adversarial corpus.
+    @Test func textRowTitlesCollapseLinesExactlyAsACharacterWalkWould() {
+        let crafted = [
+            "a\r\nb", "\n\na\n\n", "a\u{85}b", "a\u{2028}b\u{2029}c", "e\u{301}\nx",
+            "  a  \n  b  ", "a\n\n\nb", "\u{85}", "×\n÷", "\r\n", " \n ", "a \n \nb",
+            "\u{0B}v\u{0C}f", "\u{FEFF}\nx", "🦊\n🦊", "\u{C2}", "\u{E2}\u{80}",
+        ]
+        let now = Date(timeIntervalSince1970: 2_120)
+        for text in crafted + AdversarialCorpus.strings {
+            let entry = ClipboardEntry(id: "t", text: text, createdAt: now)
+            // A copied path is titled by its file name, not its text.
+            if case .path? = entry.textContent { continue }
+            let reference = text.split(whereSeparator: \.isNewline)
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            let expected = reference.isEmpty ? "(Empty text)" : reference
+            let title = SearchResultProjection.project(
+                .clipboard(.init(entries: [entry], selection: nil, now: now))
+            ).allRows[0].title
+            #expect(title == expected, "text \(text.debugDescription)")
+        }
+    }
+
     @Test func clipboardProjectionGeneratesRowsInExactOrderWithMetadata() {
         let t0 = Date(timeIntervalSince1970: 1_000)
         let t1 = Date(timeIntervalSince1970: 2_000)
@@ -159,6 +186,64 @@ struct SearchResultProjectionClipboardTests {
         #expect(pinnedRow.subtitle == "Clipboard · 2m · 1440×900")
         #expect(pinnedRow.fileSize == 480_000)
         #expect(pinnedRow.action == .copyImage(id: "image-2"))
+    }
+
+    /// Copied text that names a file is a path row whether or not the file
+    /// exists (#73): the row carries the URL, the parent folder, and the
+    /// kind's icon, and the selection — not the projection — decides
+    /// whether anything can be opened.
+    @Test func clipboardProjectionKeepsACopiedPathAsAPathRowWhenTheFileIsGone() {
+        let created = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_120)
+        let path = "/definitely/missing/Screens/shot.png"
+        let entry = ClipboardEntry(id: "path-1", text: path, createdAt: created)
+
+        let publication = SearchResultProjection.project(
+            .clipboard(.init(entries: [entry], selection: nil, now: now))
+        )
+
+        let row = publication.visibleRows[0]
+        #expect(row.id == "clipboard:path-1")
+        #expect(row.title == "shot.png")
+        #expect(row.subtitle == "Clipboard · 2m · Screens")
+        #expect(row.iconSource == .engine(symbol: "photo", tint: .cyan))
+        #expect(row.fileURL == URL(fileURLWithPath: path))
+        #expect(row.action == .copy(path))
+        #expect(publication.filterOptions.map(\.count) == [1, 1, 0, 0])
+    }
+
+    /// A publication is its rows scoped by the filter, so Clipboard Search
+    /// can keep one publication's rows and rerun only the scoping.
+    @Test func clipboardProjectionComposesFromItsRowsAndTheirScoping() {
+        let created = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_120)
+        let entries = [
+            ClipboardEntry(id: "text-1", text: "#3498DB", createdAt: created),
+            ClipboardEntry(id: "file-1", text: "/Users/f/a.pdf", kind: .file, createdAt: created),
+        ]
+        let selection = SearchResultSelection(id: "clipboard:file-1", origin: .user)
+
+        let whole = SearchResultProjection.project(
+            .clipboard(.init(
+                entries: entries,
+                selectedFilter: .files,
+                selection: selection,
+                now: now
+            ))
+        )
+        let composed = SearchResultProjection.clipboardPublication(
+            rows: whole.allRows,
+            selectedFilter: .files,
+            selection: selection
+        )
+
+        #expect(composed == whole)
+        #expect(composed.visibleRows.map(\.id) == ["clipboard:file-1"])
+        #expect(composed.allRows[0].iconSource == .engine(
+            symbol: "paintpalette.fill",
+            tint: .purple
+        ))
+        #expect(composed.selection?.id == "clipboard:file-1")
     }
 
     @Test func clipboardProjectionPublishesTypeChipsAndScopesVisibleRows() {

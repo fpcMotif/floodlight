@@ -4,15 +4,6 @@ import Testing
 @testable import FloodlightEngine
 
 struct ClipboardHistoryStoreTests {
-    private func makeTemporaryDatabaseURL() throws -> (url: URL, cleanup: () -> Void) {
-        let tempDir = TemporaryDirectory.make(label: "FloodlightTests")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let dbURL = tempDir.appendingPathComponent("test-clipboard.sqlite3")
-        return (dbURL, {
-            try? FileManager.default.removeItem(at: tempDir)
-        })
-    }
-
     // MARK: - Recording & Size Cap
 
     @Test func recordingValidTextSucceedsAndPreservesMetadata() throws {
@@ -272,7 +263,7 @@ struct ClipboardHistoryStoreTests {
     // MARK: - Disk Persistence Round-Trip
 
     @Test func diskStorePersistsAndReloadsEntriesPinsAndFTS() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
 
         // Create store 1 and write data
@@ -389,7 +380,7 @@ struct ClipboardHistoryStoreTests {
     }
 
     @Test func diskStorePersistsFileKindAndFTS() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
         let path = "/Users/f/devv/floodlight/Package.swift"
 
@@ -592,7 +583,7 @@ struct ClipboardHistoryStoreTests {
     }
 
     @Test func diskStorePersistsImageKindThumbnailAndPayload() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
         let png = ClipboardImageTestData.png
         let thumbnail = ClipboardImageTestData.thumbnail

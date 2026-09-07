@@ -1,4 +1,5 @@
 import AppKit
+import FloodlightEngine
 import SwiftUI
 
 struct ClipboardInspectorPane: View {
@@ -579,7 +580,7 @@ private struct FileTextPreviewContainer: View {
 }
 
 private extension Color {
-    init(components: ClipboardInspector.ColorComponents) {
+    init(components: ClipboardColorComponents) {
         self.init(
             red: Double(components.red) / 255,
             green: Double(components.green) / 255,

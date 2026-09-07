@@ -209,6 +209,16 @@ package enum TemporaryDirectory {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(label)-\(UUID().uuidString)", isDirectory: true)
     }
+
+    /// A path for a fresh on-disk Clipboard History database, and the
+    /// cleanup that removes the directory it lives in.
+    package static func makeClipboardDatabase() throws -> (url: URL, cleanup: () -> Void) {
+        let directory = make(label: "FloodlightTests")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return (directory.appendingPathComponent("test-clipboard.sqlite3"), {
+            try? FileManager.default.removeItem(at: directory)
+        })
+    }
 }
 
 /// A temporary directory that deletes itself, with helpers for building the

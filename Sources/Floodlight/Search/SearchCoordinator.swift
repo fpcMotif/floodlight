@@ -426,6 +426,9 @@ final class SearchCoordinator {
 
     func revealSelection() {
         guard let selectedItem else { return }
+        // A clipboard row keeps the path it was copied with even once the
+        // file is gone; Clipboard Search says whether Finder can show it.
+        if isClipboardMode, clipboardSearch.selectionFileURL == nil { return }
         actionPerformer.reveal(selectedItem)
     }
 

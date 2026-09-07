@@ -22,8 +22,20 @@ enum ClipboardSourceApp {
     /// per launch rather than once per render.
     private static let urlCache = OSAllocatedUnfairLock<[String: URL?]>(initialState: [:])
 
+    /// The name each identifier resolved to, memoized separately from the
+    /// URL: every clipboard row asks for it on every keystroke, and
+    /// re-deriving it from the URL is path work a thousand rows feel (#73).
+    private static let nameCache = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
     static func displayName(for bundleID: String?) -> String {
         guard let bundleID, !bundleID.isEmpty else { return "Clipboard" }
+        if let cached = nameCache.withLock({ $0[bundleID] }) { return cached }
+        let name = resolveDisplayName(for: bundleID)
+        nameCache.withLock { $0[bundleID] = name }
+        return name
+    }
+
+    private static func resolveDisplayName(for bundleID: String) -> String {
         // Before the lookup, not after it: these are the identifiers Launch
         // Services answers badly or not at all, so asking it first would pay
         // for an answer this table exists to override.

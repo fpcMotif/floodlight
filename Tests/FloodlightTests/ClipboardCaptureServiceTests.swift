@@ -112,6 +112,24 @@ struct ClipboardCaptureServiceTests {
         #expect(entry?.sourceAppBundleID == "com.apple.Notes")
     }
 
+    /// Classification is the last step of the capture pass: what was copied
+    /// is decided once, here, and every consumer reads the stored answer.
+    @Test func pollRecordsWhatTheCopiedTextIsAlongsideIt() {
+        let harness = makeHarness()
+
+        harness.observer.setContents(string: "{\"name\": \"floodlight\", \"version\": 1}")
+        harness.service.poll()
+        #expect(harness.store.mostRecentEntry?.textContent == .code(language: "JSON"))
+
+        harness.observer.setContents(string: "https://www.example.org/docs")
+        harness.service.poll()
+        #expect(harness.store.mostRecentEntry?.textContent == .link(domain: "example.org"))
+
+        harness.observer.setContents(string: "Copied from Notes")
+        harness.service.poll()
+        #expect(harness.store.mostRecentEntry?.textContent == .plain)
+    }
+
     @Test func pollSkipsOwnWriteMarkerType() {
         let harness = makeHarness()
 

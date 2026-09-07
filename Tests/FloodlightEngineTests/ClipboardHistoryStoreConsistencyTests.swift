@@ -31,15 +31,6 @@ struct ClipboardHistoryStoreConsistencyTests {
         let unpinnedIDsBefore: [String]
     }
 
-    private func makeTemporaryDatabaseURL() throws -> (url: URL, cleanup: () -> Void) {
-        let tempDir = TemporaryDirectory.make(label: "FloodlightTests")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let dbURL = tempDir.appendingPathComponent("test-clipboard.sqlite3")
-        return (dbURL, {
-            try? FileManager.default.removeItem(at: tempDir)
-        })
-    }
-
     /// Opens a second raw connection to the same database file and drops the
     /// entries table out from under a live `ClipboardHistoryStore`, returning
     /// the raw SQLite result code for `DROP TABLE` so the caller can verify it
@@ -57,7 +48,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     // MARK: - A. Text binding round-trip
 
     @Test func textBindingRoundTripsExactBytesForAdversarialAndExtremeStrings() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
 
         let extras = [
@@ -99,7 +90,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     /// held a prefix. Clipboard text is whatever another application put on the
     /// pasteboard, so this is reachable, not theoretical.
     @Test func textWithAnInteriorNULRoundTripsWholeThroughAReopenedStore() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
         let text = "\u{0000}embedded-nul-ish"
         var entryID = ""
@@ -117,7 +108,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     }
 
     @Test func imageDisplayNameWithNonASCIIAndQuotesRoundTripsThroughReopenedStore() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
 
         let displayName = "スクリーンショット \"2026\" 'quote'.png"
@@ -150,7 +141,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     /// through a second raw connection. Callers get back a snapshot of the
     /// mirror taken immediately before the drop, to assert against afterward.
     private func makeStoreWithDroppedEntriesTable() throws -> BrokenStoreFixture {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         let store = try ClipboardHistoryStore(databaseURL: dbURL)
         let first = try #require(store.record(text: "Alpha"))
         let second = try #require(store.record(text: "Beta"))
@@ -242,7 +233,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     // MARK: - C. Unopenable / damaged database
 
     @Test func garbageBytesFileFailsToInitialize() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
         try Data("not a sqlite database, just garbage bytes".utf8).write(to: dbURL)
 
@@ -255,7 +246,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     /// than opened and written against: the store the caller falls back to is
     /// in memory, so nothing it shows claims to be persisted.
     @Test func readOnlyDatabaseIsRefusedRatherThanOpenedForWriting() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         let directory = dbURL.deletingLastPathComponent()
         defer {
             try? FileManager.default.setAttributes(
@@ -294,7 +285,7 @@ struct ClipboardHistoryStoreConsistencyTests {
     }
 
     @Test func inMemoryStoreStillWorksAfterUnopenableDatabaseFailures() throws {
-        let (dbURL, cleanup) = try makeTemporaryDatabaseURL()
+        let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
         try Data("garbage, not a sqlite database".utf8).write(to: dbURL)
         #expect(throws: (any Error).self) {

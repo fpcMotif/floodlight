@@ -405,6 +405,29 @@ struct SearchCoordinatorClipboardModeTests {
         #expect(coordinator.selectedFilter == .all)
     }
 
+    /// A copied path stays a path row after the file is gone (#73); acting
+    /// on it is where existence is decided, so Finder is asked for nothing.
+    @Test func revealingACopiedPathToAMissingFileShowsNothing() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = try #require(store.record(text: "/definitely/missing/report.pdf"))
+        let search = makeSearch(over: store)
+        var revealed: [URL] = []
+        let effects = ScriptedActionEffects(
+            onWrite: { _ in true },
+            onReveal: { revealed.append($0) }
+        )
+
+        let coordinator = try makeCoordinator(clipboardSearch: search, actionEffects: effects)
+        coordinator.query = "clip"
+        coordinator.handleTab()
+
+        #expect(coordinator.results.first?.fileURL != nil)
+        #expect(search.selectionFileURL == nil)
+        #expect(!coordinator.isSelectionPreviewable)
+        coordinator.revealSelection()
+        #expect(revealed.isEmpty)
+    }
+
     @Test func leavingClipboardModePublishesIdleLocalResultsAndClearsTheFacts() throws {
         let store = ClipboardHistoryStore.inMemory()
         _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoice.pdf"))
