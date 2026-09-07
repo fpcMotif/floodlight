@@ -259,7 +259,7 @@ private struct ResultIcon: View {
     /// rather than running `NSImage(data:)` per body pass. Anything else
     /// carrying thumbnail bytes has no entry to key on and decodes as before.
     private func thumbnail(_ data: Data) -> NSImage? {
-        guard let entryID = SearchResultProjection.clipboardEntryID(from: item.id) else {
+        guard let entryID = ClipboardSearch.entryID(forRowID: item.id) else {
             return NSImage(data: data)
         }
         return ClipboardImageCache.shared.thumbnail(entryID: entryID, data: data)

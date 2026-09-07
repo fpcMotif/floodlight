@@ -375,10 +375,10 @@ final class FloodlightPanelController {
             togglePreview()
         case .togglePin:
             guard model.isClipboardMode else { return false }
-            model.togglePinSelection()
+            model.clipboardSearch.togglePinSelection()
         case .deleteSelection:
             guard model.isClipboardMode else { return false }
-            model.deleteSelection()
+            model.clipboardSearch.deleteSelection()
         case .openActions:
             guard model.isClipboardMode else { return false }
             boardContext.requestActions()

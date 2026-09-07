@@ -6,6 +6,7 @@ func makeSearchCoordinatorWithInertPresentation(
     assistantRunner: any AssistantProcessRunning = AssistantProcessRunner()
 ) -> SearchCoordinator {
     SearchCoordinator(
+        clipboardSearch: ClipboardSearch(store: ClipboardHistoryStore.inMemory()),
         assistantRunner: assistantRunner,
         onDismiss: {}
     )

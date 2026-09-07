@@ -28,7 +28,7 @@ struct ClipboardBoardDesignTests {
                 settings: ScriptedCatalog()
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
-            clipboardStore: clipboardStore,
+            clipboardSearch: ClipboardSearch(store: clipboardStore),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
             onDismiss: {}
@@ -88,7 +88,7 @@ struct ClipboardBoardDesignTests {
         coordinator.handleTab()
 
         let row = try #require(coordinator.results.first)
-        let inspector = try #require(coordinator.clipboardInspector)
+        let inspector = try #require(coordinator.clipboardSearch.inspector)
         #expect(row.subtitle.hasPrefix("Finder · "))
         guard case let .text(detail) = inspector else {
             Issue.record("expected a text inspector snapshot")
@@ -132,7 +132,7 @@ struct ClipboardBoardDesignTests {
         #expect(row.isPinned)
         #expect(row.title == "https://example.com/a")
         #expect(row.iconSource == .engine(symbol: "link", tint: .blue))
-        #expect(coordinator.isSelectionPinned)
+        #expect(coordinator.clipboardSearch.isSelectionPinned)
     }
 
     // MARK: - Timestamps
@@ -160,7 +160,8 @@ struct ClipboardBoardDesignTests {
         coordinator.handleTab()
 
         let actions = ClipboardMenuAction.available(
-            for: coordinator,
+            commands: ClipboardBoardCommands(session: coordinator),
+            clipboardSearch: coordinator.clipboardSearch,
             boardContext: ClipboardBoardContext(pasteTargetAppName: "Safari"),
             pasteLabel: "Paste to Safari"
         )
@@ -195,7 +196,8 @@ struct ClipboardBoardDesignTests {
         coordinator.handleTab()
 
         let actions = ClipboardMenuAction.available(
-            for: coordinator,
+            commands: ClipboardBoardCommands(session: coordinator),
+            clipboardSearch: coordinator.clipboardSearch,
             boardContext: ClipboardBoardContext(),
             pasteLabel: "Paste"
         )
@@ -204,7 +206,7 @@ struct ClipboardBoardDesignTests {
         #expect(byTitle["Pin"] == nil)
         #expect(byTitle["Quick Look"]?.isEnabled == true)
         #expect(byTitle["Show in Finder"]?.isEnabled == true)
-        #expect(coordinator.selectionFileURL == fileURL)
+        #expect(coordinator.clipboardSearch.selectionFileURL == fileURL)
     }
 
     @Test func commandKRoutesToTheBoardContextOnlyInClipboardMode() {

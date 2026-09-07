@@ -127,11 +127,17 @@ final class SelectedResultActionPerformer {
         String
     ) async -> Void
 
+    typealias ClipboardRestoreLookup = (String) -> ClipboardRestorePayload?
+
     private let effects: any SelectedResultActionEffects
     private let assistantRunSession: AssistantRunSession
     private let runningApplicationActivator: any RunningApplicationActivating
     private let recentStore: RecentStore
-    private let clipboardImagePayload: (String) -> ClipboardImagePayload?
+    /// What a row that names its Clipboard History entry — a captured image
+    /// — restores, supplied by Clipboard Search: the performer's one
+    /// dependency on Clipboard History, made explicit and swappable in the
+    /// pattern Source Selection Learning uses (ADR 0005).
+    private let clipboardRestorePayload: ClipboardRestoreLookup
     private let trackSelection: TrackSelection
     private let onDismiss: @MainActor () -> Void
 
@@ -140,7 +146,7 @@ final class SelectedResultActionPerformer {
         assistantRunSession: AssistantRunSession,
         runningApplicationActivator: any RunningApplicationActivating,
         recentStore: RecentStore,
-        clipboardImagePayload: @escaping (String) -> ClipboardImagePayload? = { _ in nil },
+        clipboardRestorePayload: @escaping ClipboardRestoreLookup = { _ in nil },
         trackSelection: @escaping TrackSelection,
         onDismiss: @escaping @MainActor () -> Void
     ) {
@@ -148,7 +154,7 @@ final class SelectedResultActionPerformer {
         self.assistantRunSession = assistantRunSession
         self.runningApplicationActivator = runningApplicationActivator
         self.recentStore = recentStore
-        self.clipboardImagePayload = clipboardImagePayload
+        self.clipboardRestorePayload = clipboardRestorePayload
         self.trackSelection = trackSelection
         self.onDismiss = onDismiss
     }
@@ -170,7 +176,7 @@ final class SelectedResultActionPerformer {
             onDismiss()
 
         case let .copyImage(id):
-            guard let payload = clipboardImagePayload(id),
+            guard case let .image(payload)? = clipboardRestorePayload(id),
                   effects.writeImageDataToClipboard(png: payload.png, tiff: payload.tiff)
             else {
                 logClipboardFailure(for: item)

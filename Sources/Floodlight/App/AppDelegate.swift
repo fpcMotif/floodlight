@@ -1,8 +1,15 @@
 import AppKit
+import FloodlightEngine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    /// Clipboard History is created once here and handed to both of its
+    /// owners: Clipboard Capture writes it, Clipboard Search reads it for
+    /// the Search Session (ADR 0008).
+    private lazy var clipboardStore = (try? ClipboardHistoryStore())
+        ?? ClipboardHistoryStore.inMemory()
     private lazy var model = SearchCoordinator(
+        clipboardSearch: ClipboardSearch(store: clipboardStore),
         onDismiss: { [weak self] in
             self?.searchDidDismiss()
         }
@@ -16,9 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self?.globalHotKeyDidFire()
     }
 
-    private lazy var clipboardCapture = ClipboardCaptureService(
-        store: model.clipboardStore
-    )
+    private lazy var clipboardCapture = ClipboardCaptureService(store: clipboardStore)
 
     // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
     // back an unowned item, so dropping this reference removes the menu bar
@@ -322,7 +327,7 @@ extension AppDelegate: ApplicationPresentationEffects {
             rootURL: model.rootURL,
             blocklistStore: model.blocklistStore,
             clipboardExclusionStore: clipboardCapture.exclusions,
-            clipboardStore: model.clipboardStore,
+            clipboardStore: clipboardStore,
             selectShortcut: { [weak self] shortcut in
                 self?.selectShortcut(shortcut) ?? .noShortcutActive
             },

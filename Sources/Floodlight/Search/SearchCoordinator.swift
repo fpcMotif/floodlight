@@ -72,8 +72,12 @@ final class SearchCoordinator {
     private let sourceSearch: any SourceSearching
     @ObservationIgnored
     package let blocklistStore: BlocklistStore
+    /// Clipboard mode's one owner (ADR 0008). The session asks it for the
+    /// publication, tells it where the selection moved, and reads the facts
+    /// it publishes; the board reads those facts and issues its commands
+    /// directly.
     @ObservationIgnored
-    package let clipboardStore: ClipboardHistoryStore
+    let clipboardSearch: ClipboardSearch
     @ObservationIgnored
     private let assistantRunner: any AssistantProcessRunning
     @ObservationIgnored
@@ -88,28 +92,13 @@ final class SearchCoordinator {
     @ObservationIgnored
     private var pathCache: PathResolutionCache
     /// Result Publication is the one order results are published in (ADR
-    /// 0002), and the two facts about the selection below belong to it: they
-    /// are recomputed here, on every republication, rather than derived by
-    /// whichever view body happens to ask (#72).
+    /// 0002). Every change to it is reported to Clipboard Search, which
+    /// recomputes what it publishes about the selection on every
+    /// republication rather than when a view body happens to ask (#72).
     private var publication: SearchResultPublication {
-        didSet { refreshSelectionSnapshot() }
+        didSet { reportSelectionToClipboardSearch() }
     }
 
-    /// Inspector snapshot for the selected Clipboard History entry, or `nil`
-    /// outside clipboard mode.
-    private(set) var clipboardInspector: ClipboardInspector?
-
-    /// Whether Space and the board's Preview chip have anything to show for
-    /// the current selection. A published boolean, not a getter that stats
-    /// the disk and writes a temporary file mid-layout.
-    private(set) var isSelectionPreviewable = false
-
-    /// The selection the two values above were computed for. A republication
-    /// whose selected row comes back byte-for-byte identical recomputes
-    /// nothing; anything that changes the row — a new rank under a new query,
-    /// a pin, a delete — does.
-    @ObservationIgnored
-    private var selectionSnapshotKey: SelectionSnapshotKey?
     @ObservationIgnored
     private var sourceWarmUpComplete = false
     @ObservationIgnored
@@ -126,8 +115,7 @@ final class SearchCoordinator {
         sourceSearch: any SourceSearching,
         recentStore: RecentStore,
         blocklistStore: BlocklistStore = BlocklistStore(),
-        clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
-            ClipboardHistoryStore.inMemory(),
+        clipboardSearch: ClipboardSearch = ClipboardSearch(store: ClipboardHistoryStore.inMemory()),
         rootURL: URL,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
         runningApplicationActivator: any RunningApplicationActivating =
@@ -138,7 +126,7 @@ final class SearchCoordinator {
     ) {
         self.sourceSearch = sourceSearch
         self.blocklistStore = blocklistStore
-        self.clipboardStore = clipboardStore
+        self.clipboardSearch = clipboardSearch
         self.rootURL = rootURL
         self.assistantRunner = assistantRunner
         pathCache = PathResolutionCache(resolver: pathResolver)
@@ -150,8 +138,8 @@ final class SearchCoordinator {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: runningApplicationActivator,
             recentStore: recentStore,
-            clipboardImagePayload: { [clipboardStore] id in
-                clipboardStore.imageData(for: id)
+            clipboardRestorePayload: { [clipboardSearch] id in
+                clipboardSearch.restorePayload(for: id)
             },
             trackSelection: { candidateID, selectedURL, query in
                 await sourceSearch.trackSelection(
@@ -178,18 +166,22 @@ final class SearchCoordinator {
                 )
             ))
         )
-        // `didSet` does not fire for the assignment that initializes a
-        // property, so the first publication would otherwise never reach
-        // `refreshSelectionSnapshot`. It agrees with the stored defaults
-        // today; relying on that silently is how it stops agreeing.
-        refreshSelectionSnapshot()
+        // A pin or a delete changes the rows behind the board; the session
+        // learns only that history changed and asks for the publication
+        // again. Clipboard Search never publishes rows itself (ADR 0002).
+        clipboardSearch.historyDidChange = { [weak self] in
+            self?.republishClipboardModeResults()
+        }
     }
 
     /// The live wiring: search scope from preferences, index and catalogs over
-    /// the real filesystem. `assistantRunner` is overridable so tests can
-    /// exercise the "Ask Codex"/"Ask Claude" seam without spawning a real
-    /// process or depending on what's installed on the test machine.
+    /// the real filesystem. Clipboard Search arrives built, over the one
+    /// Clipboard History the application shell also hands to Clipboard
+    /// Capture. `assistantRunner` is overridable so tests can exercise the
+    /// "Ask Codex"/"Ask Claude" seam without spawning a real process or
+    /// depending on what's installed on the test machine.
     convenience init(
+        clipboardSearch: ClipboardSearch,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
@@ -232,11 +224,7 @@ final class SearchCoordinator {
             ),
             recentStore: recentStore,
             blocklistStore: blocklistStore,
-            clipboardStore: (try? ClipboardHistoryStore(databaseURL: indexStorage
-                    .appendingPathComponent(
-                        "clipboard.sqlite3",
-                        isDirectory: false
-                    ))) ?? ClipboardHistoryStore.inMemory(),
+            clipboardSearch: clipboardSearch,
             rootURL: initialRoot,
             assistantRunner: assistantRunner,
             onDismiss: onDismiss
@@ -450,52 +438,28 @@ final class SearchCoordinator {
     /// selection has no file URL or isn't previewable. The shell uses this to
     /// drive QuickLook without re-deriving previewability itself.
     ///
-    /// For a captured image this *materializes* the temporary file Quick Look
-    /// reads, so it is an action, not a question: ask `isSelectionPreviewable`
-    /// to decide whether the affordance is live, and call this only once the
-    /// user has actually pressed Space or Preview. Browsing entries then
-    /// leaves nothing behind (#72).
+    /// In clipboard mode this is Clipboard Search's preview action, which
+    /// *materializes* the temporary file Quick Look reads for a captured
+    /// image — so ask `isSelectionPreviewable` to decide whether the
+    /// affordance is live, and call this only once the user has actually
+    /// pressed Space or Preview. Browsing entries then leaves nothing behind
+    /// (#72).
     var previewableSelectionURL: URL? {
-        guard let selectedItem else { return nil }
-        if selectedItem.isPreviewable, let fileURL = selectedItem.fileURL {
-            return fileURL
+        if isClipboardMode {
+            return clipboardSearch.materializePreviewURL()
         }
-        if case let .copyImage(id) = selectedItem.action {
-            return clipboardImagePreviewURL(for: id)
-        }
-        if case let .copy(text) = selectedItem.action,
-           let localURL = ClipboardInspector.parseLocalPath(text),
-           FileManager.default.fileExists(atPath: localURL.path)
-        {
-            return localURL
-        }
-        return nil
+        guard let selectedItem, selectedItem.isPreviewable else { return nil }
+        return selectedItem.fileURL
     }
 
-    private func clipboardImagePreviewURL(for id: String) -> URL? {
-        guard let payload = clipboardStore.imageData(for: id) ?? clipboardStore.entry(id: id)
-            .flatMap({ entry in
-                entry.image.flatMap { image in
-                    image.thumbnailPNGData.isEmpty ? nil : ClipboardImagePayload(
-                        png: image.thumbnailPNGData,
-                        tiff: nil
-                    )
-                }
-            })
-        else {
-            return nil
+    /// Whether Space has anything to show for the current selection. In
+    /// clipboard mode it is the flag Clipboard Search publishes; elsewhere a
+    /// row is previewable exactly when it carries a file URL.
+    var isSelectionPreviewable: Bool {
+        if isClipboardMode {
+            return clipboardSearch.isSelectionPreviewable
         }
-        let data = payload.png ?? payload.tiff
-        guard let data, !data.isEmpty else { return nil }
-        let ext = payload.png != nil ? "png" : "tiff"
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("FloodlightClipboardPreviews", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let fileURL = tempDir.appendingPathComponent("\(id).\(ext)")
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            try? data.write(to: fileURL)
-        }
-        return fileURL
+        return selectedItem?.isPreviewable ?? false
     }
 
     /// `assistantRun`'s state, but only if it belongs to `item` — every
@@ -703,112 +667,37 @@ final class SearchCoordinator {
     }
 }
 
-extension SearchCoordinator {
-    func togglePinSelection() {
-        mutateSelectedClipboardEntry { clipboardStore.togglePin(id: $0) }
-    }
-
-    func deleteSelection() {
-        mutateSelectedClipboardEntry { clipboardStore.delete(id: $0) }
-    }
-
-    /// Whether the selected clipboard row is pinned — the Actions menu
-    /// reads it to offer "Pin" or "Unpin".
-    var isSelectionPinned: Bool {
-        guard isClipboardMode, let selectedItem else { return false }
-        return selectedItem.isPinned
-    }
-
-    /// The selection's on-disk location, for "Show in Finder".
-    var selectionFileURL: URL? {
-        selectedItem?.fileURL
-    }
-
-    fileprivate func publishClipboardModeResults(
+/// Clipboard mode, as the session sees it: ask Clipboard Search for the
+/// publication, store it, and tell Clipboard Search where the selection is.
+/// Everything that reads or writes Clipboard History lives behind that seam
+/// (ADR 0008).
+fileprivate extension SearchCoordinator {
+    func publishClipboardModeResults(
         selectedFilter: SearchResultFilter? = nil,
         selection: SearchResultSelection? = nil
     ) {
         searchTask?.cancel()
         searchTask = nil
-        publication = SearchResultProjection.project(
-            .clipboard(.init(
-                entries: clipboardStore.search(query: query),
-                selectedFilter: selectedFilter ?? self.selectedFilter,
-                selection: selection ?? publication.selection
-            ))
+        publication = clipboardSearch.publication(
+            query: query,
+            selectedFilter: selectedFilter ?? self.selectedFilter,
+            selection: selection ?? publication.selection
         )
     }
 
-    /// Republishes only when the store accepted the write, so a failed pin or
-    /// delete leaves the board showing what is still on disk.
-    private func mutateSelectedClipboardEntry(_ mutate: (String) -> Bool) {
-        guard isClipboardMode, let selectedItem, let entryID = clipboardEntryID(from: selectedItem)
-        else {
-            return
-        }
-        guard mutate(entryID) else { return }
+    /// History changed under the board — a pin or a delete — so the rows are
+    /// stale. Outside clipboard mode nothing is showing them.
+    func republishClipboardModeResults() {
+        guard isClipboardMode else { return }
         publishClipboardModeResults()
     }
 
-    private func clipboardEntryID(from item: SearchItem) -> String? {
-        SearchResultProjection.clipboardEntryID(from: item.id)
+    /// Clipboard Search publishes facts about the selected row; this is the
+    /// one place it learns which row that is. Outside clipboard mode there is
+    /// none, which clears whatever it last published.
+    func reportSelectionToClipboardSearch() {
+        clipboardSearch.selectionDidMove(to: isClipboardMode ? selectedItem : nil)
     }
-
-    /// Recomputes the inspector snapshot and previewability for whatever is
-    /// selected now. Both were getters until #72, so a view body asking
-    /// either question read a multi-megabyte image out of SQLite, or created
-    /// a directory and wrote a file — on every keystroke, mid-layout.
-    fileprivate func refreshSelectionSnapshot() {
-        let key = SelectionSnapshotKey(item: selectedItem, isClipboardMode: isClipboardMode)
-        guard key != selectionSnapshotKey else { return }
-        selectionSnapshotKey = key
-
-        guard key.isClipboardMode,
-              let item = key.item,
-              let entryID = clipboardEntryID(from: item),
-              let entry = clipboardStore.entry(id: entryID)
-        else {
-            clipboardInspector = nil
-            isSelectionPreviewable = key.item?.isPreviewable ?? false
-            return
-        }
-
-        // What the board needs to know is that a full-size payload exists,
-        // never yet what it contains — and the entry already says so.
-        // `recordImage` refuses to write an image row without a payload and
-        // stores that payload's size, so a non-zero byte count *is* the
-        // existence check. Asking SQLite again would be a query per selection
-        // move for a fact already in hand.
-        let hasFullImage = entry.kind == .image && (entry.image?.byteCount ?? 0) > 0
-        clipboardInspector = ClipboardInspector.snapshot(for: entry, hasFullImage: hasFullImage)
-        isSelectionPreviewable = Self.isPreviewable(
-            item: item,
-            entry: entry,
-            hasFullImage: hasFullImage
-        )
-    }
-
-    /// Previewability without touching the disk again: a path-backed row
-    /// already carries the `fileURL` the projection resolved for it, and a
-    /// captured image is previewable while it still has pixels to write —
-    /// the full payload, or failing that the stored thumbnail.
-    private static func isPreviewable(
-        item: SearchItem,
-        entry: ClipboardEntry,
-        hasFullImage: Bool
-    ) -> Bool {
-        if item.isPreviewable { return true }
-        guard entry.kind == .image else { return false }
-        return hasFullImage || entry.image?.thumbnailPNGData.isEmpty == false
-    }
-}
-
-/// What the published selection snapshot depends on. Comparing the selected
-/// row wholesale is what lets a pin toggle or a delete refresh the inspector
-/// without the coordinator keeping a second notion of "did this change".
-private struct SelectionSnapshotKey: Equatable {
-    let item: SearchItem?
-    let isClipboardMode: Bool
 }
 
 /// The one operation that is about the coordinator rather than the cache:

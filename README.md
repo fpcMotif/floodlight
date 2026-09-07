@@ -172,6 +172,8 @@ FloodlightPanelController
   │       │   ├─ ApplicationCatalog → private app markers → a second FFFIndex
   │       │   └─ SystemCatalog
   │       ├─ Calculator
+  │       ├─ ClipboardSearch (Clipboard mode: rows, inspector, pin and preview facts)
+  │       │   └─ ClipboardHistoryStore (SQLite; ClipboardCaptureService writes it)
   │       └─ SelectedResultActionPerformer (selected-result action policy)
   │           └─ SelectedResultActionEffects → NSPasteboard / NSWorkspace
   └─ QuickLookController

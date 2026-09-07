@@ -4,17 +4,18 @@ import Foundation
 import XCTest
 @testable import Floodlight
 
-/// The budget for the keystroke that used to stutter: republishing the board's
-/// rows while a large screenshot is selected.
+/// The budget for the keystroke that used to stutter: producing the board's
+/// publication while a large screenshot is selected.
 ///
 /// Before #72 the inspector snapshot and the preview affordance were getters
 /// the view evaluated, so each republication pulled the entry's whole payload
-/// out of SQLite, decoded it, and wrote a temporary file. Both are published
-/// values now, and this bounds what a republication costs — plus asserts the
-/// two things it must no longer do: read the payload, or write a file.
+/// out of SQLite, decoded it, and wrote a temporary file. Both are values
+/// Clipboard Search publishes now (#85), and this bounds what a publication
+/// costs — plus asserts the two things it must no longer do: read the
+/// payload, or write a file.
 @MainActor
-final class ClipboardBoardPerformanceTests: XCTestCase {
-    func testClipboardRepublicationWithAnImageSelectedStaysUnderBudget() throws {
+final class ClipboardSearchPerformanceTests: XCTestCase {
+    func testClipboardPublicationWithAnImageSelectedStaysUnderBudget() throws {
         // Big enough that a payload read would swamp everything else here:
         // reading and decoding four megabytes is milliseconds, and the budget
         // below is in microseconds.
@@ -26,7 +27,7 @@ final class ClipboardBoardPerformanceTests: XCTestCase {
         for index in 0..<100 {
             _ = store.record(text: "meeting note #\(index)", sourceAppBundleID: "com.apple.Notes")
         }
-        let imageEntry = try XCTUnwrap(store.recordImage(
+        _ = try XCTUnwrap(store.recordImage(
             pngData: payload,
             tiffData: nil,
             thumbnailPNGData: ClipboardImageTestData.thumbnail,
@@ -38,21 +39,25 @@ final class ClipboardBoardPerformanceTests: XCTestCase {
             _ = store.record(text: "meeting note #\(index)", sourceAppBundleID: "com.apple.Notes")
         }
 
-        let coordinator = try makeCoordinator(clipboardStore: store)
-        coordinator.query = "clip"
-        coordinator.handleTab()
+        let tree = try TemporaryTree(label: "ClipboardSearchPerformance")
+        let previewDirectory = tree.root.appendingPathComponent("previews", isDirectory: true)
+        let search = ClipboardSearch(store: store, previewDirectory: previewDirectory)
 
-        let imageRowID = "clipboard:\(imageEntry.id)"
-        let imageRow = try XCTUnwrap(coordinator.results.first { $0.id == imageRowID })
-        coordinator.select(imageRow)
+        let opening = search.publication(query: "", selectedFilter: .all, selection: nil)
+        let imageRow = try XCTUnwrap(opening.visibleRows.first { $0.title == "note screenshot" })
+        let selection = SearchResultSelection(id: imageRow.id, origin: .user)
 
         // Two queries the image entry matches from a different rank, so every
-        // flip republishes a different row set and genuinely recomputes the
-        // selection's snapshot rather than reusing the memoized one.
+        // flip publishes a different row set and genuinely recomputes the
+        // selection's facts rather than reusing the memoized ones.
         let queries = ["note", "screenshot"]
         for query in queries {
-            coordinator.query = query
-            XCTAssertEqual(coordinator.selectedID, imageRowID, "the image stays selected")
+            let publication = search.publication(
+                query: query,
+                selectedFilter: .all,
+                selection: selection
+            )
+            XCTAssertEqual(publication.selection?.id, imageRow.id, "the image stays selected")
         }
 
         let sampleCount = _isDebugAssertConfiguration() ? 3 : 11
@@ -64,14 +69,12 @@ final class ClipboardBoardPerformanceTests: XCTestCase {
             let start = processCPUTime()
             for _ in 0..<iterations {
                 for query in queries {
-                    coordinator.query = query
+                    _ = search.publication(query: query, selectedFilter: .all, selection: selection)
                     // Exactly what the board's body reads on every pass. The
                     // counter keeps the reads from being optimized away in
                     // release, and reading these is what used to cost a
                     // four-megabyte SQLite read and a file write.
-                    if case .image = coordinator.clipboardInspector,
-                       coordinator.isSelectionPreviewable
-                    {
+                    if case .image = search.inspector, search.isSelectionPreviewable {
                         inspectedImages += 1
                     }
                 }
@@ -95,39 +98,19 @@ final class ClipboardBoardPerformanceTests: XCTestCase {
                 + " entries=\(store.count) payload_bytes=\(payload.count)"
         )
 
-        guard case let .image(detail) = coordinator.clipboardInspector else {
+        guard case let .image(detail) = search.inspector else {
             return XCTFail("the image entry should still be the inspected selection")
         }
         XCTAssertTrue(detail.hasFullImage)
         XCTAssertEqual(detail.thumbnailPNG, ClipboardImageTestData.thumbnail)
         XCTAssertFalse(
-            FileManager.default
-                .fileExists(atPath: ClipboardImageTestData.previewURL(entryID: imageEntry.id).path),
-            "republishing must not materialize Quick Look's temporary file"
+            FileManager.default.fileExists(atPath: previewDirectory.path),
+            "publishing must not materialize Quick Look's temporary file"
         )
 
-        // Bounded budget: a republication is a search plus a projection over
+        // Bounded budget: a publication is a search plus a projection over
         // 151 entries. Loose enough for a shared runner, tight enough that a
         // four-megabyte read reappearing on this path fails the gate.
         XCTAssertLessThan(medianMicroseconds, 5_000)
-    }
-
-    private func makeCoordinator(clipboardStore: ClipboardHistoryStore) throws
-        -> SearchCoordinator
-    {
-        let tree = try TemporaryTree(label: "ClipboardBoardPerformance")
-        return try SearchCoordinator(
-            sourceSearch: SourceSearchEngine(
-                files: ScriptedFileSource(),
-                applications: ScriptedCatalog(),
-                settings: ScriptedCatalog()
-            ),
-            recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
-            blocklistStore: BlocklistStore(defaults: IsolatedDefaults().defaults),
-            clipboardStore: clipboardStore,
-            rootURL: tree.root,
-            assistantRunner: ScriptedAssistantRunner(),
-            onDismiss: {}
-        )
     }
 }

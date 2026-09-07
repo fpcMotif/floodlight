@@ -259,21 +259,9 @@ enum SearchResultProjection {
         }
     }
 
-    /// The row id a Clipboard History entry gets, and the way back out of
-    /// it. The coordinator strips the prefix to reach the store, and the
-    /// board's image caches key on what it strips to, so the spelling lives
-    /// here once rather than at every site that builds or parses it.
-    static func clipboardRowID(for entryID: String) -> String {
-        clipboardRowIDPrefix + entryID
-    }
-
-    static func clipboardEntryID(from rowID: String) -> String? {
-        guard rowID.hasPrefix(clipboardRowIDPrefix) else { return nil }
-        return String(rowID.dropFirst(clipboardRowIDPrefix.count))
-    }
-
-    private static let clipboardRowIDPrefix = "clipboard:"
-
+    /// Row identity is Clipboard Search's to assign — `ClipboardSearch.rowID(
+    /// forEntryID:)` is the one spelling — so a row built here maps back to
+    /// its entry only through Clipboard Search.
     private static func buildClipboardRow(
         entry: ClipboardEntry,
         index: Int,
@@ -322,7 +310,7 @@ enum SearchResultProjection {
             }
             let exists = FileManager.default.fileExists(atPath: localURL.path)
             return SearchItem(
-                id: clipboardRowID(for: entry.id),
+                id: ClipboardSearch.rowID(forEntryID: entry.id),
                 title: title,
                 subtitle: subtitle,
                 kind: .clipboard,
@@ -347,7 +335,7 @@ enum SearchResultProjection {
             .engine(symbol: "doc.text", tint: .gray)
         }
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
             title: title,
             subtitle: subtitle,
             kind: .clipboard,
@@ -369,7 +357,7 @@ enum SearchResultProjection {
         let name = fileURL.lastPathComponent
 
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
             title: name.isEmpty ? path : name,
             subtitle: clipboardSubtitle(
                 entry: entry,
@@ -401,7 +389,7 @@ enum SearchResultProjection {
         }
 
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
             title: title,
             subtitle: clipboardSubtitle(entry: entry, now: now, detail: dimensions),
             kind: .clipboard,

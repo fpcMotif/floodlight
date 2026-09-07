@@ -106,7 +106,9 @@ struct SelectedResultActionPerformerTests {
         let harness = makeHarness()
         let png = Data(repeating: 0xAB, count: 64)
         let tiff = Data(repeating: 0xCD, count: 80)
-        harness.events.imagePayloads["image-1"] = ClipboardImagePayload(png: png, tiff: tiff)
+        harness.events.restorePayloads["image-1"] = .image(
+            ClipboardImagePayload(png: png, tiff: tiff)
+        )
         let item = SearchItem(
             id: "clipboard:image-1",
             title: "CleanShot 2026-09-01 at 15.30.png",
@@ -160,9 +162,8 @@ struct SelectedResultActionPerformerTests {
 
     @Test func clipboardImageActivationFailureKeepsSearchOpen() {
         let harness = makeHarness(clipboardSucceeds: false)
-        harness.events.imagePayloads["image-3"] = ClipboardImagePayload(
-            png: Data(repeating: 0x11, count: 8),
-            tiff: nil
+        harness.events.restorePayloads["image-3"] = .image(
+            ClipboardImagePayload(png: Data(repeating: 0x11, count: 8), tiff: nil)
         )
         let item = SearchItem(
             id: "clipboard:image-3",
@@ -176,6 +177,41 @@ struct SelectedResultActionPerformerTests {
         harness.performer.activate(item, query: "shot")
 
         #expect(harness.effects.clipboardImages.count == 1)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func clipboardImageActivationWithNoRestorePayloadKeepsSearchOpen() {
+        let harness = makeHarness()
+        let item = SearchItem(
+            id: "clipboard:image-missing",
+            title: "gone.png",
+            subtitle: "10×10 · 1m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-missing"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "gone")
+
+        #expect(harness.effects.clipboardImages.isEmpty)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func clipboardImageActivationIgnoresANonImageRestorePayload() {
+        let harness = makeHarness()
+        harness.events.restorePayloads["image-4"] = .text("not an image")
+        let item = SearchItem(
+            id: "clipboard:image-4",
+            title: "mislabeled.png",
+            subtitle: "10×10 · 1m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-4"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "mislabeled")
+
+        #expect(harness.effects.clipboardImages.isEmpty)
         #expect(harness.presentation.events.isEmpty)
     }
 
@@ -528,8 +564,8 @@ private final class Harness {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: activator,
             recentStore: recentStore,
-            clipboardImagePayload: { id in
-                events.imagePayloads[id]
+            clipboardRestorePayload: { id in
+                events.restorePayloads[id]
             },
             trackSelection: { itemID, url, query in
                 await learning.record(itemID: itemID, url: url, query: query)
@@ -663,7 +699,7 @@ private final class PresentationRecorder {
 @MainActor
 private final class EventRecorder {
     private(set) var events: [ActionEvent] = []
-    var imagePayloads: [String: ClipboardImagePayload] = [:]
+    var restorePayloads: [String: ClipboardRestorePayload] = [:]
 
     func record(_ event: ActionEvent) {
         events.append(event)

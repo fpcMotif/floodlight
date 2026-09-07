@@ -469,14 +469,6 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         }
     }
 
-    @discardableResult
-    package func togglePin(id: String, date: Date = .now) -> Bool {
-        let isCurrentlyPinned = stateLock.withLock { state in
-            state.pinnedEntries.contains { $0.id == id }
-        }
-        return isCurrentlyPinned ? unpin(id: id) : pin(id: id, date: date)
-    }
-
     // MARK: - Deletion & Clear
 
     @discardableResult
