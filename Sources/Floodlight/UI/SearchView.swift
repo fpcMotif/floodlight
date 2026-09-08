@@ -158,6 +158,11 @@ private struct SearchBar: View {
             .buttonStyle(.plain)
             .onHover { isClearButtonHovered = $0 }
             .accessibilityLabel("Clear search")
+        } else if model.isClipboardMode {
+            if let shortcut = model.activeClipboardShortcutDisplayName {
+                KeyChip(label: shortcut)
+                    .accessibilityLabel("Clipboard shortcut \(shortcut)")
+            }
         } else if let shortcut = model.activeShortcutDisplayName {
             KeyChip(label: shortcut)
                 .accessibilityLabel("Summon shortcut \(shortcut)")

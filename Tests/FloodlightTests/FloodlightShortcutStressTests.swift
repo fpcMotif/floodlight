@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 import Testing
@@ -57,6 +58,26 @@ struct FloodlightShortcutStressTests {
         #expect(FloodlightShortcut.optionSpace.carbonModifiers == UInt32(optionKey))
         #expect(FloodlightShortcut.shiftCommandC.carbonModifiers == UInt32(cmdKey | shiftKey))
         #expect(FloodlightShortcut.shiftCommandSpace.carbonModifiers == UInt32(cmdKey | shiftKey))
+    }
+
+    // MARK: - key equivalents
+
+    @Test func keyEquivalentsMirrorTheKeyAndModifiers() {
+        #expect(FloodlightShortcut.commandSpace.keyEquivalent == " ")
+        #expect(FloodlightShortcut.commandSpace.keyEquivalentModifierMask == [.command])
+
+        #expect(FloodlightShortcut.optionSpace.keyEquivalent == " ")
+        #expect(FloodlightShortcut.optionSpace.keyEquivalentModifierMask == [.option])
+
+        #expect(FloodlightShortcut.shiftCommandC.keyEquivalent == "c")
+        #expect(
+            FloodlightShortcut.shiftCommandC.keyEquivalentModifierMask == [.command, .shift]
+        )
+
+        #expect(FloodlightShortcut.shiftCommandSpace.keyEquivalent == " ")
+        #expect(
+            FloodlightShortcut.shiftCommandSpace.keyEquivalentModifierMask == [.command, .shift]
+        )
     }
 
     // MARK: - preference keys

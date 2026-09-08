@@ -24,6 +24,16 @@ struct MenuBarTests {
         #expect(clipboard.action.map(NSStringFromSelector) == "showClipboardHistoryFromMenu")
     }
 
+    @Test func clipboardHistoryItemHasNoKeyEquivalentUntilAShortcutIsActive() throws {
+        let delegate = AppDelegate()
+        let menu = delegate.makeStatusMenu()
+
+        delegate.menuWillOpen(menu)
+
+        let clipboard = try #require(menu.items.first { $0.title == "Clipboard History" })
+        #expect(clipboard.keyEquivalent.isEmpty)
+    }
+
     @Test func mainMenuExposesStandardTextEditingCommands() throws {
         let mainMenu = AppDelegate().makeMainMenu()
         let editMenu = try #require(mainMenu.items.compactMap(\.submenu)

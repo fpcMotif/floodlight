@@ -51,6 +51,8 @@ final class SearchCoordinator {
     /// this directly rather than re-deriving a preference that might not
     /// match what's actually active.
     var activeShortcutDisplayName: String?
+    /// Same lifecycle as `activeShortcutDisplayName`, for `.showClipboard`.
+    var activeClipboardShortcutDisplayName: String?
 
     var filterOptions: [SearchFilterOption] {
         publication.filterOptions

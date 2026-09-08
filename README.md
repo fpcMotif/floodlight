@@ -14,6 +14,8 @@ mouse.
 
 - Global `⌘Space` invocation, with automatic `⌥Space` fallback while Apple's
   Spotlight still owns the shortcut
+- Global `⇧⌘C` opens Clipboard History from any app, with automatic
+  `⇧⌘Space` fallback
 - FFF fuzzy search across files and folders
 - Relative, absolute, and `~/` path queries with directory-only trailing-slash
   search

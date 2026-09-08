@@ -316,8 +316,12 @@ struct ApplicationPresentationCoordinatorTests {
         let showItem = try #require(menu.items.first { $0.title == "Show Floodlight" })
         let showAction = try #require(showItem.action)
         #expect(NSApp.sendAction(showAction, to: showItem.target, from: showItem))
+        let clipboardItem = try #require(menu.items.first { $0.title == "Clipboard History" })
+        let clipboardAction = try #require(clipboardItem.action)
+        #expect(NSApp.sendAction(clipboardAction, to: clipboardItem.target, from: clipboardItem))
         #expect(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
-        delegate.globalHotKeyDidFire()
+        delegate.globalHotKeyDidFire(.summonSearch)
+        delegate.globalHotKeyDidFire(.showClipboard)
 
         #expect(controller.window?.isVisible == true)
         #expect(!hasVisibleSearchPanel())

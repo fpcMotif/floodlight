@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 
@@ -42,6 +43,23 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
         case .commandSpace: UInt32(cmdKey)
         case .optionSpace: UInt32(optionKey)
         case .shiftCommandC, .shiftCommandSpace: UInt32(cmdKey | shiftKey)
+        }
+    }
+
+    /// The same key and modifiers as `keyCode`/`carbonModifiers`, in the
+    /// `NSMenuItem` vocabulary the status menu's key equivalent needs.
+    var keyEquivalent: String {
+        switch self {
+        case .commandSpace, .optionSpace, .shiftCommandSpace: " "
+        case .shiftCommandC: "c"
+        }
+    }
+
+    var keyEquivalentModifierMask: NSEvent.ModifierFlags {
+        switch self {
+        case .commandSpace: [.command]
+        case .optionSpace: [.option]
+        case .shiftCommandC, .shiftCommandSpace: [.command, .shift]
         }
     }
 
