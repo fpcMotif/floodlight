@@ -20,7 +20,7 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    private var keyLabel: String {
+    var keyLabel: String {
         switch self {
         case .commandSpace, .optionSpace, .shiftCommandSpace: "Space"
         case .shiftCommandC: "C"

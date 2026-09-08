@@ -214,7 +214,7 @@ final class OnboardingTests {
         )
         let flow = OnboardingFlowState(
             session: session,
-            selectShortcut: { _ in .noShortcutActive },
+            selectShortcut: { _, _ in .noShortcutActive },
             openSpotlightSettings: {}
         )
 
@@ -224,6 +224,63 @@ final class OnboardingTests {
         #expect(session
             .shortcutMessage ==
             "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it.")
+    }
+
+    @Test func selectingAnAvailableClipboardShortcutAdoptsIt() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectOutcome = .requestedShortcutActive(.shiftCommandSpace)
+
+        flow.handleClipboardShortcutSelection(.shiftCommandSpace)
+
+        #expect(session.activeClipboardShortcut == .shiftCommandSpace)
+        #expect(session.clipboardShortcutMessage == nil)
+        #expect(spy.selectedActionShortcuts.map(\.action) == [.showClipboard])
+        #expect(spy.selectedActionShortcuts.map(\.shortcut) == [.shiftCommandSpace])
+    }
+
+    @Test func refusedClipboardShortcutKeepsThePreviousOneAndSaysSo() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectOutcome = .previousShortcutActive(.shiftCommandSpace)
+
+        flow.handleClipboardShortcutSelection(.shiftCommandC)
+
+        #expect(session.activeClipboardShortcut == .shiftCommandSpace)
+        #expect(session
+            .clipboardShortcutMessage ==
+            "macOS could not register ⇧⌘ C. Floodlight kept ⇧⌘ Space active.")
+    }
+
+    @Test func clipboardSelectionReportsWhenNoClipboardShortcutRemainsActive() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectOutcome = .noShortcutActive
+
+        flow.handleClipboardShortcutSelection(.shiftCommandC)
+
+        #expect(session.activeClipboardShortcut == nil)
+        #expect(session
+            .clipboardShortcutMessage ==
+            "macOS could not register ⇧⌘ C. Clipboard History has no active shortcut; try again.")
+    }
+
+    @Test func selectingAClipboardShortcutLeavesTheSummonShortcutUntouched() throws {
+        let (flow, session, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectOutcome = .requestedShortcutActive(.shiftCommandSpace)
+
+        flow.handleClipboardShortcutSelection(.shiftCommandSpace)
+
+        #expect(session.activeShortcut == .optionSpace)
+        #expect(session.shortcutMessage == nil)
+        #expect(spy.selectedActionShortcuts.map(\.action) == [.showClipboard])
+    }
+
+    @Test func summonSelectionRoutesToTheSummonAction() throws {
+        let (flow, _, spy) = try makeFlow(activeShortcut: .optionSpace)
+        spy.selectOutcome = .requestedShortcutActive(.commandSpace)
+
+        flow.handleShortcutSelection(.commandSpace)
+
+        #expect(spy.selectedActionShortcuts.map(\.action) == [.summonSearch])
+        #expect(spy.selectedActionShortcuts.map(\.shortcut) == [.commandSpace])
     }
 
     @Test func beginningSpotlightReplacementQueuesCommandSpaceAndOpensSettings() throws {
@@ -347,6 +404,7 @@ final class OnboardingTests {
             presentation: presentation,
             session: session,
             onSelectShortcut: { _ in },
+            onSelectClipboardShortcut: { _ in },
             onSetLaunchAtLogin: { _ in },
             onChooseScope: {},
             onOpenSpotlightSettings: {},
@@ -380,10 +438,18 @@ final class OnboardingTests {
 private final class OnboardingFlowSpy {
     var selectOutcome = GlobalHotKeyReplacementOutcome.noShortcutActive
     private(set) var selectedShortcuts: [FloodlightShortcut] = []
+    private(set) var selectedActionShortcuts: [(
+        action: GlobalHotKeyAction,
+        shortcut: FloodlightShortcut
+    )] = []
     private(set) var spotlightSettingsOpenCount = 0
 
-    func selectShortcut(_ shortcut: FloodlightShortcut) -> GlobalHotKeyReplacementOutcome {
+    func selectShortcut(
+        _ action: GlobalHotKeyAction,
+        _ shortcut: FloodlightShortcut
+    ) -> GlobalHotKeyReplacementOutcome {
         selectedShortcuts.append(shortcut)
+        selectedActionShortcuts.append((action, shortcut))
         return selectOutcome
     }
 

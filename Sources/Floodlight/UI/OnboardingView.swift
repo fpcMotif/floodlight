@@ -20,10 +20,11 @@ struct OnboardingView: View {
     @State private var newClipboardExclusion = ""
     // because it drives a `Binding`'s setter and SwiftUI now requires that
     // setter to be `@isolated(any) @Sendable`; the rest are annotated to match
-    // rather than leaving one of six spelled differently for a reason that is
+    // rather than leaving one of seven spelled differently for a reason that is
     // invisible at the declaration. Every caller is a main-actor controller
     // already, so this only writes down what was true.
     let onSelectShortcut: @MainActor @Sendable (FloodlightShortcut) -> Void
+    let onSelectClipboardShortcut: @MainActor @Sendable (FloodlightShortcut) -> Void
     let onSetLaunchAtLogin: @MainActor @Sendable (Bool) -> Void
     let onChooseScope: @MainActor @Sendable () -> Void
     let onOpenSpotlightSettings: @MainActor @Sendable () -> Void
@@ -155,6 +156,18 @@ struct OnboardingView: View {
                         .padding(.bottom, 12)
                 }
 
+                if presentation == .onboarding {
+                    Text(clipboardShortcutHint)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 12)
+                }
+
+                if presentation == .settings {
+                    clipboardShortcutRow
+                }
+
                 Divider()
 
                 SetupRow(
@@ -178,6 +191,71 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 10)
                 }
+            }
+        }
+    }
+
+    private var clipboardShortcutHint: String {
+        if let activeClipboardShortcut = session.activeClipboardShortcut {
+            return "\(activeClipboardShortcut.displayName) opens Clipboard History from any app."
+        }
+        return "Clipboard History's shortcut could not be registered; choose one in Settings later."
+    }
+
+    private var clipboardShortcutRow: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Clipboard shortcut")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Open Clipboard History from any app.")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+                if let activeClipboardShortcut = session.activeClipboardShortcut {
+                    ShortcutPreview(shortcut: activeClipboardShortcut)
+                } else {
+                    Text("Not active")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 12)
+
+            HStack(spacing: 8) {
+                ForEach(GlobalHotKeyAction.showClipboard.choices) { shortcut in
+                    Button {
+                        onSelectClipboardShortcut(shortcut)
+                    } label: {
+                        Label(
+                            shortcut.displayName,
+                            systemImage: session.activeClipboardShortcut == shortcut
+                                ? "checkmark.circle.fill"
+                                : "circle"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(
+                        session.activeClipboardShortcut == shortcut
+                            ? Color.floodlightSetupAccent
+                            : nil
+                    )
+                }
+
+                Spacer()
+            }
+            .padding(.bottom, 12)
+
+            if let message = session.clipboardShortcutMessage {
+                Text(message)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.floodlightSetupAccent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 12)
             }
         }
     }
@@ -483,7 +561,7 @@ private struct ShortcutPreview: View {
             Text("+")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.tertiary)
-            KeyCap(symbol: "space", width: 112)
+            KeyCap(symbol: shortcut.keyLabel, width: 112)
         }
     }
 }

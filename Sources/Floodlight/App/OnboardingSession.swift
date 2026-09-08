@@ -29,6 +29,8 @@ final class OnboardingSession {
 
     var activeShortcut: FloodlightShortcut?
     var shortcutMessage: String?
+    var activeClipboardShortcut: FloodlightShortcut?
+    var clipboardShortcutMessage: String?
     var launchesAtLogin: Bool
     var launchAtLoginMessage: String?
     var rootURL: URL
@@ -96,11 +98,13 @@ final class OnboardingSession {
         clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
         clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
             ClipboardHistoryStore.inMemory(),
+        activeClipboardShortcut: FloodlightShortcut? = nil,
         fullDiskAccessProvider: @escaping () -> Bool = {
             FloodlightFullDiskAccess.isGranted()
         }
     ) {
         self.activeShortcut = activeShortcut
+        self.activeClipboardShortcut = activeClipboardShortcut
         self.launchesAtLogin = launchesAtLogin
         self.rootURL = rootURL
         self.defaults = defaults

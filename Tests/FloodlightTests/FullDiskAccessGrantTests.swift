@@ -181,7 +181,7 @@ struct FullDiskAccessGrantTests {
         )
         let flow = OnboardingFlowState(
             session: session,
-            selectShortcut: { _ in .noShortcutActive },
+            selectShortcut: { _, _ in .noShortcutActive },
             openSpotlightSettings: {},
             fullDiskAccessCoordinator: coordinator
         )

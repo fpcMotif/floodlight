@@ -125,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if globalHotKeyRegistration.start(.showClipboard, preferred: preferredClipboard) == nil {
             NSLog("Floodlight could not register its clipboard keyboard shortcut.")
         }
+        refreshActiveShortcutDisplayNames()
+    }
+
+    private func refreshActiveShortcutDisplayNames() {
         model.activeShortcutDisplayName = globalHotKeyRegistration
             .activeShortcut(for: .summonSearch)?.displayName
         model.activeClipboardShortcutDisplayName = globalHotKeyRegistration
@@ -132,11 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func selectShortcut(
+        _ action: GlobalHotKeyAction,
         _ shortcut: FloodlightShortcut
     ) -> GlobalHotKeyReplacementOutcome {
-        let outcome = globalHotKeyRegistration.replace(.summonSearch, with: shortcut)
-        model.activeShortcutDisplayName = globalHotKeyRegistration
-            .activeShortcut(for: .summonSearch)?.displayName
+        let outcome = globalHotKeyRegistration.replace(action, with: shortcut)
+        refreshActiveShortcutDisplayNames()
         return outcome
     }
 
@@ -365,13 +369,14 @@ extension AppDelegate: ApplicationPresentationEffects {
         FloodlightConfigurationWindowController(
             presentation: origin == .initialSetup ? .onboarding : .settings,
             activeShortcut: globalHotKeyRegistration.activeShortcut(for: .summonSearch),
+            activeClipboardShortcut: globalHotKeyRegistration.activeShortcut(for: .showClipboard),
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             blocklistStore: model.blocklistStore,
             clipboardExclusionStore: clipboardCapture.exclusions,
             clipboardStore: clipboardStore,
-            selectShortcut: { [weak self] shortcut in
-                self?.selectShortcut(shortcut) ?? .noShortcutActive
+            selectShortcut: { [weak self] action, shortcut in
+                self?.selectShortcut(action, shortcut) ?? .noShortcutActive
             },
             setLaunchAtLogin: { enabled in
                 do {

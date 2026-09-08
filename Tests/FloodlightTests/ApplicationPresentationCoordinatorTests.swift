@@ -348,9 +348,10 @@ private func makeConfigurationController(
     FloodlightConfigurationWindowController(
         presentation: .settings,
         activeShortcut: .optionSpace,
+        activeClipboardShortcut: .shiftCommandC,
         launchesAtLogin: false,
         rootURL: FileManager.default.temporaryDirectory,
-        selectShortcut: { .requestedShortcutActive($0) },
+        selectShortcut: { _, shortcut in .requestedShortcutActive(shortcut) },
         setLaunchAtLogin: { _ in nil },
         chooseScope: { nil },
         onFinished: onFinished,
