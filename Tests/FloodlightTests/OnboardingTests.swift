@@ -44,9 +44,9 @@ final class OnboardingTests {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        #expect(FloodlightShortcut.preferred(in: defaults) == .commandSpace)
-        FloodlightShortcut.optionSpace.save(in: defaults)
-        #expect(FloodlightShortcut.preferred(in: defaults) == .optionSpace)
+        #expect(GlobalHotKeyAction.summonSearch.preferredShortcut(in: defaults) == .commandSpace)
+        GlobalHotKeyAction.summonSearch.save(.optionSpace, in: defaults)
+        #expect(GlobalHotKeyAction.summonSearch.preferredShortcut(in: defaults) == .optionSpace)
         #expect(FloodlightShortcut.optionSpace.fallback == .commandSpace)
         #expect(FloodlightShortcut.commandSpace.fallback == .optionSpace)
     }
