@@ -118,7 +118,7 @@ struct OnboardingView: View {
                 .padding(.vertical, 12)
 
                 HStack(spacing: 8) {
-                    ForEach(FloodlightShortcut.allCases) { shortcut in
+                    ForEach(GlobalHotKeyAction.summonSearch.choices) { shortcut in
                         Button {
                             onSelectShortcut(shortcut)
                         } label: {

@@ -19,8 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         effects: self,
         ensureSearchStarted: { [weak self] in self?.ensureSearchStarted() }
     )
-    private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] in
-        self?.globalHotKeyDidFire()
+    private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] action in
+        switch action {
+        case .summonSearch: self?.globalHotKeyDidFire()
+        case .showClipboard: break
+        }
     }
 
     private lazy var clipboardCapture = ClipboardCaptureService(store: clipboardStore)
@@ -113,18 +116,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func installGlobalHotKey() {
-        let preferred = FloodlightShortcut.preferred()
-        if globalHotKeyRegistration.start(preferred: preferred) == nil {
+        let preferred = GlobalHotKeyAction.summonSearch.preferredShortcut()
+        if globalHotKeyRegistration.start(.summonSearch, preferred: preferred) == nil {
             NSLog("Floodlight could not register its global keyboard shortcut.")
         }
-        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
+        model.activeShortcutDisplayName = globalHotKeyRegistration
+            .activeShortcut(for: .summonSearch)?.displayName
     }
 
     private func selectShortcut(
         _ shortcut: FloodlightShortcut
     ) -> GlobalHotKeyReplacementOutcome {
-        let outcome = globalHotKeyRegistration.replace(with: shortcut)
-        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
+        let outcome = globalHotKeyRegistration.replace(.summonSearch, with: shortcut)
+        model.activeShortcutDisplayName = globalHotKeyRegistration
+            .activeShortcut(for: .summonSearch)?.displayName
         return outcome
     }
 
@@ -347,7 +352,7 @@ extension AppDelegate: ApplicationPresentationEffects {
     ) -> any ConfigurationPresenting {
         FloodlightConfigurationWindowController(
             presentation: origin == .initialSetup ? .onboarding : .settings,
-            activeShortcut: globalHotKeyRegistration.activeShortcut,
+            activeShortcut: globalHotKeyRegistration.activeShortcut(for: .summonSearch),
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             blocklistStore: model.blocklistStore,

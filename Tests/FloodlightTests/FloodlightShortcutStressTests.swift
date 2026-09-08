@@ -4,16 +4,27 @@ import Testing
 @testable import Floodlight
 
 struct FloodlightShortcutStressTests {
-    // MARK: - allCases completeness
+    // MARK: - action choice sets
 
-    @Test func allCasesContainsBothShortcuts() {
-        #expect(FloodlightShortcut.allCases.count == 2)
-        #expect(FloodlightShortcut.allCases.contains(.commandSpace))
-        #expect(FloodlightShortcut.allCases.contains(.optionSpace))
+    @Test func summonActionOffersCommandThenOptionSpaceWithCommandSpaceDefault() {
+        #expect(GlobalHotKeyAction.summonSearch.choices == [.commandSpace, .optionSpace])
+        #expect(GlobalHotKeyAction.summonSearch.defaultShortcut == .commandSpace)
     }
 
-    @Test func caseIterableOrderIsCommandThenOption() {
-        #expect(FloodlightShortcut.allCases == [.commandSpace, .optionSpace])
+    @Test func clipboardActionOffersShiftCommandCThenShiftCommandSpaceWithShiftCommandCDefault() {
+        #expect(GlobalHotKeyAction.showClipboard.choices == [.shiftCommandC, .shiftCommandSpace])
+        #expect(GlobalHotKeyAction.showClipboard.defaultShortcut == .shiftCommandC)
+    }
+
+    // MARK: - fallbacks stay within their action
+
+    @Test func fallbacksStayWithinTheirAction() {
+        for action in GlobalHotKeyAction.allCases {
+            for choice in action.choices {
+                #expect(action.choices.contains(choice.fallback))
+                #expect(choice.fallback != choice)
+            }
+        }
     }
 
     // MARK: - raw values
@@ -21,92 +32,92 @@ struct FloodlightShortcutStressTests {
     @Test func rawValues() {
         #expect(FloodlightShortcut.commandSpace.rawValue == "commandSpace")
         #expect(FloodlightShortcut.optionSpace.rawValue == "optionSpace")
-    }
-
-    // MARK: - modifier symbols
-
-    @Test func modifierSymbols() {
-        #expect(FloodlightShortcut.commandSpace.modifierSymbol == "⌘")
-        #expect(FloodlightShortcut.optionSpace.modifierSymbol == "⌥")
-    }
-
-    // MARK: - modifier names
-
-    @Test func modifierNames() {
-        #expect(FloodlightShortcut.commandSpace.modifierName == "Command")
-        #expect(FloodlightShortcut.optionSpace.modifierName == "Option")
+        #expect(FloodlightShortcut.shiftCommandC.rawValue == "shiftCommandC")
+        #expect(FloodlightShortcut.shiftCommandSpace.rawValue == "shiftCommandSpace")
     }
 
     // MARK: - display names
 
-    @Test func displayNames() {
+    @Test func displayNamesComposeModifierSymbolsAndAKeyLabel() {
         #expect(FloodlightShortcut.commandSpace.displayName == "⌘ Space")
         #expect(FloodlightShortcut.optionSpace.displayName == "⌥ Space")
+        #expect(FloodlightShortcut.shiftCommandC.displayName == "⇧⌘ C")
+        #expect(FloodlightShortcut.shiftCommandSpace.displayName == "⇧⌘ Space")
     }
 
-    // MARK: - carbon modifiers
+    // MARK: - key codes and carbon modifiers
 
-    @Test func carbonModifiers() {
+    @Test func keyCodesAndCarbonModifiersNameTheKey() {
+        #expect(FloodlightShortcut.commandSpace.keyCode == UInt32(kVK_Space))
+        #expect(FloodlightShortcut.optionSpace.keyCode == UInt32(kVK_Space))
+        #expect(FloodlightShortcut.shiftCommandSpace.keyCode == UInt32(kVK_Space))
+        #expect(FloodlightShortcut.shiftCommandC.keyCode == UInt32(kVK_ANSI_C))
+
         #expect(FloodlightShortcut.commandSpace.carbonModifiers == UInt32(cmdKey))
         #expect(FloodlightShortcut.optionSpace.carbonModifiers == UInt32(optionKey))
+        #expect(FloodlightShortcut.shiftCommandC.carbonModifiers == UInt32(cmdKey | shiftKey))
+        #expect(FloodlightShortcut.shiftCommandSpace.carbonModifiers == UInt32(cmdKey | shiftKey))
     }
 
-    // MARK: - fallbacks mutual
+    // MARK: - preference keys
 
-    @Test func fallbacksAreMutual() {
-        #expect(FloodlightShortcut.commandSpace.fallback == .optionSpace)
-        #expect(FloodlightShortcut.optionSpace.fallback == .commandSpace)
+    @Test func summonActionKeepsTheGlobalShortcutPreferenceKey() {
+        #expect(GlobalHotKeyAction.summonSearch.preferenceKey == "global-shortcut")
+        #expect(GlobalHotKeyAction.showClipboard.preferenceKey == "clipboard-shortcut")
     }
 
-    // MARK: - preference key
+    // MARK: - preferred shortcut resolution
 
-    @Test func preferenceKey() {
-        #expect(FloodlightShortcut.preferenceKey == "global-shortcut")
-    }
-
-    // MARK: - preferred
-
-    @Test func preferredDefaultsToCommandSpace() throws {
+    @Test func aStoredSummonPreferenceStillResolvesAfterPreferencesBecomeActionScoped() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        #expect(FloodlightShortcut.preferred(in: defaults) == .commandSpace)
+        defaults.set("optionSpace", forKey: GlobalHotKeyAction.summonSearch.preferenceKey)
+        #expect(GlobalHotKeyAction.summonSearch.preferredShortcut(in: defaults) == .optionSpace)
     }
 
-    @Test func preferredReturnsSavedValue() throws {
+    @Test func anAbsentClipboardPreferenceResolvesToShiftCommandC() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        FloodlightShortcut.optionSpace.save(in: defaults)
-        #expect(FloodlightShortcut.preferred(in: defaults) == .optionSpace)
+        #expect(GlobalHotKeyAction.showClipboard.preferredShortcut(in: defaults) == .shiftCommandC)
+    }
+
+    @Test func aPreferenceNamingTheOtherActionsShortcutResolvesToTheDefault() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("commandSpace", forKey: GlobalHotKeyAction.showClipboard.preferenceKey)
+        #expect(GlobalHotKeyAction.showClipboard.preferredShortcut(in: defaults) == .shiftCommandC)
     }
 
     @Test func preferredFallsBackForInvalidValue() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set("not-a-shortcut", forKey: FloodlightShortcut.preferenceKey)
-        #expect(FloodlightShortcut.preferred(in: defaults) == .commandSpace)
+        defaults.set("not-a-shortcut", forKey: GlobalHotKeyAction.summonSearch.preferenceKey)
+        #expect(GlobalHotKeyAction.summonSearch.preferredShortcut(in: defaults) == .commandSpace)
     }
 
     // MARK: - save persists
 
-    @Test func savePersistsRawValue() throws {
+    @Test func savePersistsTheRawValueUnderTheActionsKey() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        FloodlightShortcut.optionSpace.save(in: defaults)
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == "optionSpace")
+        GlobalHotKeyAction.summonSearch.save(.optionSpace, in: defaults)
+        #expect(defaults.string(forKey: "global-shortcut") == "optionSpace")
 
-        FloodlightShortcut.commandSpace.save(in: defaults)
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == "commandSpace")
+        GlobalHotKeyAction.showClipboard.save(.shiftCommandSpace, in: defaults)
+        #expect(defaults.string(forKey: "clipboard-shortcut") == "shiftCommandSpace")
     }
 
     // MARK: - id matches rawValue
 
     @Test func IDMatchesRawValue() {
-        #expect(FloodlightShortcut.commandSpace.id == FloodlightShortcut.commandSpace.rawValue)
-        #expect(FloodlightShortcut.optionSpace.id == FloodlightShortcut.optionSpace.rawValue)
+        for shortcut in FloodlightShortcut.allCases {
+            #expect(shortcut.id == shortcut.rawValue)
+        }
     }
 
     // MARK: - Sendable conformance
@@ -123,8 +134,8 @@ struct FloodlightShortcutStressTests {
     @Test func hashableEquality() {
         #expect(FloodlightShortcut.commandSpace == FloodlightShortcut.commandSpace)
         #expect(FloodlightShortcut.commandSpace != FloodlightShortcut.optionSpace)
-        let set: Set<FloodlightShortcut> = [.commandSpace, .optionSpace, .commandSpace]
-        #expect(set.count == 2)
+        let set = Set(FloodlightShortcut.allCases)
+        #expect(set.count == FloodlightShortcut.allCases.count)
     }
 
     // MARK: - Helpers
