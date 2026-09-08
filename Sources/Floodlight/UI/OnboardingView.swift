@@ -98,62 +98,19 @@ struct OnboardingView: View {
     private var shortcutSection: some View {
         SetupSection(title: "General") {
             VStack(spacing: 0) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Keyboard shortcut")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("Open Floodlight from any app.")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-                    if let activeShortcut = session.activeShortcut {
-                        ShortcutPreview(shortcut: activeShortcut)
-                    } else {
-                        Text("Not active")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 12)
-
-                HStack(spacing: 8) {
-                    ForEach(GlobalHotKeyAction.summonSearch.choices) { shortcut in
-                        Button {
-                            onSelectShortcut(shortcut)
-                        } label: {
-                            Label(
-                                shortcut.displayName,
-                                systemImage: session.activeShortcut == shortcut
-                                    ? "checkmark.circle.fill"
-                                    : "circle"
-                            )
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(
-                            session.activeShortcut == shortcut
-                                ? Color.floodlightSetupAccent
-                                : nil
-                        )
-                    }
-
-                    Spacer()
-
+                ShortcutChoiceRow(
+                    title: "Keyboard shortcut",
+                    subtitle: "Open Floodlight from any app.",
+                    activeShortcut: session.activeShortcut,
+                    choices: GlobalHotKeyAction.summonSearch.choices,
+                    message: session.shortcutMessage,
+                    onSelect: onSelectShortcut
+                ) {
                     if session.offersSpotlightReplacement {
                         Button("Replace Spotlight…", action: onOpenSpotlightSettings)
                             .buttonStyle(.link)
                             .help("Open macOS Spotlight shortcut settings")
                     }
-                }
-                .padding(.bottom, 12)
-
-                if let message = session.shortcutMessage {
-                    Text(message)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color.floodlightSetupAccent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 12)
                 }
 
                 if presentation == .onboarding {
@@ -165,7 +122,18 @@ struct OnboardingView: View {
                 }
 
                 if presentation == .settings {
-                    clipboardShortcutRow
+                    Divider()
+
+                    ShortcutChoiceRow(
+                        title: "Clipboard shortcut",
+                        subtitle: "Open Clipboard History from any app.",
+                        activeShortcut: session.activeClipboardShortcut,
+                        choices: GlobalHotKeyAction.showClipboard.choices,
+                        message: session.clipboardShortcutMessage,
+                        onSelect: onSelectClipboardShortcut
+                    ) {
+                        EmptyView()
+                    }
                 }
 
                 Divider()
@@ -200,64 +168,6 @@ struct OnboardingView: View {
             return "\(activeClipboardShortcut.displayName) opens Clipboard History from any app."
         }
         return "Clipboard History's shortcut could not be registered; choose one in Settings later."
-    }
-
-    private var clipboardShortcutRow: some View {
-        VStack(spacing: 0) {
-            Divider()
-
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Clipboard shortcut")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Open Clipboard History from any app.")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-                if let activeClipboardShortcut = session.activeClipboardShortcut {
-                    ShortcutPreview(shortcut: activeClipboardShortcut)
-                } else {
-                    Text("Not active")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.vertical, 12)
-
-            HStack(spacing: 8) {
-                ForEach(GlobalHotKeyAction.showClipboard.choices) { shortcut in
-                    Button {
-                        onSelectClipboardShortcut(shortcut)
-                    } label: {
-                        Label(
-                            shortcut.displayName,
-                            systemImage: session.activeClipboardShortcut == shortcut
-                                ? "checkmark.circle.fill"
-                                : "circle"
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(
-                        session.activeClipboardShortcut == shortcut
-                            ? Color.floodlightSetupAccent
-                            : nil
-                    )
-                }
-
-                Spacer()
-            }
-            .padding(.bottom, 12)
-
-            if let message = session.clipboardShortcutMessage {
-                Text(message)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Color.floodlightSetupAccent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 12)
-            }
-        }
     }
 
     private var searchAccessSection: some View {
@@ -548,6 +458,70 @@ private struct SetupSection<Content: View>: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.primary.opacity(0.07), lineWidth: 1)
                 }
+        }
+    }
+}
+
+private struct ShortcutChoiceRow<Accessory: View>: View {
+    let title: String
+    let subtitle: String
+    let activeShortcut: FloodlightShortcut?
+    let choices: [FloodlightShortcut]
+    let message: String?
+    let onSelect: @MainActor @Sendable (FloodlightShortcut) -> Void
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+                if let activeShortcut {
+                    ShortcutPreview(shortcut: activeShortcut)
+                } else {
+                    Text("Not active")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 12)
+
+            HStack(spacing: 8) {
+                ForEach(choices) { shortcut in
+                    Button {
+                        onSelect(shortcut)
+                    } label: {
+                        Label(
+                            shortcut.displayName,
+                            systemImage: activeShortcut == shortcut
+                                ? "checkmark.circle.fill"
+                                : "circle"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(activeShortcut == shortcut ? Color.floodlightSetupAccent : nil)
+                }
+
+                Spacer()
+
+                accessory
+            }
+            .padding(.bottom, 12)
+
+            if let message {
+                Text(message)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.floodlightSetupAccent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 12)
+            }
         }
     }
 }
