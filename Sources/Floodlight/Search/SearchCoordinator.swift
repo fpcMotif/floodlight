@@ -309,6 +309,12 @@ final class SearchCoordinator {
         applyModeEvent(.backspaceOnEmptyQuery)
     }
 
+    /// Whether an open board should dismiss instead is presentation's
+    /// decision, made above this.
+    func showClipboardHistory() {
+        applyModeEvent(.clipboardShortcut)
+    }
+
     /// The engine title for the "⇥ Search <Engine>" affordance on a ranked
     /// keyword row — non-nil only for `item` itself, only in local mode,
     /// and only when the matched engine is a URL engine Tab can complete

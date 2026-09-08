@@ -6,6 +6,11 @@ protocol ApplicationPresentationEffects: AnyObject {
     func hideSearch()
     func toggleSearch()
 
+    /// `hideSearch()` resets the session to local, so a session on the
+    /// board is a board on screen.
+    var isClipboardHistoryShowing: Bool { get }
+    func showClipboardHistory()
+
     func makeConfiguration(
         origin: ConfigurationOrigin,
         onFinished: @escaping @MainActor () -> Void,
@@ -27,6 +32,7 @@ enum ConfigurationOrigin: Equatable, Sendable {
 enum SearchPresentationOutcome: Equatable, Sendable {
     case searchPresented
     case configurationFocused
+    case searchDismissed
 }
 
 @MainActor
@@ -72,6 +78,20 @@ final class ApplicationPresentationCoordinator {
     func toggleSearch() -> SearchPresentationOutcome {
         guard let configurationState else {
             effects.toggleSearch()
+            return .searchPresented
+        }
+        configurationState.presentation?.show()
+        return .configurationFocused
+    }
+
+    @discardableResult
+    func showClipboardHistory() -> SearchPresentationOutcome {
+        guard let configurationState else {
+            guard !effects.isClipboardHistoryShowing else {
+                effects.hideSearch()
+                return .searchDismissed
+            }
+            effects.showClipboardHistory()
             return .searchPresented
         }
         configurationState.presentation?.show()

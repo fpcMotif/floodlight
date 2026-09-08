@@ -9,6 +9,7 @@ struct MenuBarTests {
 
         #expect(menu.items.map(\.title) == [
             "Show Floodlight",
+            "Clipboard History",
             "",
             "Settings…",
             "Choose Search Scope…",
@@ -19,6 +20,8 @@ struct MenuBarTests {
         ])
         let settings = try #require(menu.items.first { $0.title == "Settings…" })
         #expect(settings.action.map(NSStringFromSelector) == "showSettings")
+        let clipboard = try #require(menu.items.first { $0.title == "Clipboard History" })
+        #expect(clipboard.action.map(NSStringFromSelector) == "showClipboardHistoryFromMenu")
     }
 
     @Test func mainMenuExposesStandardTextEditingCommands() throws {

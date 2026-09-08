@@ -68,6 +68,33 @@ struct ApplicationPresentationCoordinatorTests {
         #expect(harness.events == [.showConfiguration, .showConfiguration])
     }
 
+    @Test func clipboardRequestPresentsTheBoardWhenTheSessionIsNotOnIt() {
+        let harness = Harness()
+
+        #expect(harness.coordinator.showClipboardHistory() == .searchPresented)
+
+        #expect(harness.events == [.showClipboardHistory])
+    }
+
+    @Test func clipboardRequestDismissesSearchWhenTheBoardIsAlreadyShowing() {
+        let harness = Harness()
+        harness.effects.isClipboardHistoryShowing = true
+
+        #expect(harness.coordinator.showClipboardHistory() == .searchDismissed)
+
+        #expect(harness.events == [.hideSearch])
+    }
+
+    @Test func clipboardRequestFocusesAnOpenConfigurationInsteadOfPresentingSearch() {
+        let harness = Harness()
+        harness.coordinator.showConfiguration(from: .statusMenu)
+        harness.events.removeAll()
+
+        #expect(harness.coordinator.showClipboardHistory() == .configurationFocused)
+
+        #expect(harness.events == [.showConfiguration])
+    }
+
     @Test func repeatedConfigurationRequestFocusesExistingSession() {
         let harness = Harness()
         harness.coordinator.showConfiguration(from: .statusMenu)
@@ -350,6 +377,7 @@ private final class ScriptedEffects: ApplicationPresentationEffects {
     private let record: (Event) -> Void
     private(set) var presentations: [ScriptedConfigurationPresentation] = []
     var makeHook: ((@MainActor () -> Void, @MainActor () -> Void) -> Void)?
+    var isClipboardHistoryShowing = false
 
     init(events record: @escaping (Event) -> Void) {
         self.record = record
@@ -365,6 +393,10 @@ private final class ScriptedEffects: ApplicationPresentationEffects {
 
     func toggleSearch() {
         record(.toggleSearch)
+    }
+
+    func showClipboardHistory() {
+        record(.showClipboardHistory)
     }
 
     func makeConfiguration(
@@ -425,10 +457,12 @@ private final class WeakPresentationEffects: ApplicationPresentationEffects {
 
     weak var latestPresentation: LifecyclePresentation?
     private(set) var callbacks: [Callbacks] = []
+    var isClipboardHistoryShowing = false
 
     func showSearch() {}
     func hideSearch() {}
     func toggleSearch() {}
+    func showClipboardHistory() {}
 
     func makeConfiguration(
         origin: ConfigurationOrigin,
@@ -488,6 +522,7 @@ private enum Event: Equatable {
     case showSearch
     case hideSearch
     case toggleSearch
+    case showClipboardHistory
     case makeConfiguration(ConfigurationOrigin)
     case showConfiguration
 }

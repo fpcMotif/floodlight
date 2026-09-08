@@ -29,6 +29,10 @@ final class FloodlightPanelController {
     private let quickLook = QuickLookController()
     private let boardContext = ClipboardBoardContext()
 
+    var isVisible: Bool {
+        panel.isVisible
+    }
+
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
     private var accessibilityDisplayObservation: NSObjectProtocol?

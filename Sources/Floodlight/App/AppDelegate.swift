@@ -59,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         presentation.showSearch()
     }
 
+    @objc private func showClipboardHistoryFromMenu() {
+        presentation.showClipboardHistory()
+    }
+
     @objc private func showSettings() {
         presentation.showConfiguration(from: .statusMenu)
     }
@@ -154,6 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         show.keyEquivalentModifierMask = [.command]
         show.target = self
         menu.addItem(show)
+
+        let clipboard = NSMenuItem(
+            title: "Clipboard History",
+            action: #selector(showClipboardHistoryFromMenu),
+            keyEquivalent: ""
+        )
+        clipboard.target = self
+        menu.addItem(clipboard)
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -303,6 +315,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 extension AppDelegate: ApplicationPresentationEffects {
+    var isClipboardHistoryShowing: Bool {
+        model.isClipboardMode
+    }
+
     func showSearch() {
         panelController.show()
     }
@@ -313,6 +329,15 @@ extension AppDelegate: ApplicationPresentationEffects {
 
     func toggleSearch() {
         panelController.toggle()
+    }
+
+    /// The intent goes after `show()` so nothing presentation does can
+    /// undo it.
+    func showClipboardHistory() {
+        if !panelController.isVisible {
+            panelController.show()
+        }
+        model.showClipboardHistory()
     }
 
     func makeConfiguration(
