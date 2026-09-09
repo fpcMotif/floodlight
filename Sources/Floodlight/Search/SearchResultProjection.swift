@@ -538,6 +538,9 @@ enum SearchResultProjection {
 
     private static func buildLocalRows(_ context: LocalContext) -> [SearchItem] {
         var output: [SearchItem] = []
+        if let link = DirectLink.row(for: context.query) {
+            output.append(link)
+        }
         if let value = Calculator.evaluate(context.query) {
             let answer = Calculator.format(value)
             output.append(SearchItem(

@@ -260,6 +260,9 @@ struct SearchCoordinatorTests {
         #expect(results.last?.id == "web-search")
     }
 
+    /// A URL-shaped query names its destination outright, so the Direct Link
+    /// row leads (#93). The fallback's own rule is unchanged: it is still
+    /// last, behind every local match.
     @Test func webFallbackIsPositionedAfterLocalMatchesForURLShapedQuery() {
         let file = makeIndexedFile(name: "github-notes.txt", score: 500)
         let results = projectResults(
@@ -269,8 +272,7 @@ struct SearchCoordinatorTests {
             system: []
         )
 
-        #expect(results.first?.id == file.id)
-        #expect(results.last?.id == "web-search")
+        #expect(results.map(\.id) == ["direct-link", file.id, "web-search"])
     }
 
     @Test func emptyQueryOmitsTheWebFallback() {

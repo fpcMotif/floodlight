@@ -178,6 +178,48 @@ final class SearchPerformanceTests: XCTestCase {
         XCTAssertLessThan(settingsMicroseconds, 1_000)
     }
 
+    /// Direct Link runs inline in Result Projection, several times per
+    /// keystroke, on every query the user types — almost none of which name
+    /// an address. This bounds what those queries cost: the whitespace test
+    /// and the known-TLD test are what has to stay cheap.
+    func testDirectLinkRecognitionOnNonAddressQueriesStaysUnderBudget() {
+        let queries = [
+            "swift concurrency crash on launch",
+            "screenshot 2026-09-09 at 14.32.11",
+            "main.swift",
+            "SearchCoordinator",
+            "~/Projects/floodlight/Sources",
+            "yt lofi hip hop radio",
+            "SearchCoordinatorIntegrationTestsResults.swift",
+            "2+2*3",
+        ]
+        for query in queries {
+            _ = DirectLink.row(for: query)
+        }
+        let sampleCount = _isDebugAssertConfiguration() ? 3 : 11
+        let iterations = _isDebugAssertConfiguration() ? 200 : 2_000
+        let samples = (0..<sampleCount).map { _ in
+            measureCPU(iterations: iterations) {
+                queries.reduce(into: 0) { count, query in
+                    count += DirectLink.row(for: query) == nil ? 0 : 1
+                }
+            }
+        }
+        let microsecondsPerQuery = median(
+            samples.map { $0.microsecondsPerIteration / Double(queries.count) }
+        )
+
+        print(
+            "FLOODLIGHT_BENCH direct_link_recognition_us="
+                + String(format: "%.3f", microsecondsPerQuery)
+        )
+        // Loose on purpose, like the budgets above it: this is not a target,
+        // it is the tripwire for a regex, an `NSDataDetector`, or a per-call
+        // allocation creeping in, each of which costs an order of magnitude
+        // more than the scan does.
+        XCTAssertLessThan(microsecondsPerQuery, 25)
+    }
+
     func testSourceSearchImmediateSnapshotBudget() async throws {
         let application = SearchFixtures.application(name: "Xcode")
         let engine = SourceSearchEngine(
