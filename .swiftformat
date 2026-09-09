@@ -76,4 +76,4 @@
 # type makes, and the compiler checks promises at the place they are made.
 --disable redundantSendable
 
---exclude .build,.tools,docs,Sources/Floodlight/Resources
+--exclude .build,.tools,docs,Vendor,Sources/Floodlight/Resources

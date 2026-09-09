@@ -51,7 +51,6 @@ struct ClipboardInspectorTests {
     @Test func imageSnapshotShowsNameDimensionsAndPreviewBytes() {
         let created = Date(timeIntervalSince1970: 1_785_250_800)
         let thumbnail = Data(repeating: 0xEF, count: 32)
-        let png = Data(repeating: 0xAB, count: 64)
         let entry = ClipboardEntry(
             id: "image-1",
             text: "Screenshot 2026-09-01.png",
@@ -83,7 +82,6 @@ struct ClipboardInspectorTests {
         // payload exists — never the payload itself (#72).
         #expect(detail.thumbnailPNG == thumbnail)
         #expect(detail.hasFullImage)
-        #expect(png.count == 64, "the full payload stays out of the snapshot")
     }
 
     @Test func imageSnapshotWithoutAFullPayloadStillCarriesItsThumbnail() {

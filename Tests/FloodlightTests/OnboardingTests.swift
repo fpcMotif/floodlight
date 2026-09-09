@@ -16,7 +16,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         session.complete()
@@ -57,7 +57,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
 
@@ -84,7 +84,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { false }
         )
@@ -113,7 +113,7 @@ final class OnboardingTests {
             let setupSession = OnboardingSession(
                 activeShortcut: .commandSpace,
                 launchesAtLogin: true,
-                rootURL: URL(fileURLWithPath: "/Users/JohnDoe", isDirectory: true),
+                rootURL: { URL(fileURLWithPath: "/Users/JohnDoe", isDirectory: true) },
                 defaults: defaults,
                 fullDiskAccessProvider: { false }
             )
@@ -125,7 +125,7 @@ final class OnboardingTests {
             let settingsSession = OnboardingSession(
                 activeShortcut: .optionSpace,
                 launchesAtLogin: true,
-                rootURL: URL(fileURLWithPath: "/Users/JohnDoe", isDirectory: true),
+                rootURL: { URL(fileURLWithPath: "/Users/JohnDoe", isDirectory: true) },
                 defaults: defaults,
                 fullDiskAccessProvider: { true }
             )
@@ -142,7 +142,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { true }
         )
@@ -208,7 +208,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { false }
         )
@@ -382,7 +382,7 @@ final class OnboardingTests {
         let session = OnboardingSession(
             activeShortcut: activeShortcut,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { false }
         )

@@ -15,8 +15,6 @@ package enum BlocklistRule: Codable, Hashable, Sendable {
         let type = try container.decode(String.self, forKey: .type)
         let value = try container.decode(String.self, forKey: .value)
         switch type {
-        case "name":
-            self = .name(value)
         case "id":
             self = .id(value)
         default:
@@ -38,7 +36,7 @@ package enum BlocklistRule: Codable, Hashable, Sendable {
 }
 
 package final class BlocklistStore: @unchecked Sendable {
-    private struct State: Codable, Sendable {
+    private struct State: Sendable {
         var rules: Set<BlocklistRule> = []
         var normalizedBlockedNames: Set<String> = []
         var blockedIDs: Set<String> = []

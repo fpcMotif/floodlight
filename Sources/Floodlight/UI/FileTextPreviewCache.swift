@@ -149,8 +149,6 @@ final class FileTextPreviewCache {
 
     private var cache: [CacheKey: FileTextPreview?] = [:]
 
-    init() {}
-
     private func makeKey(for url: URL) -> CacheKey? {
         let standardized = url.standardizedFileURL.resolvingSymlinksInPath().path
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: standardized)

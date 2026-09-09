@@ -18,7 +18,7 @@ final class ClipboardExclusionStore: @unchecked Sendable {
     }
 
     var excludedBundleIDs: [String] {
-        exclusions.withLock { Array($0).sorted() }
+        exclusions.withLock { $0.sorted() }
     }
 
     func exclude(bundleID: String) {

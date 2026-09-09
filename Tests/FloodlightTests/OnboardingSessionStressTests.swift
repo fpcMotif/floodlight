@@ -14,7 +14,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: true,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { true }
         )
@@ -34,7 +34,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { true }
         )
@@ -48,7 +48,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { false }
         )
@@ -64,7 +64,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .optionSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         #expect(session.offersSpotlightReplacement)
@@ -77,7 +77,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         #expect(!session.offersSpotlightReplacement)
@@ -90,7 +90,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         #expect(!session.offersSpotlightReplacement)
@@ -112,7 +112,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults,
             fullDiskAccessProvider: { providerValue }
         )
@@ -136,7 +136,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         session.complete()
@@ -152,7 +152,7 @@ struct OnboardingSessionStressTests {
         let session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            rootURL: { URL(fileURLWithPath: "/Users/example", isDirectory: true) },
             defaults: defaults
         )
         session.complete()

@@ -98,19 +98,6 @@ struct FloodlightMetricsStressTests {
             * FloodlightMetrics.resultRowHeight)
     }
 
-    // MARK: - Typography values exist (Font values, not CGFloat)
-
-    @Test func typographyValuesExist() {
-        #expect(FloodlightMetrics.Typography.rowTitle as Any? != nil)
-        #expect(FloodlightMetrics.Typography.topHitTitle as Any? != nil)
-        #expect(FloodlightMetrics.Typography.rowSubtitle as Any? != nil)
-        #expect(FloodlightMetrics.Typography.assistantAnswer as Any? != nil)
-        #expect(FloodlightMetrics.Typography.badge as Any? != nil)
-        #expect(FloodlightMetrics.Typography.chip as Any? != nil)
-        #expect(FloodlightMetrics.Typography.keyChip as Any? != nil)
-        #expect(FloodlightMetrics.Typography.emptyState as Any? != nil)
-    }
-
     @Test func typographyInputSizeIsCGFloat() {
         // inputSize is the one Typography property that's a CGFloat, not a Font.
         #expect(FloodlightMetrics.Typography.inputSize == 24)

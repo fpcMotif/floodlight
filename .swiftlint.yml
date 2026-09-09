@@ -19,6 +19,7 @@ excluded:
   - .scratch
   - .tools
   - docs
+  - Vendor
   - Sources/Floodlight/Resources
 
 # Performance antipatterns. These are the reason SwiftLint is in the gate at
