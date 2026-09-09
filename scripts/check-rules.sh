@@ -28,7 +28,8 @@ astgrep=$(resolve_tool ast-grep "$FLOODLIGHT_ASTGREP_VERSION" --version)
 
 engine_probe="$PROJECT_DIR/Sources/FloodlightEngine/GateSelfTest.swift"
 shell_probe="$PROJECT_DIR/Sources/Floodlight/GateSelfTest.swift"
-trap 'rm -f "$engine_probe" "$shell_probe"' EXIT INT TERM
+tests_probe="$PROJECT_DIR/Tests/FloodlightTests/GateSelfTest.swift"
+trap 'rm -f "$engine_probe" "$shell_probe" "$tests_probe"' EXIT INT TERM
 
 if "$astgrep" scan --config "$PROJECT_DIR/sgconfig.yml"; then
     echo "check-rules: no architecture violations"
@@ -78,3 +79,37 @@ else
     exit 1
 fi
 rm -f "$shell_probe"
+
+# The readability rules are scoped to both source targets *and* Tests, which is
+# a wider claim than any rule above makes and so a wider glob to get wrong.
+# `readability-nesting-depth` stands in for all of them: it is the only one
+# whose match needs no particular code around it, so a five-deep nest is a
+# violation wherever it is planted. `--filter` runs that rule alone, so the
+# probe does not have to satisfy the other seven.
+nesting_probe_source='func gateSelfTest() {
+    if isReady {
+        for row in rows {
+            while row.hasMore {
+                if row.isStale {
+                    for child in row.children {
+                        child.refresh()
+                    }
+                }
+            }
+        }
+    }
+}
+'
+
+for probe in "$engine_probe" "$shell_probe" "$tests_probe"; do
+    printf '%s' "$nesting_probe_source" > "$probe"
+    if "$astgrep" scan --no-ignore vcs --filter '^readability-nesting-depth$' \
+        --config "$PROJECT_DIR/sgconfig.yml" >/dev/null 2>&1; then
+        echo "check-rules: SELF-TEST FAILED — readability-nesting-depth did not fire on a" >&2
+        echo "  five-deep nest planted at ${probe#"$PROJECT_DIR"/}. The 'files:' globs in" >&2
+        echo "  the readability rules are not matching that directory." >&2
+        exit 1
+    fi
+    rm -f "$probe"
+done
+echo "check-rules: self-test passed (readability rules armed on Sources and Tests)"

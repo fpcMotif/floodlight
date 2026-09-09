@@ -1,0 +1,107 @@
+id: readability-nesting-depth
+language: Swift
+severity: error
+message: >-
+  Block nested five deep — invert the innermost condition into a `guard` and
+  leave early, or lift the inner body into a named function the outer block
+  calls.
+note: >-
+  `cyclomatic_complexity` in .swiftlint.yml counts branches wherever they sit,
+  so four nested `if`s and four flat ones score the same. What a reader has to
+  hold is the nesting, and nothing in the gate could see it: this rule counts
+  levels and only levels.
+
+  A level is an `if`, `for`, `while`, `repeat`, a `switch` case body, a `catch`
+  body, or a closure body — a closure counts because a callback inside a
+  callback costs a reader what a loop inside a loop costs.
+
+  These add no level. An `else if` shares its chain head's depth, so a dispatch
+  chain of ten reads as one level and is reported once, at the head. A `guard`
+  body must leave the scope, which is what makes `guard` the fix this rule
+  prescribes; a rule that rejected its own fix would be worthless. A `do` body
+  adds nothing, though its `catch` counts. A closure passed inside a
+  *condition* — `if items.contains(where: { ... })` — runs beside the statement
+  rather than within it.
+
+  Five is where this tree stands, not where it should end up. Like every
+  threshold in the gate it only moves down, in the commit that removes the last
+  offender at the level above. Ratcheting is one edit: point the rule at
+  `containerAtLevel3`.
+
+  A site that genuinely reads better nested — a dynamic-programming recurrence
+  that mirrors its table — takes a `// ast-grep-ignore: readability-nesting-depth`
+  with the reason beside it.
+files:
+  - "Sources/**/*.swift"
+  - "Tests/**/*.swift"
+
+# Depth is expressed as a ladder rather than one long chain of `inside`s so the
+# threshold is a single reference at the bottom of the file.
+#
+# A level is one two-step hop up the tree: a `statements` body node, then the
+# container that owns it. Requiring the hop to pass through `statements` is what
+# keeps the classic false reds out — an `else if` hangs off its chain head
+# rather than off a body, a `guard` is not a container at all, and a closure in
+# a condition is not inside the statement it is a condition of.
+utils:
+  block:
+    any:
+      - kind: if_statement
+      - kind: for_statement
+      - kind: while_statement
+      - kind: repeat_while_statement
+      - kind: switch_statement
+      - kind: do_statement
+  container:
+    any:
+      - kind: if_statement
+      - kind: for_statement
+      - kind: while_statement
+      - kind: repeat_while_statement
+      - kind: switch_entry
+      - kind: catch_block
+      - kind: lambda_literal
+  containerAtLevel1:
+    matches: container
+  containerAtLevel2:
+    all:
+      - matches: container
+      - inside:
+          stopBy: end
+          kind: statements
+          inside:
+            stopBy: end
+            matches: containerAtLevel1
+  containerAtLevel3:
+    all:
+      - matches: container
+      - inside:
+          stopBy: end
+          kind: statements
+          inside:
+            stopBy: end
+            matches: containerAtLevel2
+  containerAtLevel4:
+    all:
+      - matches: container
+      - inside:
+          stopBy: end
+          kind: statements
+          inside:
+            stopBy: end
+            matches: containerAtLevel3
+
+rule:
+  matches: block
+  # An `else if` hangs directly off its chain head, so excluding it reports the
+  # chain once instead of once per arm. A block nested inside a body is a child
+  # of `statements` and is unaffected.
+  not:
+    inside:
+      kind: if_statement
+  inside:
+    stopBy: end
+    kind: statements
+    inside:
+      stopBy: end
+      matches: containerAtLevel4

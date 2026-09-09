@@ -88,18 +88,23 @@ iterating: `make check-format`, `check-lint`, `check-rules`,
 | Gate | Tool | What it owns |
 | --- | --- | --- |
 | `check-format` | SwiftFormat | One deterministic style. Never hand-edit its feedback — run `make format`. |
-| `check-lint` | SwiftLint `--strict` | Performance antipatterns (`first_where`, `contains_over_filter_count`, …) and complexity proxies. |
-| `check-rules` | ast-grep | Floodlight's own invariants — see below. |
+| `check-lint` | SwiftLint `--strict` | Whatever SwiftLint already has a rule for: performance antipatterns (`first_where`, `contains_over_filter_count`, …) and the size and complexity ratchets. |
+| `check-rules` | ast-grep | Whatever needs the parse tree — Floodlight's own invariants, and the shapes that make code hard to read. See below. |
 | `check-architecture` | `rg` | Nothing under `Sources` declares `public` or `open`. |
 | `check-build` | `swift build` | Warnings as errors, with strict concurrency checking on. |
 | `check-dead-code` | Periphery | Unused declarations, with no suppression baseline. |
 
-The architecture rules live one-per-file in
-[`tools/ast-grep/rules`](tools/ast-grep/rules) and encode this codebase rather
-than Swift style: the engine may not import a UI framework, the query path may
-not touch the filesystem, the search path may not fully sort a candidate set,
-and `try!`/`as!`/force unwrap may not ship. Every message names the alternative
-to use. Adding a rule is one YAML file plus one test file in
+The ast-grep rules live one-per-file in
+[`tools/ast-grep/rules`](tools/ast-grep/rules) and come in two kinds. The
+architecture rules encode this codebase rather than Swift style: the engine may
+not import a UI framework, the query path may not touch the filesystem, the
+search path may not fully sort a candidate set, and `try!`/`as!`/force unwrap
+may not ship. The readability rules encode the shapes that cost a reader more
+than a branch counter can see — a block nested past the current depth, an
+`else` after a branch that already returned, a condition with three or more
+`&&`/`||`, and the two comment forms below. Every message names the alternative
+to use, and every `note` says what does *and does not* trip the rule. Adding a
+rule is one YAML file plus one test file in
 [`tools/ast-grep/rule-tests`](tools/ast-grep/rule-tests).
 
 Latency budgets run separately, in release configuration, because a debug
@@ -150,6 +155,41 @@ The Finder/DMG icon is generated from
 `Sources/Floodlight/Resources/AppIcon.png` with `make icons`. The menu bar uses
 the separate monochrome `FloodlightMenuBar.svg` vector as a template image so
 macOS supplies the correct foreground color for every appearance and state.
+
+## Comments
+
+A comment says **why**. The code already says what, and a comment that repeats
+it is a second thing to keep true: it goes stale in silence, and it spends the
+attention the code needed.
+
+- A `///` doc comment states the **contract** — an invariant, a precondition,
+  the units, what `nil` means, which actor the caller has to be on. Not the
+  signature in prose.
+- A `//` line comment states the **reason** — the constraint, the measurement,
+  the bug it avoids, the simpler thing that was tried and did not work. Not the
+  operation on the next line.
+
+Write this. The code cannot say it:
+
+```swift
+// A max-heap under `ranksBefore`: the root is the worst item kept so far, so
+// deciding whether a candidate belongs is one comparison.
+var heap: [SearchItem] = []
+```
+
+Delete this. The next line already says it:
+
+```swift
+// Create store 1 and write data
+let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
+```
+
+Two shapes of this are mechanical, and `check-rules` owns them: commented-out
+code (`comments-no-dead-code`), and a short imperative fragment naming the next
+line's operation (`comments-say-why`). Both are deliberately narrow — they
+catch only the forms a regex can be trusted with, so they are a floor under the
+convention rather than the convention itself. The rest is a review judgement,
+and "what does this comment add?" is the question it answers.
 
 ## Make `⌘Space` belong to Floodlight
 
@@ -207,7 +247,10 @@ marked settled. Persistent FFF history, frecency data, and private app markers s
 `~/Library/Application Support/Floodlight`.
 
 macOS privacy rules still apply. To search protected locations, grant Floodlight
-Full Disk Access in System Settings → Privacy & Security.
+Full Disk Access in System Settings → Privacy & Security. Return on a Clipboard
+History entry pastes it into the app you came from; that keystroke needs
+Floodlight under Accessibility in the same pane, and until it is granted the
+footer says "Copy" and Return copies and closes instead.
 
 ## Current compatibility boundary
 

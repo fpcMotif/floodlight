@@ -10,6 +10,7 @@
 # again on the way out. Ignored so an interrupted run cannot leave a file that
 # looks like source.
 Sources/*/GateSelfTest.swift
+Tests/*/GateSelfTest.swift
 DerivedData/
 docs/.astro/
 docs/dist/
