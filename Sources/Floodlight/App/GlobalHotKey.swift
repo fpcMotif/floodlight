@@ -1,11 +1,12 @@
+import AppKit
 import Carbon
 import Foundation
 
 enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
     case commandSpace
     case optionSpace
-
-    static let preferenceKey = "global-shortcut"
+    case shiftCommandC
+    case shiftCommandSpace
 
     var id: String {
         rawValue
@@ -15,25 +16,50 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .commandSpace: "⌘"
         case .optionSpace: "⌥"
+        case .shiftCommandC, .shiftCommandSpace: "⇧⌘"
         }
     }
 
-    // periphery:ignore - Test-only readable name for the registered modifier.
-    var modifierName: String {
+    var keyLabel: String {
         switch self {
-        case .commandSpace: "Command"
-        case .optionSpace: "Option"
+        case .commandSpace, .optionSpace, .shiftCommandSpace: "Space"
+        case .shiftCommandC: "C"
         }
     }
 
     var displayName: String {
-        "\(modifierSymbol) Space"
+        "\(modifierSymbol) \(keyLabel)"
+    }
+
+    var keyCode: UInt32 {
+        switch self {
+        case .commandSpace, .optionSpace, .shiftCommandSpace: UInt32(kVK_Space)
+        case .shiftCommandC: UInt32(kVK_ANSI_C)
+        }
     }
 
     var carbonModifiers: UInt32 {
         switch self {
         case .commandSpace: UInt32(cmdKey)
         case .optionSpace: UInt32(optionKey)
+        case .shiftCommandC, .shiftCommandSpace: UInt32(cmdKey | shiftKey)
+        }
+    }
+
+    /// The same key and modifiers as `keyCode`/`carbonModifiers`, in the
+    /// `NSMenuItem` vocabulary the status menu's key equivalent needs.
+    var keyEquivalent: String {
+        switch self {
+        case .commandSpace, .optionSpace, .shiftCommandSpace: " "
+        case .shiftCommandC: "c"
+        }
+    }
+
+    var keyEquivalentModifierMask: NSEvent.ModifierFlags {
+        switch self {
+        case .commandSpace: [.command]
+        case .optionSpace: [.option]
+        case .shiftCommandC, .shiftCommandSpace: [.command, .shift]
         }
     }
 
@@ -41,14 +67,51 @@ enum FloodlightShortcut: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .commandSpace: .optionSpace
         case .optionSpace: .commandSpace
+        case .shiftCommandC: .shiftCommandSpace
+        case .shiftCommandSpace: .shiftCommandC
+        }
+    }
+}
+
+/// One system-wide hot key can summon the Search Session, and a second can
+/// open the clipboard board. Choice sets and preferences live per action so a
+/// picker for one never offers, or falls back to, the other's shortcuts.
+enum GlobalHotKeyAction: CaseIterable, Hashable, Sendable {
+    case summonSearch
+    case showClipboard
+
+    var preferenceKey: String {
+        switch self {
+        case .summonSearch: "global-shortcut"
+        case .showClipboard: "clipboard-shortcut"
         }
     }
 
-    static func preferred(in defaults: UserDefaults = .standard) -> FloodlightShortcut {
-        defaults.string(forKey: preferenceKey).flatMap(Self.init(rawValue:)) ?? .commandSpace
+    var choices: [FloodlightShortcut] {
+        switch self {
+        case .summonSearch: [.commandSpace, .optionSpace]
+        case .showClipboard: [.shiftCommandC, .shiftCommandSpace]
+        }
     }
 
-    func save(in defaults: UserDefaults = .standard) {
-        defaults.set(rawValue, forKey: Self.preferenceKey)
+    var defaultShortcut: FloodlightShortcut {
+        switch self {
+        case .summonSearch: .commandSpace
+        case .showClipboard: .shiftCommandC
+        }
+    }
+
+    func preferredShortcut(in defaults: UserDefaults = .standard) -> FloodlightShortcut {
+        guard let stored = defaults.string(forKey: preferenceKey)
+            .flatMap(FloodlightShortcut.init(rawValue:)),
+            choices.contains(stored)
+        else {
+            return defaultShortcut
+        }
+        return stored
+    }
+
+    func save(_ shortcut: FloodlightShortcut, in defaults: UserDefaults = .standard) {
+        defaults.set(shortcut.rawValue, forKey: preferenceKey)
     }
 }

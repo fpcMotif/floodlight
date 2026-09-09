@@ -60,7 +60,7 @@ The replaceable lifecycle and coherent publication of one explicitly activated A
 _Avoid_: Assistant task, conversation
 
 **Global Hot-Key Registration**:
-The main-actor-owned lifetime of Floodlight’s one system-wide summon shortcut, including its native handler, active registration identity, callback routing, and actually active shortcut.
+The main-actor-owned lifetime of Floodlight’s system-wide shortcuts, one per action — summoning the Search Session and opening the clipboard board — sharing a single native handler and identifier allocator while keeping each action’s registration identity, callback routing, and actually active shortcut independent.
 _Avoid_: Hot-key manager, keyboard-shortcut framework
 
 **Degraded Search**:

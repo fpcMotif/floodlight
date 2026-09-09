@@ -4,14 +4,16 @@ import Foundation
 final class OnboardingFlowState {
     let fullDiskAccessCoordinator: FullDiskAccessGrantCoordinator
     private let session: OnboardingSession
-    private let selectShortcut: (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome
+    private let selectShortcut: (GlobalHotKeyAction, FloodlightShortcut)
+        -> GlobalHotKeyReplacementOutcome
     private let openSpotlightSettings: () -> Void
     private(set) var pendingShortcut: FloodlightShortcut?
     private(set) var didFinish = false
 
     init(
         session: OnboardingSession,
-        selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
+        selectShortcut: @escaping (GlobalHotKeyAction, FloodlightShortcut)
+            -> GlobalHotKeyReplacementOutcome,
         openSpotlightSettings: @escaping () -> Void,
         fullDiskAccessCoordinator: FullDiskAccessGrantCoordinator? = nil
     ) {
@@ -34,7 +36,7 @@ final class OnboardingFlowState {
     func handleShortcutSelection(_ shortcut: FloodlightShortcut) {
         pendingShortcut = nil
 
-        switch selectShortcut(shortcut) {
+        switch selectShortcut(.summonSearch, shortcut) {
         case let .requestedShortcutActive(activeShortcut):
             session.activeShortcut = activeShortcut
             session.shortcutMessage = nil
@@ -46,7 +48,27 @@ final class OnboardingFlowState {
             )
         case .noShortcutActive:
             session.activeShortcut = nil
-            session.shortcutMessage = inactiveMessage(for: shortcut)
+            session.shortcutMessage = inactiveMessage(for: shortcut, ownerName: "Floodlight")
+        }
+    }
+
+    func handleClipboardShortcutSelection(_ shortcut: FloodlightShortcut) {
+        switch selectShortcut(.showClipboard, shortcut) {
+        case let .requestedShortcutActive(activeShortcut):
+            session.activeClipboardShortcut = activeShortcut
+            session.clipboardShortcutMessage = nil
+        case let .previousShortcutActive(activeShortcut):
+            session.activeClipboardShortcut = activeShortcut
+            session.clipboardShortcutMessage = refusalMessage(
+                for: shortcut,
+                activeShortcut: activeShortcut
+            )
+        case .noShortcutActive:
+            session.activeClipboardShortcut = nil
+            session.clipboardShortcutMessage = inactiveMessage(
+                for: shortcut,
+                ownerName: "Clipboard History"
+            )
         }
     }
 
@@ -68,7 +90,7 @@ final class OnboardingFlowState {
             return
         }
 
-        switch selectShortcut(pendingShortcut) {
+        switch selectShortcut(.summonSearch, pendingShortcut) {
         case let .requestedShortcutActive(activeShortcut):
             session.activeShortcut = activeShortcut
             session.shortcutMessage = "⌘ Space is ready."
@@ -96,13 +118,13 @@ final class OnboardingFlowState {
         if shortcut == .commandSpace {
             return "Spotlight or another app still owns ⌘ Space. Floodlight kept \(activeShortcut.displayName) active."
         }
-        return "macOS could not register ⌥ Space. Floodlight kept \(activeShortcut.displayName) active."
+        return "macOS could not register \(shortcut.displayName). Floodlight kept \(activeShortcut.displayName) active."
     }
 
-    private func inactiveMessage(for shortcut: FloodlightShortcut) -> String {
+    private func inactiveMessage(for shortcut: FloodlightShortcut, ownerName: String) -> String {
         if shortcut == .commandSpace {
-            return "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose ⌥ Space to restore it."
+            return "Spotlight or another app still owns ⌘ Space. Floodlight has no active shortcut; choose \(shortcut.fallback.displayName) to restore it."
         }
-        return "macOS could not register ⌥ Space. Floodlight has no active shortcut; try again."
+        return "macOS could not register \(shortcut.displayName). \(ownerName) has no active shortcut; try again."
     }
 }

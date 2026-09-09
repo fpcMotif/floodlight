@@ -51,6 +51,8 @@ final class SearchCoordinator {
     /// this directly rather than re-deriving a preference that might not
     /// match what's actually active.
     var activeShortcutDisplayName: String?
+    /// Same lifecycle as `activeShortcutDisplayName`, for `.showClipboard`.
+    var activeClipboardShortcutDisplayName: String?
 
     var filterOptions: [SearchFilterOption] {
         publication.filterOptions
@@ -179,10 +181,13 @@ final class SearchCoordinator {
     /// Clipboard History the application shell also hands to Clipboard
     /// Capture. `assistantRunner` is overridable so tests can exercise the
     /// "Ask Codex"/"Ask Claude" seam without spawning a real process or
-    /// depending on what's installed on the test machine.
+    /// depending on what's installed on the test machine. `actionEffects`
+    /// is where the shell hands in the Paste Delivery it shares with the
+    /// panel (#66).
     convenience init(
         clipboardSearch: ClipboardSearch,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
+        actionEffects: any SelectedResultActionEffects = AppKitSelectedResultActionEffects(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
         let fileManager = FileManager.default
@@ -227,6 +232,7 @@ final class SearchCoordinator {
             clipboardSearch: clipboardSearch,
             rootURL: initialRoot,
             assistantRunner: assistantRunner,
+            actionEffects: actionEffects,
             onDismiss: onDismiss
         )
     }
@@ -307,6 +313,12 @@ final class SearchCoordinator {
 
     func handleBackspaceOnEmptyQuery() {
         applyModeEvent(.backspaceOnEmptyQuery)
+    }
+
+    /// Whether an open board should dismiss instead is presentation's
+    /// decision, made above this.
+    func showClipboardHistory() {
+        applyModeEvent(.clipboardShortcut)
     }
 
     /// The engine title for the "⇥ Search <Engine>" affordance on a ranked

@@ -30,10 +30,13 @@ package enum SearchMode: Equatable, Sendable {
     }
 
     package struct ClipboardContext: Equatable, Sendable {
-        package let typedKeyword: String
+        /// The keyword token as typed (`clip`, `CLIP`) when keyword
+        /// completion entered the mode; `nil` when the clipboard shortcut
+        /// entered it directly.
+        package let typedKeyword: String?
         package let queryAtEntry: String
 
-        package init(typedKeyword: String = "clip", queryAtEntry: String = "") {
+        package init(typedKeyword: String? = "clip", queryAtEntry: String = "") {
             self.typedKeyword = typedKeyword
             self.queryAtEntry = queryAtEntry
         }
@@ -48,6 +51,10 @@ package enum SearchModeEvent: Equatable, Sendable {
     case escape
     case backspaceOnEmptyQuery
     case reset
+    /// The global clipboard shortcut fired. Whether that dismisses an
+    /// already-open board is a presentation decision made above this
+    /// pure transition, not a mode decision.
+    case clipboardShortcut
 }
 
 extension SearchMode {
@@ -67,6 +74,12 @@ extension SearchMode {
         case .tab:
             guard case .local = mode else { return (mode, query) }
             return entered(query: query, registry: registry)
+
+        case .clipboardShortcut:
+            guard case .clipboard = mode else {
+                return (.clipboard(ClipboardContext(typedKeyword: nil, queryAtEntry: "")), "")
+            }
+            return (mode, query)
 
         case .shiftTab, .escape, .backspaceOnEmptyQuery:
             switch mode {
@@ -139,8 +152,10 @@ extension SearchMode {
         for context: ClipboardContext,
         query: String
     ) -> String {
+        guard let typedKeyword = context.typedKeyword else { return query }
+
         let spelling: String = if query == context.queryAtEntry {
-            context.typedKeyword
+            typedKeyword
         } else {
             "clip"
         }

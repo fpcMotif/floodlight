@@ -28,14 +28,20 @@ final class FloodlightPanelController {
     private let model: SearchCoordinator
     private let quickLook = QuickLookController()
     private let boardContext = ClipboardBoardContext()
+    private let pasteDelivery: PasteTargetDelivery
+
+    var isVisible: Bool {
+        panel.isVisible
+    }
 
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
     private var accessibilityDisplayObservation: NSObjectProtocol?
     private var appliedGlassSlabState: Bool?
 
-    init(model: SearchCoordinator) {
+    init(model: SearchCoordinator, pasteDelivery: PasteTargetDelivery = PasteTargetDelivery()) {
         self.model = model
+        self.pasteDelivery = pasteDelivery
         panel = FloodlightPanel(
             contentRect: NSRect(
                 x: 0,
@@ -213,12 +219,9 @@ final class FloodlightPanelController {
         defer { FloodlightPerformance.end("ShowPanel", id: signpost) }
         positionOnActiveScreen()
         model.prepareForPresentation()
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        boardContext.pasteTargetAppName = ClipboardBoardContext.pasteTargetName(
-            frontmostName: frontmost?.localizedName,
-            frontmostBundleID: frontmost?.bundleIdentifier,
-            ownBundleID: Bundle.main.bundleIdentifier
-        )
+        pasteDelivery.capture(frontmost: NSWorkspace.shared.frontmostApplication)
+        boardContext.pasteTargetAppName = pasteDelivery.target?.name
+        boardContext.isPasteDeliveryAvailable = pasteDelivery.isAvailable
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeKey()

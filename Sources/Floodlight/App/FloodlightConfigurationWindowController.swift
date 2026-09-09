@@ -36,13 +36,15 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     init(
         presentation: FloodlightConfigurationPresentation = .onboarding,
         activeShortcut: FloodlightShortcut?,
+        activeClipboardShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
         rootURL: URL,
         blocklistStore: BlocklistStore = BlocklistStore(),
         clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
         clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
             ClipboardHistoryStore.inMemory(),
-        selectShortcut: @escaping (FloodlightShortcut) -> GlobalHotKeyReplacementOutcome,
+        selectShortcut: @escaping (GlobalHotKeyAction, FloodlightShortcut)
+            -> GlobalHotKeyReplacementOutcome,
         setLaunchAtLogin: @escaping (Bool) -> String?,
         chooseScope: @escaping () -> URL?,
         onFinished: @escaping () -> Void,
@@ -55,7 +57,8 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
             rootURL: rootURL,
             blocklistStore: blocklistStore,
             clipboardExclusionStore: clipboardExclusionStore,
-            clipboardStore: clipboardStore
+            clipboardStore: clipboardStore,
+            activeClipboardShortcut: activeClipboardShortcut
         )
         self.session = session
         flow = OnboardingFlowState(
@@ -94,6 +97,9 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
             presentation: presentation,
             session: session,
             onSelectShortcut: { [weak self] in self?.flow.handleShortcutSelection($0) },
+            onSelectClipboardShortcut: { [weak self] in
+                self?.flow.handleClipboardShortcutSelection($0)
+            },
             onSetLaunchAtLogin: { [weak self] in self?.handleLaunchAtLogin($0) },
             onChooseScope: { [weak self] in self?.handleChooseScope() },
             onOpenSpotlightSettings: { [weak self] in

@@ -356,6 +356,98 @@ struct SearchCoordinatorClipboardModeTests {
         #expect(coordinator.previewableSelectionURL == nil)
     }
 
+    // MARK: - Clipboard shortcut (⇧⌘C)
+
+    @Test func showClipboardHistoryEntersTheBoardAndPublishesWhatClipboardSearchReturns() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Old copy")
+        _ = store.record(text: "New copy")
+
+        let coordinator = try makeCoordinator(clipboardSearch: makeSearch(over: store))
+        coordinator.showClipboardHistory()
+
+        let expected = makeSearch(over: store)
+            .publication(query: "", selectedFilter: .all, selection: nil)
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.query.isEmpty)
+        #expect(coordinator.results.map(\.title) == ["New copy", "Old copy"])
+        #expect(coordinator.results == expected.visibleRows)
+    }
+
+    @Test func showClipboardHistoryStartsOnAllRegardlessOfTheLocalFilter() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Snippet")
+        _ = try #require(store.recordFile(path: "/Users/f/Documents/Invoices/Invoice.pdf"))
+        let coordinator = try makeCoordinator(clipboardSearch: makeSearch(over: store))
+        coordinator.query = "xcode"
+        coordinator.selectFilter(.files)
+
+        coordinator.showClipboardHistory()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.selectedFilter == .all)
+        #expect(coordinator.results.count == 2)
+    }
+
+    @Test func showClipboardHistoryDiscardsATypedLocalQuery() throws {
+        let coordinator = try makeCoordinator()
+        coordinator.query = "notes"
+
+        coordinator.showClipboardHistory()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.query.isEmpty)
+    }
+
+    @Test func showClipboardHistoryFromWebModeEntersTheBoard() throws {
+        let coordinator = try makeCoordinator()
+        coordinator.query = "yt cats"
+        coordinator.handleTab()
+
+        coordinator.showClipboardHistory()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.query.isEmpty)
+    }
+
+    @Test func aQueryTypedAfterTheShortcutFiltersWithinTheBoard() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Old copy")
+        _ = store.record(text: "New copy")
+        let coordinator = try makeCoordinator(clipboardSearch: makeSearch(over: store))
+
+        coordinator.showClipboardHistory()
+        coordinator.query = "Old"
+
+        #expect(coordinator.results.map(\.title) == ["Old copy"])
+    }
+
+    @Test func escapeFromAShortcutEnteredBoardLeavesAnEmptyFieldAndASecondEscapeDismisses() throws {
+        var dismissed = false
+        let coordinator = try makeCoordinator(onDismiss: { dismissed = true })
+
+        coordinator.showClipboardHistory()
+        coordinator.handleEscape()
+
+        #expect(!coordinator.isClipboardMode)
+        #expect(coordinator.query.isEmpty)
+        #expect(!dismissed)
+
+        coordinator.handleEscape()
+        #expect(dismissed)
+    }
+
+    @Test func showClipboardHistoryWhileOnTheBoardChangesNothing() throws {
+        let coordinator = try makeCoordinator()
+
+        coordinator.showClipboardHistory()
+        coordinator.query = "inv"
+        coordinator.showClipboardHistory()
+
+        #expect(coordinator.isClipboardMode)
+        #expect(coordinator.query == "inv")
+    }
+
     // MARK: - Exiting clipboard mode
 
     @Test func escapeExitsClipboardModeAndRestoresFieldQuery() throws {
@@ -512,4 +604,6 @@ private final class ScriptedActionEffects: SelectedResultActionEffects {
     func revealInFinder(_ url: URL) {
         onReveal(url)
     }
+
+    func deliverPaste() {}
 }

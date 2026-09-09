@@ -102,4 +102,6 @@ private struct ScriptedSelectedResultActionEffects: SelectedResultActionEffects 
     func open(_ url: URL, asApplication: Bool) async throws {}
 
     func revealInFinder(_ url: URL) {}
+
+    func deliverPaste() {}
 }
