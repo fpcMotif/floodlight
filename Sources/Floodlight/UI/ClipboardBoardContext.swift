@@ -11,6 +11,9 @@ final class ClipboardBoardContext {
     /// Display name of the application that was frontmost when the panel was
     /// summoned — `nil` when that was Floodlight itself or unknown.
     var pasteTargetAppName: String?
+    /// Whether macOS lets Floodlight post the ⌘V that Paste Delivery needs
+    /// (#66) — Accessibility trust, read when the panel is summoned.
+    var isPasteDeliveryAvailable = false
     @ObservationIgnored
     var previewHandler: (@MainActor () -> Void)?
     /// Installed by the footer's Actions chip; ⌘K and a click both call it.
@@ -29,16 +32,11 @@ final class ClipboardBoardContext {
         actionsHandler?()
     }
 
-    /// Floodlight never pastes into itself, so its own bundle yields `nil`.
-    static func pasteTargetName(
-        frontmostName: String?,
-        frontmostBundleID: String?,
-        ownBundleID: String?
-    ) -> String? {
-        guard let frontmostName, !frontmostName.isEmpty else { return nil }
-        if let frontmostBundleID, let ownBundleID, frontmostBundleID == ownBundleID {
-            return nil
-        }
-        return frontmostName
+    /// What Return will do, told truthfully: it pastes only when there is an
+    /// application to paste into and macOS lets Floodlight post the
+    /// keystroke; otherwise it copies and closes, and the chip says so.
+    static func pasteLabel(targetAppName: String?, isDeliveryAvailable: Bool) -> String {
+        guard isDeliveryAvailable, let targetAppName else { return "Copy" }
+        return "Paste to \(targetAppName)"
     }
 }

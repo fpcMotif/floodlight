@@ -35,32 +35,19 @@ struct FloodlightPanelTests {
         #expect(controller.panel.isVisible)
     }
 
-    @Test func pasteTargetIgnoresFloodlightItselfAndEmptyNames() {
-        #expect(ClipboardBoardContext.pasteTargetName(
-            frontmostName: "Safari",
-            frontmostBundleID: "com.apple.Safari",
-            ownBundleID: "app.floodlight"
-        ) == "Safari")
-        #expect(ClipboardBoardContext.pasteTargetName(
-            frontmostName: "Floodlight",
-            frontmostBundleID: "app.floodlight",
-            ownBundleID: "app.floodlight"
-        ) == nil)
-        #expect(ClipboardBoardContext.pasteTargetName(
-            frontmostName: nil,
-            frontmostBundleID: nil,
-            ownBundleID: "app.floodlight"
-        ) == nil)
-        #expect(ClipboardBoardContext.pasteTargetName(
-            frontmostName: "",
-            frontmostBundleID: "x",
-            ownBundleID: "y"
-        ) == nil)
-        #expect(ClipboardBoardContext.pasteTargetName(
-            frontmostName: "Safari",
-            frontmostBundleID: nil,
-            ownBundleID: nil
-        ) == "Safari")
+    @Test func returnChipPromisesAPasteOnlyWhenOneCanHappen() {
+        #expect(ClipboardBoardContext.pasteLabel(
+            targetAppName: "Ghostty",
+            isDeliveryAvailable: true
+        ) == "Paste to Ghostty")
+        #expect(ClipboardBoardContext.pasteLabel(
+            targetAppName: "Ghostty",
+            isDeliveryAvailable: false
+        ) == "Copy")
+        #expect(ClipboardBoardContext.pasteLabel(
+            targetAppName: nil,
+            isDeliveryAvailable: true
+        ) == "Copy")
     }
 
     @Test func spaceTogglesQuickLookInClipboardModeWhenIdleAndPreviewable() {

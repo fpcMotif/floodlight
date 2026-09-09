@@ -13,6 +13,10 @@ protocol SelectedResultActionEffects {
     func writeImageDataToClipboard(png: Data?, tiff: Data?) -> Bool
     func open(_ url: URL, asApplication: Bool) async throws
     func revealInFinder(_ url: URL)
+    /// Hands the application the user came from a ⌘V for what the clipboard
+    /// now holds. Dispatched, like a Finder reveal: nothing reports whether
+    /// the target honoured it.
+    func deliverPaste()
 }
 
 @MainActor
@@ -24,6 +28,21 @@ struct AppKitSelectedResultActionEffects: SelectedResultActionEffects {
 
         var errorDescription: String? {
             "Launch Services completed without returning an application."
+        }
+    }
+
+    private let pasteDelivery: PasteTargetDelivery
+
+    /// The shell shares one `PasteTargetDelivery` between the panel that
+    /// captures the target and these effects that paste into it; the default
+    /// has never captured anyone, so it delivers nothing.
+    init(pasteDelivery: PasteTargetDelivery = PasteTargetDelivery()) {
+        self.pasteDelivery = pasteDelivery
+    }
+
+    func deliverPaste() {
+        Task { [pasteDelivery] in
+            await pasteDelivery.deliver()
         }
     }
 
@@ -166,14 +185,14 @@ final class SelectedResultActionPerformer {
                 logClipboardFailure(for: item)
                 return
             }
-            onDismiss()
+            dismissThenPaste(item)
 
         case let .copyFiles(paths):
             guard effects.writeFilesToClipboard(paths) else {
                 logClipboardFailure(for: item)
                 return
             }
-            onDismiss()
+            dismissThenPaste(item)
 
         case let .copyImage(id):
             guard case let .image(payload)? = clipboardRestorePayload(id),
@@ -182,7 +201,7 @@ final class SelectedResultActionPerformer {
                 logClipboardFailure(for: item)
                 return
             }
-            onDismiss()
+            dismissThenPaste(item)
 
         case let .open(url):
             open(url, for: item, query: query)
@@ -194,6 +213,15 @@ final class SelectedResultActionPerformer {
                 arguments: arguments
             ))
         }
+    }
+
+    /// Activating a Clipboard History entry is Paste Delivery (#66): the
+    /// panel must be gone before the ⌘V goes out, or the keystroke lands in
+    /// Floodlight's own search field. A calculator result only copies.
+    private func dismissThenPaste(_ item: SearchItem) {
+        onDismiss()
+        guard item.kind == .clipboard else { return }
+        effects.deliverPaste()
     }
 
     func copy(_ item: SearchItem) {

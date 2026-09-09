@@ -8,13 +8,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the Search Session (ADR 0008).
     private lazy var clipboardStore = (try? ClipboardHistoryStore())
         ?? ClipboardHistoryStore.inMemory()
+    /// Paste Delivery's one instance (#66): the panel tells it who was
+    /// frontmost, the action effects paste into that application.
+    private let pasteDelivery = PasteTargetDelivery()
     private lazy var model = SearchCoordinator(
         clipboardSearch: ClipboardSearch(store: clipboardStore),
+        actionEffects: AppKitSelectedResultActionEffects(pasteDelivery: pasteDelivery),
         onDismiss: { [weak self] in
             self?.searchDidDismiss()
         }
     )
-    private lazy var panelController = FloodlightPanelController(model: model)
+    private lazy var panelController = FloodlightPanelController(
+        model: model,
+        pasteDelivery: pasteDelivery
+    )
     private lazy var presentation = ApplicationPresentationCoordinator(
         effects: self,
         ensureSearchStarted: { [weak self] in self?.ensureSearchStarted() }

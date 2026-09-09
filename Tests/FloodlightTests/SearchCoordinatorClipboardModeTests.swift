@@ -604,4 +604,6 @@ private final class ScriptedActionEffects: SelectedResultActionEffects {
     func revealInFinder(_ url: URL) {
         onReveal(url)
     }
+
+    func deliverPaste() {}
 }

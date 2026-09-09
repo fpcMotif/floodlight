@@ -587,15 +587,13 @@ private struct ClipboardFooterBar: View {
     let clipboardSearch: ClipboardSearch
     let boardContext: ClipboardBoardContext
 
-    /// Context-aware to the application that was frontmost when the panel
-    /// opened — falls back to a bare "Paste" once Floodlight itself was
-    /// frontmost, or the frontmost application couldn't be named (#57).
+    /// Names the application that was frontmost when the panel opened (#57),
+    /// and says "Copy" once Return cannot paste there (#66).
     private var pasteLabel: String {
-        if let name = boardContext.pasteTargetAppName {
-            "Paste to \(name)"
-        } else {
-            "Paste"
-        }
+        ClipboardBoardContext.pasteLabel(
+            targetAppName: boardContext.pasteTargetAppName,
+            isDeliveryAvailable: boardContext.isPasteDeliveryAvailable
+        )
     }
 
     var body: some View {
