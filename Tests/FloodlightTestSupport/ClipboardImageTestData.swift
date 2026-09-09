@@ -12,7 +12,8 @@ package enum ClipboardImageTestData {
     package static let pngSHA256 =
         "ec65c8798ecf95902413c40f7b9e6d4b0068885f5f324aba1f9ba1c8e14aea61"
 
-    /// Where `SearchCoordinator` materializes a captured image for Quick Look.
+    /// Where `ClipboardSearch` materializes a captured image for Quick Look
+    /// unless a preview directory is injected.
     ///
     /// Spelled out rather than asked of the production builder: what the tests
     /// pin is that the path does not move, and deriving it from the code under

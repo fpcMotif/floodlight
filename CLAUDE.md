@@ -27,6 +27,20 @@ Every change must leave `make check` and `make test` green. Never commit a
 throwaway test harness (e.g. render dumps) — SwiftLint's function-length and
 identifier rules reject them, on purpose.
 
+The thresholds in `.swiftlint.yml` are a ratchet set at the tree's current
+worst offender, and `check-lint` fails if one has slack in it. Adding a line to
+a standing offender is meant to fail: split it, then lower the number in the
+same commit.
+
+## Comments
+
+A comment says **why**; the code already says what. `///` states the contract,
+`//` states the reason, and neither describes the operation on the next line.
+The convention, with an example to write and one to delete, is the
+[Comments section of the README](README.md#comments). `check-rules` enforces
+the two mechanical shapes (`comments-no-dead-code`, `comments-say-why`); the
+rest is on you.
+
 ## Design work
 
 - Clipboard board metrics live in `FloodlightMetrics` — never a literal at a

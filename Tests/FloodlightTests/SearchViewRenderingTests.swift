@@ -36,7 +36,7 @@ struct SearchViewRenderingTests {
                 settings: settings
             ),
             recentStore: RecentStore(defaults: IsolatedDefaults().defaults),
-            clipboardStore: clipboardStore,
+            clipboardSearch: ClipboardSearch(store: clipboardStore),
             rootURL: tree.root,
             assistantRunner: ScriptedAssistantRunner(),
             onDismiss: {}
@@ -162,7 +162,7 @@ struct SearchViewRenderingTests {
 
         #expect(coordinator.isClipboardMode)
         #expect(!coordinator.filterOptions.isEmpty)
-        #expect(coordinator.clipboardInspector != nil)
+        #expect(coordinator.clipboardSearch.inspector != nil)
 
         let image = try render(
             SearchView(model: coordinator),

@@ -51,11 +51,17 @@ package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
     package let sourceAppBundleID: String?
     package let pinnedAt: Date?
     package let image: ClipboardImageMetadata?
+    /// What the text is — link, colour, code, path, or plain prose — for a
+    /// `.text` entry; `nil` for a file or image entry. Decided once, when the
+    /// entry is recorded or when the store reads a row that predates it (#73).
+    package let textContent: ClipboardTextContent?
 
     package var isPinned: Bool {
         pinnedAt != nil
     }
 
+    /// A text entry built without a `textContent` classifies itself, so a
+    /// fixture reads exactly the way a recorded entry does.
     package init(
         id: String = UUID().uuidString,
         text: String,
@@ -63,7 +69,8 @@ package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
         createdAt: Date = .now,
         sourceAppBundleID: String? = nil,
         pinnedAt: Date? = nil,
-        image: ClipboardImageMetadata? = nil
+        image: ClipboardImageMetadata? = nil,
+        textContent: ClipboardTextContent? = nil
     ) {
         self.id = id
         self.text = text
@@ -72,6 +79,7 @@ package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
         self.sourceAppBundleID = sourceAppBundleID
         self.pinnedAt = pinnedAt
         self.image = image
+        self.textContent = kind == .text ? textContent ?? .classify(text) : nil
     }
 
     func withPinnedAt(_ pinnedAt: Date?) -> ClipboardEntry {
@@ -82,7 +90,8 @@ package struct ClipboardEntry: Identifiable, Equatable, Hashable, Sendable {
             createdAt: createdAt,
             sourceAppBundleID: sourceAppBundleID,
             pinnedAt: pinnedAt,
-            image: image
+            image: image,
+            textContent: textContent
         )
     }
 }

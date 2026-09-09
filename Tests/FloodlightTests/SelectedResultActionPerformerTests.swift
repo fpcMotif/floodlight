@@ -16,6 +16,7 @@ struct SelectedResultActionPerformerTests {
         #expect(successful.effects.clipboardValues == ["42"])
         #expect(successful.presentation.events == [.dismiss])
         #expect(successful.events.events == [.clipboard("42"), .dismiss])
+        #expect(successful.effects.pasteDeliveries == 0)
 
         let failed = makeHarness(clipboardSucceeds: false)
         failed.performer.activate(item, query: "6 * 7")
@@ -25,7 +26,7 @@ struct SelectedResultActionPerformerTests {
         #expect(failed.events.events == [.clipboard("42")])
     }
 
-    @Test func clipboardEntryActivationPutsExactTextOnClipboardAndDismisses() {
+    @Test func clipboardEntryActivationPastesOnlyAfterTheWriteAndTheDismissal() {
         let harness = makeHarness()
         let clipboardText = "Multi-line\nClipboard\nSnippet\t123"
         let item = SearchItem(
@@ -41,6 +42,24 @@ struct SelectedResultActionPerformerTests {
 
         #expect(harness.effects.clipboardValues == [clipboardText])
         #expect(harness.presentation.events == [.dismiss])
+        #expect(harness.events.events == [.clipboard(clipboardText), .dismiss, .pasteDelivered])
+    }
+
+    @Test func clipboardEntryActivationFailureNeverPastes() {
+        let harness = makeHarness(clipboardSucceeds: false)
+        let item = SearchItem(
+            id: "clipboard:entry-2",
+            title: "unwritable",
+            subtitle: "Notes · 2m",
+            kind: .clipboard,
+            action: .copy("unwritable"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "unwritable")
+
+        #expect(harness.presentation.events.isEmpty)
+        #expect(harness.effects.pasteDeliveries == 0)
     }
 
     @Test func clipboardFileActivationRestoresNativeFileReferencesAndDismisses() {
@@ -61,6 +80,7 @@ struct SelectedResultActionPerformerTests {
         #expect(harness.effects.clipboardFilePaths == [[path]])
         #expect(harness.effects.clipboardValues.isEmpty)
         #expect(harness.presentation.events == [.dismiss])
+        #expect(harness.events.events == [.clipboardFiles([path]), .dismiss, .pasteDelivered])
     }
 
     @Test func clipboardFileCopyWritesTheAbsolutePathWithoutDismissing() {
@@ -106,7 +126,9 @@ struct SelectedResultActionPerformerTests {
         let harness = makeHarness()
         let png = Data(repeating: 0xAB, count: 64)
         let tiff = Data(repeating: 0xCD, count: 80)
-        harness.events.imagePayloads["image-1"] = ClipboardImagePayload(png: png, tiff: tiff)
+        harness.events.restorePayloads["image-1"] = .image(
+            ClipboardImagePayload(png: png, tiff: tiff)
+        )
         let item = SearchItem(
             id: "clipboard:image-1",
             title: "CleanShot 2026-09-01 at 15.30.png",
@@ -123,6 +145,7 @@ struct SelectedResultActionPerformerTests {
         #expect(harness.effects.clipboardImages[0].tiff == tiff)
         #expect(harness.effects.clipboardValues.isEmpty)
         #expect(harness.presentation.events == [.dismiss])
+        #expect(harness.events.events == [.clipboardImage(png, tiff), .dismiss, .pasteDelivered])
     }
 
     @Test func clipboardImageCopyWritesTheDisplayNameWithoutDismissing() {
@@ -160,9 +183,8 @@ struct SelectedResultActionPerformerTests {
 
     @Test func clipboardImageActivationFailureKeepsSearchOpen() {
         let harness = makeHarness(clipboardSucceeds: false)
-        harness.events.imagePayloads["image-3"] = ClipboardImagePayload(
-            png: Data(repeating: 0x11, count: 8),
-            tiff: nil
+        harness.events.restorePayloads["image-3"] = .image(
+            ClipboardImagePayload(png: Data(repeating: 0x11, count: 8), tiff: nil)
         )
         let item = SearchItem(
             id: "clipboard:image-3",
@@ -176,6 +198,41 @@ struct SelectedResultActionPerformerTests {
         harness.performer.activate(item, query: "shot")
 
         #expect(harness.effects.clipboardImages.count == 1)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func clipboardImageActivationWithNoRestorePayloadKeepsSearchOpen() {
+        let harness = makeHarness()
+        let item = SearchItem(
+            id: "clipboard:image-missing",
+            title: "gone.png",
+            subtitle: "10×10 · 1m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-missing"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "gone")
+
+        #expect(harness.effects.clipboardImages.isEmpty)
+        #expect(harness.presentation.events.isEmpty)
+    }
+
+    @Test func clipboardImageActivationIgnoresANonImageRestorePayload() {
+        let harness = makeHarness()
+        harness.events.restorePayloads["image-4"] = .text("not an image")
+        let item = SearchItem(
+            id: "clipboard:image-4",
+            title: "mislabeled.png",
+            subtitle: "10×10 · 1m",
+            kind: .clipboard,
+            action: .copyImage(id: "image-4"),
+            score: 100
+        )
+
+        harness.performer.activate(item, query: "mislabeled")
+
+        #expect(harness.effects.clipboardImages.isEmpty)
         #expect(harness.presentation.events.isEmpty)
     }
 
@@ -528,8 +585,8 @@ private final class Harness {
             assistantRunSession: assistantRunSession,
             runningApplicationActivator: activator,
             recentStore: recentStore,
-            clipboardImagePayload: { id in
-                events.imagePayloads[id]
+            clipboardRestorePayload: { id in
+                events.restorePayloads[id]
             },
             trackSelection: { itemID, url, query in
                 await learning.record(itemID: itemID, url: url, query: query)
@@ -560,6 +617,7 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     private(set) var openRequests: [OpenRequest] = []
     private(set) var completedOpenCount = 0
     private(set) var revealedURLs: [URL] = []
+    private(set) var pasteDeliveries = 0
 
     init(
         clipboardSucceeds: Bool,
@@ -571,6 +629,11 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
         self.openError = openError
         self.openGate = openGate
         self.events = events
+    }
+
+    func deliverPaste() {
+        pasteDeliveries += 1
+        events.record(.pasteDelivered)
     }
 
     func writeToClipboard(_ value: String) -> Bool {
@@ -663,7 +726,7 @@ private final class PresentationRecorder {
 @MainActor
 private final class EventRecorder {
     private(set) var events: [ActionEvent] = []
-    var imagePayloads: [String: ClipboardImagePayload] = [:]
+    var restorePayloads: [String: ClipboardRestorePayload] = [:]
 
     func record(_ event: ActionEvent) {
         events.append(event)
@@ -680,6 +743,7 @@ private enum ActionEvent: Equatable {
     case openFailed(URL)
     case revealed(URL)
     case dismiss
+    case pasteDelivered
     case showSettings
     case learned(SearchItem.ID, URL, String)
 }

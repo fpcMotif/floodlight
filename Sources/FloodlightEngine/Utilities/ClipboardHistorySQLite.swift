@@ -22,7 +22,8 @@ enum ClipboardHistorySQLite {
 
     static let entryColumns = """
     id, text, created_at, source_app_bundle_id, pinned_at, kind, \
-    image_hash, image_width, image_height, image_byte_count, thumbnail_png
+    image_hash, image_width, image_height, image_byte_count, thumbnail_png, \
+    content_kind, content_detail
     """
 
     private static let schemaSQL = """
@@ -51,7 +52,7 @@ enum ClipboardHistorySQLite {
 
     static func initializeSchema(db: OpaquePointer) throws {
         try exec(db, schemaSQL)
-        try migrateImageColumns(db: db)
+        try migrateAddedColumns(db: db)
         try recreateFTSTriggers(db: db)
     }
 
@@ -71,12 +72,17 @@ enum ClipboardHistorySQLite {
         }
     }
 
+    // MARK: - Reads
+
+    /// A row's classification computed while reading it, waiting to be
+    /// stored once the statement that read it is finalized.
+    typealias Backfill = (id: String, content: ClipboardTextContent)
+
     static func loadInitialWindow(
         db: OpaquePointer,
         recentLimit: Int
     ) -> (pinned: [ClipboardEntry], recent: [ClipboardEntry]) {
-        var pinned: [ClipboardEntry] = []
-        var recent: [ClipboardEntry] = []
+        var backfill: [Backfill] = []
 
         let pinnedSQL = """
         SELECT \(entryColumns)
@@ -84,15 +90,7 @@ enum ClipboardHistorySQLite {
         WHERE pinned_at IS NOT NULL
         ORDER BY pinned_at ASC;
         """
-        var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, pinnedSQL, -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let entry = readEntry(from: stmt) {
-                    pinned.append(entry)
-                }
-            }
-        }
+        let pinned = fetch(db: db, sql: pinnedSQL, backfill: &backfill) { _ in } ?? []
 
         let recentSQL = """
         SELECT \(entryColumns)
@@ -101,20 +99,85 @@ enum ClipboardHistorySQLite {
         ORDER BY created_at DESC
         LIMIT ?;
         """
-        if sqlite3_prepare_v2(db, recentSQL, -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
+        let recent = fetch(db: db, sql: recentSQL, backfill: &backfill) { stmt in
             sqlite3_bind_int(stmt, 1, Int32(recentLimit))
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let entry = readEntry(from: stmt) {
-                    recent.append(entry)
-                }
-            }
-        }
+        } ?? []
 
+        storeClassifications(db: db, of: backfill)
         return (pinned, recent)
     }
 
-    static func readEntry(from stmt: OpaquePointer?) -> ClipboardEntry? {
+    static func fetchEntry(db: OpaquePointer, id: String) -> ClipboardEntry? {
+        var backfill: [Backfill] = []
+        let sql = """
+        SELECT \(entryColumns)
+        FROM clipboard_entries
+        WHERE id = ?
+        LIMIT 1;
+        """
+        let entries = fetch(db: db, sql: sql, backfill: &backfill) { stmt in
+            bindText(stmt, index: 1, value: id)
+        }
+        storeClassifications(db: db, of: backfill)
+        return entries?.first
+    }
+
+    /// The trigram index's answer for `ftsQuery`, pinned entries first. `nil`
+    /// when the statement cannot be prepared, so the store can fall back to
+    /// scanning its window instead of reporting nothing.
+    static func fetchMatches(
+        db: OpaquePointer,
+        ftsQuery: String,
+        limit: Int
+    ) -> [ClipboardEntry]? {
+        var backfill: [Backfill] = []
+        let sql = """
+        SELECT \(entryColumns)
+        FROM clipboard_entries
+        WHERE rowid IN (SELECT rowid FROM clipboard_fts WHERE clipboard_fts MATCH ?)
+        ORDER BY pinned_at IS NOT NULL DESC, pinned_at ASC, created_at DESC
+        LIMIT ?;
+        """
+        let entries = fetch(db: db, sql: sql, backfill: &backfill) { stmt in
+            bindText(stmt, index: 1, value: ftsQuery)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+        }
+        storeClassifications(db: db, of: backfill)
+        return entries
+    }
+
+    /// Runs one SELECT over `entryColumns` and reads every row it returns, or
+    /// `nil` if the statement cannot be prepared. Rows classified on the way
+    /// in land in `backfill`; the statement is finalized before this returns,
+    /// so the caller can write them back without an open read on the table.
+    private static func fetch(
+        db: OpaquePointer,
+        sql: String,
+        backfill: inout [Backfill],
+        bind: (OpaquePointer?) -> Void
+    ) -> [ClipboardEntry]? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+
+        var entries: [ClipboardEntry] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let entry = readEntry(from: stmt, backfill: &backfill) {
+                entries.append(entry)
+            }
+        }
+        return entries
+    }
+
+    /// One row as a Clipboard Entry. A text row recorded before its
+    /// classification was stored comes back classified now and is added to
+    /// `backfill`, for the caller to persist once its statement is done
+    /// (#73) — so the one-time work happens on load, never on a keystroke.
+    static func readEntry(
+        from stmt: OpaquePointer?,
+        backfill: inout [Backfill]
+    ) -> ClipboardEntry? {
         guard let stmt else { return nil }
 
         guard let id = readText(stmt, index: 0), let text = readText(stmt, index: 1) else {
@@ -160,6 +223,16 @@ enum ClipboardHistorySQLite {
             nil
         }
 
+        var content = ClipboardTextContent(
+            storedKind: readText(stmt, index: 11),
+            storedDetail: readText(stmt, index: 12)
+        )
+        if kind == .text, content == nil {
+            let classified = ClipboardTextContent.classify(text)
+            backfill.append((id: id, content: classified))
+            content = classified
+        }
+
         return ClipboardEntry(
             id: id,
             text: text,
@@ -167,8 +240,32 @@ enum ClipboardHistorySQLite {
             createdAt: createdAt,
             sourceAppBundleID: sourceAppBundleID,
             pinnedAt: pinnedAt,
-            image: image
+            image: image,
+            textContent: content
         )
+    }
+
+    /// Persists the classification `readEntry` computed for rows recorded
+    /// before the columns existed, so every later read finds it stored. One
+    /// transaction, once per row, ever; a failure costs nothing but a repeat
+    /// the next time the row is read.
+    private static func storeClassifications(db: OpaquePointer, of backfill: [Backfill]) {
+        guard !backfill.isEmpty else { return }
+        let sql = "UPDATE clipboard_entries SET content_kind = ?, content_detail = ? WHERE id = ?;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_exec(db, "BEGIN;", nil, nil, nil) == SQLITE_OK else { return }
+
+        for (id, content) in backfill {
+            let stored = content.storedForm
+            sqlite3_reset(stmt)
+            bindText(stmt, index: 1, value: stored.kind)
+            bindText(stmt, index: 2, value: stored.detail)
+            bindText(stmt, index: 3, value: id)
+            sqlite3_step(stmt)
+        }
+        sqlite3_exec(db, "COMMIT;", nil, nil, nil)
     }
 
     static func sha256Hex(_ data: Data) -> String {
@@ -238,9 +335,10 @@ enum ClipboardHistorySQLite {
         return Data(bytes: bytes, count: count)
     }
 
-    /// Adds the columns later releases introduced. A column an earlier launch
+    /// Adds the columns later releases introduced — the image columns, then
+    /// the stored text classification (#73). A column an earlier launch
     /// already added is success; anything else is a database we cannot prepare.
-    private static func migrateImageColumns(db: OpaquePointer) throws {
+    private static func migrateAddedColumns(db: OpaquePointer) throws {
         for columnSQL in [
             "ALTER TABLE clipboard_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';",
             "ALTER TABLE clipboard_entries ADD COLUMN image_hash TEXT;",
@@ -250,6 +348,8 @@ enum ClipboardHistorySQLite {
             "ALTER TABLE clipboard_entries ADD COLUMN thumbnail_png BLOB;",
             "ALTER TABLE clipboard_entries ADD COLUMN png_data BLOB;",
             "ALTER TABLE clipboard_entries ADD COLUMN tiff_data BLOB;",
+            "ALTER TABLE clipboard_entries ADD COLUMN content_kind TEXT;",
+            "ALTER TABLE clipboard_entries ADD COLUMN content_detail TEXT;",
         ] {
             do {
                 try exec(db, columnSQL)
@@ -259,6 +359,10 @@ enum ClipboardHistorySQLite {
         }
     }
 
+    /// The update trigger names the columns the indexed text is built from,
+    /// so a pin, an unpin, or a stored classification leaves the trigram
+    /// index alone: re-tokenizing an entry whose text did not change was a
+    /// cost per write that nothing read back.
     private static func recreateFTSTriggers(db: OpaquePointer) throws {
         try exec(db, """
         DROP TRIGGER IF EXISTS clipboard_entries_ai;
@@ -287,7 +391,8 @@ enum ClipboardHistorySQLite {
             );
         END;
 
-        CREATE TRIGGER IF NOT EXISTS clipboard_entries_au AFTER UPDATE ON clipboard_entries BEGIN
+        CREATE TRIGGER IF NOT EXISTS clipboard_entries_au
+        AFTER UPDATE OF text, kind, image_width, image_height ON clipboard_entries BEGIN
             INSERT INTO clipboard_fts(clipboard_fts, rowid, text) VALUES(
                 'delete',
                 old.rowid,

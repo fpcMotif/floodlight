@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+/// The Selected-Result intents the board's footer and Actions menu dispatch
+/// to the Search Session (ADR 0005) — everything else they show comes from
+/// Clipboard Search, so neither needs the coordinator itself.
+struct ClipboardBoardCommands {
+    let paste: @MainActor () -> Void
+    let copy: @MainActor () -> Void
+    let reveal: @MainActor () -> Void
+
+    @MainActor
+    init(session: SearchCoordinator) {
+        paste = { session.openSelection() }
+        copy = { session.copySelection() }
+        reveal = { session.revealSelection() }
+    }
+}
+
 /// One entry of the board's Actions menu: what it says, the chord the
 /// panel already honours for it, and what it does.
 struct ClipboardMenuAction {
@@ -14,10 +30,14 @@ struct ClipboardMenuAction {
 
     /// The actions the panel can perform on the current selection today,
     /// with the shortcuts `FloodlightPanelController.panelCommand` maps —
-    /// nothing here promises a chord the panel does not honour.
+    /// nothing here promises a chord the panel does not honour. Paste,
+    /// Copy, and Show in Finder are the session's Selected-Result intents
+    /// (ADR 0005); the facts that enable an item, and the pin and delete
+    /// commands, are Clipboard Search's (ADR 0008).
     @MainActor
     static func available(
-        for model: SearchCoordinator,
+        commands: ClipboardBoardCommands,
+        clipboardSearch: ClipboardSearch,
         boardContext: ClipboardBoardContext,
         pasteLabel: String
     ) -> [ClipboardMenuAction] {
@@ -28,7 +48,7 @@ struct ClipboardMenuAction {
                 modifiers: [],
                 isEnabled: true,
                 startsGroup: false,
-                handler: { model.openSelection() }
+                handler: commands.paste
             ),
             ClipboardMenuAction(
                 title: "Copy",
@@ -36,13 +56,13 @@ struct ClipboardMenuAction {
                 modifiers: [.command],
                 isEnabled: true,
                 startsGroup: false,
-                handler: { model.copySelection() }
+                handler: commands.copy
             ),
             ClipboardMenuAction(
                 title: "Quick Look",
                 keyEquivalent: " ",
                 modifiers: [],
-                isEnabled: model.isSelectionPreviewable,
+                isEnabled: clipboardSearch.isSelectionPreviewable,
                 startsGroup: true,
                 handler: { boardContext.requestPreview() }
             ),
@@ -50,17 +70,17 @@ struct ClipboardMenuAction {
                 title: "Show in Finder",
                 keyEquivalent: "r",
                 modifiers: [.command],
-                isEnabled: model.selectionFileURL != nil,
+                isEnabled: clipboardSearch.selectionFileURL != nil,
                 startsGroup: false,
-                handler: { model.revealSelection() }
+                handler: commands.reveal
             ),
             ClipboardMenuAction(
-                title: model.isSelectionPinned ? "Unpin" : "Pin",
+                title: clipboardSearch.isSelectionPinned ? "Unpin" : "Pin",
                 keyEquivalent: ".",
                 modifiers: [.command],
                 isEnabled: true,
                 startsGroup: true,
-                handler: { model.togglePinSelection() }
+                handler: { clipboardSearch.togglePinSelection() }
             ),
             ClipboardMenuAction(
                 title: "Delete",
@@ -68,7 +88,7 @@ struct ClipboardMenuAction {
                 modifiers: [.command],
                 isEnabled: true,
                 startsGroup: false,
-                handler: { model.deleteSelection() }
+                handler: { clipboardSearch.deleteSelection() }
             ),
         ]
     }
@@ -78,12 +98,18 @@ struct ClipboardMenuAction {
 /// click on the chip and ⌘K both route through
 /// `ClipboardBoardContext.requestActions()`, so the two can never diverge.
 struct ClipboardActionsMenuAnchor: NSViewRepresentable {
-    let model: SearchCoordinator
+    let commands: ClipboardBoardCommands
+    let clipboardSearch: ClipboardSearch
     let boardContext: ClipboardBoardContext
     let pasteLabel: String
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, boardContext: boardContext, pasteLabel: pasteLabel)
+        Coordinator(
+            commands: commands,
+            clipboardSearch: clipboardSearch,
+            boardContext: boardContext,
+            pasteLabel: pasteLabel
+        )
     }
 
     func makeNSView(context: Context) -> MenuAnchorView {
@@ -100,22 +126,32 @@ struct ClipboardActionsMenuAnchor: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
-        private let model: SearchCoordinator
+        private let commands: ClipboardBoardCommands
+        private let clipboardSearch: ClipboardSearch
         private let boardContext: ClipboardBoardContext
         var pasteLabel: String
         weak var anchor: NSView?
         private var actions: [ClipboardMenuAction] = []
 
-        init(model: SearchCoordinator, boardContext: ClipboardBoardContext, pasteLabel: String) {
-            self.model = model
+        init(
+            commands: ClipboardBoardCommands,
+            clipboardSearch: ClipboardSearch,
+            boardContext: ClipboardBoardContext,
+            pasteLabel: String
+        ) {
+            self.commands = commands
+            self.clipboardSearch = clipboardSearch
             self.boardContext = boardContext
             self.pasteLabel = pasteLabel
         }
 
+        /// The anchor only exists inside the board, so the menu can only
+        /// pop while Clipboard mode is showing it.
         func popUpMenu() {
-            guard let anchor, model.isClipboardMode else { return }
+            guard let anchor else { return }
             actions = ClipboardMenuAction.available(
-                for: model,
+                commands: commands,
+                clipboardSearch: clipboardSearch,
                 boardContext: boardContext,
                 pasteLabel: pasteLabel
             )

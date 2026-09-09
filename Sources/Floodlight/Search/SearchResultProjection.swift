@@ -102,21 +102,9 @@ enum SearchResultProjection {
 
     struct ClipboardContext: Equatable {
         let entries: [ClipboardEntry]
-        let selectedFilter: SearchResultFilter
+        var selectedFilter: SearchResultFilter = .all
         let selection: SearchResultSelection?
-        let now: Date
-
-        init(
-            entries: [ClipboardEntry],
-            selectedFilter: SearchResultFilter = .all,
-            selection: SearchResultSelection?,
-            now: Date = .now
-        ) {
-            self.entries = entries
-            self.selectedFilter = selectedFilter
-            self.selection = selection
-            self.now = now
-        }
+        var now: Date = .now
     }
 
     static func project(_ input: Input) -> SearchResultPublication {
@@ -195,20 +183,44 @@ enum SearchResultProjection {
     }
 
     private static func projectClipboard(_ context: ClipboardContext) -> SearchResultPublication {
-        let rows = context.entries.enumerated().map { index, entry in
-            buildClipboardRow(entry: entry, index: index, now: context.now)
+        clipboardPublication(
+            rows: clipboardRows(entries: context.entries, now: context.now),
+            selectedFilter: context.selectedFilter,
+            selection: context.selection
+        )
+    }
+
+    /// The board's rows for `entries`, in order, aged against `now` — the
+    /// half of a clipboard projection that costs anything, which is why
+    /// Clipboard Search keeps a publication's `allRows` across chip
+    /// switches (#73). Pure: every fact a row needs is already on its
+    /// entry, so nothing here parses text or touches the filesystem.
+    private static func clipboardRows(entries: [ClipboardEntry], now: Date) -> [SearchItem] {
+        entries.enumerated().map { index, entry in
+            buildClipboardRow(entry: entry, index: index, now: now)
         }
-        let selectedFilter = SearchResultFilter.clipboard.contains(context.selectedFilter)
-            ? context.selectedFilter
+    }
+
+    /// Scopes `rows` to `selectedFilter`, counts every chip, and reconciles
+    /// `selection` against what is visible — the cheap half, which Clipboard
+    /// Search reruns over a kept publication's `allRows` when nothing the
+    /// rows depend on has changed.
+    static func clipboardPublication(
+        rows: [SearchItem],
+        selectedFilter: SearchResultFilter,
+        selection: SearchResultSelection?
+    ) -> SearchResultPublication {
+        let selectedFilter = SearchResultFilter.clipboard.contains(selectedFilter)
+            ? selectedFilter
             : .all
         let visibleRows = rows.filter { clipboardFilter(selectedFilter, includes: $0) }
         return SearchResultPublication(
             sourceCandidates: [],
             allRows: rows,
             visibleRows: visibleRows,
-            filterOptions: clipboardFilterOptions(entries: context.entries),
+            filterOptions: clipboardFilterOptions(rows: rows),
             selectedFilter: selectedFilter,
-            selection: reconcile(context.selection, in: visibleRows),
+            selection: reconcile(selection, in: visibleRows),
             progress: .settled
         )
     }
@@ -231,21 +243,23 @@ enum SearchResultProjection {
         }
     }
 
-    private static func clipboardFilterOptions(
-        entries: [ClipboardEntry]
-    ) -> [SearchFilterOption] {
+    /// A row's action says which chip it belongs to, the same way
+    /// `clipboardFilter` decides membership, so the counts and the scoped
+    /// rows can never disagree.
+    private static func clipboardFilterOptions(rows: [SearchItem]) -> [SearchFilterOption] {
         var text = 0
         var files = 0
         var images = 0
-        for entry in entries {
-            switch entry.kind {
-            case .text: text += 1
-            case .file: files += 1
-            case .image: images += 1
+        for row in rows {
+            switch row.action {
+            case .copy: text += 1
+            case .copyFiles: files += 1
+            case .copyImage: images += 1
+            default: break
             }
         }
         let counts: [SearchResultFilter: Int] = [
-            .all: entries.count,
+            .all: rows.count,
             .text: text,
             .files: files,
             .images: images,
@@ -259,21 +273,9 @@ enum SearchResultProjection {
         }
     }
 
-    /// The row id a Clipboard History entry gets, and the way back out of
-    /// it. The coordinator strips the prefix to reach the store, and the
-    /// board's image caches key on what it strips to, so the spelling lives
-    /// here once rather than at every site that builds or parses it.
-    static func clipboardRowID(for entryID: String) -> String {
-        clipboardRowIDPrefix + entryID
-    }
-
-    static func clipboardEntryID(from rowID: String) -> String? {
-        guard rowID.hasPrefix(clipboardRowIDPrefix) else { return nil }
-        return String(rowID.dropFirst(clipboardRowIDPrefix.count))
-    }
-
-    private static let clipboardRowIDPrefix = "clipboard:"
-
+    /// Row identity is Clipboard Search's to assign — `ClipboardSearch.rowID(
+    /// forEntryID:)` is the one spelling — so a row built here maps back to
+    /// its entry only through Clipboard Search.
     private static func buildClipboardRow(
         entry: ClipboardEntry,
         index: Int,
@@ -289,69 +291,30 @@ enum SearchResultProjection {
         }
     }
 
+    /// The icon is the entry's stored classification read back, never the
+    /// text parsed again: what the list shows and what the inspector says
+    /// come from the one decision capture made (#73).
     private static func buildClipboardTextRow(
         entry: ClipboardEntry,
         index: Int,
         now: Date
     ) -> SearchItem {
-        let text = entry.text
-        if let localURL = ClipboardInspector.parseLocalPath(text) {
-            let name = localURL.lastPathComponent
-            let title = name.isEmpty ? text : name
-            let subtitle = clipboardSubtitle(
-                entry: entry,
-                now: now,
-                detail: parentFolderName(of: localURL)
-            )
-            let ext = localURL.pathExtension.lowercased()
-            let iconSource: SearchItemIconSource = if [
-                "png",
-                "jpg",
-                "jpeg",
-                "heic",
-                "webp",
-                "gif",
-                "tiff",
-                "svg",
-            ].contains(ext) {
-                .engine(symbol: "photo", tint: .cyan)
-            } else if ["mp4", "mov", "m4v", "webm", "mkv", "avi"].contains(ext) {
-                .engine(symbol: "video.fill", tint: .purple)
-            } else {
-                .inferred
-            }
-            let exists = FileManager.default.fileExists(atPath: localURL.path)
-            return SearchItem(
-                id: clipboardRowID(for: entry.id),
-                title: title,
-                subtitle: subtitle,
-                kind: .clipboard,
-                action: .copy(text),
-                iconSource: iconSource,
-                score: SearchItemRanking.calculator - index,
-                fileURL: exists ? localURL : nil,
-                modifiedAt: entry.createdAt,
-                isPinned: entry.isPinned
-            )
+        if case let .path(path) = entry.textContent {
+            return buildClipboardPathRow(entry: entry, path: path, index: index, now: now)
         }
 
-        let title = previewTitle(for: text)
-        let subtitle = clipboardSubtitle(entry: entry, now: now, detail: nil)
-        let iconSource: SearchItemIconSource = if ClipboardInspector.parseURL(text) != nil {
-            .engine(symbol: "link", tint: .blue)
-        } else if ClipboardInspector.parseHexColor(text) != nil {
-            .engine(symbol: "paintpalette.fill", tint: .purple)
-        } else if ClipboardInspector.parseCodeHint(text) != nil {
-            .engine(symbol: "curlybraces", tint: .cyan)
-        } else {
-            .engine(symbol: "doc.text", tint: .gray)
+        let iconSource: SearchItemIconSource = switch entry.textContent {
+        case .link: .engine(symbol: "link", tint: .blue)
+        case .color: .engine(symbol: "paintpalette.fill", tint: .purple)
+        case .code: .engine(symbol: "curlybraces", tint: .cyan)
+        case .plain, .path, nil: .engine(symbol: "doc.text", tint: .gray)
         }
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
-            title: title,
-            subtitle: subtitle,
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
+            title: previewTitle(for: entry.text),
+            subtitle: clipboardSubtitle(entry: entry, now: now, detail: nil),
             kind: .clipboard,
-            action: .copy(text),
+            action: .copy(entry.text),
             iconSource: iconSource,
             score: SearchItemRanking.calculator - index,
             modifiedAt: entry.createdAt,
@@ -359,28 +322,62 @@ enum SearchResultProjection {
         )
     }
 
+    /// Copied text that names a local file reads as that file whether or not
+    /// anything is still at the path: history records what was copied. The
+    /// row carries the URL; whether it can be opened is decided when the row
+    /// is selected, which is the one place that stats it.
+    private static func buildClipboardPathRow(
+        entry: ClipboardEntry,
+        path: ClipboardPathContent,
+        index: Int,
+        now: Date
+    ) -> SearchItem {
+        let iconSource: SearchItemIconSource = if pathRowImageExtensions
+            .contains(path.fileExtension)
+        {
+            .engine(symbol: "photo", tint: .cyan)
+        } else if pathRowVideoExtensions.contains(path.fileExtension) {
+            .engine(symbol: "video.fill", tint: .purple)
+        } else {
+            .inferred
+        }
+        return SearchItem(
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
+            title: path.name.isEmpty ? entry.text : path.name,
+            subtitle: clipboardSubtitle(entry: entry, now: now, detail: path.parentFolderName),
+            kind: .clipboard,
+            action: .copy(entry.text),
+            iconSource: iconSource,
+            score: SearchItemRanking.calculator - index,
+            fileURL: path.url,
+            modifiedAt: entry.createdAt,
+            isPinned: entry.isPinned
+        )
+    }
+
+    private static let pathRowImageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "svg",
+    ]
+    private static let pathRowVideoExtensions: Set<String> = [
+        "mp4", "mov", "m4v", "webm", "mkv", "avi",
+    ]
+
     private static func buildClipboardFileRow(
         entry: ClipboardEntry,
         index: Int,
         now: Date
     ) -> SearchItem {
-        let path = entry.text
-        let fileURL = URL(fileURLWithPath: path)
-        let name = fileURL.lastPathComponent
+        let path = ClipboardPathContent(url: URL(fileURLWithPath: entry.text))
 
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
-            title: name.isEmpty ? path : name,
-            subtitle: clipboardSubtitle(
-                entry: entry,
-                now: now,
-                detail: parentFolderName(of: fileURL)
-            ),
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
+            title: path.name.isEmpty ? entry.text : path.name,
+            subtitle: clipboardSubtitle(entry: entry, now: now, detail: path.parentFolderName),
             kind: .clipboard,
-            action: .copyFiles([path]),
+            action: .copyFiles([entry.text]),
             iconSource: .inferred,
             score: SearchItemRanking.calculator - index,
-            fileURL: fileURL,
+            fileURL: path.url,
             isPinned: entry.isPinned
         )
     }
@@ -401,7 +398,7 @@ enum SearchResultProjection {
         }
 
         return SearchItem(
-            id: clipboardRowID(for: entry.id),
+            id: ClipboardSearch.rowID(forEntryID: entry.id),
             title: title,
             subtitle: clipboardSubtitle(entry: entry, now: now, detail: dimensions),
             kind: .clipboard,
@@ -428,16 +425,84 @@ enum SearchResultProjection {
         return "\(app) · \(time) · \(detail)"
     }
 
-    private static func parentFolderName(of url: URL) -> String? {
-        let parent = url.deletingLastPathComponent().lastPathComponent
-        return parent == "/" || parent.isEmpty ? nil : parent
+    /// One line for the row: the entry's lines joined by single spaces, empty
+    /// lines dropped, the ends trimmed — exactly what splitting on
+    /// `Character.isNewline` and joining produces, done over the UTF-8 bytes.
+    /// A grapheme walk over a 20 KB entry is hundreds of microseconds, and
+    /// it ran per row per keystroke; a byte scan is a few (#73).
+    private static func previewTitle(for text: String) -> String {
+        // Most entries have no newline at all, and for them the title is the
+        // text itself: one scan of the string's own buffer, no copy.
+        var scanned = text
+        let collapsed = scanned.withUTF8 { bytes -> String? in
+            var index = 0
+            while index < bytes.count, newlineLength(in: bytes, at: index) == 0 {
+                index += 1
+            }
+            return index < bytes.count ? collapseLines(bytes) : nil
+        }
+        var singleLine = collapsed ?? text
+        // Trimming bridges through NSString on every row; it can only change
+        // anything when an end byte is a tab, a space, or part of a
+        // non-ASCII scalar (every other Unicode space is one).
+        if let first = singleLine.utf8.first, let last = singleLine.utf8.last,
+           mayBeWhitespace(first) || mayBeWhitespace(last)
+        {
+            singleLine = singleLine.trimmingCharacters(in: .whitespaces)
+        }
+        return singleLine.isEmpty ? "(Empty text)" : singleLine
     }
 
-    private static func previewTitle(for text: String) -> String {
-        let singleLine = text.split(whereSeparator: \.isNewline)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        return singleLine.isEmpty ? "(Empty text)" : singleLine
+    /// `bytes` with each run of newlines replaced by one space, and leading
+    /// and trailing newlines dropped — what splitting on newlines, omitting
+    /// empty pieces, and joining with a space produces.
+    private static func collapseLines(_ bytes: UnsafeBufferPointer<UInt8>) -> String {
+        var collapsed: [UInt8] = []
+        collapsed.reserveCapacity(bytes.count)
+        var separatorPending = false
+        var index = 0
+        while index < bytes.count {
+            let newlineLength = newlineLength(in: bytes, at: index)
+            if newlineLength > 0 {
+                separatorPending = !collapsed.isEmpty
+                index += newlineLength
+                continue
+            }
+            if separatorPending {
+                collapsed.append(0x20)
+                separatorPending = false
+            }
+            collapsed.append(bytes[index])
+            index += 1
+        }
+        // Not `String(bytes:encoding: .utf8)`, which the lint rule would
+        // otherwise prefer: it strips a leading U+FEFF as a byte-order mark,
+        // and the Character walk this replaces kept it. `decoding:` copies
+        // the bytes as they are, and they are whole scalars of valid UTF-8.
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: collapsed, as: UTF8.self)
+    }
+
+    private static func mayBeWhitespace(_ byte: UInt8) -> Bool {
+        byte == 0x09 || byte == 0x20 || byte >= 0x80
+    }
+
+    /// The byte length of the newline scalar at `index`, or 0. The set is
+    /// `Character.isNewline`'s — U+000A through U+000D, U+0085, U+2028,
+    /// U+2029 — and every one of them starts its own grapheme, so scanning
+    /// scalars decides exactly what scanning Characters would.
+    private static func newlineLength(in bytes: UnsafeBufferPointer<UInt8>, at index: Int) -> Int {
+        switch bytes[index] {
+        case 0x0A...0x0D:
+            1
+        case 0xC2 where index + 1 < bytes.count && bytes[index + 1] == 0x85:
+            2
+        case 0xE2 where index + 2 < bytes.count && bytes[index + 1] == 0x80
+            && (bytes[index + 2] == 0xA8 || bytes[index + 2] == 0xA9):
+            3
+        default:
+            0
+        }
     }
 
     private static func appDisplayName(for bundleID: String?) -> String {

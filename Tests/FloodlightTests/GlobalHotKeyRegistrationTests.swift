@@ -10,13 +10,13 @@ final class GlobalHotKeyRegistrationTests {
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: makeDefaults(),
-            onPressed: {}
+            onPressed: { _ in }
         )
 
-        let active = registration.start(preferred: .commandSpace)
+        let active = registration.start(.summonSearch, preferred: .commandSpace)
 
         #expect(active == .commandSpace)
-        #expect(registration.activeShortcut == .commandSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
         #expect(system.registeredShortcuts == [.commandSpace])
         #expect(system.handlerInstallations == 1)
     }
@@ -30,10 +30,10 @@ final class GlobalHotKeyRegistrationTests {
         system.failNextRegistration(of: .commandSpace, with: failure)
         let registration = makeRegistration(system: system)
 
-        let active = registration.start(preferred: .commandSpace)
+        let active = registration.start(.summonSearch, preferred: .commandSpace)
 
         #expect(active == .optionSpace)
-        #expect(registration.activeShortcut == .optionSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .optionSpace)
         #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
         #expect(registration.lastFailure == failure)
     }
@@ -51,8 +51,8 @@ final class GlobalHotKeyRegistrationTests {
         system.failNextRegistration(of: .optionSpace, with: fallbackFailure)
         let registration = makeRegistration(system: system)
 
-        #expect(registration.start(preferred: .commandSpace) == nil)
-        #expect(registration.activeShortcut == nil)
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == nil)
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
         #expect(registration.lastFailure == fallbackFailure)
     }
 
@@ -62,7 +62,7 @@ final class GlobalHotKeyRegistrationTests {
         system.handlerFailure = failure
         let registration = makeRegistration(system: system)
 
-        #expect(registration.start(preferred: .commandSpace) == nil)
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == nil)
         #expect(system.registeredShortcuts.isEmpty)
         #expect(registration.lastFailure == failure)
     }
@@ -71,7 +71,7 @@ final class GlobalHotKeyRegistrationTests {
         let handlerSystem = ScriptedGlobalHotKeySystem()
         handlerSystem.handlerFailure = .missingHandlerReference
         let handlerRegistration = makeRegistration(system: handlerSystem)
-        #expect(handlerRegistration.start(preferred: .commandSpace) == nil)
+        #expect(handlerRegistration.start(.summonSearch, preferred: .commandSpace) == nil)
         #expect(handlerRegistration.lastFailure == .missingHandlerReference)
 
         let hotKeySystem = ScriptedGlobalHotKeySystem()
@@ -80,7 +80,7 @@ final class GlobalHotKeyRegistrationTests {
             with: .missingRegistrationReference(shortcut: .commandSpace)
         )
         let hotKeyRegistration = makeRegistration(system: hotKeySystem)
-        #expect(hotKeyRegistration.start(preferred: .commandSpace) == .optionSpace)
+        #expect(hotKeyRegistration.start(.summonSearch, preferred: .commandSpace) == .optionSpace)
         #expect(hotKeyRegistration
             .lastFailure == .missingRegistrationReference(shortcut: .commandSpace))
     }
@@ -88,10 +88,10 @@ final class GlobalHotKeyRegistrationTests {
     @Test func onlyTheCurrentFloodlightPressedEventInvokesTheAction() throws {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
-        let registration = makeRegistration(system: system) {
+        let registration = makeRegistration(system: system) { _ in
             invocationCount += 1
         }
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         let current = try #require(system.identifiers.last)
 
         #expect(system.emit(identifier: current, kind: UInt32(kEventHotKeyPressed)) == noErr)
@@ -118,20 +118,20 @@ final class GlobalHotKeyRegistrationTests {
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: defaults,
-            onPressed: { invocationCount += 1 }
+            onPressed: { _ in invocationCount += 1 }
         )
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         let first = try #require(system.identifiers.last)
 
-        let outcome = registration.replace(with: .optionSpace)
+        let outcome = registration.replace(.summonSearch, with: .optionSpace)
         let second = try #require(system.identifiers.last)
 
         #expect(outcome == .requestedShortcutActive(.optionSpace))
-        #expect(registration.activeShortcut == .optionSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .optionSpace)
         #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
         #expect(system.invalidations == ["registration:1"])
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
-            .optionSpace.rawValue)
+        #expect(defaults.string(forKey: GlobalHotKeyAction.summonSearch.preferenceKey) ==
+            FloodlightShortcut.optionSpace.rawValue)
         #expect(first.id == 1)
         #expect(second.id == 2)
         #expect(system
@@ -144,27 +144,28 @@ final class GlobalHotKeyRegistrationTests {
     @Test func refusedReplacementPreservesThePreviousShortcutAndPreference() {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
-        FloodlightShortcut.commandSpace.save(in: defaults)
+        GlobalHotKeyAction.summonSearch.save(.commandSpace, in: defaults)
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: defaults,
-            onPressed: {}
+            onPressed: { _ in }
         )
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         let replacementFailure = GlobalHotKeyError.registrationFailed(
             shortcut: .optionSpace,
             status: OSStatus(eventHotKeyExistsErr)
         )
         system.failNextRegistration(of: .optionSpace, with: replacementFailure)
 
-        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .previousShortcutActive(.commandSpace))
 
-        #expect(registration.activeShortcut == .commandSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
         #expect(system.registeredShortcuts == [.commandSpace, .optionSpace])
         #expect(system.identifiers.map(\.id) == [1, 2])
         #expect(system.invalidations.isEmpty)
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
-            .commandSpace.rawValue)
+        #expect(defaults.string(forKey: GlobalHotKeyAction.summonSearch.preferenceKey) ==
+            FloodlightShortcut.commandSpace.rawValue)
         #expect(registration.lastFailure == replacementFailure)
     }
 
@@ -172,15 +173,16 @@ final class GlobalHotKeyRegistrationTests {
         let system = ScriptedGlobalHotKeySystem()
         system.supportsConcurrentRegistrations = false
         let registration = makeRegistration(system: system)
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         system.failNextRegistration(
             of: .optionSpace,
             with: .registrationFailed(shortcut: .optionSpace, status: -1)
         )
 
-        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .previousShortcutActive(.commandSpace))
 
-        #expect(registration.activeShortcut == .commandSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
         #expect(system.registeredShortcuts == [.commandSpace, .optionSpace, .commandSpace])
         #expect(system.identifiers.map(\.id) == [1, 2, 3])
         #expect(system.invalidations == ["registration:1"])
@@ -190,13 +192,13 @@ final class GlobalHotKeyRegistrationTests {
         let system = ScriptedGlobalHotKeySystem()
         system.supportsConcurrentRegistrations = false
         let defaults = makeDefaults()
-        FloodlightShortcut.commandSpace.save(in: defaults)
+        GlobalHotKeyAction.summonSearch.save(.commandSpace, in: defaults)
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: defaults,
-            onPressed: {}
+            onPressed: { _ in }
         )
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         system.failNextRegistration(
             of: .optionSpace,
             with: .registrationFailed(shortcut: .optionSpace, status: -1)
@@ -207,25 +209,26 @@ final class GlobalHotKeyRegistrationTests {
         )
         system.failNextRegistration(of: .commandSpace, with: restorationFailure)
 
-        #expect(registration.replace(with: .optionSpace) == .noShortcutActive)
+        #expect(registration.replace(.summonSearch, with: .optionSpace) == .noShortcutActive)
 
-        #expect(registration.activeShortcut == nil)
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
         #expect(registration.lastFailure == restorationFailure)
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
-            .commandSpace.rawValue)
+        #expect(defaults.string(forKey: GlobalHotKeyAction.summonSearch.preferenceKey) ==
+            FloodlightShortcut.commandSpace.rawValue)
     }
 
     @Test func repeatedReplacementKeepsOnlyTheLatestRegistrationActive() {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
-        let registration = makeRegistration(system: system) {
+        let registration = makeRegistration(system: system) { _ in
             invocationCount += 1
         }
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
 
-        #expect(registration.replace(with: .optionSpace) == .requestedShortcutActive(.optionSpace))
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .requestedShortcutActive(.optionSpace))
         #expect(registration
-            .replace(with: .commandSpace) == .requestedShortcutActive(.commandSpace))
+            .replace(.summonSearch, with: .commandSpace) == .requestedShortcutActive(.commandSpace))
 
         let identifiers = system.identifiers
         #expect(identifiers.map(\.id) == [1, 2, 3])
@@ -240,16 +243,17 @@ final class GlobalHotKeyRegistrationTests {
     @Test func immediateReplacementThenStopRetiresBothRegistrationsAndRouting() throws {
         let system = ScriptedGlobalHotKeySystem()
         var invocationCount = 0
-        let registration = makeRegistration(system: system) {
+        let registration = makeRegistration(system: system) { _ in
             invocationCount += 1
         }
-        registration.start(preferred: .commandSpace)
-        #expect(registration.replace(with: .optionSpace) == .requestedShortcutActive(.optionSpace))
+        registration.start(.summonSearch, preferred: .commandSpace)
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .requestedShortcutActive(.optionSpace))
         let activeIdentifier = try #require(system.identifiers.last)
 
         registration.stop()
 
-        #expect(registration.activeShortcut == nil)
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
         #expect(system.invalidations == ["registration:1", "registration:2", "handler"])
         #expect(system
             .emit(identifier: activeIdentifier, kind: UInt32(kEventHotKeyPressed)) ==
@@ -260,24 +264,25 @@ final class GlobalHotKeyRegistrationTests {
     @Test func retirementFailureKeepsThePreviousShortcutAndRetriesCleanupOnStop() throws {
         let system = ScriptedGlobalHotKeySystem()
         let defaults = makeDefaults()
-        FloodlightShortcut.commandSpace.save(in: defaults)
+        GlobalHotKeyAction.summonSearch.save(.commandSpace, in: defaults)
         var invocationCount = 0
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: defaults,
-            onPressed: { invocationCount += 1 }
+            onPressed: { _ in invocationCount += 1 }
         )
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         let previousIdentifier = try #require(system.identifiers.last)
         system.registrationInvalidationFailure = .unregistrationFailed(status: -1)
 
-        #expect(registration.replace(with: .optionSpace) == .previousShortcutActive(.commandSpace))
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .previousShortcutActive(.commandSpace))
 
         let requestedIdentifier = try #require(system.identifiers.last)
-        #expect(registration.activeShortcut == .commandSpace)
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
         #expect(system.invalidations == ["registration:1", "registration:2"])
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
-            .commandSpace.rawValue)
+        #expect(defaults.string(forKey: GlobalHotKeyAction.summonSearch.preferenceKey) ==
+            FloodlightShortcut.commandSpace.rawValue)
         #expect(system
             .emit(identifier: previousIdentifier, kind: UInt32(kEventHotKeyPressed)) == noErr)
         #expect(system
@@ -297,17 +302,17 @@ final class GlobalHotKeyRegistrationTests {
     @Test func failedStopRetriesCleanupBeforeRestarting() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         system.registrationInvalidationFailure = .unregistrationFailed(status: -1)
 
         registration.stop()
 
-        #expect(registration.activeShortcut == nil)
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
         #expect(system.invalidations == ["registration:1"])
         #expect(system.handlerInstallations == 1)
 
         system.registrationInvalidationFailure = nil
-        #expect(registration.start(preferred: .commandSpace) == .commandSpace)
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == .commandSpace)
 
         #expect(system.registeredShortcuts == [.commandSpace, .commandSpace])
         #expect(system.invalidations == ["registration:1", "registration:1"])
@@ -332,10 +337,10 @@ final class GlobalHotKeyRegistrationTests {
             system: system,
             defaults: makeDefaults(),
             firstIdentifier: UInt32.max,
-            onPressed: {}
+            onPressed: { _ in }
         )
 
-        #expect(registration.start(preferred: .commandSpace) == nil)
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == nil)
         #expect(system.identifiers.map(\.id) == [UInt32.max])
         #expect(registration.lastFailure == .identifierExhausted)
     }
@@ -343,12 +348,12 @@ final class GlobalHotKeyRegistrationTests {
     @Test func stopInvalidatesTheRegistrationBeforeTheHandlerAndIsIdempotent() {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
 
         registration.stop()
         registration.stop()
 
-        #expect(registration.activeShortcut == nil)
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
         #expect(system.invalidations == ["registration:1", "handler"])
     }
 
@@ -356,9 +361,9 @@ final class GlobalHotKeyRegistrationTests {
         let system = ScriptedGlobalHotKeySystem()
         let registration = makeRegistration(system: system)
 
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         registration.stop()
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         registration.stop()
 
         #expect(system.handlerInstallations == 2)
@@ -370,14 +375,14 @@ final class GlobalHotKeyRegistrationTests {
         let registrationSystem = ScriptedGlobalHotKeySystem()
         registrationSystem.registrationInvalidationFailure = .unregistrationFailed(status: -1)
         let registration = makeRegistration(system: registrationSystem)
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
         registration.stop()
         #expect(registration.lastFailure == .unregistrationFailed(status: -1))
 
         let handlerSystem = ScriptedGlobalHotKeySystem()
         handlerSystem.handlerInvalidationFailure = .handlerRemovalFailed(status: -2)
         let handlerRegistration = makeRegistration(system: handlerSystem)
-        handlerRegistration.start(preferred: .commandSpace)
+        handlerRegistration.start(.summonSearch, preferred: .commandSpace)
         handlerRegistration.stop()
         #expect(handlerRegistration.lastFailure == .handlerRemovalFailed(status: -2))
     }
@@ -385,7 +390,7 @@ final class GlobalHotKeyRegistrationTests {
     @Test func deinitializationInvalidatesTheRegistrationBeforeTheHandler() {
         let system = ScriptedGlobalHotKeySystem()
         var registration: GlobalHotKeyRegistration? = makeRegistration(system: system)
-        registration?.start(preferred: .commandSpace)
+        registration?.start(.summonSearch, preferred: .commandSpace)
 
         registration = nil
 
@@ -398,21 +403,136 @@ final class GlobalHotKeyRegistrationTests {
         let registration = GlobalHotKeyRegistration(
             system: system,
             defaults: defaults,
-            onPressed: {}
+            onPressed: { _ in }
         )
-        registration.start(preferred: .commandSpace)
+        registration.start(.summonSearch, preferred: .commandSpace)
 
         #expect(registration
-            .replace(with: .commandSpace) == .requestedShortcutActive(.commandSpace))
+            .replace(.summonSearch, with: .commandSpace) == .requestedShortcutActive(.commandSpace))
 
         #expect(system.registeredShortcuts == [.commandSpace])
-        #expect(defaults.string(forKey: FloodlightShortcut.preferenceKey) == FloodlightShortcut
-            .commandSpace.rawValue)
+        #expect(defaults.string(forKey: GlobalHotKeyAction.summonSearch.preferenceKey) ==
+            FloodlightShortcut.commandSpace.rawValue)
+    }
+
+    // MARK: - Per-action registry
+
+    @Test func bothActionsRegisterAndEachFiredIdentifierInvokesOnlyItsOwnCallback() throws {
+        let system = ScriptedGlobalHotKeySystem()
+        var firedActions: [GlobalHotKeyAction] = []
+        let registration = makeRegistration(system: system) { action in
+            firedActions.append(action)
+        }
+
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == .commandSpace)
+        #expect(registration.start(.showClipboard, preferred: .shiftCommandC) == .shiftCommandC)
+
+        let summonIdentifier = try #require(system.identifiers.first)
+        let clipboardIdentifier = try #require(system.identifiers.last)
+        #expect(summonIdentifier != clipboardIdentifier)
+
+        #expect(system
+            .emit(identifier: summonIdentifier, kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(system
+            .emit(identifier: clipboardIdentifier, kind: UInt32(kEventHotKeyPressed)) == noErr)
+        #expect(firedActions == [.summonSearch, .showClipboard])
+    }
+
+    @Test func aRetiredIdentifierInvokesNothingAndIsReportedUnhandled() throws {
+        let system = ScriptedGlobalHotKeySystem()
+        let registration = makeRegistration(system: system)
+        registration.start(.summonSearch, preferred: .commandSpace)
+        let retired = try #require(system.identifiers.last)
+
+        #expect(registration.replace(.summonSearch, with: .optionSpace) ==
+            .requestedShortcutActive(.optionSpace))
+
+        #expect(system.emit(identifier: retired, kind: UInt32(kEventHotKeyPressed)) ==
+            OSStatus(eventNotHandledErr))
+    }
+
+    @Test func clipboardActionFallsBackToShiftCommandSpaceWhenShiftCommandCIsRefused() {
+        let system = ScriptedGlobalHotKeySystem()
+        let failure = GlobalHotKeyError.registrationFailed(
+            shortcut: .shiftCommandC,
+            status: OSStatus(eventHotKeyExistsErr)
+        )
+        system.failNextRegistration(of: .shiftCommandC, with: failure)
+        let registration = makeRegistration(system: system)
+
+        let active = registration.start(.showClipboard, preferred: .shiftCommandC)
+
+        #expect(active == .shiftCommandSpace)
+        #expect(registration.activeShortcut(for: .showClipboard) == .shiftCommandSpace)
+        #expect(registration.lastFailure == failure)
+    }
+
+    @Test func clipboardActionFailingBothChoicesLeavesTheSummonShortcutActive() {
+        let system = ScriptedGlobalHotKeySystem()
+        let registration = makeRegistration(system: system)
+        registration.start(.summonSearch, preferred: .commandSpace)
+
+        let firstFailure = GlobalHotKeyError.registrationFailed(
+            shortcut: .shiftCommandC,
+            status: -1
+        )
+        let secondFailure = GlobalHotKeyError.registrationFailed(
+            shortcut: .shiftCommandSpace,
+            status: -2
+        )
+        system.failNextRegistration(of: .shiftCommandC, with: firstFailure)
+        system.failNextRegistration(of: .shiftCommandSpace, with: secondFailure)
+
+        #expect(registration.start(.showClipboard, preferred: .shiftCommandC) == nil)
+
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
+        #expect(registration.activeShortcut(for: .showClipboard) == nil)
+        #expect(registration.lastFailure == secondFailure)
+    }
+
+    @Test func replacingOneActionLeavesTheOtherUntouched() throws {
+        let system = ScriptedGlobalHotKeySystem()
+        let registration = makeRegistration(system: system)
+        registration.start(.summonSearch, preferred: .commandSpace)
+        registration.start(.showClipboard, preferred: .shiftCommandC)
+        let summonIdentifier = try #require(system.identifiers.first)
+
+        #expect(registration.replace(.showClipboard, with: .shiftCommandSpace) ==
+            .requestedShortcutActive(.shiftCommandSpace))
+
+        #expect(registration.activeShortcut(for: .summonSearch) == .commandSpace)
+        #expect(system
+            .emit(identifier: summonIdentifier, kind: UInt32(kEventHotKeyPressed)) == noErr)
+    }
+
+    @Test func stopRetiresBothRegistrationsBeforeTheHandler() {
+        let system = ScriptedGlobalHotKeySystem()
+        let registration = makeRegistration(system: system)
+        registration.start(.summonSearch, preferred: .commandSpace)
+        registration.start(.showClipboard, preferred: .shiftCommandC)
+
+        registration.stop()
+
+        #expect(registration.activeShortcut(for: .summonSearch) == nil)
+        #expect(registration.activeShortcut(for: .showClipboard) == nil)
+        #expect(system.invalidations == ["registration:1", "registration:2", "handler"])
+    }
+
+    @Test func aNonConcurrentSystemReservesItsOneSlotForTheSummonAction() {
+        let system = ScriptedGlobalHotKeySystem()
+        system.supportsConcurrentRegistrations = false
+        let registration = makeRegistration(system: system)
+
+        #expect(registration.start(.summonSearch, preferred: .commandSpace) == .commandSpace)
+        #expect(registration.start(.showClipboard, preferred: .shiftCommandC) == nil)
+
+        #expect(registration.activeShortcut(for: .showClipboard) == nil)
+        #expect(system.registeredShortcuts == [.commandSpace])
     }
 
     private func makeRegistration(
         system: ScriptedGlobalHotKeySystem,
-        onPressed: @escaping @MainActor () -> Void = {}
+        onPressed: @escaping @MainActor (GlobalHotKeyAction) -> Void = { _ in }
     ) -> GlobalHotKeyRegistration {
         GlobalHotKeyRegistration(
             system: system,

@@ -351,6 +351,7 @@ struct SearchCoordinatorTests {
         let runner = FakeAssistantProcessRunner(availableCommands: ["claude"])
         var dismissed = false
         let coordinator = SearchCoordinator(
+            clipboardSearch: ClipboardSearch(store: ClipboardHistoryStore.inMemory()),
             assistantRunner: runner,
             onDismiss: { dismissed = true }
         )

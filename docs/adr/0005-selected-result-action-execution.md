@@ -16,15 +16,15 @@ func reveal(_ item: SearchItem)
 ```
 
 The performer directly coordinates existing deep owners: one shared `AssistantRunSession`, `RunningApplicationActivating`, `RecentStore`, and a narrow `@Sendable async` Source Selection Learning closure. It receives a required main-actor callback for search dismissal. The application shell wires that callback without giving the performer panel, window-controller, `AppDelegate`, or `SearchCoordinator` references.
-Mechanical AppKit operations sit behind one cohesive `SelectedResultActionEffects` seam. Its API follows the real framework guarantees: clipboard writing is synchronous and returns `Bool`, opening is `async throws`, and Finder reveal is a synchronous dispatched request without invented completion. The production adapter converts `NSWorkspace` completion handlers to checked continuations; scripted tests observe effects without changing the user clipboard, opening applications, or revealing files.
+Mechanical AppKit operations sit behind one cohesive `SelectedResultActionEffects` seam. Its API follows the real framework guarantees: clipboard writing is synchronous and returns `Bool`, opening is `async throws`, and Finder reveal is a synchronous dispatched request without invented completion. Paste Delivery (#66) is dispatched the same way: after a Clipboard History entry is on the clipboard and search has dismissed, the effects hand the application that was frontmost at summon a synthesized ⌘V through `PasteTargetDelivery`, which the shell shares between the panel (it captures the target) and the effects. macOS only lets a process post that keystroke under Accessibility trust; without it the activation stays copy-and-dismiss and the board's Return chip reads "Copy". The production adapter converts `NSWorkspace` completion handlers to checked continuations; scripted tests observe effects without changing the user clipboard, opening applications, or revealing files.
 
 ## Action policy
 
 | Action | Presentation | Successful consequences |
 |---|---|---|
-| Activate `.copy(value)` | Dismiss only after the clipboard accepts the exact value | None |
-| Activate `.copyFiles(paths)` | Dismiss only after the clipboard accepts native file references | None |
-| Activate `.copyImage(id)` | Dismiss only after the clipboard accepts PNG/TIFF data | None |
+| Activate `.copy(value)` | Dismiss only after the clipboard accepts the exact value | For a Clipboard History entry, dispatch Paste Delivery (#66) |
+| Activate `.copyFiles(paths)` | Dismiss only after the clipboard accepts native file references | For a Clipboard History entry, dispatch Paste Delivery (#66) |
+| Activate `.copyImage(id)` | Dismiss only after the clipboard accepts PNG/TIFF data | For a Clipboard History entry, dispatch Paste Delivery (#66) |
 | Explicit Copy | Keep search open | None |
 | Activate an already-running application | Dismiss after synchronous activation succeeds | Record application recency and report Source Selection Learning |
 | Open an application, file, folder, or URL | Dismiss promptly; never reopen automatically after delayed failure | After confirmed completion, record application recency when applicable and report Source Selection Learning |

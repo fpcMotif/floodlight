@@ -26,7 +26,7 @@ struct SearchModeTests {
     }
 
     private func clipboardContext(
-        typedKeyword: String = "clip",
+        typedKeyword: String? = "clip",
         queryAtEntry: String
     ) -> SearchMode {
         .clipboard(
@@ -71,7 +71,71 @@ struct SearchModeTests {
         #expect(result.query == "test")
     }
 
+    // MARK: - Entering clipboard mode with the shortcut
+
+    @Test func clipboardShortcutFromLocalEntersClipboardModeWithAnEmptyField() {
+        let result = transition(from: .local, query: "notes", event: .clipboardShortcut)
+
+        #expect(result.mode == clipboardContext(typedKeyword: nil, queryAtEntry: ""))
+        #expect(result.query.isEmpty)
+    }
+
+    @Test func clipboardShortcutFromWebEntersClipboardModeDiscardingTheWebContext() {
+        let mode = webContext(engineID: "google", queryAtEntry: "swift")
+        let result = transition(from: mode, query: "swift", event: .clipboardShortcut)
+
+        #expect(result.mode == clipboardContext(typedKeyword: nil, queryAtEntry: ""))
+        #expect(result.query.isEmpty)
+    }
+
+    @Test(arguments: [
+        SearchMode.ClipboardContext(typedKeyword: "clip", queryAtEntry: "x"),
+        SearchMode.ClipboardContext(typedKeyword: nil, queryAtEntry: ""),
+    ])
+    func clipboardShortcutOnTheBoardIsANoOp(context: SearchMode.ClipboardContext) {
+        let mode = SearchMode.clipboard(context)
+        let result = transition(from: mode, query: "inv", event: .clipboardShortcut)
+
+        #expect(result.mode == mode)
+        #expect(result.query == "inv")
+    }
+
     // MARK: - Exiting clipboard mode
+
+    @Test func escapeFromAShortcutEnteredBoardLeavesTheFieldEmpty() {
+        let mode = clipboardContext(typedKeyword: nil, queryAtEntry: "")
+        let result = transition(from: mode, query: "", event: .escape)
+
+        #expect(result.mode == .local)
+        #expect(result.query.isEmpty)
+    }
+
+    @Test func escapeFromAShortcutEnteredBoardKeepsATypedQueryUnchanged() {
+        let mode = clipboardContext(typedKeyword: nil, queryAtEntry: "")
+        let result = transition(from: mode, query: "invoice", event: .escape)
+
+        #expect(result.mode == .local)
+        #expect(result.query == "invoice")
+    }
+
+    @Test(arguments: [SearchModeEvent.shiftTab, .backspaceOnEmptyQuery])
+    func shiftTabAndBackspaceOnEmptyExitAShortcutEnteredBoardExactlyLikeEscape(
+        event: SearchModeEvent
+    ) {
+        let mode = clipboardContext(typedKeyword: nil, queryAtEntry: "")
+        let result = transition(from: mode, query: "invoice", event: event)
+
+        #expect(result.mode == .local, "\(event)")
+        #expect(result.query == "invoice", "\(event)")
+    }
+
+    @Test func resetFromAShortcutEnteredBoardReturnsToLocalWithAnEmptyField() {
+        let mode = clipboardContext(typedKeyword: nil, queryAtEntry: "")
+        let result = transition(from: mode, query: "invoice", event: .reset)
+
+        #expect(result.mode == .local)
+        #expect(result.query.isEmpty)
+    }
 
     @Test func escapeExitsClipboardModeReconstructingTheTypedSpelling() {
         let mode = clipboardContext(typedKeyword: "clip", queryAtEntry: "invoice")

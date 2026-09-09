@@ -1,24 +1,36 @@
 import AppKit
+import FloodlightEngine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    /// Clipboard History is created once here and handed to both of its
+    /// owners: Clipboard Capture writes it, Clipboard Search reads it for
+    /// the Search Session (ADR 0008).
+    private lazy var clipboardStore = (try? ClipboardHistoryStore())
+        ?? ClipboardHistoryStore.inMemory()
+    /// Paste Delivery's one instance (#66): the panel tells it who was
+    /// frontmost, the action effects paste into that application.
+    private let pasteDelivery = PasteTargetDelivery()
     private lazy var model = SearchCoordinator(
+        clipboardSearch: ClipboardSearch(store: clipboardStore),
+        actionEffects: AppKitSelectedResultActionEffects(pasteDelivery: pasteDelivery),
         onDismiss: { [weak self] in
             self?.searchDidDismiss()
         }
     )
-    private lazy var panelController = FloodlightPanelController(model: model)
+    private lazy var panelController = FloodlightPanelController(
+        model: model,
+        pasteDelivery: pasteDelivery
+    )
     private lazy var presentation = ApplicationPresentationCoordinator(
         effects: self,
         ensureSearchStarted: { [weak self] in self?.ensureSearchStarted() }
     )
-    private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] in
-        self?.globalHotKeyDidFire()
+    private lazy var globalHotKeyRegistration = GlobalHotKeyRegistration { [weak self] action in
+        self?.globalHotKeyDidFire(action)
     }
 
-    private lazy var clipboardCapture = ClipboardCaptureService(
-        store: model.clipboardStore
-    )
+    private lazy var clipboardCapture = ClipboardCaptureService(store: clipboardStore)
 
     // periphery:ignore - Assigned and never read on purpose: NSStatusBar hands
     // back an unowned item, so dropping this reference removes the menu bar
@@ -26,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
     private var launchAtLoginItem: NSMenuItem?
+    private var clipboardHistoryItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -54,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         presentation.showSearch()
     }
 
+    @objc private func showClipboardHistoryFromMenu() {
+        presentation.showClipboardHistory()
+    }
+
     @objc private func showSettings() {
         presentation.showConfiguration(from: .statusMenu)
     }
@@ -79,8 +96,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.start()
     }
 
-    func globalHotKeyDidFire() {
-        presentation.toggleSearch()
+    func globalHotKeyDidFire(_ action: GlobalHotKeyAction) {
+        switch action {
+        case .summonSearch: presentation.toggleSearch()
+        case .showClipboard: presentation.showClipboardHistory()
+        }
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -104,18 +124,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func installGlobalHotKey() {
-        let preferred = FloodlightShortcut.preferred()
-        if globalHotKeyRegistration.start(preferred: preferred) == nil {
+        let preferred = GlobalHotKeyAction.summonSearch.preferredShortcut()
+        if globalHotKeyRegistration.start(.summonSearch, preferred: preferred) == nil {
             NSLog("Floodlight could not register its global keyboard shortcut.")
         }
-        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
+        let preferredClipboard = GlobalHotKeyAction.showClipboard.preferredShortcut()
+        if globalHotKeyRegistration.start(.showClipboard, preferred: preferredClipboard) == nil {
+            NSLog("Floodlight could not register its clipboard keyboard shortcut.")
+        }
+        refreshActiveShortcutDisplayNames()
+    }
+
+    private func refreshActiveShortcutDisplayNames() {
+        model.activeShortcutDisplayName = globalHotKeyRegistration
+            .activeShortcut(for: .summonSearch)?.displayName
+        model.activeClipboardShortcutDisplayName = globalHotKeyRegistration
+            .activeShortcut(for: .showClipboard)?.displayName
     }
 
     private func selectShortcut(
+        _ action: GlobalHotKeyAction,
         _ shortcut: FloodlightShortcut
     ) -> GlobalHotKeyReplacementOutcome {
-        let outcome = globalHotKeyRegistration.replace(with: shortcut)
-        model.activeShortcutDisplayName = globalHotKeyRegistration.activeShortcut?.displayName
+        let outcome = globalHotKeyRegistration.replace(action, with: shortcut)
+        refreshActiveShortcutDisplayNames()
         return outcome
     }
 
@@ -149,6 +181,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         show.keyEquivalentModifierMask = [.command]
         show.target = self
         menu.addItem(show)
+
+        let clipboard = NSMenuItem(
+            title: "Clipboard History",
+            action: #selector(showClipboardHistoryFromMenu),
+            keyEquivalent: ""
+        )
+        clipboard.target = self
+        menu.addItem(clipboard)
+        clipboardHistoryItem = clipboard
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -197,6 +238,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusMenu else { return }
         launchAtLoginItem?.state = LaunchAtLogin.launchesAtLogin ? .on : .off
+        let clipboardShortcut = globalHotKeyRegistration.activeShortcut(for: .showClipboard)
+        clipboardHistoryItem?.keyEquivalent = clipboardShortcut?.keyEquivalent ?? ""
+        clipboardHistoryItem?.keyEquivalentModifierMask = clipboardShortcut?
+            .keyEquivalentModifierMask ?? []
     }
 
     /// This menu is never drawn — Floodlight is an agent app. It exists so the
@@ -298,6 +343,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 extension AppDelegate: ApplicationPresentationEffects {
+    var isClipboardHistoryShowing: Bool {
+        model.isClipboardMode
+    }
+
     func showSearch() {
         panelController.show()
     }
@@ -310,6 +359,15 @@ extension AppDelegate: ApplicationPresentationEffects {
         panelController.toggle()
     }
 
+    /// The intent goes after `show()` so nothing presentation does can
+    /// undo it.
+    func showClipboardHistory() {
+        if !panelController.isVisible {
+            panelController.show()
+        }
+        model.showClipboardHistory()
+    }
+
     func makeConfiguration(
         origin: ConfigurationOrigin,
         onFinished: @escaping @MainActor () -> Void,
@@ -317,14 +375,15 @@ extension AppDelegate: ApplicationPresentationEffects {
     ) -> any ConfigurationPresenting {
         FloodlightConfigurationWindowController(
             presentation: origin == .initialSetup ? .onboarding : .settings,
-            activeShortcut: globalHotKeyRegistration.activeShortcut,
+            activeShortcut: globalHotKeyRegistration.activeShortcut(for: .summonSearch),
+            activeClipboardShortcut: globalHotKeyRegistration.activeShortcut(for: .showClipboard),
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
             rootURL: model.rootURL,
             blocklistStore: model.blocklistStore,
             clipboardExclusionStore: clipboardCapture.exclusions,
-            clipboardStore: model.clipboardStore,
-            selectShortcut: { [weak self] shortcut in
-                self?.selectShortcut(shortcut) ?? .noShortcutActive
+            clipboardStore: clipboardStore,
+            selectShortcut: { [weak self] action, shortcut in
+                self?.selectShortcut(action, shortcut) ?? .noShortcutActive
             },
             setLaunchAtLogin: { enabled in
                 do {

@@ -1,0 +1,341 @@
+id: readability-nesting-depth
+snapshots:
+  ? |
+    func discover() {
+        if isReady {
+            for row in rows {
+                switch row.kind {
+                case .application:
+                    row.candidates.map { candidate in
+                        while candidate.hasMore {
+                            candidate.advance()
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+        }
+    }
+  : labels:
+    - source: |-
+        while candidate.hasMore {
+                                candidate.advance()
+                            }
+      style: primary
+      start: 192
+      end: 283
+    - source: |-
+        if isReady {
+                for row in rows {
+                    switch row.kind {
+                    case .application:
+                        row.candidates.map { candidate in
+                            while candidate.hasMore {
+                                candidate.advance()
+                            }
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+      style: secondary
+      start: 22
+      end: 374
+    - source: "for row in rows {\n            switch row.kind {\n            case .application:\n                row.candidates.map { candidate in\n                    while candidate.hasMore {\n                        candidate.advance()\n                    }\n                }\n            default:\n                break\n            }\n        }\n    "
+      style: secondary
+      start: 43
+      end: 373
+    - source: |-
+        for row in rows {
+                    switch row.kind {
+                    case .application:
+                        row.candidates.map { candidate in
+                            while candidate.hasMore {
+                                candidate.advance()
+                            }
+                        }
+                    default:
+                        break
+                    }
+                }
+      style: secondary
+      start: 43
+      end: 368
+    - source: "switch row.kind {\n            case .application:\n                row.candidates.map { candidate in\n                    while candidate.hasMore {\n                        candidate.advance()\n                    }\n                }\n            default:\n                break\n            }\n        "
+      style: secondary
+      start: 73
+      end: 367
+    - source: |-
+        case .application:
+                        row.candidates.map { candidate in
+                            while candidate.hasMore {
+                                candidate.advance()
+                            }
+                        }
+      style: secondary
+      start: 103
+      end: 301
+    - source: |-
+        row.candidates.map { candidate in
+                            while candidate.hasMore {
+                                candidate.advance()
+                            }
+                        }
+      style: secondary
+      start: 138
+      end: 301
+    - source: |-
+        { candidate in
+                            while candidate.hasMore {
+                                candidate.advance()
+                            }
+                        }
+      style: secondary
+      start: 157
+      end: 301
+    - source: "while candidate.hasMore {\n                        candidate.advance()\n                    }\n                "
+      style: secondary
+      start: 192
+      end: 300
+  ? |
+    func drain() {
+        if isReady {
+            repeat {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale { row.refresh() }
+                    }
+                }
+            } while hasMore
+        }
+    }
+  : labels:
+    - source: if row.isStale { row.refresh() }
+      style: primary
+      start: 135
+      end: 167
+    - source: |-
+        if isReady {
+                repeat {
+                    for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+                } while hasMore
+            }
+      style: secondary
+      start: 19
+      end: 229
+    - source: "repeat {\n            for row in rows {\n                while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            }\n        } while hasMore\n    "
+      style: secondary
+      start: 40
+      end: 228
+    - source: |-
+        repeat {
+                    for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+                } while hasMore
+      style: secondary
+      start: 40
+      end: 223
+    - source: "for row in rows {\n                while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            }\n        "
+      style: secondary
+      start: 61
+      end: 208
+    - source: |-
+        for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+      style: secondary
+      start: 61
+      end: 199
+    - source: "while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            "
+      style: secondary
+      start: 95
+      end: 198
+    - source: |-
+        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+      style: secondary
+      start: 95
+      end: 185
+    - source: "if row.isStale { row.refresh() }\n                "
+      style: secondary
+      start: 135
+      end: 184
+  ? |
+    func publish() {
+        if isReady {
+            emit()
+        } else {
+            for row in rows {
+                while row.hasMore {
+                    if row.isStale {
+                        for child in row.children {
+                            child.refresh()
+                        }
+                    }
+                }
+            }
+        }
+    }
+  : labels:
+    - source: |-
+        for child in row.children {
+                                child.refresh()
+                            }
+      style: primary
+      start: 173
+      end: 262
+    - source: |-
+        if isReady {
+                emit()
+            } else {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale {
+                            for child in row.children {
+                                child.refresh()
+                            }
+                        }
+                    }
+                }
+            }
+      style: secondary
+      start: 21
+      end: 310
+    - source: "for row in rows {\n            while row.hasMore {\n                if row.isStale {\n                    for child in row.children {\n                        child.refresh()\n                    }\n                }\n            }\n        }\n    "
+      style: secondary
+      start: 70
+      end: 309
+    - source: |-
+        for row in rows {
+                    while row.hasMore {
+                        if row.isStale {
+                            for child in row.children {
+                                child.refresh()
+                            }
+                        }
+                    }
+                }
+      style: secondary
+      start: 70
+      end: 304
+    - source: "while row.hasMore {\n                if row.isStale {\n                    for child in row.children {\n                        child.refresh()\n                    }\n                }\n            }\n        "
+      style: secondary
+      start: 100
+      end: 303
+    - source: |-
+        while row.hasMore {
+                        if row.isStale {
+                            for child in row.children {
+                                child.refresh()
+                            }
+                        }
+                    }
+      style: secondary
+      start: 100
+      end: 294
+    - source: "if row.isStale {\n                    for child in row.children {\n                        child.refresh()\n                    }\n                }\n            "
+      style: secondary
+      start: 136
+      end: 293
+    - source: |-
+        if row.isStale {
+                            for child in row.children {
+                                child.refresh()
+                            }
+                        }
+      style: secondary
+      start: 136
+      end: 280
+    - source: "for child in row.children {\n                        child.refresh()\n                    }\n                "
+      style: secondary
+      start: 173
+      end: 279
+  ? |
+    func recover() {
+        if isReady {
+            do {
+                try load()
+            } catch {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale { row.refresh() }
+                    }
+                }
+            }
+        }
+    }
+  : labels:
+    - source: if row.isStale { row.refresh() }
+      style: primary
+      start: 174
+      end: 206
+    - source: |-
+        if isReady {
+                do {
+                    try load()
+                } catch {
+                    for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+                }
+            }
+      style: secondary
+      start: 21
+      end: 254
+    - source: "do {\n            try load()\n        } catch {\n            for row in rows {\n                while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            }\n        }\n    "
+      style: secondary
+      start: 42
+      end: 253
+    - source: |-
+        catch {
+                    for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+                }
+      style: secondary
+      start: 80
+      end: 248
+    - source: "for row in rows {\n                while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            }\n        "
+      style: secondary
+      start: 100
+      end: 247
+    - source: |-
+        for row in rows {
+                        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+                    }
+      style: secondary
+      start: 100
+      end: 238
+    - source: "while row.hasMore {\n                    if row.isStale { row.refresh() }\n                }\n            "
+      style: secondary
+      start: 134
+      end: 237
+    - source: |-
+        while row.hasMore {
+                            if row.isStale { row.refresh() }
+                        }
+      style: secondary
+      start: 134
+      end: 224
+    - source: "if row.isStale { row.refresh() }\n                "
+      style: secondary
+      start: 174
+      end: 223

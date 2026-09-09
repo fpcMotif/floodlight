@@ -1,0 +1,164 @@
+id: readability-nesting-depth
+valid:
+  # An `else if` chain is the classic false red: it is a dispatch on one value,
+  # a reader takes it one arm at a time, and a rule that counted each arm as a
+  # level would push everyone back to a nested `if`. Five arms, one level.
+  - |
+    func classify(_ value: Int) -> String {
+        if value < 0 {
+            return "negative"
+        } else if value == 0 {
+            return "zero"
+        } else if value < 10 {
+            return "small"
+        } else if value < 100 {
+            return "medium"
+        } else if value < 1000 {
+            return "large"
+        }
+        return "huge"
+    }
+  # A `guard` body adds no level. This is four deep and would be five if it
+  # did — the fix this rule prescribes must not trip it.
+  - |
+    func walk() {
+        if isReady {
+            for row in rows {
+                guard let value = row.value else {
+                    for fallback in fallbacks {
+                        while fallback.hasMore {
+                            fallback.advance()
+                        }
+                    }
+                    return
+                }
+                use(value)
+            }
+        }
+    }
+  # A closure in a *condition* is not inside the statement it is a condition
+  # of. Four deep; five if `contains(where:)` were counted as containing it.
+  - |
+    func scan() {
+        for row in rows {
+            if rows.contains(where: { candidate in
+                if candidate.score > 1 {
+                    while candidate.hasMore {
+                        candidate.advance()
+                    }
+                }
+                return true
+            }) {
+                publish()
+            }
+        }
+    }
+  # A `do` body adds no level: it introduces error handling, not a branch.
+  - |
+    func load() {
+        if isReady {
+            do {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale { row.refresh() }
+                    }
+                }
+            } catch {
+                report(error)
+            }
+        }
+    }
+  # Four deep, one short of the threshold.
+  - |
+    func refresh() {
+        if isReady {
+            for row in rows {
+                while row.hasMore {
+                    if row.isStale { row.refresh() }
+                }
+            }
+        }
+    }
+  # A flat `switch`, however many cases, is one level. `cyclomatic_complexity`
+  # ignores case statements for the same reason.
+  - |
+    func symbol(for kind: Kind) -> String {
+        switch kind {
+        case .application: return "app"
+        case .folder: return "folder"
+        case .file: return "doc"
+        case .setting: return "gear"
+        case .clipboard: return "clipboard"
+        case .calculation: return "sum"
+        case .webSearch: return "globe"
+        case .history: return "clock"
+        case .command: return "terminal"
+        default: return "questionmark"
+        }
+    }
+invalid:
+  # Five deep through mixed kinds: if, for, a case body, a closure, then the
+  # block that gets reported.
+  - |
+    func discover() {
+        if isReady {
+            for row in rows {
+                switch row.kind {
+                case .application:
+                    row.candidates.map { candidate in
+                        while candidate.hasMore {
+                            candidate.advance()
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+        }
+    }
+  # The same depth reached through an `else` body, which is a body like any
+  # other — unlike the `else if` in the valid cases above.
+  - |
+    func publish() {
+        if isReady {
+            emit()
+        } else {
+            for row in rows {
+                while row.hasMore {
+                    if row.isStale {
+                        for child in row.children {
+                            child.refresh()
+                        }
+                    }
+                }
+            }
+        }
+    }
+  # A `catch` body is a container even though the `do` it belongs to is not.
+  - |
+    func recover() {
+        if isReady {
+            do {
+                try load()
+            } catch {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale { row.refresh() }
+                    }
+                }
+            }
+        }
+    }
+  # `repeat` counts like any other loop.
+  - |
+    func drain() {
+        if isReady {
+            repeat {
+                for row in rows {
+                    while row.hasMore {
+                        if row.isStale { row.refresh() }
+                    }
+                }
+            } while hasMore
+        }
+    }

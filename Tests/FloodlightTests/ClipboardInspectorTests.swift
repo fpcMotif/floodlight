@@ -178,36 +178,29 @@ struct ClipboardInspectorTests {
             return
         }
         #expect(detail.contentType == .color)
-        #expect(
-            detail.colorComponents == ClipboardInspector.ColorComponents(
-                red: 52,
-                green: 152,
-                blue: 219,
-                alpha: nil
-            )
-        )
+        #expect(detail.colorComponents?.red == 52)
+        #expect(detail.colorComponents?.green == 152)
+        #expect(detail.colorComponents?.blue == 219)
+        #expect(detail.colorComponents?.alpha == nil)
         #expect(detail.colorComponents?.rgbDescription == "rgb(52, 152, 219)")
     }
 
-    @Test func shortAndAlphaHexColorsParse() {
-        #expect(
-            ClipboardInspector.parseHexColorComponents("#fff") ==
-                ClipboardInspector.ColorComponents(red: 255, green: 255, blue: 255, alpha: nil)
+    /// The inspector reads the entry's stored classification rather than
+    /// deriving its own, so what it says can never differ from the list.
+    @Test func theSnapshotReadsTheStoredClassificationInsteadOfTheText() {
+        let entry = ClipboardEntry(
+            id: "stored-1",
+            text: "https://www.example.org/x",
+            createdAt: .now,
+            textContent: .code(language: "JSON")
         )
-
-        let withAlpha = ClipboardInspector.parseHexColorComponents("#3498DB80")
-        #expect(
-            withAlpha == ClipboardInspector.ColorComponents(
-                red: 52,
-                green: 152,
-                blue: 219,
-                alpha: 128
-            )
-        )
-        #expect(withAlpha?.rgbDescription.hasPrefix("rgba(52, 152, 219, 0.50") == true)
-
-        #expect(ClipboardInspector.parseHexColorComponents("#12345") == nil)
-        #expect(ClipboardInspector.parseHexColorComponents("3498DB") == nil)
+        guard case let .text(detail) = ClipboardInspector.snapshot(for: entry) else {
+            Issue.record("expected a text snapshot")
+            return
+        }
+        #expect(detail.contentType == .code)
+        #expect(detail.codeLanguage == "JSON")
+        #expect(detail.domain == nil)
     }
 
     @Test func codeLinesKeepEmptyLinesStripCarriageReturnsAndCap() {
@@ -275,10 +268,6 @@ struct ClipboardInspectorTests {
     }
 
     @Test func crlfMultilineTextIsNotClassifiedAsALocalPath() {
-        #expect(ClipboardInspector.parseLocalPath("/tmp/shot.png") != nil)
-        #expect(ClipboardInspector.parseLocalPath("/tmp/shot.png\r\nmore") == nil)
-        #expect(ClipboardInspector.parseLocalPath("~/Desktop/a.png\nb") == nil)
-
         let entry = ClipboardEntry(
             id: "crlf-path",
             text: "/tmp/shot.png\r\nnot a path",
