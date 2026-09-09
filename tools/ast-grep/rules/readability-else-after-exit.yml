@@ -1,0 +1,48 @@
+id: readability-else-after-exit
+language: Swift
+severity: error
+message: >-
+  `else` after a branch that already left the scope — delete the `else` and
+  dedent its body; an `else if` becomes a plain `if`.
+note: >-
+  The branch above this `else` ends in `return`, `throw`, `continue` or
+  `break`, so nothing can fall into the `else` body except the condition being
+  false. The `else` buys no control flow, only a level of indentation, and it
+  hides the real shape. `PathNavigator.formatPathSubtitle` is what the fix
+  looks like: three independent returns, none of them indented under the one
+  above.
+
+  Only the LAST statement of the then-body counts, and only a genuine
+  control-transfer statement. A branch that bails early and then keeps working
+  — `guard let match = candidate else { return nil }` followed by ordinary code
+  — needs its `else` and does not trip. Neither does `fatalError(...)`, which
+  is a call rather than a control transfer, nor a `switch` whose every case
+  returns, nor a `return` buried in an `if` nested inside the branch. A
+  `guard`'s own `else` is never matched: its exit is inside the `else`, not
+  before it.
+
+  What does trip: `else` and `else if` alike, in any body — a function, a
+  closure, a `for` or `while` loop — and an exit with a comment after it, since
+  the rule looks past comments to the last real statement.
+files:
+  - "Sources/**/*.swift"
+  - "Tests/**/*.swift"
+
+# Reported on the `else` keyword alone, so the diagnostic marks the token to
+# delete instead of highlighting the whole chain. `else` is reached by walking
+# back from the then-body: its immediate sibling is the closing brace, not the
+# `statements` node, hence `stopBy: end`. A `guard`'s `else` has no `statements`
+# sibling before it at all, which is what keeps guards out.
+rule:
+  kind: else
+  follows:
+    kind: statements
+    stopBy: end
+    has:
+      kind: control_transfer_statement
+      nthChild:
+        position: 1
+        reverse: true
+        ofRule:
+          not:
+            kind: comment

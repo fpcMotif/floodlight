@@ -36,6 +36,11 @@ opt_in_rules:
   - last_where
   - reduce_into
   - sorted_first_last
+  # Not a performance rule: the fifth complexity proxy, and the only one
+  # SwiftLint leaves off by default. A hundred-line view builder or completion
+  # handler is a body like any other, and it is the one shape the other four
+  # proxies cannot see — it belongs to no function and no type.
+  - closure_body_length
 
 disabled_rules:
   # SwiftFormat owns line width (--max-width 100) and it is the only tool
@@ -86,33 +91,51 @@ identifier_name:
 #
 # That means adding a line to a standing offender fails the gate. That is the
 # intent — split it, then lower the number here in the same commit. These only
-# ever move down. Today's offenders, all of which want splitting:
+# ever move down.
 #
-#   file_length           665  Sources/Floodlight/Search/SearchCoordinator.swift
-#   type_body_length      586  SearchCoordinator
-#   function_body_length  119  SearchCoordinator.applyResults
-#   cyclomatic_complexity  13  SearchCoordinator.applyResults
+# It used to be only a promise, and the promise broke: offenders shrank and
+# nobody lowered the numbers, so by #95 `cyclomatic_complexity` allowed 13
+# against a worst of 11 and this comment still named a function
+# (`SearchCoordinator.applyResults`) that no longer existed. check-lint.sh now
+# re-measures the tree on every run and fails when a number sits above what
+# anything reaches, naming the rule and the value to set. The list below is
+# documentation; the check is the enforcement.
+#
+#   file_length           658  Tests/FloodlightTests/SelectedResultActionPerformerTests.swift
+#   type_body_length      564  FFFIndexTests
+#   function_body_length  100  SourceSearchEngine.execute(token:query:immediate:)
+#   cyclomatic_complexity  11  that function, tied with ClipboardCaptureService.poll
+#   closure_body_length   108  OnboardingView.clipboardSection
 #
 # --strict means the `warning` value IS the failure threshold; `error` is just
 # documentation of a number nothing should ever approach.
 file_length:
-  warning: 665
+  warning: 658
   error: 800
   ignore_comment_only_lines: true
 
 type_body_length:
-  warning: 586
+  warning: 564
   error: 700
 
 function_body_length:
-  warning: 119
+  warning: 100
   error: 150
 
 cyclomatic_complexity:
-  warning: 13
+  warning: 11
   error: 18
   ignores_case_statements: true
 
+closure_body_length:
+  warning: 108
+  error: 150
+
+# `nesting` counts nested *declarations* — a type inside a type, a function
+# inside a function. It says nothing about indentation: a body nested five
+# blocks deep scores zero here, and raising `function_level` will never fix a
+# staircase. Block nesting needs the parse tree and is `readability-nesting-depth`
+# in tools/ast-grep/rules.
 nesting:
   type_level: 2
   function_level: 3

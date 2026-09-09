@@ -1,0 +1,107 @@
+id: readability-else-after-exit
+valid:
+  # The classic false red: the branch exits in the *middle* and then keeps
+  # working, so the `else` is load-bearing. Only the last statement counts,
+  # and a `guard`'s own `else` is never the match.
+  - |
+    func resolve(_ candidate: SearchItem?) {
+        if let match = candidate {
+            guard match.score > 0 else { return }
+            accept(match)
+        } else {
+            reject()
+        }
+    }
+  # An `if` with no `else` — the shape this rule asks for.
+  - |
+    func subtitle(_ path: String, homePath: String) -> String {
+        if path == homePath {
+            return "~/"
+        }
+        return path
+    }
+  - |
+    if isVisible {
+        log("panel already up")
+    } else {
+        present()
+    }
+  # `fatalError` is a call, not a control-transfer statement.
+  - |
+    func score(of item: SearchItem) -> Int {
+        if item.title.isEmpty {
+            fatalError("item without a title")
+        } else {
+            return item.score
+        }
+    }
+  # The `return` is nested one level down, so the branch can still fall through
+  # to the `else`.
+  - |
+    func kind(of item: SearchItem, isDirectory: Bool) -> SearchItemKind {
+        if item.fileURL != nil {
+            if isDirectory { return .folder }
+        } else {
+            return .application
+        }
+        return .file
+    }
+  - |
+    guard let envelope else { throw FFFIndexError.invalidResult }
+  - |
+    let hint = "if x { return } else { y } is the shape to avoid"
+invalid:
+  # The live case: PathNavigator.formatPathSubtitle. Three independent returns
+  # wearing a chain.
+  - |
+    func subtitle(_ path: String, homePath: String) -> String {
+        if path == homePath {
+            return "~/"
+        } else if path.hasPrefix(homePath) {
+            return "~" + path.dropFirst(homePath.count)
+        }
+        return path
+    }
+  - |
+    func title(of item: SearchItem) -> String {
+        if item.title.isEmpty {
+            return "Untitled"
+        } else {
+            return item.title
+        }
+    }
+  - |
+    func decode(_ line: String) throws {
+        if line.isEmpty {
+            throw FFFIndexError.invalidResult
+        } else {
+            record(line)
+        }
+    }
+  - |
+    for candidate in candidatePaths {
+        if candidate.isHidden {
+            continue
+        } else {
+            results.append(candidate)
+        }
+    }
+  - |
+    while let event = queue.next() {
+        if event.isTerminator {
+            break
+        } else {
+            handle(event)
+        }
+    }
+  # A comment after the exit does not hide it — the rule looks past comments to
+  # the last real statement.
+  - |
+    func open(_ url: URL) {
+        if url.isFileURL {
+            return
+            // nothing to hand to the browser
+        } else {
+            browser.open(url)
+        }
+    }

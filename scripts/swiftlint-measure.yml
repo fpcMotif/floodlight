@@ -1,0 +1,38 @@
+# Not a lint configuration. This is the input to the slack check in
+# scripts/check-lint.sh.
+#
+# Every ratcheted threshold is forced to its floor, so SwiftLint reports what
+# each declaration actually reaches instead of only the ones over the limit.
+# The maximum it reports is what the matching number in .swiftlint.yml has to
+# be — anything higher is slack, and slack is a licence for the next offender.
+#
+# `parent_config` inherits the exclusion list and the opt-in rules, so neither
+# is repeated here and neither can drift. Each rule's *options* do have to be
+# repeated: SwiftLint replaces a rule's configuration wholesale rather than
+# merging it into the parent's, so `ignore_comment_only_lines` would silently
+# revert to false and measure a different tree than the gate lints. check-lint.sh
+# compares the two configs option by option and fails when they disagree, which
+# is what keeps that repetition honest.
+parent_config: ../.swiftlint.yml
+
+file_length:
+  warning: 1
+  error: 1000000
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 1
+  error: 1000000
+
+function_body_length:
+  warning: 1
+  error: 1000000
+
+cyclomatic_complexity:
+  warning: 1
+  error: 1000000
+  ignores_case_statements: true
+
+closure_body_length:
+  warning: 1
+  error: 1000000

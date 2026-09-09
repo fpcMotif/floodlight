@@ -188,6 +188,16 @@ package enum ClipboardTextContent: Equatable, Hashable, Sendable {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
+    /// Any one of these makes a snippet read as source, whichever language it
+    /// came from: the two branches this replaced both answered "Code", so
+    /// Swift's markers and JavaScript's never told the caller apart. Each
+    /// marker carries its trailing space, which is what keeps `funcs` and
+    /// `classy` from matching.
+    private static let codeMarkers = [
+        "func ", "struct ", "import ", "class ",
+        "const ", "function ", "export ",
+    ]
+
     private static func codeLanguage(in text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")) ||
@@ -197,14 +207,7 @@ package enum ClipboardTextContent: Equatable, Hashable, Sendable {
                 return "JSON"
             }
         }
-        if trimmed.contains("func ") || trimmed.contains("struct ") || trimmed
-            .contains("import ") || trimmed.contains("class ")
-        {
-            return "Code"
-        }
-        if trimmed.contains("const ") || trimmed.contains("function ") || trimmed
-            .contains("export ")
-        {
+        if codeMarkers.contains(where: { trimmed.contains($0) }) {
             return "Code"
         }
         if trimmed.hasPrefix("<!DOCTYPE") || trimmed

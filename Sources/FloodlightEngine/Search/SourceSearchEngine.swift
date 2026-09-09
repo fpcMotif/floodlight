@@ -109,10 +109,10 @@ package actor SourceSearchEngine: SourceSearching {
         let readinessChanged = readinessBefore.0 != filesReady
             || readinessBefore.1 != applicationsReady
             || readinessBefore.2 != settingsReady
-        guard readinessChanged
-            || refreshes.0.changed || refreshes.1.changed
-            || refreshes.0.failed || refreshes.1.failed,
-            let active = invalidateActiveExecution()
+        let refreshesMovedOrFailed = refreshes.0.changed || refreshes.1.changed
+            || refreshes.0.failed || refreshes.1.failed
+        guard readinessChanged || refreshesMovedOrFailed,
+              let active = invalidateActiveExecution()
         else { return }
         restart(active)
     }

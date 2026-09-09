@@ -118,7 +118,8 @@ package enum PathNavigator {
         let homePath = homeURL.path
         if path == homePath {
             return "~/"
-        } else if path.hasPrefix(homePath) {
+        }
+        if path.hasPrefix(homePath) {
             return "~" + path.dropFirst(homePath.count)
         }
         return path

@@ -266,7 +266,9 @@ struct ClipboardHistoryStoreTests {
         let (dbURL, cleanup) = try TemporaryDirectory.makeClipboardDatabase()
         defer { cleanup() }
 
-        // Create store 1 and write data
+        // Scoped so the first store is deallocated, and its SQLite handle
+        // closed, before the second opens the same file. Without that this
+        // tests two live connections rather than what survives on disk.
         do {
             let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
             _ = try #require(store1.record(

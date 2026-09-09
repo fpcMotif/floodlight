@@ -2,9 +2,9 @@ id: readability-nesting-depth
 language: Swift
 severity: error
 message: >-
-  Block nested five deep — invert the innermost condition into a `guard` and
-  leave early, or lift the inner body into a named function the outer block
-  calls.
+  Block nested past the level this gate allows — invert the innermost condition
+  into a `guard` and leave early, or lift the inner body into a named function
+  the outer block calls.
 note: >-
   `cyclomatic_complexity` in .swiftlint.yml counts branches wherever they sit,
   so four nested `if`s and four flat ones score the same. What a reader has to
@@ -23,10 +23,11 @@ note: >-
   *condition* — `if items.contains(where: { ... })` — runs beside the statement
   rather than within it.
 
-  Five is where this tree stands, not where it should end up. Like every
-  threshold in the gate it only moves down, in the commit that removes the last
-  offender at the level above. Ratcheting is one edit: point the rule at
-  `containerAtLevel3`.
+  The level allowed is the one this tree already reaches, not the one it should
+  end up at. Like every threshold in the gate it only moves down, in the commit
+  that removes the last offender at the level above, and it lives in exactly
+  one place: the `containerAtLevel` the rule points at, at the bottom of this
+  file. Ratcheting is that one line, plus the sites it exposes.
 
   A site that genuinely reads better nested — a dynamic-programming recurrence
   that mirrors its table — takes a `// ast-grep-ignore: readability-nesting-depth`

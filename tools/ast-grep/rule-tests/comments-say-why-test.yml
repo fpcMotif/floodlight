@@ -1,0 +1,77 @@
+id: comments-say-why
+valid:
+  # A `///` doc line opening "Returns" is the Swift documentation convention and
+  # the classic false red for any comment rule. It must never match, which is
+  # why it is first here.
+  - |
+    /// Returns the ranked page for `query`, at most `limit` rows.
+    func topRanked(_ items: [SearchItem], limit: Int) -> [SearchItem] { items }
+  # Same opening verb as the offender below, but a sentence: it gives the
+  # reason and ends on a full stop.
+  - |
+    // Create the store twice because the round trip is what is under test.
+    let store = try ClipboardHistoryStore(databaseURL: dbURL)
+  # Verb-initial and unpunctuated, but past the five-trailing-word budget.
+  - |
+    // Create the second store from the same disk path so the reload is real
+    let store2 = try ClipboardHistoryStore(databaseURL: dbURL)
+  # Real, copied verbatim from SearchItemRankingPerformanceTests.swift.
+  - |
+    // Warm up
+    for _ in 0..<5 {
+        _ = SearchItemRanking.topRanked(items, limit: 10)
+    }
+  # Real, copied verbatim from GuidancePanelAnchorPolicyTests.swift.
+  - |
+    // Move target window by 100 points
+    currentTarget = NSRect(x: 500, y: 350, width: 640, height: 480)
+  # Lower-case prose, including the words a verb list is tempted by.
+  - |
+    // for a query with no path syntax the resolver returns nil
+    guard PathNavigator.hasPathSyntax(query) else { return nil }
+  - |
+    // returns the same rows the full sort would have
+    let ranked = SearchItemRanking.topRanked(matches, limit: limit)
+  # Every directive form.
+  - |
+    // MARK: - Disk Persistence Round-Trip
+  - |
+    // TODO: pin ordering once the board lands
+  - |
+    // FIXME: Create the store lazily
+  - |
+    // swiftlint:disable:next force_unwrapping
+    let score = value!
+  - |
+    // periphery:ignore
+    func unusedHelper() {}
+  - |
+    // ast-grep-ignore: search-path-no-full-sort
+    let ranked = matches.sorted(by: ranksBefore)
+  - |
+    // swift-format-ignore
+    let table = [1, 2, 3]
+invalid:
+  - |
+    // Create the store
+    let store = ClipboardHistoryStore.inMemory()
+  # The live offender in ClipboardHistoryStoreTests: a label on a `do` block
+  # that already reads as "make a store, write to it".
+  - |
+    // Create store 1 and write data
+    do {
+        let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
+        store1.pin(id: entry.id)
+    }
+  - |
+    // Increment the counter
+    changeCount += 1
+  - |
+    // Load the index
+    let index = try FFFIndex(root: root)
+  - |
+    // Save the entry
+    store.record(text: text)
+  - |
+    // Parse the query
+    let parsed = Calculator.evaluate(query)

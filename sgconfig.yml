@@ -1,13 +1,21 @@
-# ast-grep owns Floodlight's architecture rules — the invariants that are about
-# this codebase rather than about Swift.
+# The split with SwiftLint, for whoever writes the next rule: SwiftLint owns
+# whatever it already has a rule for, and ast-grep owns whatever needs the parse
+# tree — Floodlight's own architecture invariants, and the shapes that make code
+# hard to read. SwiftLint's `custom_rules` are regex, and regex cannot tell
+# `.sorted()` on a candidate array from `.sorted()` on a settings menu, `try!` in
+# a string from `try!` in code, or a block nested four deep from four flat ones.
 #
-# The split with SwiftLint is deliberate: SwiftLint's `custom_rules` are regex,
-# and regex cannot tell `.sorted()` on a candidate array from `.sorted()` on a
-# settings menu, or `try!` in a string from `try!` in code. These rules match
-# the parse tree, so they can.
+# So the rules here come in two kinds. The architecture rules are about this
+# codebase rather than about Swift: what the engine may import, what the query
+# path may touch, what the search path may sort. The `readability-` and
+# `comments-` rules are about Swift, but about the part of it SwiftLint's
+# complexity proxies are blind to — nesting depth, an `else` after an exit, the
+# length of a boolean condition, and the two comment shapes a regex can be
+# trusted with.
 #
 # Adding a rule is dropping one file in `tools/ast-grep/rules` and one test file
-# in `tools/ast-grep/rule-tests`. There is no linter framework to extend.
+# in `tools/ast-grep/rule-tests`, then `ast-grep test --update-all` to record the
+# snapshot the test run compares against. There is no linter framework to extend.
 #
 # The rule-evolution ladder, for whoever writes the next one:
 #   1. ast-grep YAML       — while the pattern is syntactic (all rules today)
