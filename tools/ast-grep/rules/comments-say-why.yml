@@ -1,0 +1,42 @@
+id: comments-say-why
+language: Swift
+severity: error
+message: >-
+  This comment names what the next line does; the line already says that. Give
+  the reason instead — the `guard` in `PathResolutionCache.resolving(query:rootURL:)`
+  is the shape to copy — or delete the comment.
+note: >-
+  One shape trips this and nothing else: `//`, one space, one verb from a closed
+  list (Add, Assign, Build, Call, Check, Clear, Compute, Configure, Convert,
+  Create, Declare, Decrement, Define, Delete, Fetch, Get, Handle, Increment,
+  Initialize, Insert, Instantiate, Invoke, Iterate, Load, Log, Loop, Make,
+  Parse, Print, Register, Remove, Reset, Return, Save, Set, Start, Stop, Store,
+  Update), then one to five more plain words, and the line ends on a letter or
+  digit. A full stop, comma, colon, backtick,
+  bracket or arrow anywhere in the line clears it, so does a sixth trailing
+  word, so does a lower-case opening word, and so does a third slash. `///` can
+  never match — including a doc line opening "Returns", which is Swift's own
+  documentation convention and is out of bounds for this rule. `// MARK:`,
+  `// TODO:`, `// FIXME:`, `// swiftlint:`, `// periphery:`,
+  `// ast-grep-ignore:` and `// swift-format-ignore` are clear twice over: none
+  opens with a listed verb, and all but the last carry a colon.
+
+  The narrowness is the whole design. A regex that fired on any capitalised
+  imperative matched nine lines in this tree and not one of them was the defect
+  — `// Warm up` above a benchmark's throwaway loop, `// Move target window by
+  100 points` in `GuidancePanelAnchorPolicyTests`. Real explanations here run
+  long and land on a full stop: `PathResolutionCache.resolving` spends four
+  lines on why `PathNavigator.hasPathSyntax` is worth checking first. So a
+  sentence passes, and a label does not. Each `//` line is its own node, so a
+  wrapped comment is judged one line at a time; its lines run past six words or
+  carry punctuation, which is why wrapping is not a way around the rule.
+files:
+  - "Sources/**/*.swift"
+  - "Tests/**/*.swift"
+
+# Syntactic, not semantic: the rule reads shape — short, capitalised,
+# unpunctuated, verb-initial — never meaning. Widening the verb list is how this
+# rule turns into a false red, so add one only with a live offender in hand.
+rule:
+  kind: comment
+  regex: "^// (Add|Assign|Build|Call|Check|Clear|Compute|Configure|Convert|Create|Declare|Decrement|Define|Delete|Fetch|Get|Handle|Increment|Initialize|Insert|Instantiate|Invoke|Iterate|Load|Log|Loop|Make|Parse|Print|Register|Remove|Reset|Return|Save|Set|Start|Stop|Store|Update)( [A-Za-z0-9][A-Za-z0-9'-]*){1,5}$"

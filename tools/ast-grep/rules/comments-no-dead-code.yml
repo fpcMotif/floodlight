@@ -1,0 +1,55 @@
+id: comments-no-dead-code
+language: Swift
+severity: error
+message: >-
+  Commented-out code — delete the line. Git is the archive:
+  `git log -S'<identifier>'` finds the commit that removed it and `git show`
+  brings it back.
+note: >-
+  A commented-out line rots in place. It survives every rename and every
+  signature change made around it, so by the time someone uncomments it, it no
+  longer builds and no longer describes what the code did. The history does
+  both, and it is one command away.
+
+  A bare keyword test was tried first and flagged only prose: wrapped sentences
+  whose continuation line happens to start with a keyword, as in
+  `ClipboardSourceApp.resolveDisplayName` ("for an answer this table exists to
+  override") and `SourceSearchEngine` ("for every progressive snapshot"). So
+  the rule asks for the shape of a statement, not a keyword. Six shapes trip
+  it, each measured from the first character after the slashes: a `let`/`var`
+  declaration carrying an `=`; a line that is nothing but closing brackets; a
+  line that is one whole call, optionally after `return`/`throw`/`try`/`await`;
+  a control-flow keyword on a line that ends in an opening brace; a whole line
+  that is one `import`; and a `return` of something that reads as code —
+  `nil`, `true`, `false`, `self`, a dotted path, or a camelCased name.
+
+  Prose stays quiet because each shape has to be the entire line: a call named
+  mid-sentence, "return the snapshot", "import the marker tree", and a
+  continuation line quoting `{` inside a sentence all fail their shape. `///`
+  doc comments stay quiet, because the match starts at the third character.
+  Every directive stays quiet — `// MARK:`, `// TODO:`, `// FIXME:`,
+  `// swiftlint:`, `// periphery:`, `// ast-grep-ignore:`,
+  `// swift-format-ignore` — because none of them is one of the six shapes.
+  A commented-out expression statement with no call, no `=` and no keyword
+  (`// score`) still passes; catching that would cost the false positives this
+  rule was narrowed to avoid.
+files:
+  - "Sources/**/*.swift"
+  - "Tests/**/*.swift"
+rule:
+  kind: comment
+  any:
+    # `// let old = compute()` — a declaration with an initialiser.
+    - regex: '^//[ \t]*(let|var)[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*(:[ \t]*[^=]+)?=[ \t]*[^=]'
+    # `// }`, `// })` — a line that closes a block and nothing else.
+    - regex: '^//[ \t]*[)}\]][ \t)}\],;]*$'
+    # `// store.save()`, `// return compute()` — a whole line that is one call.
+    - regex: '^//[ \t]*(return[ \t]+|throw[ \t]+|try[ \t]+|await[ \t]+)*[A-Za-z_][A-Za-z0-9_]*(\??\.[A-Za-z_][A-Za-z0-9_]*)*\(.*\)[ \t]*$'
+    # `// if isVisible {` — a control-flow header that opens a brace.
+    - regex: '^//[ \t]*(if|guard|for|while|switch|do|catch|repeat|else|func|init|deinit)\b[^.]*\{[ \t]*$'
+    # `// import SwiftUI` — a whole line that is one import.
+    - regex: '^//[ \t]*import[ \t]+[A-Za-z_][A-Za-z0-9_.]*[ \t]*$'
+    # `// return nil`, `// return item.score` — a return of something that
+    # reads as code rather than as English. A bare lower-case word after
+    # `return` is prose ("return the snapshot") and is left alone.
+    - regex: '^//[ \t]*return[ \t]+(nil|true|false|self|[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+|[a-z_][a-z0-9_]*[A-Z][A-Za-z0-9_]*)[ \t]*$'

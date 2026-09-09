@@ -1,0 +1,53 @@
+id: comments-say-why
+snapshots:
+  ? |
+    // Create store 1 and write data
+    do {
+        let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
+        store1.pin(id: entry.id)
+    }
+  : labels:
+    - source: // Create store 1 and write data
+      style: primary
+      start: 0
+      end: 32
+  ? |
+    // Create the store
+    let store = ClipboardHistoryStore.inMemory()
+  : labels:
+    - source: // Create the store
+      style: primary
+      start: 0
+      end: 19
+  ? |
+    // Increment the counter
+    changeCount += 1
+  : labels:
+    - source: // Increment the counter
+      style: primary
+      start: 0
+      end: 24
+  ? |
+    // Load the index
+    let index = try FFFIndex(root: root)
+  : labels:
+    - source: // Load the index
+      style: primary
+      start: 0
+      end: 17
+  ? |
+    // Parse the query
+    let parsed = Calculator.evaluate(query)
+  : labels:
+    - source: // Parse the query
+      style: primary
+      start: 0
+      end: 18
+  ? |
+    // Save the entry
+    store.record(text: text)
+  : labels:
+    - source: // Save the entry
+      style: primary
+      start: 0
+      end: 17

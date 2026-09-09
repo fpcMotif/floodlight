@@ -83,9 +83,23 @@ rm -f "$shell_probe"
 # The readability rules are scoped to both source targets *and* Tests, which is
 # a wider claim than any rule above makes and so a wider glob to get wrong.
 # `readability-nesting-depth` stands in for all of them: it is the only one
-# whose match needs no particular code around it, so a five-deep nest is a
+# whose match needs no particular code around it, so a deep enough nest is a
 # violation wherever it is planted. `--filter` runs that rule alone, so the
-# probe does not have to satisfy the other seven.
+# probe does not have to satisfy the other twelve.
+#
+# The filter is checked against the clean tree first. Every test below reads a
+# non-zero exit as "the rule fired", and `--filter` on an id that does not exist
+# also exits non-zero — so a renamed rule would turn this whole section into
+# three tests that pass without running anything.
+if ! "$astgrep" scan --no-ignore vcs --filter '^readability-nesting-depth$' \
+    --config "$PROJECT_DIR/sgconfig.yml" >/dev/null 2>&1; then
+    echo "check-rules: SELF-TEST FAILED — scanning the clean tree for" >&2
+    echo "  readability-nesting-depth alone did not exit 0. Either the rule id in this" >&2
+    echo "  script no longer matches one in tools/ast-grep/rules, or the tree is not" >&2
+    echo "  clean; either way the three probes below would pass without testing." >&2
+    exit 1
+fi
+
 nesting_probe_source='func gateSelfTest() {
     if isReady {
         for row in rows {

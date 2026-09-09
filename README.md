@@ -77,7 +77,7 @@ request.
 
 ```sh
 make install-tools   # pinned binaries into .tools/, once
-make check           # format, lint, architecture rules, build, dead code
+make check           # format, lint, ast-grep rules, architecture, build, dead code
 make format          # fix everything the format gate would complain about
 ```
 
@@ -103,9 +103,18 @@ may not ship. The readability rules encode the shapes that cost a reader more
 than a branch counter can see — a block nested past the current depth, an
 `else` after a branch that already returned, a condition with three or more
 `&&`/`||`, and the two comment forms below. Every message names the alternative
-to use, and every `note` says what does *and does not* trip the rule. Adding a
-rule is one YAML file plus one test file in
-[`tools/ast-grep/rule-tests`](tools/ast-grep/rule-tests).
+to use, and every `note` says what does *and does not* trip the rule, so you can
+predict the verdict before you push. Adding a rule is one YAML file plus one
+test file in [`tools/ast-grep/rule-tests`](tools/ast-grep/rule-tests), then
+`ast-grep test --update-all` to record the snapshot the test run compares
+against.
+
+The size and complexity thresholds in [`.swiftlint.yml`](.swiftlint.yml) are a
+ratchet: each sits on exactly the tree's worst offender, so adding a line to a
+standing offender fails the gate on purpose — split it, then lower the number in
+the same commit. `check-lint` re-measures the tree on every run and also fails
+when a threshold sits *above* what anything reaches, naming the rule and the
+value to set, so a number cannot quietly outlive the offender that justified it.
 
 Latency budgets run separately, in release configuration, because a debug
 build's search path is several times slower than what a user feels:

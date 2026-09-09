@@ -1,0 +1,83 @@
+id: readability-named-predicate
+valid:
+  # The classic false red: the fix this rule prescribes. A named boolean is an
+  # assignment, not a condition, so the chain that earns the name is legal
+  # however long it is. A rule that rejected its own remedy would be useless.
+  - |
+    func warmUp() {
+        let refreshesMovedOrFailed = refreshes.0.changed || refreshes.1.changed
+            || refreshes.0.failed || refreshes.1.failed
+        guard readinessChanged || refreshesMovedOrFailed else { return }
+        restart()
+    }
+  # Two operators.
+  - |
+    if isReady && hasResults {
+        publish()
+    }
+  - |
+    guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
+        return nil
+    }
+  # A parenthesised group is a boundary the reader already sees, so it stops
+  # the count: two operators outside the brackets, two inside.
+  - |
+    if (trimmed.hasPrefix("{") && trimmed.hasSuffix("}"))
+        || (trimmed.hasPrefix("[") && trimmed.hasSuffix("]"))
+    {
+        return "JSON"
+    }
+  # A closure body is a boundary too — `contains(where:)` in a condition is not
+  # a five-clause condition.
+  - |
+    if candidates.contains(where: { $0.isReady && $0.isVisible && $0.isRecent && $0.isPinned }) {
+        return
+    }
+  # `where` on a loop is not a `condition:`.
+  - |
+    for candidate in candidates where candidate.isReady && candidate.isVisible
+        && candidate.isRecent && candidate.isPinned
+    {
+        use(candidate)
+    }
+  - |
+    let hint = "a || b || c || d is fine inside a string"
+invalid:
+  - |
+    if isReady && hasResults && isVisible && isPinned {
+        publish()
+    }
+  - |
+    guard readinessChanged || refreshes.0.changed || refreshes.1.changed
+        || refreshes.0.failed
+    else {
+        return
+    }
+  - |
+    while isReady && hasResults && isVisible && isPinned {
+        advance()
+    }
+  # A comparison between the links does not hide them: tree-sitter roots this
+  # at the `==` and hangs the whole `||` chain off it, which is exactly the
+  # shape an `inside: {field: condition}` anchor would have missed.
+  - |
+    if character == ":" || isASCIILetter(character) || isASCIIDigit(character)
+        || character == "."
+    {
+        return true
+    }
+  # A clause after a comma is a condition like any other.
+  - |
+    guard let active = execution, isReady && hasResults && isVisible && isPinned
+    else {
+        return
+    }
+  # Brackets around the whole chain group nothing, so they change nothing.
+  - |
+    if (isReady && hasResults && isVisible && isPinned) {
+        publish()
+    }
+  - |
+    repeat {
+        advance()
+    } while isReady && hasResults && isVisible && isPinned

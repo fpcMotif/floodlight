@@ -1,0 +1,82 @@
+id: readability-named-predicate
+language: Swift
+severity: error
+message: >-
+  Condition chains three or more `&&`/`||` — lift it into a named boolean
+  (`let anythingChanged = ...`) and branch on the name.
+note: >-
+  A five-clause `guard` hands the reader five facts and no name for what they
+  add up to, and `cyclomatic_complexity` cannot see it: `||` costs nothing
+  there, so a condition can grow without limit under a green gate.
+  `SourceSearchEngine.warmUp` is the shape to copy — `readinessChanged` and
+  `refreshesMovedOrFailed` are each named where they are computed, and the
+  `guard` branches on the two names. `DirectLink.scheme(of:)` does the same
+  with `continuesScheme`.
+
+  Three or more `&&`/`||` along one chain in the `condition:` of an `if`,
+  `guard`, `while` or `repeat`-`while` trip the rule. Two do not. It counts a
+  chain wherever the condition puts it: a comparison between the links does not
+  hide them (`a == b || c || d || e` is three `||` and trips), a clause after a
+  comma is a condition like any other (`guard let x = y, a && b && c && d`
+  trips), and wrapping the whole chain in brackets changes nothing. The report
+  lands once, on the outermost operator of the chain, not once per link.
+
+  Three things do stop the count, because each is a boundary the reader already
+  sees: a parenthesised group, a closure body, and a call's argument list. So
+  `(a && b) || (c && d)` passes — the parentheses do the naming — and
+  `xs.contains { $0.a && $0.b && $0.c }` in a condition counts nothing. So does
+  `let flag = a && b && c && d`, which is an assignment rather than a
+  condition, which is what lets the fix this message prescribes be legal. `for
+  ... where` and `case ... where` are out of scope for the same reason: neither
+  is a `condition:`.
+
+  A chain that genuinely reads better inline takes a
+  `// ast-grep-ignore: readability-named-predicate` with the reason beside it.
+files:
+  - "Sources/**/*.swift"
+  - "Tests/**/*.swift"
+
+# Anchored by walking *up* from the operator to the statement that owns it,
+# stopping at the first body, closure or argument list. Anchoring the other way
+# — `inside: {field: condition}` — looks equivalent and is not: tree-sitter-swift
+# gives the binary operators no precedence, so `a == b || c || d` roots at the
+# `==` and hangs the whole `||` chain off its `rhs`. The chain is then not the
+# condition field, and every condition whose first operand is a comparison
+# escapes the rule entirely.
+#
+# `not: inside logical-operator` is what makes the report land once: a chain
+# nests to the right, so every link but the outermost has an operator as its
+# direct parent.
+utils:
+  logical-operator:
+    any:
+      - kind: conjunction_expression
+      - kind: disjunction_expression
+  operand-boundary:
+    any:
+      - kind: tuple_expression
+      - kind: lambda_literal
+      - kind: value_arguments
+
+rule:
+  matches: logical-operator
+  not:
+    inside:
+      matches: logical-operator
+  inside:
+    stopBy:
+      any:
+        - kind: statements
+        - kind: lambda_literal
+        - kind: value_arguments
+    any:
+      - kind: if_statement
+      - kind: guard_statement
+      - kind: while_statement
+      - kind: repeat_while_statement
+  has:
+    stopBy: {matches: operand-boundary}
+    matches: logical-operator
+    has:
+      stopBy: {matches: operand-boundary}
+      matches: logical-operator

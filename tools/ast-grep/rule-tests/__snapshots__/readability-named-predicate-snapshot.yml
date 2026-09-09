@@ -1,0 +1,192 @@
+id: readability-named-predicate
+snapshots:
+  ? |
+    guard let active = execution, isReady && hasResults && isVisible && isPinned
+    else {
+        return
+    }
+  : labels:
+    - source: isReady && hasResults && isVisible && isPinned
+      style: primary
+      start: 30
+      end: 76
+    - source: |-
+        guard let active = execution, isReady && hasResults && isVisible && isPinned
+        else {
+            return
+        }
+      style: secondary
+      start: 0
+      end: 96
+    - source: isVisible && isPinned
+      style: secondary
+      start: 55
+      end: 76
+    - source: hasResults && isVisible && isPinned
+      style: secondary
+      start: 41
+      end: 76
+  ? |
+    guard readinessChanged || refreshes.0.changed || refreshes.1.changed
+        || refreshes.0.failed
+    else {
+        return
+    }
+  : labels:
+    - source: |-
+        readinessChanged || refreshes.0.changed || refreshes.1.changed
+            || refreshes.0.failed
+      style: primary
+      start: 6
+      end: 94
+    - source: |-
+        guard readinessChanged || refreshes.0.changed || refreshes.1.changed
+            || refreshes.0.failed
+        else {
+            return
+        }
+      style: secondary
+      start: 0
+      end: 114
+    - source: |-
+        refreshes.1.changed
+            || refreshes.0.failed
+      style: secondary
+      start: 49
+      end: 94
+    - source: |-
+        refreshes.0.changed || refreshes.1.changed
+            || refreshes.0.failed
+      style: secondary
+      start: 26
+      end: 94
+  ? |
+    if (isReady && hasResults && isVisible && isPinned) {
+        publish()
+    }
+  : labels:
+    - source: isReady && hasResults && isVisible && isPinned
+      style: primary
+      start: 4
+      end: 50
+    - source: |-
+        if (isReady && hasResults && isVisible && isPinned) {
+            publish()
+        }
+      style: secondary
+      start: 0
+      end: 69
+    - source: isVisible && isPinned
+      style: secondary
+      start: 29
+      end: 50
+    - source: hasResults && isVisible && isPinned
+      style: secondary
+      start: 15
+      end: 50
+  ? |
+    if character == ":" || isASCIILetter(character) || isASCIIDigit(character)
+        || character == "."
+    {
+        return true
+    }
+  : labels:
+    - source: |-
+        ":" || isASCIILetter(character) || isASCIIDigit(character)
+            || character == "."
+      style: primary
+      start: 16
+      end: 98
+    - source: |-
+        if character == ":" || isASCIILetter(character) || isASCIIDigit(character)
+            || character == "."
+        {
+            return true
+        }
+      style: secondary
+      start: 0
+      end: 118
+    - source: |-
+        isASCIIDigit(character)
+            || character == "."
+      style: secondary
+      start: 51
+      end: 98
+    - source: |-
+        isASCIILetter(character) || isASCIIDigit(character)
+            || character == "."
+      style: secondary
+      start: 23
+      end: 98
+  ? |
+    if isReady && hasResults && isVisible && isPinned {
+        publish()
+    }
+  : labels:
+    - source: isReady && hasResults && isVisible && isPinned
+      style: primary
+      start: 3
+      end: 49
+    - source: |-
+        if isReady && hasResults && isVisible && isPinned {
+            publish()
+        }
+      style: secondary
+      start: 0
+      end: 67
+    - source: isVisible && isPinned
+      style: secondary
+      start: 28
+      end: 49
+    - source: hasResults && isVisible && isPinned
+      style: secondary
+      start: 14
+      end: 49
+  ? |
+    repeat {
+        advance()
+    } while isReady && hasResults && isVisible && isPinned
+  : labels:
+    - source: isReady && hasResults && isVisible && isPinned
+      style: primary
+      start: 31
+      end: 77
+    - source: |-
+        repeat {
+            advance()
+        } while isReady && hasResults && isVisible && isPinned
+      style: secondary
+      start: 0
+      end: 77
+    - source: isVisible && isPinned
+      style: secondary
+      start: 56
+      end: 77
+    - source: hasResults && isVisible && isPinned
+      style: secondary
+      start: 42
+      end: 77
+  ? |
+    while isReady && hasResults && isVisible && isPinned {
+        advance()
+    }
+  : labels:
+    - source: isReady && hasResults && isVisible && isPinned
+      style: primary
+      start: 6
+      end: 52
+    - source: |-
+        while isReady && hasResults && isVisible && isPinned {
+            advance()
+        }
+      style: secondary
+      start: 0
+      end: 70
+    - source: isVisible && isPinned
+      style: secondary
+      start: 31
+      end: 52
+    - source: hasResults && isVisible && isPinned
+      style: secondary
+      start: 17
+      end: 52

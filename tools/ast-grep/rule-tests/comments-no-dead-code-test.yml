@@ -1,0 +1,82 @@
+id: comments-no-dead-code
+valid:
+  # The classic false red, and the reason the regex is not a keyword test: a
+  # wrapped sentence whose continuation line starts with `for`. Copied
+  # verbatim from ClipboardSourceApp.resolveDisplayName.
+  - |
+    private static func resolveDisplayName(for bundleID: String) -> String {
+        // Before the lookup, not after it: these are the identifiers Launch
+        // Services answers badly or not at all, so asking it first would pay
+        // for an answer this table exists to override.
+        if let known = knownNames[bundleID] { return known }
+        return bundleID
+    }
+  # The second real one, from SourceSearchEngine.
+  - |
+    func snapshot() -> ([SearchItem], Provenance) {
+        // The shell owns the final command/calculator/web merge and ranks the
+        // complete list once. Sorting this partial list would repeat that work
+        // for every progressive snapshot.
+        return (items, provenance)
+    }
+  # A call named mid-sentence. The call shape has to be the whole line.
+  - |
+    // resolveDisplayName(for:) answers from knownNames before Launch Services.
+    let name = resolveDisplayName(for: bundleID)
+  # Doc comments pass even when they quote code.
+  - |
+    /// let ranked = matches.sorted()
+    /// Use `SearchItemRanking.topRanked(_:limit:)` instead.
+    func topRanked() {}
+  - |
+    // MARK: - Rendering
+  - |
+    // TODO: bound the retry count
+  - |
+    // FIXME: this drops the last frame on resize
+  - |
+    // swiftlint:disable:next force_cast
+    let panel = window as! FloodlightPanel
+  - |
+    // periphery:ignore
+    func unusedProbe() {}
+  - |
+    // ast-grep-ignore: search-path-no-full-sort
+    let ordered = applications.sorted()
+  - |
+    // swift-format-ignore
+    let matrix = [1, 0, 0, 1]
+  # Prose that opens with `return` or `import` and carries on in English. The
+  # shape has to be the whole line and has to read as code.
+  - |
+    // Discovery is allowed to be slow, so it can afford to stat every
+    // candidate and return the ones that survive.
+  - |
+    // import the marker tree once, then hand it to a dedicated FFF instance
+  # An expression statement with no call, no `=` and no keyword. Deliberately
+  # out of reach: the shapes that would catch it also catch prose.
+  - |
+    // score
+invalid:
+  - |
+    // let old = compute()
+  - |
+    // }
+  - |
+    // store.save()
+  - |
+    // var cached: [String: Int] = [:]
+  - |
+    // return SearchItemRanking.topRanked(matches, limit: limit)
+  - |
+    // if isVisible {
+  - |
+    // })
+  - |
+    // import SwiftUI
+  - |
+    // return nil
+  - |
+    // return item.score
+  - |
+    // return isVisible

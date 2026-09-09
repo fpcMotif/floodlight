@@ -1,0 +1,130 @@
+id: readability-else-after-exit
+snapshots:
+  ? |
+    for candidate in candidatePaths {
+        if candidate.isHidden {
+            continue
+        } else {
+            results.append(candidate)
+        }
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 85
+      end: 89
+    - source: continue
+      style: secondary
+      start: 70
+      end: 78
+    - source: "continue\n    "
+      style: secondary
+      start: 70
+      end: 83
+  ? |
+    func decode(_ line: String) throws {
+        if line.isEmpty {
+            throw FFFIndexError.invalidResult
+        } else {
+            record(line)
+        }
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 107
+      end: 111
+    - source: throw FFFIndexError.invalidResult
+      style: secondary
+      start: 67
+      end: 100
+    - source: "throw FFFIndexError.invalidResult\n    "
+      style: secondary
+      start: 67
+      end: 105
+  ? |
+    func open(_ url: URL) {
+        if url.isFileURL {
+            return
+            // nothing to hand to the browser
+        } else {
+            browser.open(url)
+        }
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 110
+      end: 114
+    - source: return
+      style: secondary
+      start: 55
+      end: 61
+    - source: "return\n        // nothing to hand to the browser\n    "
+      style: secondary
+      start: 55
+      end: 108
+  ? |
+    func subtitle(_ path: String, homePath: String) -> String {
+        if path == homePath {
+            return "~/"
+        } else if path.hasPrefix(homePath) {
+            return "~" + path.dropFirst(homePath.count)
+        }
+        return path
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 112
+      end: 116
+    - source: return "~/"
+      style: secondary
+      start: 94
+      end: 105
+    - source: "return \"~/\"\n    "
+      style: secondary
+      start: 94
+      end: 110
+  ? |
+    func title(of item: SearchItem) -> String {
+        if item.title.isEmpty {
+            return "Untitled"
+        } else {
+            return item.title
+        }
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 104
+      end: 108
+    - source: return "Untitled"
+      style: secondary
+      start: 80
+      end: 97
+    - source: "return \"Untitled\"\n    "
+      style: secondary
+      start: 80
+      end: 102
+  ? |
+    while let event = queue.next() {
+        if event.isTerminator {
+            break
+        } else {
+            handle(event)
+        }
+    }
+  : labels:
+    - source: else
+      style: primary
+      start: 81
+      end: 85
+    - source: break
+      style: secondary
+      start: 69
+      end: 74
+    - source: "break\n    "
+      style: secondary
+      start: 69
+      end: 79

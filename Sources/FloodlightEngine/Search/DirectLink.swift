@@ -109,11 +109,9 @@ package enum DirectLink {
         while index < token.endIndex {
             let character = token[index]
             if character == ":" { return token[token.startIndex..<index] }
-            guard isASCIILetter(character) || isASCIIDigit(character)
+            let continuesScheme = isASCIILetter(character) || isASCIIDigit(character)
                 || character == "+" || character == "-" || character == "."
-            else {
-                return nil
-            }
+            guard continuesScheme else { return nil }
             token.formIndex(after: &index)
         }
         return nil

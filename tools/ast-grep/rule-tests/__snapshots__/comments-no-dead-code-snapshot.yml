@@ -1,0 +1,79 @@
+id: comments-no-dead-code
+snapshots:
+  ? |
+    // if isVisible {
+  : labels:
+    - source: // if isVisible {
+      style: primary
+      start: 0
+      end: 17
+  ? |
+    // import SwiftUI
+  : labels:
+    - source: // import SwiftUI
+      style: primary
+      start: 0
+      end: 17
+  ? |
+    // let old = compute()
+  : labels:
+    - source: // let old = compute()
+      style: primary
+      start: 0
+      end: 22
+  ? |
+    // return SearchItemRanking.topRanked(matches, limit: limit)
+  : labels:
+    - source: '// return SearchItemRanking.topRanked(matches, limit: limit)'
+      style: primary
+      start: 0
+      end: 60
+  ? |
+    // return isVisible
+  : labels:
+    - source: // return isVisible
+      style: primary
+      start: 0
+      end: 19
+  ? |
+    // return item.score
+  : labels:
+    - source: // return item.score
+      style: primary
+      start: 0
+      end: 20
+  ? |
+    // return nil
+  : labels:
+    - source: // return nil
+      style: primary
+      start: 0
+      end: 13
+  ? |
+    // store.save()
+  : labels:
+    - source: // store.save()
+      style: primary
+      start: 0
+      end: 15
+  ? |
+    // var cached: [String: Int] = [:]
+  : labels:
+    - source: '// var cached: [String: Int] = [:]'
+      style: primary
+      start: 0
+      end: 34
+  ? |
+    // }
+  : labels:
+    - source: // }
+      style: primary
+      start: 0
+      end: 4
+  ? |
+    // })
+  : labels:
+    - source: // })
+      style: primary
+      start: 0
+      end: 5
