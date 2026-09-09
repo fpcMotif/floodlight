@@ -29,6 +29,6 @@ package extension ClipboardHistoryStore {
     var mostRecentEntry: ClipboardEntry? {
         let entries = search(query: "")
         return entries.first { !$0.isPinned }
-            ?? entries.filter(\.isPinned).max { $0.createdAt < $1.createdAt }
+            ?? entries.max { $0.createdAt < $1.createdAt }
     }
 }

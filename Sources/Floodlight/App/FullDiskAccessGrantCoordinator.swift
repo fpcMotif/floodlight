@@ -25,11 +25,13 @@ package final class FullDiskAccessGrantCoordinator {
     private let onGranted: () -> Void
     private let onDismissed: () -> Void
     private let autoPresentPanel: Bool
+    private let appNotificationCenter: NotificationCenter
+    private let workspaceNotificationCenter: NotificationCenter
 
     private var pollTimer: Timer?
     private var dismissTask: Task<Void, Never>?
     private var panel: FullDiskAccessGuidancePanel?
-    private var notificationObservers: [NSObjectProtocol] = []
+    private var notificationObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     package init(
         openSettings: @escaping () -> Void = {
@@ -47,7 +49,9 @@ package final class FullDiskAccessGrantCoordinator {
         parentWindowProvider: (() -> NSRect?)? = nil,
         onGranted: @escaping () -> Void = {},
         onDismissed: @escaping () -> Void = {},
-        autoPresentPanel: Bool = true
+        autoPresentPanel: Bool = true,
+        appNotificationCenter: NotificationCenter = .default,
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         self.openSettings = openSettings
         self.fullDiskAccessProvider = fullDiskAccessProvider
@@ -57,13 +61,12 @@ package final class FullDiskAccessGrantCoordinator {
         self.onGranted = onGranted
         self.onDismissed = onDismissed
         self.autoPresentPanel = autoPresentPanel
+        self.appNotificationCenter = appNotificationCenter
+        self.workspaceNotificationCenter = workspaceNotificationCenter
     }
 
     isolated deinit {
-        pollTimer?.invalidate()
-        for observer in notificationObservers {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        stopPolling()
     }
 
     package func beginGrantFlow() {
@@ -121,6 +124,7 @@ package final class FullDiskAccessGrantCoordinator {
             panel?.updatePhase(.granted)
             dismissTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { return }
                 self?.dismiss()
             }
         }
@@ -136,7 +140,7 @@ package final class FullDiskAccessGrantCoordinator {
         }
         pollTimer = timer
 
-        let appActiveObserver = NotificationCenter.default.addObserver(
+        let appActiveObserver = appNotificationCenter.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
@@ -146,7 +150,7 @@ package final class FullDiskAccessGrantCoordinator {
             }
         }
 
-        let workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        let workspaceObserver = workspaceNotificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
@@ -156,14 +160,17 @@ package final class FullDiskAccessGrantCoordinator {
             }
         }
 
-        notificationObservers = [appActiveObserver, workspaceObserver]
+        notificationObservers = [
+            (appNotificationCenter, appActiveObserver),
+            (workspaceNotificationCenter, workspaceObserver),
+        ]
     }
 
     private func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
-        for observer in notificationObservers {
-            NotificationCenter.default.removeObserver(observer)
+        for (center, observer) in notificationObservers {
+            center.removeObserver(observer)
         }
         notificationObservers.removeAll()
         dismissTask?.cancel()

@@ -1,4 +1,3 @@
-import AppKit
 import FloodlightEngine
 import Foundation
 
@@ -105,7 +104,7 @@ enum ClipboardInspector: Equatable {
         for entry: ClipboardEntry,
         hasFullImage: Bool = false
     ) -> ClipboardInspector {
-        let sourceApp = sourceAppDisplayName(for: entry.sourceAppBundleID)
+        let sourceApp = ClipboardSourceApp.displayName(for: entry.sourceAppBundleID)
         let formattedDate = formattedDetailedDate(entry.createdAt)
 
         switch entry.kind {
@@ -178,12 +177,11 @@ enum ClipboardInspector: Equatable {
     ) -> FileDetail {
         let name = url.lastPathComponent
         let classification = classifyFile(ext: url.pathExtension.lowercased())
-        let fileExists = FileManager.default.fileExists(atPath: url.path)
         return FileDetail(
             name: name.isEmpty ? path : name,
             path: path,
             type: fileType(for: url),
-            byteCount: fileExists ? fileByteCount(at: url) : nil,
+            byteCount: fileByteCount(at: url),
             isVideo: classification.isVideo,
             isImage: classification.isImage,
             isText: classification.isText,
@@ -271,10 +269,9 @@ enum ClipboardInspector: Equatable {
         // as a single Character — splitting on `"\n"` alone would leave a
         // CRLF-joined remainder intact.
         guard !text.isEmpty else { return [""] }
-        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        return text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .prefix(limit)
             .map(String.init)
-        return Array(lines)
     }
 
     /// Locale-aware: a 12-hour locale sees "Today at 3:03 PM", a 24-hour one
@@ -313,9 +310,5 @@ enum ClipboardInspector: Equatable {
         if values?.isDirectory == true { return nil }
         guard let size = values?.fileSize, size > 0 else { return nil }
         return UInt64(size)
-    }
-
-    private static func sourceAppDisplayName(for bundleID: String?) -> String {
-        ClipboardSourceApp.displayName(for: bundleID)
     }
 }

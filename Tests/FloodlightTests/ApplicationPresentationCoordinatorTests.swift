@@ -350,10 +350,10 @@ private func makeConfigurationController(
         activeShortcut: .optionSpace,
         activeClipboardShortcut: .shiftCommandC,
         launchesAtLogin: false,
-        rootURL: FileManager.default.temporaryDirectory,
+        rootURL: { FileManager.default.temporaryDirectory },
         selectShortcut: { _, shortcut in .requestedShortcutActive(shortcut) },
         setLaunchAtLogin: { _ in nil },
-        chooseScope: { nil },
+        chooseScope: {},
         onFinished: onFinished,
         onDismissed: onDismissed
     )

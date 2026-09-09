@@ -9,13 +9,10 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct FileTextPreviewTests {
-    private let tempDirectory: URL
+    private let tree: TemporaryTree
 
     init() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FileTextPreviewTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        tempDirectory = dir
+        tree = try TemporaryTree(label: "FileTextPreviewTests")
     }
 
     // MARK: - Classification Tests
@@ -109,7 +106,7 @@ struct FileTextPreviewTests {
     // MARK: - Decoder Tests
 
     @Test func decodesJSONContent() throws {
-        let file = tempDirectory.appendingPathComponent("sample.json")
+        let file = tree.root.appendingPathComponent("sample.json")
         let jsonString = """
         {
           "name": "Floodlight",
@@ -127,7 +124,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func decodesMarkdownContentPreservingLines() throws {
-        let file = tempDirectory.appendingPathComponent("notes.md")
+        let file = tree.root.appendingPathComponent("notes.md")
         let mdString = "# Heading\n\nFirst paragraph with notes.\nLine 2."
         try mdString.write(to: file, atomically: true, encoding: .utf8)
 
@@ -141,7 +138,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func detectsEmptyFileExplicitly() throws {
-        let file = tempDirectory.appendingPathComponent("empty.txt")
+        let file = tree.root.appendingPathComponent("empty.txt")
         try "".write(to: file, atomically: true, encoding: .utf8)
 
         let preview = try #require(FileTextPreviewDecoder.decode(at: file))
@@ -151,7 +148,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func rejectsBinaryFileWithTextExtension() throws {
-        let file = tempDirectory.appendingPathComponent("binary.txt")
+        let file = tree.root.appendingPathComponent("binary.txt")
         var data = Data("Some leading text".utf8)
         data.append(0x00) // NUL byte indicator of binary data
         data.append(contentsOf: "trailing text".utf8)
@@ -162,13 +159,13 @@ struct FileTextPreviewTests {
     }
 
     @Test func rejectsMissingFileGracefully() {
-        let missing = tempDirectory.appendingPathComponent("missing-\(UUID().uuidString).json")
+        let missing = tree.root.appendingPathComponent("missing-\(UUID().uuidString).json")
         let preview = FileTextPreviewDecoder.decode(at: missing)
         #expect(preview == nil)
     }
 
     @Test func decodesUTF8WithBOM() throws {
-        let file = tempDirectory.appendingPathComponent("bom-utf8.txt")
+        let file = tree.root.appendingPathComponent("bom-utf8.txt")
         var data = Data([0xEF, 0xBB, 0xBF])
         data.append(contentsOf: "BOM UTF-8 Content".utf8)
         try data.write(to: file)
@@ -179,7 +176,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func decodesUTF16WithBOM() throws {
-        let file = tempDirectory.appendingPathComponent("bom-utf16.txt")
+        let file = tree.root.appendingPathComponent("bom-utf16.txt")
         let text = "UTF-16 Text Content"
         guard let data = text.data(using: .utf16) else {
             Issue.record("failed to encode utf16")
@@ -193,7 +190,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func truncatesFileExceedingLineLimit() throws {
-        let file = tempDirectory.appendingPathComponent("many-lines.py")
+        let file = tree.root.appendingPathComponent("many-lines.py")
         let lines = (1...250).map { "print(\($0))" }
         let content = lines.joined(separator: "\n")
         try content.write(to: file, atomically: true, encoding: .utf8)
@@ -206,7 +203,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func truncatesFileExceedingByteLimit() throws {
-        let file = tempDirectory.appendingPathComponent("large-bytes.txt")
+        let file = tree.root.appendingPathComponent("large-bytes.txt")
         let chunk = String(repeating: "A", count: 1_000) + "\n"
         let content = String(repeating: chunk, count: 100) // 100 KB
         try content.write(to: file, atomically: true, encoding: .utf8)
@@ -221,7 +218,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func rejectsInvalidUTF8() throws {
-        let file = tempDirectory.appendingPathComponent("invalid-utf8.txt")
+        let file = tree.root.appendingPathComponent("invalid-utf8.txt")
         let data = Data([0x48, 0x69, 0xFF, 0xFE, 0x41])
         try data.write(to: file)
 
@@ -230,7 +227,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func byteTruncationNeverSplitsAMultibyteCharacter() throws {
-        let file = tempDirectory.appendingPathComponent("multibyte.txt")
+        let file = tree.root.appendingPathComponent("multibyte.txt")
         let sourceLine = "日本語テキスト🙂"
         let content = Array(repeating: sourceLine, count: 100).joined(separator: "\n")
         try content.write(to: file, atomically: true, encoding: .utf8)
@@ -244,7 +241,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func decodesUnicodeContentAndFilenames() throws {
-        let file = tempDirectory.appendingPathComponent("笔记-🙂.txt")
+        let file = tree.root.appendingPathComponent("笔记-🙂.txt")
         try "héllo wörld\n日本語".write(to: file, atomically: true, encoding: .utf8)
 
         let preview = try #require(FileTextPreviewDecoder.decode(at: file))
@@ -254,7 +251,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func bomOnlyFileIsEmpty() throws {
-        let file = tempDirectory.appendingPathComponent("bom-only.txt")
+        let file = tree.root.appendingPathComponent("bom-only.txt")
         try Data([0xEF, 0xBB, 0xBF]).write(to: file)
 
         let preview = try #require(FileTextPreviewDecoder.decode(at: file))
@@ -263,7 +260,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func directoryWithTextExtensionIsRejected() throws {
-        let directory = tempDirectory.appendingPathComponent("notes.md")
+        let directory = tree.root.appendingPathComponent("notes.md")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let preview = FileTextPreviewDecoder.decode(at: directory)
@@ -273,7 +270,7 @@ struct FileTextPreviewTests {
     // MARK: - Cache & Invalidation Tests
 
     @Test func cacheReturnsStoredPreviewAndInvalidatesOnModification() async throws {
-        let file = tempDirectory.appendingPathComponent("cached.txt")
+        let file = tree.root.appendingPathComponent("cached.txt")
         try "Version 1".write(to: file, atomically: true, encoding: .utf8)
 
         let cache = FileTextPreviewCache()
@@ -305,7 +302,7 @@ struct FileTextPreviewTests {
         filename: String,
         content: String
     ) async throws {
-        let url = tempDirectory.appendingPathComponent(filename)
+        let url = tree.root.appendingPathComponent(filename)
         try content.write(to: url, atomically: true, encoding: .utf8)
         let entrySnapshot = snapshot(forPath: url.path)
 
@@ -329,7 +326,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func nativeFileEntryAndCopiedPathRenderIdentically() async throws {
-        let url = tempDirectory.appendingPathComponent("native-vs-copied.json")
+        let url = tree.root.appendingPathComponent("native-vs-copied.json")
         try "{\n  \"native\": true\n}".write(to: url, atomically: true, encoding: .utf8)
 
         _ = await FileTextPreviewCache.shared.preview(for: url)
@@ -345,11 +342,11 @@ struct FileTextPreviewTests {
     }
 
     @Test func changingSelectionReplacesThePreview() async throws {
-        let urlA = tempDirectory.appendingPathComponent("a.json")
+        let urlA = tree.root.appendingPathComponent("a.json")
         let contentA = (1...12).map { "line \($0): value-\($0)" }.joined(separator: "\n")
         try contentA.write(to: urlA, atomically: true, encoding: .utf8)
 
-        let urlB = tempDirectory.appendingPathComponent("b.json")
+        let urlB = tree.root.appendingPathComponent("b.json")
         try "line 1\nline 2\nline 3".write(to: urlB, atomically: true, encoding: .utf8)
 
         let snapshotA = snapshot(forPath: urlA.path)
@@ -379,16 +376,16 @@ struct FileTextPreviewTests {
         let url: URL
         switch scenario {
         case "binary":
-            url = tempDirectory.appendingPathComponent("unreadable-binary.txt")
+            url = tree.root.appendingPathComponent("unreadable-binary.txt")
             var data = Data("Header".utf8)
             data.append(0x00)
             data.append(contentsOf: "Body".utf8)
             try data.write(to: url)
         case "missing":
-            url = tempDirectory
+            url = tree.root
                 .appendingPathComponent("unreadable-missing-\(UUID().uuidString).json")
         case "directory":
-            url = tempDirectory.appendingPathComponent("unreadable-directory.md")
+            url = tree.root.appendingPathComponent("unreadable-directory.md")
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         default:
             Issue.record("unexpected scenario: \(scenario)")
@@ -408,7 +405,7 @@ struct FileTextPreviewTests {
 
     @Test(.disabled(if: geteuid() == 0, "root ignores file permissions"))
     func permissionDeniedFileFallsBackToMetadataOnly() async throws {
-        let url = tempDirectory.appendingPathComponent("secret.txt")
+        let url = tree.root.appendingPathComponent("secret.txt")
         try "Top secret".write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
         defer {
@@ -430,7 +427,7 @@ struct FileTextPreviewTests {
     }
 
     @Test func emptyFileRendersAnExplicitEmptyState() async throws {
-        let url = tempDirectory.appendingPathComponent("empty-state.txt")
+        let url = tree.root.appendingPathComponent("empty-state.txt")
         try "".write(to: url, atomically: true, encoding: .utf8)
         let entrySnapshot = snapshot(forPath: url.path)
         _ = await FileTextPreviewCache.shared.preview(for: url)

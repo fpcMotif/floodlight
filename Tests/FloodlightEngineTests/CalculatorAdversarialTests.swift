@@ -202,8 +202,8 @@ struct CalculatorAdversarialTests {
     }
 
     @Test func signedBareNumberEvaluatesButUnsignedBareNumberDoesNot() {
-        // looksLikeExpression demands an operator character; a leading
-        // sign satisfies that check, so "-5" is an "expression" but "5" isn't.
+        // A leading sign makes a number an expression; without an operator,
+        // bare numbers stay search queries.
         #expect(Calculator.evaluate("-5") == -5)
         #expect(Calculator.evaluate("+5") == 5)
         #expect(Calculator.evaluate("-0") == 0)

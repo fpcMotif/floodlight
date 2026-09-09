@@ -126,7 +126,7 @@ package final class ApplicationCatalog: Catalog {
         guard !query.isEmpty else { return [] }
         let normalizedQuery = FuzzyMatcher.normalized(query)
 
-        let applicationsByMarker = snapshotApplicationsByMarker()
+        let applicationsByMarker = state.withLock { $0.applicationsByMarker }
         let queryBytes = Array(normalizedQuery.utf8)
         let asciiQuery = queryBytes.allSatisfy { $0 < 0x80 } ? queryBytes : nil
         let indexed = try await index.searchFiles(
@@ -216,7 +216,7 @@ package final class ApplicationCatalog: Catalog {
     }
 
     package func track(query: String, selectedURL: URL) {
-        let markerByApplicationPath = snapshotMarkersByApplicationPath()
+        let markerByApplicationPath = state.withLock { $0.markerByApplicationPath }
         guard let markerName = markerByApplicationPath[selectedURL.standardizedFileURL.path] else {
             return
         }
@@ -328,14 +328,6 @@ package final class ApplicationCatalog: Catalog {
             }
         )
         return CatalogDirectoryFingerprint.make(forPaths: paths, fileManager: fileManager)
-    }
-
-    private func snapshotApplicationsByMarker() -> [String: Application] {
-        state.withLock { $0.applicationsByMarker }
-    }
-
-    private func snapshotMarkersByApplicationPath() -> [String: String] {
-        state.withLock { $0.markerByApplicationPath }
     }
 
     private static func discoverApplications() -> [(name: String, url: URL)] {
