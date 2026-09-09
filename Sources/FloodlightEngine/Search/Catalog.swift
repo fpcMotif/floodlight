@@ -61,6 +61,10 @@ package extension Catalog {
 /// Each band is far enough from its neighbours that no fuzzy score can cross
 /// it, so a strong file match never outranks a weak application match.
 package enum SearchItemRanking {
+    /// A query that is itself a web address (`x.com/abc`, `https://abd.com`).
+    /// The most literal address a query can be — it names its destination
+    /// with no keyword to look up — so it outranks even a matched engine.
+    package static let directLink = 160_000
     /// A matched keyword engine (`yt query`, `claude query`) — a deliberate
     /// address naming its destination, so it outranks fuzzy app/file matches.
     package static let keywordEngine = 150_000

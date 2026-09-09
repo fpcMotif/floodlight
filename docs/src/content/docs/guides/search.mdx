@@ -79,6 +79,31 @@ Type an arithmetic expression such as:
 
 Press <kbd>Return</kbd> to copy the result.
 
+## Direct links
+
+A query that is itself a web address gets its own row at the top of the list,
+showing the destination host and the exact URL it will open. Press
+<kbd>Return</kbd> to open it in your default browser, or <kbd>⌘ C</kbd> to copy
+the full URL without leaving the panel.
+
+```text
+https://example.com/docs   opens as typed
+example.com/docs           opens https://example.com/docs
+example.com                opens https://example.com
+```
+
+An address typed without a scheme is opened over `https`, and only if its last
+label is a known top-level domain — every two-letter domain, plus the common
+long ones such as `.com`, `.dev`, and `.app`. Type the scheme yourself for
+anything else, including local development servers: `http://localhost:3000`
+works, `localhost:3000` does not.
+
+Only `http` and `https` open from the search field. A query with a space in it,
+a local path, an email address, or an address carrying a username before the
+host — `https://example.com@elsewhere.test` — never produces a link row. The
+web fallback below stays one arrow key away, for when you did mean to search
+for the domain name.
+
 ## Web fallback
 
 Every non-empty query includes a final web-search action. It stays below local
