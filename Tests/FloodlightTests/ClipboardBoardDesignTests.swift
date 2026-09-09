@@ -3,6 +3,7 @@ import FloodlightEngine
 import FloodlightTestSupport
 import Foundation
 import os
+import SwiftUI
 import Testing
 @testable import Floodlight
 
@@ -207,6 +208,98 @@ struct ClipboardBoardDesignTests {
         #expect(byTitle["Quick Look"]?.isEnabled == true)
         #expect(byTitle["Show in Finder"]?.isEnabled == true)
         #expect(coordinator.clipboardSearch.selectionFileURL == fileURL)
+    }
+
+    // MARK: - Materials
+
+    /// Nothing is painted under the 60 pt search row in any mode (#94): the
+    /// bar is the shared glass capsule, and the board's opaque well below it
+    /// is the only surface clipboard mode adds. Sampled in the row's empty
+    /// top strip — clear of the magnifier, the mode token, and the field —
+    /// where a mode-conditional fill would be the only thing there.
+    @Test func noModePaintsABackgroundUnderTheSearchRow() throws {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "Acme billing address")
+        let clipboard = try makeCoordinator(clipboardStore: store)
+        clipboard.query = "clip"
+        clipboard.handleTab()
+        #expect(clipboard.isClipboardMode)
+        let idle = try makeCoordinator(clipboardStore: ClipboardHistoryStore.inMemory())
+
+        for coordinator in [idle, clipboard] {
+            let isClipboardMode = coordinator.isClipboardMode
+            let width = FloodlightMetrics.resolvedPanelWidth(isClipboardMode: isClipboardMode)
+            let panel = try rasterize(
+                SearchView(model: coordinator, usesGlassSlab: true),
+                width: width,
+                height: isClipboardMode
+                    ? FloodlightMetrics.clipboardPanelHeight
+                    : FloodlightMetrics.searchHeight
+            )
+            // Six rows down: inside the 60 pt row, above the 24 pt field's
+            // glyphs, and clear of the panel's own rounded top edge.
+            for fraction in [0.4, 0.55, 0.7, 0.85] {
+                let column = Int(width * fraction)
+                #expect(
+                    panel.alpha(column: column, row: 6) == 0,
+                    "clipboard mode \(isClipboardMode): the search row paints at \(column)"
+                )
+            }
+            // The well's filter bar is opaque where the row is bare — the
+            // control that these samples read the row and not the board.
+            if isClipboardMode {
+                #expect(panel.alpha(
+                    column: Int(width) / 2,
+                    row: Int(FloodlightMetrics.searchHeight + FloodlightMetrics.filterBarHeight / 2)
+                ) == 255)
+            }
+        }
+    }
+
+    /// One rasterized view's pixels, addressable from its top-left corner.
+    private struct Raster {
+        let bytes: [UInt8]
+        let width: Int
+
+        /// 0 where nothing painted, 255 where an opaque surface did.
+        func alpha(column: Int, row: Int) -> UInt8 {
+            bytes[(row * width + column) * 4 + 3]
+        }
+    }
+
+    /// Renders `view` over a transparent background at the panel's real size
+    /// — the same `ImageRenderer` seam `SearchViewRenderingTests` uses, with
+    /// the pixels kept instead of discarded.
+    private func rasterize(
+        _ view: some View,
+        width: CGFloat,
+        height: CGFloat,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> Raster {
+        let renderer = ImageRenderer(content: view.frame(width: width, height: height))
+        renderer.proposedSize = ProposedViewSize(width: width, height: height)
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage, sourceLocation: sourceLocation)
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try #require(
+                CGContext(
+                    data: buffer.baseAddress,
+                    width: image.width,
+                    height: image.height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: image.width * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ),
+                sourceLocation: sourceLocation
+            )
+            context.draw(
+                image,
+                in: CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            )
+        }
+        return Raster(bytes: bytes, width: image.width)
     }
 
     @Test func commandKRoutesToTheBoardContextOnlyInClipboardMode() {

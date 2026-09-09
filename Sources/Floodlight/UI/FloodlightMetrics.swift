@@ -34,11 +34,6 @@ enum FloodlightMetrics {
         isClipboardMode ? clipboardPanelWidth : panelWidth
     }
 
-    /// The tint painted under the 60 pt search row in clipboard mode only,
-    /// so the field reads over bright windows behind the glass — the board
-    /// body below it is opaque and needs no such wash (#57 review).
-    static let clipboardFieldTintOpacity: Double = 0.55
-
     /// How far the board's solid "well" insets from the panel's glass edge
     /// on its leading, trailing, and bottom sides — the same 7 pt as a
     /// result row's own padding, so the well reads as a scaled-up row.

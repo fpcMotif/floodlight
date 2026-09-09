@@ -172,6 +172,12 @@ final class FloodlightPanelController {
         }
 
         let glassView = NSGlassEffectView()
+        // Clear by decision, not by accident (#94): the capsule's lens and
+        // rim highlight over the window behind it are the look the panel is
+        // specified to have, in every mode. #1's wording of a regular slab
+        // over a masked backdrop is superseded. Nothing may be painted over
+        // the slab to make content legible — the clipboard board's opaque
+        // well is a surface of its own, inset from the slab's edge.
         glassView.style = .clear
         glassView.cornerRadius = FloodlightMetrics.cornerRadius
         glassView.contentView = hostingController.view

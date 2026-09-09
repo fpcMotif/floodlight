@@ -119,16 +119,10 @@ private struct SearchBar: View {
         }
         .padding(.horizontal, 20)
         .frame(height: FloodlightMetrics.searchHeight, alignment: .center)
-        .background {
-            // Clipboard mode's board body is an opaque well; only the field
-            // above it sits directly over glass and needs this wash to
-            // stay legible over bright windows behind the panel (#57
-            // review).
-            if model.isClipboardMode {
-                Color(nsColor: .windowBackgroundColor)
-                    .opacity(FloodlightMetrics.clipboardFieldTintOpacity)
-            }
-        }
+        // No background in any mode (#94): the row's surface is the shared
+        // glass slab, so the bar is the same capsule whichever mode the
+        // panel is in. A legibility treatment here would have to apply to
+        // every mode, not one.
         .transaction { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
@@ -205,7 +199,7 @@ private struct SearchResultsSection: View {
     var body: some View {
         if model.isClipboardMode {
             // No divider here: the well's own top edge — where its opaque
-            // fill starts — is the separation from the tinted search row
+            // fill starts — is the separation from the glass search row
             // above it (#57 "glass field, solid well").
             ClipboardWell(
                 model: model,
@@ -251,7 +245,7 @@ private struct SearchResultsSection: View {
 /// divider, and footer sit on one opaque "well" — a solid fill with a
 /// hairline inside stroke, inset from the panel's glass on its leading,
 /// trailing, and bottom edges only, so its top edge reads as the seam
-/// between the tinted field above and the solid board below.
+/// between the glass field above and the solid board below.
 ///
 /// The list and the filter bar are the session's rows and intents, so they
 /// keep the coordinator; the inspector and the footer's affordances read
