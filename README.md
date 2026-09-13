@@ -22,7 +22,8 @@ mouse.
 - Time-budgeted FFF content search when filename matches are sparse
 - Live file and folder index updates
 - Persistent FFF frecency and query history
-- FFF-ranked application search via a package-marker index
+- In-memory application search with typo-tolerant fuzzy ranking and recency
+  learning
 - Native System Settings search
 - Arithmetic with precedence, powers, percentages, and unit conversions
 - Web-search fallback in the default browser
@@ -220,7 +221,7 @@ FloodlightPanelController
   │   └─ SearchCoordinator (Search Session and selection)
   │       ├─ SourceSearchEngine actor
   │       │   ├─ FFFFileSource → FFFKit → vendored fff-search
-  │       │   ├─ ApplicationCatalog → private app markers → a second FFFIndex
+  │       │   ├─ ApplicationCatalog → in-memory application snapshot
   │       │   └─ SystemCatalog
   │       ├─ Calculator
   │       ├─ ClipboardSearch (Clipboard mode: rows, inspector, pin and preview facts)
@@ -231,20 +232,22 @@ FloodlightPanelController
   └─ QuickLookController
 ```
 
-The actor owns source startup, cancellation, scope changes, and rebuilds. Each
-FFF instance serializes its own calls on a high-priority queue. Application and
-System Settings matches publish immediately. File and application-marker search
-then run concurrently after a 15–20 ms debounce. Content search waits another
-30 ms. New queries cancel stale work before it can publish.
+The actor owns source startup, cancellation, scope changes, and rebuilds. The
+FFF index serializes its own calls on a high-priority queue. Application and
+System Settings matches publish immediately from their in-memory snapshots.
+File search then runs concurrently after a 15–20 ms debounce. Content search
+waits another 30 ms. New queries cancel stale work before it can publish.
 
 macOS applications are directory packages, while FFF indexes regular files and
 derives directories from indexed file paths. Floodlight discovers apps in
-standard system, user, and CoreServices locations without descending into their
-packages. It writes one empty marker per app under its private Application
-Support directory and gives that marker tree to a dedicated FFF instance. The
-marker result maps back to the real bundle URL, so app fuzzy scoring, frecency,
-and query history use FFF without indexing every package file. `.app` bundles
-elsewhere inside the selected scope are also recognized by the main FFF index.
+standard system, user, and CoreServices locations without descending into
+their packages and holds them in an in-memory snapshot — there is no
+application index on disk. Queries run straight against that snapshot with
+the structural fuzzy matcher, the blocklist, and RecentStore recency
+learning, so an install or removal is one snapshot swap and a typo the
+matcher accepts (a wrong or extra letter) still reaches the app. `.app`
+bundles elsewhere inside the selected scope are also recognized by the main
+FFF index.
 
 ## Search scope and privacy
 
@@ -252,8 +255,8 @@ Floodlight indexes the current user's home directory by default. Change the
 scope with `⌘L`, or from the menu-bar flashlight. The main file
 index uses FFF's native macOS scanner and file-system watcher. Startup, rebuild,
 and scope changes wait until the new snapshot is searchable before results are
-marked settled. Persistent FFF history, frecency data, and private app markers stay on the Mac under
-`~/Library/Application Support/Floodlight`.
+marked settled. Persistent FFF history and frecency data stay on the Mac
+under `~/Library/Application Support/Floodlight`.
 
 macOS privacy rules still apply. To search protected locations, grant Floodlight
 Full Disk Access in System Settings → Privacy & Security. Return on a Clipboard

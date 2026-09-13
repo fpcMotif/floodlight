@@ -36,7 +36,7 @@ case .settings: settings.track(query: query, selectedURL: selectedURL)
 }
 ```
 
-The current file and application sources forward this message to FFF. `SystemCatalog` currently inherits `Catalog.track`'s no-op default, so Settings feedback is safely ignored rather than persisted. Application tracking first maps the real application URL to the corresponding marker inside its FFF index; file tracking uses the selected indexed URL directly.
+The file source forwards this message to FFF. `SystemCatalog` and `ApplicationCatalog` inherit `Catalog.track`'s no-op default, so Settings and application feedback is safely ignored rather than persisted; application learning lives in `RecentStore`, which needs no per-query association. File tracking uses the selected indexed URL directly. (Amended 2026-09-13: earlier builds mapped each application to a private marker file inside a dedicated FFF index and tracked selections there. The application catalog's single in-memory retrieval path made that association unreachable, so the marker index and its tracking were removed rather than kept alive for learning alone.)
 
 Floodlight's Swift `FFFFileSource` calls `FFFKit.FFFIndex.track(query:selectedURL:)`. FFFKit is Swift, but its search and persistence implementation crosses a C-compatible interface into Rust. At the pinned FFF Swift 0.2.0 implementation, the Rust query tracker stores an association equivalent to:
 
@@ -55,7 +55,7 @@ With Floodlight's production storage URL, the association is persisted locally u
 └── lock.mdb
 ```
 
-FFF's separate `frecency.lmdb` does not store this query-selection association. During a later mixed file search, FFF looks up the exact root-and-query entry. After the same path has been selected at least three times, Floodlight's configured FFF search adds `selection count × 100` ranking points to that matching path. For example, three repeated selections add 300 points and four add 400. Application catalogs use the same FFF mechanism over private marker files. `RecentStore` is separate: it supplies query-independent application frequency and recency rather than this query-specific association.
+FFF's separate `frecency.lmdb` does not store this query-selection association. During a later mixed file search, FFF looks up the exact root-and-query entry. After the same path has been selected at least three times, Floodlight's configured FFF search adds `selection count × 100` ranking points to that matching path. For example, three repeated selections add 300 points and four add 400. `RecentStore` is separate: it supplies query-independent application frequency and recency rather than this query-specific association.
 
 Authoritative dependency references for the pinned behavior:
 

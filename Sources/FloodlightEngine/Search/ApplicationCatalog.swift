@@ -27,20 +27,23 @@ package final class ApplicationCatalog: Catalog {
     private let blocklistStore: BlocklistStore
     private let discoveryProvider: @Sendable () -> [(name: String, url: URL)]
 
-    /// - Parameter supportURL: Where earlier builds kept the private
-    ///   application marker index. The catalog no longer reads or writes
-    ///   anything under it — matching runs entirely against the in-memory
-    ///   snapshot — but the parameter stays so callers and upgrade tests can
-    ///   point at that legacy location and verify it is left untouched.
+    /// Nothing here touches disk: matching runs entirely against the
+    /// in-memory snapshot, so whatever `supportURL` points at is neither read
+    /// nor written. A machine upgrading from a marker-index build keeps
+    /// whatever it still has under that directory, byte for byte.
     package init(
+        supportURL: URL? = nil,
         recentStore: RecentStore,
         blocklistStore: BlocklistStore = BlocklistStore(),
-        supportURL: URL? = nil,
         deferDiscovery: Bool = false,
         discoveryProvider: @escaping @Sendable () -> [(name: String, url: URL)] = {
             ApplicationCatalog.discoverApplications()
         }
     ) {
+        // The parameter stays so tests can prove the directory is never
+        // touched (#100); referencing it keeps the dead-code gate honest
+        // without giving the location a job.
+        _ = supportURL
         self.recentStore = recentStore
         self.blocklistStore = blocklistStore
         self.discoveryProvider = discoveryProvider

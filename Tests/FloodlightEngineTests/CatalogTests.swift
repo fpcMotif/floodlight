@@ -99,12 +99,9 @@ struct CatalogTests {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightCoreServicesTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let catalog = ApplicationCatalog(
-            recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL
+            recentStore: RecentStore(defaults: defaults)
         )
 
         let finder = catalog.immediatePage(for: "finder").items
@@ -169,6 +166,79 @@ struct CatalogTests {
         #expect(try await catalog.indexedItems(for: "claude", limit: 80).isEmpty)
     }
 
+    /// #100 acceptance: a fresh catalog startup must create no marker files or
+    /// application FFF databases — the strongest form leaves the support
+    /// directory itself uncreated.
+    @Test func startupLeavesSupportDirectoryFreeOfApplicationIndexArtifacts() async throws {
+        let suiteName = "FloodlightCatalogArtifactsTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let supportURL = TemporaryDirectory.make(label: "FloodlightCatalogSupport")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let claude = URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true)
+        let catalog = ApplicationCatalog(
+            supportURL: supportURL,
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            deferDiscovery: true,
+            discoveryProvider: { [(name: "Claude", url: claude)] }
+        )
+        try await catalog.start()
+
+        #expect(catalog.immediatePage(for: "claude").items.contains { $0.fileURL == claude })
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+
+    /// #100 acceptance: upgrading machines still carry the marker tree and the
+    /// private FFF databases that earlier builds wrote under the support
+    /// directory; search must work without touching a byte of that storage.
+    @Test func legacyApplicationIndexArtifactsStayUntouched() async throws {
+        let suiteName = "FloodlightCatalogLegacyTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let supportURL = TemporaryDirectory.make(label: "FloodlightCatalogLegacy")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+        let itemsURL = supportURL
+            .appendingPathComponent("ApplicationIndex/Items", isDirectory: true)
+        let databaseURL = supportURL
+            .appendingPathComponent("ApplicationIndex/Database", isDirectory: true)
+        try FileManager.default.createDirectory(at: itemsURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: databaseURL, withIntermediateDirectories: true)
+        let artifacts = [
+            itemsURL.appendingPathComponent("Claude.app"),
+            itemsURL.appendingPathComponent("Café.app"),
+            databaseURL.appendingPathComponent("frecency.lmdb"),
+            databaseURL.appendingPathComponent("history.lmdb"),
+        ]
+        for (index, artifact) in artifacts.enumerated() {
+            try Data("legacy-\(index)".utf8).write(to: artifact)
+        }
+        let contentsBefore = try artifacts.map { try Data(contentsOf: $0) }
+        let listingBefore = try FileManager.default
+            .subpathsOfDirectory(atPath: supportURL.path).sorted()
+
+        let claude = URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true)
+        let catalog = ApplicationCatalog(
+            supportURL: supportURL,
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            deferDiscovery: true,
+            discoveryProvider: { [(name: "Claude", url: claude)] }
+        )
+        try await catalog.start()
+        _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+
+        #expect(catalog.immediatePage(for: "claude").items.contains { $0.fileURL == claude })
+        #expect(try artifacts.map { try Data(contentsOf: $0) } == contentsBefore)
+        #expect(
+            try FileManager.default.subpathsOfDirectory(atPath: supportURL.path).sorted()
+                == listingBefore
+        )
+    }
+
     @Test func blocklistNameRulesMatchRegardlessOfCaseAndDiacritics() throws {
         let suiteName = "FloodlightBlocklistFoldingTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -202,12 +272,9 @@ struct CatalogTests {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightCatalogTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let catalog = ApplicationCatalog(
-            recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL
+            recentStore: RecentStore(defaults: defaults)
         )
         try await catalog.start()
         let results = catalog.immediatePage(for: "safari").items
@@ -259,12 +326,9 @@ struct CatalogTests {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightFastCatalogTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let catalog = ApplicationCatalog(
-            recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL
+            recentStore: RecentStore(defaults: defaults)
         )
         let start = ContinuousClock.now
         let page = catalog.immediatePage(for: "claude")
@@ -310,8 +374,6 @@ struct CatalogTests {
         let suiteName = "FloodlightLearningPrefixTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightLearningPrefixTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         // "disc" reaches Discord by name prefix and Disk Cleaner only by
         // correcting the "c" to a "k".
@@ -323,7 +385,6 @@ struct CatalogTests {
 
         let catalog = ApplicationCatalog(
             recentStore: recentStore,
-            supportURL: supportURL,
             discoveryProvider: { [discord, diskCleaner] }
         )
 
@@ -337,8 +398,6 @@ struct CatalogTests {
         let suiteName = "FloodlightLearningWordPrefixTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightLearningWordPrefixTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let googleChrome = Self.application(named: "Google Chrome")
         let chromaEditor = Self.application(named: "Chroma Editor")
@@ -348,7 +407,6 @@ struct CatalogTests {
 
         let catalog = ApplicationCatalog(
             recentStore: recentStore,
-            supportURL: supportURL,
             discoveryProvider: { [googleChrome, chromaEditor] }
         )
 
@@ -362,8 +420,6 @@ struct CatalogTests {
         let suiteName = "FloodlightLearningSameShapeTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightLearningSameShapeTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         // "not" is a name prefix of both, so nothing but learning separates
         // them.
@@ -373,7 +429,6 @@ struct CatalogTests {
         let recentStore = RecentStore(defaults: defaults)
         let catalog = ApplicationCatalog(
             recentStore: recentStore,
-            supportURL: supportURL,
             discoveryProvider: { [notes, notion] }
         )
 
@@ -490,8 +545,6 @@ struct CatalogTests {
         let suiteName = "FloodlightRefreshTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightRefreshTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let notes = (
             name: "Notes",
@@ -504,7 +557,6 @@ struct CatalogTests {
         let discovery = ApplicationDiscoveryFixture([notes])
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
             deferDiscovery: true,
             discoveryProvider: { discovery.snapshot() }
         )
@@ -554,14 +606,11 @@ struct CatalogTests {
         let suiteName = "FloodlightSingleFlightTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightSingleFlightTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let discovery = BlockingApplicationDiscovery()
         defer { discovery.resume(count: 2) }
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
             deferDiscovery: true,
             discoveryProvider: { discovery.snapshot() }
         )
@@ -650,70 +699,5 @@ struct CatalogTests {
         #expect(didRemove)
         #expect(!(catalog.immediatePage(for: "Nebula Controls").items
                 .contains { $0.id == "setting:\(pane)" }))
-    }
-
-    // MARK: - Startup independence from legacy storage
-
-    /// The marker index is gone: starting a catalog pointed at a fresh
-    /// support directory must create nothing there — no marker files, no
-    /// application FFF databases.
-    @Test func startupLeavesSupportDirectoryFreeOfApplicationIndexArtifacts() async throws {
-        let suiteName = "FloodlightStartupIndependenceTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightStartupIndependenceTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
-
-        let catalog = ApplicationCatalog(
-            recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
-            deferDiscovery: true,
-            discoveryProvider: { [Self.application(named: "Notes")] }
-        )
-        try await catalog.start()
-        _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-
-        #expect(catalog.immediatePage(for: "notes").totalMatched == 1)
-        let contents = try FileManager.default.contentsOfDirectory(atPath: supportURL.path)
-        #expect(
-            contents.isEmpty,
-            "catalog startup wrote into its support directory: \(contents)"
-        )
-    }
-
-    /// Machines upgrading from a marker-index build still have those files on
-    /// disk. Search must work with them present and must leave every byte of
-    /// them alone — deletion is a separate, deliberate decision.
-    @Test func legacyApplicationIndexArtifactsRemainUntouched() async throws {
-        let suiteName = "FloodlightLegacyArtifactTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightLegacyArtifactTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
-
-        let fileManager = FileManager.default
-        let items = supportURL
-            .appendingPathComponent("ApplicationIndex/Items", isDirectory: true)
-        let database = supportURL
-            .appendingPathComponent("ApplicationIndex/Database", isDirectory: true)
-        try fileManager.createDirectory(at: items, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: database, withIntermediateDirectories: true)
-        let legacyMarker = items.appendingPathComponent("Notes.app")
-        let legacyDatabase = database.appendingPathComponent("history.lmdb")
-        try Data("legacy marker".utf8).write(to: legacyMarker)
-        try Data("legacy database".utf8).write(to: legacyDatabase)
-
-        let catalog = ApplicationCatalog(
-            recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
-            deferDiscovery: true,
-            discoveryProvider: { [Self.application(named: "Notes")] }
-        )
-        try await catalog.start()
-        _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
-
-        #expect(catalog.immediatePage(for: "notes").totalMatched == 1)
-        #expect(try Data(contentsOf: legacyMarker) == Data("legacy marker".utf8))
-        #expect(try Data(contentsOf: legacyDatabase) == Data("legacy database".utf8))
     }
 }

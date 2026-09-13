@@ -241,12 +241,11 @@ package actor SourceSearchEngine: SourceSearching {
     /// reported count covers all eligible matches before truncation.
     private static let applicationCandidateBudget = 80
 
-    private func execute(token: UInt64, query: String, immediate: Bool) async {
-        let searchSignpost = FloodlightPerformance.begin("SourceSearch")
-        defer { FloodlightPerformance.end("SourceSearch", id: searchSignpost) }
-
-        if let sourceMutation { _ = await sourceMutation.task.value }
-        guard isCurrent(token), !Task.isCancelled else { return }
+    /// The pre-start page: whatever the catalogs hold in memory this moment,
+    /// published before any startup or refresh work so a keystroke never waits
+    /// on either. The debounce paces itself on whether the page found
+    /// anything, so the application page is returned for it.
+    private func publishImmediatePage(token: UInt64, query: String) -> SearchItemPage {
         let appPage = applications.immediatePage(
             for: query,
             limit: Self.applicationCandidateBudget
@@ -271,6 +270,16 @@ package actor SourceSearchEngine: SourceSearching {
             ),
             provenance: immediateCandidates.provenance
         )
+        return appPage
+    }
+
+    private func execute(token: UInt64, query: String, immediate: Bool) async {
+        let searchSignpost = FloodlightPerformance.begin("SourceSearch")
+        defer { FloodlightPerformance.end("SourceSearch", id: searchSignpost) }
+
+        if let sourceMutation { _ = await sourceMutation.task.value }
+        guard isCurrent(token), !Task.isCancelled else { return }
+        let appPage = publishImmediatePage(token: token, query: query)
 
         if !immediate {
             try? await Task.sleep(for: .milliseconds(appPage.items.isEmpty ? 15 : 20))
