@@ -23,6 +23,8 @@ declare -a CAMPAIGN=(
     "originating-query-capture.patch|SelectedResultActionPerformerTests.independentOpensKeepTheirOwnItemAndQuery"
     "cancelled-independent-opens.patch|SelectedResultActionPerformerTests.independentOpensRetainIdentityAcrossReverseCompletion"
     "bypassed-running-application-fallback.patch|SelectedResultActionPerformerTests.successfulApplicationFallbackRecordsRecencyAndLearningAfterOpen"
+    "reintroduced-character-mask.patch|CatalogTests.substitutionTypoWithNovelLetterReachesTheApplication"
+    "reduced-application-candidate-budget.patch|SourceSearchEngineTests.applicationPagesUseTheFullCandidateBudget"
 )
 
 BASELINE_FILTER=$(printf '%s\n' "${CAMPAIGN[@]}" | cut -d '|' -f 2 | paste -sd '|' -)
@@ -48,4 +50,4 @@ for entry in "${CAMPAIGN[@]}"; do
     printf 'caught: %s by %s\n' "$patch" "$test_name"
 done
 
-printf '%s\n' "Swift mutations: 6 caught, 0 missed, 0 timed out, 0 unviable"
+printf '%s\n' "Swift mutations: 8 caught, 0 missed, 0 timed out, 0 unviable"
