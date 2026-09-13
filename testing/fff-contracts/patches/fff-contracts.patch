@@ -1,0 +1,1028 @@
+diff --git a/Vendor/fff/Cargo.lock b/Vendor/fff/Cargo.lock
+index de93390..281a182 100644
+--- a/Vendor/fff/Cargo.lock
++++ b/Vendor/fff/Cargo.lock
+@@ -765,6 +765,18 @@ dependencies = [
+  "zlob",
+ ]
+ 
++[[package]]
++name = "fff-test-harness"
++version = "0.0.0"
++dependencies = [
++ "fff-search",
++ "libc",
++ "proptest",
++ "serde",
++ "serde_json",
++ "tempfile",
++]
++
+ [[package]]
+ name = "file-id"
+ version = "0.2.3"
+diff --git a/Vendor/fff/Cargo.toml b/Vendor/fff/Cargo.toml
+index 99854c5..1046c72 100644
+--- a/Vendor/fff/Cargo.toml
++++ b/Vendor/fff/Cargo.toml
+@@ -7,6 +7,7 @@ members = [
+   "crates/fff-python",
+   "crates/fff-query-parser",
+   "crates/fff-grep",
++  "crates/fff-test-harness",
+ ]
+ 
+ resolver = "2"
+diff --git a/Vendor/fff/Makefile b/Vendor/fff/Makefile
+index 00c5c07..6481d3f 100644
+--- a/Vendor/fff/Makefile
++++ b/Vendor/fff/Makefile
+@@ -14,7 +14,7 @@ SHELL := bash
+ # string rather than the literal `-o` / `pipefail` tokens.
+ .SHELLFLAGS := -o pipefail -euc
+ 
+-.PHONY: build build-c-lib install uninstall test test-rust test-rescan test-rescan-known-defects rescan-probe test-c-smoke test-c-api test-lua test-lua-snap test-version test-bun test-node prepare-bun prepare-bun-packaged prepare-node set-npm-version header test-stress test-stress-seeded test-stress-random test-stress-regressions test-stress-repos test-node-stress sync-js-api sync-js-api-check bump-homebrew-formula bump-install-mcp-sh test-bun-compile
++.PHONY: build build-c-lib install uninstall test test-rust test-harness test-harness-terminal test-rescan test-rescan-known-defects rescan-probe test-c-smoke test-c-api test-lua test-lua-snap test-version test-bun test-node prepare-bun prepare-bun-packaged prepare-node set-npm-version header test-stress test-stress-seeded test-stress-random test-stress-regressions test-stress-repos test-node-stress sync-js-api sync-js-api-check bump-homebrew-formula bump-install-mcp-sh test-bun-compile
+ 
+ all: format test lint
+ 
+@@ -97,6 +97,12 @@ test-setup:
+ test-rust:
+ 	cargo test --workspace --no-default-features --features zlob --exclude fff-nvim --exclude fff-python
+ 
++test-harness:
++	cargo test -p fff-test-harness
++
++test-harness-terminal:
++	printf '%s\n' '{"id":"stop","op":"shutdown"}' | cargo run -q -p fff-test-harness --bin fff-terminal-harness
++
+ # Watcher rescan harness: asserts that editing, build output, git activity and
+ # preview reads all stay on the incremental path instead of re-walking the tree.
+ test-rescan:
+diff --git a/Vendor/fff/crates/fff-c/tests/smoke.c b/Vendor/fff/crates/fff-c/tests/smoke.c
+index 68eaa9a..cfb41eb 100644
+--- a/Vendor/fff/crates/fff-c/tests/smoke.c
++++ b/Vendor/fff/crates/fff-c/tests/smoke.c
+@@ -31,6 +31,34 @@ static uint64_t watch_glob_id = 0;
+ static uint64_t watch_dir_id = 0;
+ static uint64_t watch_all_id = 0;
+ 
++static int expect_error(struct FffResult *result, const char *message) {
++    int matches = result && !result->success && !result->handle && result->error &&
++                  strcmp(result->error, message) == 0;
++    if (!matches) {
++        fprintf(stderr, "C contract expected error: %s\n", message);
++    }
++    fff_free_result(result);
++    return matches ? 0 : 1;
++}
++
++static int error_and_ownership_contract(void) {
++    int failed = 0;
++    failed += expect_error(fff_create_instance_with(NULL), "opts is null");
++    failed += expect_error(
++        fff_create_instance_with(&(struct FffCreateOptions){.version = 0}),
++        "Unsupported FffCreateOptions version 0 (library understands up to 3)");
++    failed += expect_error(
++        fff_create_instance_with(&(struct FffCreateOptions){
++            .version = FFF_CREATE_OPTIONS_VERSION,
++            .base_path = NULL,
++        }),
++        "opts.base_path is null or empty");
++    fff_free_result(NULL);
++    fff_free_search_result(NULL);
++    fff_destroy(NULL);
++    return failed;
++}
++
+ static void on_watch_batch(uint64_t watch_id, struct FffWatchEventBatch *batch, void *user_data) {
+     (void)user_data;
+     /* route by id like real SDKs do; unknown ids are benign no-ops */
+@@ -200,6 +228,10 @@ static int watch_smoke(void) {
+ int main(int argc, char **argv) {
+     const char *base_path = argc > 1 ? argv[1] : ".";
+ 
++    if (error_and_ownership_contract() != 0) {
++        return 1;
++    }
++
+     // make sure that FFF C api is designed more for FFI rather than for direct C usage (I'm sorry)
+     struct FffResult *create_result = fff_create_instance_with(&(struct FffCreateOptions){
+         .version = FFF_CREATE_OPTIONS_VERSION,
+@@ -246,6 +278,14 @@ int main(int argc, char **argv) {
+ 
+     struct FffSearchResult *sr = (struct FffSearchResult *)res->handle;
+     uint32_t total = sr->count;
++    if (fff_search_result_get_item(sr, sr->count) != NULL ||
++        fff_search_result_get_score(sr, sr->count) != NULL) {
++        fprintf(stderr, "FAIL: out-of-bounds search access was not rejected\n");
++        fff_free_search_result(sr);
++        fff_free_result(res);
++        fff_destroy(file_picker);
++        return 1;
++    }
+     int found = 0;
+     for (uint32_t i = 0; i < sr->count; i++) {
+         const char *path = sr->items[i].relative_path;
+diff --git a/Vendor/fff/crates/fff-core/src/score.rs b/Vendor/fff/crates/fff-core/src/score.rs
+index 8fe21ce..b69eb60 100644
+--- a/Vendor/fff/crates/fff-core/src/score.rs
++++ b/Vendor/fff/crates/fff-core/src/score.rs
+@@ -591,12 +591,8 @@ fn sort_and_paginate_dirs<'a>(
+ 
+     sort_with_buffer(&mut results, |a, b| b.1.total.cmp(&a.1.total));
+ 
+-    if results.len() > limit {
+-        let page_end = std::cmp::min(offset + limit, results.len());
+-        let page_size = page_end - offset;
+-        results.drain(0..offset);
+-        results.truncate(page_size);
+-    }
++    results.drain(0..offset);
++    results.truncate(limit);
+ 
+     let (items, scores): (Vec<&DirItem>, Vec<Score>) = results.into_iter().unzip();
+     (items, scores, total_matched)
+@@ -1040,14 +1036,8 @@ fn sort_and_paginate<'a>(
+             .then_with(|| b.0.modified.cmp(&a.0.modified))
+     });
+ 
+-    // in the best scenario truncation happened in the select_nth step
+-    if results.len() > limit {
+-        let page_end = std::cmp::min(offset + limit, results.len());
+-        let page_size = page_end - offset;
+-
+-        results.drain(0..offset);
+-        results.truncate(page_size);
+-    }
++    results.drain(0..offset);
++    results.truncate(limit);
+ 
+     let (items, scores): (Vec<&FileItem>, Vec<Score>) = results.into_iter().unzip();
+     (items, scores, total_matched)
+diff --git a/Vendor/fff/crates/fff-test-harness/Cargo.toml b/Vendor/fff/crates/fff-test-harness/Cargo.toml
+new file mode 100644
+index 0000000..a0503ac
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/Cargo.toml
+@@ -0,0 +1,27 @@
++[package]
++name = "fff-test-harness"
++version = "0.0.0"
++edition = "2024"
++publish = false
++
++[[bin]]
++name = "fff-terminal-harness"
++path = "src/bin/fff-test-terminal.rs"
++
++[lints]
++workspace = true
++
++[features]
++default = ["ripgrep"]
++ripgrep = ["fff-search/ripgrep"]
++zlob = ["fff-search/zlob"]
++
++[dependencies]
++fff-search = { path = "../fff-core", default-features = false }
++libc = "0.2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++tempfile = "3.8"
++
++[dev-dependencies]
++proptest = { version = "1", default-features = false, features = ["std", "fork"] }
+diff --git a/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
+new file mode 100644
+index 0000000..85d30bf
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
+@@ -0,0 +1,262 @@
++use std::io::{self, BufRead, IsTerminal, Write};
++
++use fff_test_harness::{FixtureFile, MAX_TIMEOUT_MS, SearchWorkload};
++use serde::Deserialize;
++use serde_json::{Value, json};
++
++const MAX_COMMANDS: usize = 10_000;
++const MAX_ERROR_BYTES: usize = 512;
++const MAX_LINE_BYTES: usize = 1024 * 1024;
++
++#[derive(Deserialize)]
++#[serde(tag = "op", rename_all = "snake_case")]
++enum Command {
++    Init {
++        id: String,
++        #[serde(default)]
++        files: Vec<FixtureFile>,
++        #[serde(default)]
++        watch: bool,
++    },
++    Query {
++        id: String,
++        #[serde(default)]
++        query: String,
++        #[serde(default)]
++        offset: usize,
++        limit: usize,
++    },
++    Put {
++        id: String,
++        path: String,
++        #[serde(default)]
++        content: String,
++    },
++    Remove {
++        id: String,
++        path: String,
++    },
++    Rename {
++        id: String,
++        from: String,
++        to: String,
++    },
++    Rebuild {
++        id: String,
++    },
++    Quiesce {
++        id: String,
++        #[serde(default = "default_timeout")]
++        timeout_ms: u64,
++    },
++    Observe {
++        id: String,
++    },
++    Shutdown {
++        id: String,
++    },
++}
++
++fn main() {
++    let _echo = EchoGuard::disable();
++    let mut output = io::stdout().lock();
++    let mut workload = match SearchWorkload::new() {
++        Ok(workload) => workload,
++        Err(error) => {
++            emit(&mut output, failure("startup", "startup", &error));
++            return;
++        }
++    };
++    if let Err(error) = workload.init(&[], false) {
++        emit(&mut output, failure("startup", "startup", &error));
++        return;
++    }
++    emit(
++        &mut output,
++        json!({"type":"ready","ready":true,"protocol":1}),
++    );
++
++    for line in io::stdin().lock().lines().take(MAX_COMMANDS) {
++        let line = match line {
++            Ok(line) if line.len() <= MAX_LINE_BYTES => line,
++            Ok(_) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", "command line is too large"),
++                );
++                continue;
++            }
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", &error.to_string()),
++                );
++                break;
++            }
++        };
++        let line = line.replace("\u{1b}[200~", "").replace("\u{1b}[201~", "");
++        if line.is_empty() {
++            continue;
++        }
++        let value: Value = match serde_json::from_str(&line) {
++            Ok(value) => value,
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", &error.to_string()),
++                );
++                continue;
++            }
++        };
++        let fallback_id = value
++            .get("id")
++            .and_then(Value::as_str)
++            .unwrap_or("invalid")
++            .chars()
++            .take(128)
++            .collect::<String>();
++        if value
++            .get("id")
++            .and_then(Value::as_str)
++            .is_some_and(|id| id.len() > 128)
++        {
++            emit(
++                &mut output,
++                failure(&fallback_id, "invalid", "command id exceeds 128 bytes"),
++            );
++            continue;
++        }
++        let command: Command = match serde_json::from_value(value) {
++            Ok(command) => command,
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure(&fallback_id, "invalid", &error.to_string()),
++                );
++                continue;
++            }
++        };
++        let shutdown = matches!(command, Command::Shutdown { .. });
++        emit(&mut output, execute(&mut workload, command));
++        if shutdown {
++            break;
++        }
++    }
++}
++
++fn execute(workload: &mut SearchWorkload, command: Command) -> Value {
++    let (id, op, result) = match command {
++        Command::Init { id, files, watch } => {
++            let result = workload.init(&files, watch).and_then(to_value);
++            (id, "init", result)
++        }
++        Command::Query {
++            id,
++            query,
++            offset,
++            limit,
++        } => {
++            let result = workload.query(&query, offset, limit).and_then(to_value);
++            (id, "query", result)
++        }
++        Command::Put { id, path, content } => {
++            let result = workload.put(&path, &content).and_then(to_value);
++            (id, "put", result)
++        }
++        Command::Remove { id, path } => {
++            let result = workload.remove(&path).and_then(to_value);
++            (id, "remove", result)
++        }
++        Command::Rename { id, from, to } => {
++            let result = workload.rename(&from, &to).and_then(to_value);
++            (id, "rename", result)
++        }
++        Command::Rebuild { id } => {
++            let result = workload
++                .rebuild()
++                .and_then(|_| workload.quiesce(MAX_TIMEOUT_MS))
++                .and_then(to_value);
++            (id, "rebuild", result)
++        }
++        Command::Quiesce { id, timeout_ms } => {
++            let result = workload.quiesce(timeout_ms).and_then(to_value);
++            (id, "quiesce", result)
++        }
++        Command::Observe { id } => {
++            let result = workload.observe().and_then(to_value);
++            (id, "observe", result)
++        }
++        Command::Shutdown { id } => {
++            workload.shutdown();
++            (id, "shutdown", Ok(json!({"shutdown":true})))
++        }
++    };
++    match result {
++        Ok(data) => json!({"type":"result","id":id,"op":op,"ok":true,"data":data}),
++        Err(error) => failure(&id, op, &error),
++    }
++}
++
++fn to_value(value: impl serde::Serialize) -> Result<Value, String> {
++    serde_json::to_value(value).map_err(|error| error.to_string())
++}
++
++fn failure(id: &str, op: &str, error: &str) -> Value {
++    let error = error.chars().take(MAX_ERROR_BYTES).collect::<String>();
++    json!({"type":"result","id":id,"op":op,"ok":false,"error":error})
++}
++
++fn emit(output: &mut impl Write, value: Value) {
++    let _ = serde_json::to_writer(&mut *output, &value);
++    let _ = output.write_all(b"\n");
++    let _ = output.flush();
++}
++
++fn default_timeout() -> u64 {
++    MAX_TIMEOUT_MS
++}
++
++#[cfg(unix)]
++struct EchoGuard(Option<libc::termios>);
++
++#[cfg(unix)]
++impl EchoGuard {
++    fn disable() -> Self {
++        if !io::stdin().is_terminal() {
++            return Self(None);
++        }
++        unsafe {
++            let mut original = std::mem::zeroed();
++            if libc::tcgetattr(libc::STDIN_FILENO, &mut original) != 0 {
++                return Self(None);
++            }
++            let mut quiet = original;
++            quiet.c_lflag &= !libc::ECHO;
++            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &quiet) != 0 {
++                return Self(None);
++            }
++            Self(Some(original))
++        }
++    }
++}
++
++#[cfg(unix)]
++impl Drop for EchoGuard {
++    fn drop(&mut self) {
++        if let Some(original) = self.0 {
++            unsafe {
++                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original);
++            }
++        }
++    }
++}
++
++#[cfg(not(unix))]
++struct EchoGuard;
++
++#[cfg(not(unix))]
++impl EchoGuard {
++    fn disable() -> Self {
++        Self
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/src/lib.rs b/Vendor/fff/crates/fff-test-harness/src/lib.rs
+new file mode 100644
+index 0000000..b62a1d3
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/src/lib.rs
+@@ -0,0 +1,358 @@
++use std::fs;
++use std::path::{Component, Path, PathBuf};
++use std::time::Duration;
++
++use fff_search::{
++    FFFMode, FilePicker, FilePickerOptions, FuzzySearchOptions, PaginationArgs, QueryParser,
++    SharedFilePicker, SharedFrecency,
++};
++use serde::{Deserialize, Serialize};
++use tempfile::TempDir;
++
++pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
++pub const MAX_FIXTURE_FILES: usize = 256;
++pub const MAX_LIMIT: usize = 100;
++pub const MAX_PATH_BYTES: usize = 512;
++pub const MAX_QUERY_BYTES: usize = 512;
++pub const MAX_TIMEOUT_MS: u64 = 10_000;
++
++#[derive(Clone, Debug, Deserialize, Serialize)]
++pub struct FixtureFile {
++    pub path: String,
++    #[serde(default)]
++    pub content: String,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct SearchItem {
++    pub path: String,
++    pub file_name: String,
++    pub score: i32,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct SearchPage {
++    pub items: Vec<SearchItem>,
++    pub total_matched: usize,
++    pub total_files: usize,
++    pub offset: usize,
++    pub limit: usize,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct Observation {
++    pub initialized: bool,
++    pub root: String,
++    pub live_files: usize,
++    pub scanned_files: usize,
++    pub scanning: bool,
++    pub watcher_ready: bool,
++    pub generation: u64,
++}
++
++pub struct SearchWorkload {
++    fixture: TempDir,
++    picker: SharedFilePicker,
++    frecency: SharedFrecency,
++    initialized: bool,
++    watch: bool,
++    generation: u64,
++}
++
++impl SearchWorkload {
++    pub fn new() -> Result<Self, String> {
++        Ok(Self {
++            fixture: tempfile::tempdir().map_err(|error| error.to_string())?,
++            picker: SharedFilePicker::default(),
++            frecency: SharedFrecency::noop(),
++            initialized: false,
++            watch: false,
++            generation: 0,
++        })
++    }
++
++    pub fn init(&mut self, files: &[FixtureFile], watch: bool) -> Result<Observation, String> {
++        if files.len() > MAX_FIXTURE_FILES {
++            return Err(format!("fixture exceeds {MAX_FIXTURE_FILES} files"));
++        }
++        self.shutdown();
++        self.clear_fixture()?;
++        for file in files {
++            self.write_fixture(&file.path, &file.content)?;
++        }
++
++        self.picker = SharedFilePicker::default();
++        self.frecency = SharedFrecency::noop();
++        FilePicker::new_with_shared_state(
++            self.picker.clone(),
++            self.frecency.clone(),
++            FilePickerOptions {
++                base_path: self.root().to_string_lossy().into_owned(),
++                mode: FFFMode::Ai,
++                watch,
++                enable_content_indexing: false,
++                enable_mmap_cache: false,
++                ..Default::default()
++            },
++        )
++        .map_err(|error| error.to_string())?;
++        self.initialized = true;
++        self.watch = watch;
++        self.generation += 1;
++        self.quiesce(MAX_TIMEOUT_MS)
++    }
++
++    pub fn query(&self, query: &str, offset: usize, limit: usize) -> Result<SearchPage, String> {
++        if query.len() > MAX_QUERY_BYTES {
++            return Err(format!("query exceeds {MAX_QUERY_BYTES} bytes"));
++        }
++        if limit > MAX_LIMIT {
++            return Err(format!("limit exceeds {MAX_LIMIT}"));
++        }
++        let offset = offset.min(MAX_FIXTURE_FILES);
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let parsed = QueryParser::default().parse(query);
++        let results = picker.fuzzy_search(
++            &parsed,
++            None,
++            FuzzySearchOptions {
++                max_threads: 1,
++                pagination: PaginationArgs { offset, limit },
++                ..Default::default()
++            },
++        );
++        let items = results
++            .items
++            .iter()
++            .zip(&results.scores)
++            .map(|(item, score)| SearchItem {
++                path: item.relative_path(picker),
++                file_name: item.file_name(picker),
++                score: score.total,
++            })
++            .collect();
++        Ok(SearchPage {
++            items,
++            total_matched: results.total_matched,
++            total_files: results.total_files,
++            offset,
++            limit,
++        })
++    }
++
++    pub fn query_directories(
++        &self,
++        query: &str,
++        offset: usize,
++        limit: usize,
++    ) -> Result<SearchPage, String> {
++        if query.len() > MAX_QUERY_BYTES {
++            return Err(format!("query exceeds {MAX_QUERY_BYTES} bytes"));
++        }
++        if limit > MAX_LIMIT {
++            return Err(format!("limit exceeds {MAX_LIMIT}"));
++        }
++        let offset = offset.min(MAX_FIXTURE_FILES);
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let parsed = QueryParser::default().parse(query);
++        let results = picker.fuzzy_search_directories(
++            &parsed,
++            FuzzySearchOptions {
++                max_threads: 1,
++                pagination: PaginationArgs { offset, limit },
++                ..Default::default()
++            },
++        );
++        let items = results
++            .items
++            .iter()
++            .zip(&results.scores)
++            .map(|(item, score)| {
++                let path = item.relative_path(picker);
++                SearchItem {
++                    file_name: path
++                        .trim_end_matches('/')
++                        .rsplit('/')
++                        .next()
++                        .unwrap_or("")
++                        .to_string(),
++                    path,
++                    score: score.total,
++                }
++            })
++            .collect();
++        Ok(SearchPage {
++            items,
++            total_matched: results.total_matched,
++            total_files: results.total_dirs,
++            offset,
++            limit,
++        })
++    }
++
++    pub fn put(&mut self, path: &str, content: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let absolute = self.write_fixture(path, content)?;
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker
++            .handle_create_or_modify(&absolute)
++            .ok_or_else(|| "index rejected put; rebuild required".to_string())?;
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn remove(&mut self, path: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let absolute = self.resolve_path(path)?;
++        match fs::remove_file(&absolute) {
++            Ok(()) => {}
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++            Err(error) => return Err(error.to_string()),
++        }
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker.remove_file_by_path(&absolute);
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn rename(&mut self, from: &str, to: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let source = self.resolve_path(from)?;
++        let destination = self.resolve_path(to)?;
++        if let Some(parent) = destination.parent() {
++            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
++        }
++        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker.remove_file_by_path(&source);
++        picker
++            .handle_create_or_modify(&destination)
++            .ok_or_else(|| "index rejected rename; rebuild required".to_string())?;
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn rebuild(&mut self) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        self.picker
++            .trigger_full_rescan_async(&self.frecency)
++            .map_err(|error| error.to_string())?;
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn quiesce(&self, timeout_ms: u64) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let timeout = Duration::from_millis(timeout_ms.min(MAX_TIMEOUT_MS));
++        if !self.picker.wait_for_indexing_complete(timeout) {
++            return Err("index did not quiesce before timeout".to_string());
++        }
++        if self.watch && !self.picker.wait_for_watcher(timeout) {
++            return Err("watcher was not ready before timeout".to_string());
++        }
++        self.observe()
++    }
++
++    pub fn observe(&self) -> Result<Observation, String> {
++        let root = self.root().to_string_lossy().into_owned();
++        if !self.initialized {
++            return Ok(Observation {
++                initialized: false,
++                root,
++                live_files: 0,
++                scanned_files: 0,
++                scanning: false,
++                watcher_ready: false,
++                generation: self.generation,
++            });
++        }
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let progress = picker.get_scan_progress();
++        Ok(Observation {
++            initialized: true,
++            root,
++            live_files: picker.live_file_count(),
++            scanned_files: progress.scanned_files_count,
++            scanning: progress.is_scanning || picker.is_post_scan_active(),
++            watcher_ready: progress.is_watcher_ready,
++            generation: self.generation,
++        })
++    }
++
++    pub fn shutdown(&mut self) {
++        self.picker.shutdown_watches_and_wait();
++        if let Ok(mut guard) = self.picker.write()
++            && let Some(mut picker) = guard.take()
++        {
++            picker.stop_background_monitor();
++        }
++        self.initialized = false;
++        self.watch = false;
++    }
++
++    pub fn root(&self) -> &Path {
++        self.fixture.path()
++    }
++
++    fn clear_fixture(&self) -> Result<(), String> {
++        for entry in fs::read_dir(self.root()).map_err(|error| error.to_string())? {
++            let path = entry.map_err(|error| error.to_string())?.path();
++            if path.is_dir() {
++                fs::remove_dir_all(path).map_err(|error| error.to_string())?;
++            } else {
++                fs::remove_file(path).map_err(|error| error.to_string())?;
++            }
++        }
++        Ok(())
++    }
++
++    fn ensure_initialized(&self) -> Result<(), String> {
++        if self.initialized {
++            Ok(())
++        } else {
++            Err("workload is not initialized".to_string())
++        }
++    }
++
++    fn resolve_path(&self, path: &str) -> Result<PathBuf, String> {
++        if path.is_empty() || path.len() > MAX_PATH_BYTES {
++            return Err(format!("path must contain 1..={MAX_PATH_BYTES} bytes"));
++        }
++        let path = Path::new(path);
++        if path.is_absolute()
++            || path
++                .components()
++                .any(|part| !matches!(part, Component::Normal(_)))
++        {
++            return Err("path must be a plain relative path".to_string());
++        }
++        Ok(self.root().join(path))
++    }
++
++    fn write_fixture(&self, path: &str, content: &str) -> Result<PathBuf, String> {
++        if content.len() > MAX_CONTENT_BYTES {
++            return Err(format!("content exceeds {MAX_CONTENT_BYTES} bytes"));
++        }
++        let absolute = self.resolve_path(path)?;
++        if let Some(parent) = absolute.parent() {
++            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
++        }
++        fs::write(&absolute, content).map_err(|error| error.to_string())?;
++        Ok(absolute)
++    }
++}
++
++impl Drop for SearchWorkload {
++    fn drop(&mut self) {
++        self.shutdown();
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/tests/contracts.rs b/Vendor/fff/crates/fff-test-harness/tests/contracts.rs
+new file mode 100644
+index 0000000..2eda22e
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/tests/contracts.rs
+@@ -0,0 +1,138 @@
++use std::collections::BTreeSet;
++
++use fff_test_harness::{FixtureFile, MAX_LIMIT, SearchWorkload};
++use proptest::prelude::*;
++
++fn fixture() -> Vec<FixtureFile> {
++    [
++        "src/main.rs",
++        "src/nested/main.rs",
++        "docs/résumé guide.md",
++        "quotes/a'b\"c.txt",
++        "space name.txt",
++        "empty",
++    ]
++    .into_iter()
++    .map(|path| FixtureFile {
++        path: path.to_string(),
++        content: format!("fixture for {path}"),
++    })
++    .collect()
++}
++
++#[test]
++fn r01_results_are_bounded_unique_and_paginated() {
++    let mut workload = SearchWorkload::new().unwrap();
++    workload.init(&fixture(), false).unwrap();
++
++    let all = workload.query("", 0, MAX_LIMIT).unwrap();
++    let first = workload.query("", 0, 2).unwrap();
++    let second = workload.query("", 2, 2).unwrap();
++    let all_directories = workload.query_directories("", 0, MAX_LIMIT).unwrap();
++    let second_directory = workload.query_directories("", 1, 1).unwrap();
++    let identities = all
++        .items
++        .iter()
++        .map(|item| item.path.as_str())
++        .collect::<BTreeSet<_>>();
++
++    assert_eq!(all.items.len(), all.total_matched);
++    assert_eq!(identities.len(), all.items.len());
++    assert_eq!(first.items, all.items[0..2]);
++    assert_eq!(second.items, all.items[2..4]);
++    assert!(!all_directories.items.is_empty());
++    assert_eq!(second_directory.items, all_directories.items[1..2]);
++    assert!(
++        all.items
++            .iter()
++            .all(|item| workload.root().join(&item.path).is_file())
++    );
++    assert!(
++        workload
++            .query("résumé", 0, 4)
++            .unwrap()
++            .items
++            .iter()
++            .any(|item| item.path == "docs/résumé guide.md")
++    );
++}
++
++proptest! {
++    #![proptest_config(ProptestConfig::with_cases(24))]
++
++    #[test]
++    fn r01_pages_match_the_same_real_search(
++        offset in 0usize..10,
++        limit in 0usize..12,
++        query in prop::sample::select(vec!["", "main", "résumé", "space", "a'b\"c"])
++    ) {
++        let mut workload = SearchWorkload::new().unwrap();
++        workload.init(&fixture(), false).unwrap();
++        let all = workload.query(query, 0, MAX_LIMIT).unwrap();
++        let page = workload.query(query, offset, limit).unwrap();
++        let effective_limit = if limit == 0 { all.items.len() } else { limit };
++        let end = offset.saturating_add(effective_limit).min(all.items.len());
++        let expected = if offset < all.items.len() { &all.items[offset..end] } else { &[] };
++
++        prop_assert!(limit == 0 || page.items.len() <= limit);
++        prop_assert!(page.items.iter().all(|item| workload.root().join(&item.path).is_file()));
++        prop_assert_eq!(&page.items, expected);
++        prop_assert_eq!(page.total_matched, all.total_matched);
++    }
++
++    #[test]
++    fn r03_bounded_filesystem_lifecycle_converges(
++        operations in prop::collection::vec((0u8..5, 0usize..8), 1..20)
++    ) {
++        let mut workload = SearchWorkload::new().unwrap();
++        workload.init(&[], false).unwrap();
++        let mut expected = BTreeSet::new();
++
++        for (kind, slot) in operations {
++            let path = format!("generated/item-{slot}.txt");
++            let renamed = format!("renamed/item-{slot}.txt");
++            match kind {
++                0 => {
++                    workload.put(&path, &format!("value {slot}")).unwrap();
++                    expected.insert(path);
++                }
++                1 => {
++                    workload.remove(&path).unwrap();
++                    expected.remove(&path);
++                }
++                2 if expected.contains(&path) => {
++                    workload.rename(&path, &renamed).unwrap();
++                    expected.remove(&path);
++                    expected.insert(renamed);
++                }
++                3 => {
++                    let files = expected
++                        .iter()
++                        .map(|path| FixtureFile {
++                            path: path.clone(),
++                            content: "restored".to_string(),
++                        })
++                        .collect::<Vec<_>>();
++                    workload.shutdown();
++                    workload.init(&files, false).unwrap();
++                }
++                _ => {
++                    workload.rebuild().unwrap();
++                    workload.quiesce(10_000).unwrap();
++                }
++            }
++        }
++
++        workload.rebuild().unwrap();
++        let observation = workload.quiesce(10_000).unwrap();
++        let found = workload
++            .query("", 0, MAX_LIMIT)
++            .unwrap()
++            .items
++            .into_iter()
++            .map(|item| item.path)
++            .collect::<BTreeSet<_>>();
++        prop_assert!(!observation.scanning);
++        prop_assert_eq!(found, expected);
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/tests/terminal.rs b/Vendor/fff/crates/fff-test-harness/tests/terminal.rs
+new file mode 100644
+index 0000000..c8d727a
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/tests/terminal.rs
+@@ -0,0 +1,51 @@
++use std::io::Write;
++use std::process::{Command, Stdio};
++
++use serde_json::Value;
++
++#[test]
++fn terminal_protocol_marks_ready_and_correlates_every_operation() {
++    let mut child = Command::new(env!("CARGO_BIN_EXE_fff-terminal-harness"))
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .spawn()
++        .unwrap();
++    let input = [
++        r#"{"id":"init","op":"init","files":[{"path":"alpha.txt","content":"a"}]}"#,
++        r#"{"id":"query","op":"query","query":"alpha","offset":0,"limit":5}"#,
++        r#"{"id":"put","op":"put","path":"beta.txt","content":"b"}"#,
++        r#"{"id":"rename","op":"rename","from":"beta.txt","to":"gamma.txt"}"#,
++        r#"{"id":"remove","op":"remove","path":"gamma.txt"}"#,
++        r#"{"id":"rebuild","op":"rebuild"}"#,
++        r#"{"id":"quiesce","op":"quiesce","timeout_ms":10000}"#,
++        r#"{"id":"observe","op":"observe"}"#,
++        r#"{"id":"shutdown","op":"shutdown"}"#,
++    ]
++    .into_iter()
++    .map(|line| format!("\u{1b}[200~{line}\n\u{1b}[201~"))
++    .collect::<String>();
++    child
++        .stdin
++        .take()
++        .unwrap()
++        .write_all(input.as_bytes())
++        .unwrap();
++
++    let output = child.wait_with_output().unwrap();
++    assert!(output.status.success());
++    let lines = String::from_utf8(output.stdout).unwrap();
++    let messages = lines
++        .lines()
++        .map(|line| serde_json::from_str::<Value>(line).unwrap())
++        .collect::<Vec<_>>();
++
++    assert_eq!(messages.len(), 10);
++    assert_eq!(messages[0]["type"], "ready");
++    assert_eq!(messages[0]["ready"], true);
++    for (message, id) in messages[1..].iter().zip([
++        "init", "query", "put", "rename", "remove", "rebuild", "quiesce", "observe", "shutdown",
++    ]) {
++        assert_eq!(message["id"], id);
++        assert_eq!(message["ok"], true, "{message}");
++    }
++}

@@ -7,7 +7,8 @@ import Testing
 
 @MainActor
 struct SelectedResultActionPerformerTests {
-    @Test func copyActivationDismissesOnlyAfterSuccessfulWrite() {
+    @Test("L05: copy dismissal follows the clipboard write outcome")
+    func copyActivationDismissesOnlyAfterSuccessfulWrite() {
         let successful = makeHarness()
         let item = copyItem(value: "42")
 
@@ -327,7 +328,8 @@ struct SelectedResultActionPerformerTests {
         #expect(harness.presentation.events.isEmpty)
     }
 
-    @Test func runningApplicationSuccessRecordsRecencyAndLearningWithoutOpening() async throws {
+    @Test("L01: running application activation records success without opening")
+    func runningApplicationSuccessRecordsRecencyAndLearningWithoutOpening() async throws {
         let harness = makeHarness(activatesRunningApplication: true)
         let item = SearchFixtures.application(name: "Calendar")
         let url = try #require(item.fileURL)
@@ -360,8 +362,9 @@ struct SelectedResultActionPerformerTests {
         #expect(learned == [.init(itemID: item.id, url: url, query: "rep")])
     }
 
-    @Test func successfulApplicationFallbackRecordsRecencyAndLearningAfterOpen() async throws {
-        let openGate = OpenGate()
+    @Test("L02: failed fast activation falls back to normal application opening")
+    func successfulApplicationFallbackRecordsRecencyAndLearningAfterOpen() async throws {
+        let openGate = AsyncTestGate()
         let harness = makeHarness(openGate: openGate)
         let item = SearchFixtures.application(name: "Calendar")
         let url = try #require(item.fileURL)
@@ -379,7 +382,7 @@ struct SelectedResultActionPerformerTests {
             .openRequested(url, asApplication: true),
         ])
 
-        await openGate.resume()
+        await openGate.open()
         try await waitUntil {
             await harness.learning.count == 1
                 && harness.recentStore.boost(for: item.id) > 0
@@ -396,8 +399,9 @@ struct SelectedResultActionPerformerTests {
         #expect(learned == [.init(itemID: item.id, url: url, query: "cal")])
     }
 
-    @Test func failedApplicationOpenDoesNotRecordOrLearn() async throws {
-        let openGate = OpenGate()
+    @Test("L04: delayed open failure stays dismissed and records no learning")
+    func failedApplicationOpenDoesNotRecordOrLearn() async throws {
+        let openGate = AsyncTestGate()
         let harness = makeHarness(openError: TestFailure.openFailed, openGate: openGate)
         let item = SearchFixtures.application(name: "Calendar")
         let url = try #require(item.fileURL)
@@ -414,7 +418,7 @@ struct SelectedResultActionPerformerTests {
             .openRequested(url, asApplication: true),
         ])
 
-        await openGate.resume()
+        await openGate.open()
         try await waitUntil { harness.effects.completedOpenCount == 1 }
         await Task.yield()
         #expect(harness.recentStore.boost(for: item.id) == 0)
@@ -439,7 +443,8 @@ struct SelectedResultActionPerformerTests {
         #expect(harness.presentation.events.isEmpty)
     }
 
-    @Test func revealRequiresAFileURLAndDismissesOnlyWhenDispatched() throws {
+    @Test("L06: reveal dispatches only supported file targets")
+    func revealRequiresAFileURLAndDismissesOnlyWhenDispatched() throws {
         let harness = makeHarness()
         let file = SearchFixtures.file(name: "report.pdf")
         let web = try SearchItem(
@@ -487,17 +492,19 @@ struct SelectedResultActionPerformerTests {
         ]))
     }
 
-    private func makeHarness(
+    func makeHarness(
         clipboardSucceeds: Bool = true,
         openError: (any Error)? = nil,
-        openGate: OpenGate? = nil,
+        openGate: AsyncTestGate? = nil,
+        openGates: [URL: AsyncTestGate] = [:],
         activatesRunningApplication: Bool = false,
         assistantRunner: any AssistantProcessRunning = ScriptedAssistantRunner()
-    ) -> Harness {
-        Harness(
+    ) -> SelectedResultActionHarness {
+        SelectedResultActionHarness(
             clipboardSucceeds: clipboardSucceeds,
             openError: openError,
             openGate: openGate,
+            openGates: openGates,
             activatesRunningApplication: activatesRunningApplication,
             assistantRunner: assistantRunner
         )
@@ -529,7 +536,7 @@ struct SelectedResultActionPerformerTests {
     /// sanitized run. The default matches the rest of the suite — the 2s this
     /// file used to carry was an outlier that a shared CI runner, saturated
     /// by the concurrency stress tests, walked past on work that does land.
-    private func waitUntil(
+    func waitUntil(
         timeout: TimeInterval = 5,
         _ condition: () async -> Bool
     ) async throws {
@@ -544,20 +551,21 @@ struct SelectedResultActionPerformerTests {
 }
 
 @MainActor
-private final class Harness {
-    let events = EventRecorder()
-    let effects: ScriptedSelectedResultActionEffects
+final class SelectedResultActionHarness {
+    fileprivate let events = EventRecorder()
+    fileprivate let effects: ScriptedSelectedResultActionEffects
     let assistantRunSession: AssistantRunSession
-    let activator: ScriptedRunningApplicationActivator
+    fileprivate let activator: ScriptedRunningApplicationActivator
     let recentStore: RecentStore
     let learning = LearningRecorder()
-    let presentation = PresentationRecorder()
+    fileprivate let presentation = PresentationRecorder()
     let performer: SelectedResultActionPerformer
 
     init(
         clipboardSucceeds: Bool,
         openError: (any Error)?,
-        openGate: OpenGate?,
+        openGate: AsyncTestGate?,
+        openGates: [URL: AsyncTestGate],
         activatesRunningApplication: Bool,
         assistantRunner: any AssistantProcessRunning
     ) {
@@ -565,6 +573,7 @@ private final class Harness {
             clipboardSucceeds: clipboardSucceeds,
             openError: openError,
             openGate: openGate,
+            openGates: openGates,
             events: events
         )
         assistantRunSession = AssistantRunSession(runner: assistantRunner)
@@ -609,7 +618,8 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
 
     private let clipboardSucceeds: Bool
     private let openError: (any Error)?
-    private let openGate: OpenGate?
+    private let openGate: AsyncTestGate?
+    private let openGates: [URL: AsyncTestGate]
     private let events: EventRecorder
     private(set) var clipboardValues: [String] = []
     private(set) var clipboardFilePaths: [[String]] = []
@@ -622,12 +632,14 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     init(
         clipboardSucceeds: Bool,
         openError: (any Error)?,
-        openGate: OpenGate?,
+        openGate: AsyncTestGate?,
+        openGates: [URL: AsyncTestGate],
         events: EventRecorder
     ) {
         self.clipboardSucceeds = clipboardSucceeds
         self.openError = openError
         self.openGate = openGate
+        self.openGates = openGates
         self.events = events
     }
 
@@ -657,7 +669,7 @@ private final class ScriptedSelectedResultActionEffects: SelectedResultActionEff
     func open(_ url: URL, asApplication: Bool) async throws {
         openRequests.append(.init(url: url, asApplication: asApplication))
         events.record(.openRequested(url, asApplication: asApplication))
-        if let openGate {
+        if let openGate = openGates[url] ?? openGate {
             await openGate.wait()
         }
         defer { completedOpenCount += 1 }
@@ -691,7 +703,7 @@ private final class ScriptedRunningApplicationActivator: RunningApplicationActiv
     }
 }
 
-private actor LearningRecorder {
+actor LearningRecorder {
     struct Entry: Hashable {
         let itemID: SearchItem.ID
         let url: URL
@@ -746,22 +758,6 @@ private enum ActionEvent: Equatable {
     case pasteDelivered
     case showSettings
     case learned(SearchItem.ID, URL, String)
-}
-
-private actor OpenGate {
-    private var isOpen = false
-    private var continuation: CheckedContinuation<Void, Never>?
-
-    func wait() async {
-        guard !isOpen else { return }
-        await withCheckedContinuation { continuation = $0 }
-    }
-
-    func resume() {
-        isOpen = true
-        continuation?.resume()
-        continuation = nil
-    }
 }
 
 private enum TestFailure: Error {

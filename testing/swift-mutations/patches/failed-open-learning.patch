@@ -1,0 +1,16 @@
+diff --git a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+--- a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
++++ b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+@@ -256,11 +256,11 @@ final class SelectedResultActionPerformer {
+         onDismiss()
+         Task { [effects, recentStore, trackSelection] in
+             do {
+-                try await effects.open(url, asApplication: isApplication)
+                 if isApplication {
+                     recentStore.record(item.id)
+                 }
+                 await trackSelection(item.id, url, query)
++                try await effects.open(url, asApplication: isApplication)
+             } catch {
+                 NSLog(
+                     "Floodlight could not open selected %@ result: %@",

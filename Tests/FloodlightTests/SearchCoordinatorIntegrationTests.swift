@@ -224,41 +224,38 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
 
     // MARK: - Staleness and the generation guard
 
-    @Test func ASlowIndexedPassForAnOldQueryNeverOverwritesANewerOne() async throws {
-        // The race that matters: the user types "a", the indexed pass for
-        // "a" takes 300ms, and meanwhile they finish typing "ab". The "a"
-        // results must never appear under "ab".
+    @Test("S01: a superseded completion cannot replace the current publication")
+    func supersededCompletionCannotReplaceCurrentPublication() async throws {
+        let stale = SearchFixtures.file(name: "ab-stale.txt", score: 90_000)
+        let current = SearchFixtures.file(name: "ab-current.txt", score: 100_000)
+        let gate = AsyncTestGate()
+        let files = ScriptedFileSource()
+        files.setIndexed([stale], forQuery: "a", gatedBy: gate)
+        files.setIndexed([current], forQuery: "ab")
         let applications = ScriptedCatalog()
-        applications.setBehavior(
-            .init(
-                immediate: [SearchFixtures.application(id: "app:slow", name: "Slow")],
-                indexed: [SearchFixtures.application(id: "app:stale", name: "Stale")],
-                indexedDelay: .milliseconds(300)
-            ),
-            forQuery: "a"
-        )
-        applications.setBehavior(
-            .init(
-                immediate: [SearchFixtures.application(id: "app:fast", name: "Fast")],
-                indexed: [SearchFixtures.application(id: "app:fresh", name: "Fresh")]
-            ),
-            forQuery: "ab"
-        )
-        let coordinator = try await makeCoordinator(applications: applications)
+        applications.setBehavior(.init(immediate: [stale]), forQuery: "a")
+        let coordinator = try await makeCoordinator(applications: applications, files: files)
 
         coordinator.query = "a"
+        try await waitUntil("the stale row publishes before its source blocks") {
+            let sourceIsBlocked = await gate.waitingCount == 1
+            return sourceIsBlocked && coordinator.results.contains { $0.id == stale.id }
+        }
         coordinator.query = "ab"
+        try await waitUntil("the current publication settles") {
+            !coordinator.isSearching && coordinator.results.contains { $0.id == current.id }
+        }
+        let selectedID = coordinator.selectedID
 
-        try await settle(coordinator)
-        // Give the abandoned "a" pass more than enough time to land.
+        await gate.open()
         try await Task.sleep(for: TestBudget.duration(.milliseconds(500)))
 
-        #expect(coordinator.results.contains { $0.id == "app:fresh" })
+        #expect(coordinator.results.contains { $0.id == current.id })
         #expect(
-            !coordinator.results.contains { $0.id == "app:stale" },
+            !coordinator.results.contains { $0.id == stale.id },
             "results from an abandoned query leaked into the current one"
         )
-        #expect(!coordinator.results.contains { $0.id == "app:slow" })
+        #expect(coordinator.selectedID == selectedID)
     }
 
     @Test func rapidTypingLeavesOnlyTheFinalQuerysResults() async throws {
@@ -305,17 +302,19 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         #expect(!coordinator.isSearching)
     }
 
-    @Test func resetCancelsInFlightWorkAndClearsPublishedState() async throws {
-        let applications = ScriptedCatalog(
-            .init(
-                immediate: [SearchFixtures.application(name: "Xcode")],
-                indexed: [SearchFixtures.application(name: "Xcode Beta")],
-                indexedDelay: .milliseconds(400)
-            )
+    @Test("S02: cancellation rejects a delayed completion")
+    func resetCancelsInFlightWorkAndClearsPublishedState() async throws {
+        let gate = AsyncTestGate()
+        let files = ScriptedFileSource()
+        files.setIndexed(
+            [SearchFixtures.file(name: "cancelled.txt")],
+            forQuery: "xcode",
+            gatedBy: gate
         )
-        let coordinator = try await makeCoordinator(applications: applications)
+        let coordinator = try await makeCoordinator(files: files)
 
         coordinator.query = "xcode"
+        try await waitUntil("the cancelled source blocks") { await gate.waitingCount == 1 }
         coordinator.selectFilter(.applications)
         coordinator.reset()
 
@@ -325,7 +324,8 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         #expect(coordinator.selectedFilter == .all)
         #expect(!coordinator.isSearching)
 
-        try await Task.sleep(for: TestBudget.duration(.milliseconds(600)))
+        await gate.open()
+        try await Task.sleep(for: TestBudget.duration(.milliseconds(50)))
         #expect(
             coordinator.results.isEmpty,
             "a cancelled search must not repopulate the panel after a reset"
@@ -381,7 +381,8 @@ final class SearchCoordinatorIntegrationTests: SearchCoordinatorIntegrationTestC
         #expect(coordinator.selectedID == nil)
     }
 
-    @Test func AUserDrivenSelectionSurvivesTheIndexedPass() async throws {
+    @Test("S07: explicit selection survives later source results")
+    func AUserDrivenSelectionSurvivesTheIndexedPass() async throws {
         // Once the user has arrowed down, a late-landing result set must not
         // yank the selection back to the top.
         let initialApps = (0..<4).map {

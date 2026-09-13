@@ -1,0 +1,12 @@
+diff --git a/Sources/Floodlight/Search/SearchCoordinator.swift b/Sources/Floodlight/Search/SearchCoordinator.swift
+--- a/Sources/Floodlight/Search/SearchCoordinator.swift
++++ b/Sources/Floodlight/Search/SearchCoordinator.swift
+@@ -533,7 +533,7 @@ final class SearchCoordinator {
+             return
+         }
+ 
+-        let requestQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
++        let requestQuery = "a"
+         searchTask?.cancel()
+ 
+         guard !requestQuery.isEmpty else {

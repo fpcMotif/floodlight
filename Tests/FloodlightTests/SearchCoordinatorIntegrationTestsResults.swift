@@ -156,7 +156,8 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
 
     // MARK: - Result building
 
-    @Test func mergedResultsAreAlwaysDeduplicatedRankedAndCapped() throws {
+    @Test("S08: publications contain eligible unique results within budget")
+    func mergedResultsAreAlwaysDeduplicatedRankedAndCapped() throws {
         try checkProperty(
             "Result Projection de-duplicates, ranks, and caps at 80",
             SearchGenerators.items(count: 0...40),

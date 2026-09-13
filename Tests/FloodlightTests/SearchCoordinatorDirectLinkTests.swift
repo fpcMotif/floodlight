@@ -10,7 +10,8 @@ import Testing
 /// grows one.
 @MainActor
 final class SearchCoordinatorDirectLinkTests: SearchCoordinatorIntegrationTestCase {
-    @Test func typingAnAddressSelectsTheRowThatOpensIt() async throws {
+    @Test("S11: addressed search isolates and selects its destination")
+    func typingAnAddressSelectsTheRowThatOpensIt() async throws {
         let coordinator = try await makeCoordinator()
 
         coordinator.query = "x.com/fddddfdf"

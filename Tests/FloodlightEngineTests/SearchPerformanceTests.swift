@@ -108,6 +108,167 @@ final class SearchPerformanceTests: XCTestCase {
         XCTAssertLessThan(microsecondsPerQuery, 1_000)
     }
 
+    /// The in-memory catalog at real-machine scale: 1,500 discovered
+    /// applications, the full 80-candidate budget, and the query classes that
+    /// stress different matcher paths. The medians are the before/after
+    /// record for dropping the second retrieval mechanism; the budget is a
+    /// tripwire, not a target.
+    func testApplicationSearchAtScalePerformanceBudget() {
+        let suiteName = "FloodlightPerformanceTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create isolated defaults")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let applications = (0..<1_500).map { index in
+            (
+                name: "Studio Tool \(index)",
+                url: URL(
+                    fileURLWithPath: "/Applications/Studio Tool \(index).app",
+                    isDirectory: true
+                )
+            )
+        }
+        let nebula = (
+            name: "Nebula",
+            url: URL(fileURLWithPath: "/Applications/Nebula.app", isDirectory: true)
+        )
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            discoveryProvider: { applications + [nebula] }
+        )
+        let queryClasses: [(name: String, queries: [String])] = [
+            ("exact", ["studio tool 777", "nebula"]),
+            ("broad", ["studio", "tool"]),
+            ("typo", ["nebulx", "studio toxl"]),
+            ("nomatch", ["zzqqxx", "vqjvqk"]),
+        ]
+
+        for queryClass in queryClasses {
+            for query in queryClass.queries {
+                _ = catalog.immediatePage(for: query, limit: 80).items
+            }
+        }
+
+        // The printed medians are the record and must stay comparable, so
+        // the corpus never shrinks — only the repetition count does. Debug
+        // matcher builds are tens of milliseconds per query at this scale.
+        let iterations = _isDebugAssertConfiguration() ? 5 : 40
+        let sampleCount = _isDebugAssertConfiguration() ? 3 : 11
+        var benchLines: [String] = []
+        for queryClass in queryClasses {
+            var samples: [Double] = []
+            var resultCount = 0
+            for _ in 0..<sampleCount {
+                let sample = measure(iterations: iterations, queries: queryClass.queries) { query in
+                    catalog.immediatePage(for: query, limit: 80).items
+                }
+                samples.append(sample.microsecondsPerQuery)
+                resultCount += sample.resultCount
+            }
+            let microsecondsPerQuery = median(samples)
+            benchLines.append(
+                "app_search_1500_\(queryClass.name)_us="
+                    + String(format: "%.3f", microsecondsPerQuery)
+                    + " results=\(resultCount)"
+            )
+            // Tripwire, not target — the regression gate is the printed
+            // median compared with the recorded baseline. Without the old
+            // character-mask prefilter every candidate pays the matcher, so
+            // at 1,500 applications a debug build sits at tens of
+            // milliseconds; what must never come back is per-candidate I/O,
+            // which would cost orders of magnitude more.
+            XCTAssertLessThan(
+                microsecondsPerQuery,
+                100_000,
+                "\(queryClass.name) application search regressed pathologically"
+            )
+        }
+        print("FLOODLIGHT_BENCH " + benchLines.joined(separator: " "))
+    }
+
+    /// Startup and refresh are the moments the removed marker index did its
+    /// work. This records what the in-memory path costs instead — discovery
+    /// plus normalization of 1,500 applications. Every catalog gets the same
+    /// temporary support directory; `app_index_storage_writes` counts what
+    /// startup and refresh actually created there, which must be nothing.
+    func testApplicationCatalogStartupAndRefreshPerformanceBudget() async throws {
+        let suiteName = "FloodlightPerformanceTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create isolated defaults")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let supportURL = TemporaryDirectory.make(label: "FloodlightPerformanceSupport")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let applications = (0..<1_500).map { index in
+            (
+                name: "Studio Tool \(index)",
+                url: URL(
+                    fileURLWithPath: "/Applications/Studio Tool \(index).app",
+                    isDirectory: true
+                )
+            )
+        }
+        let probe = (
+            name: "Refresh Probe",
+            url: URL(fileURLWithPath: "/Applications/Refresh Probe.app", isDirectory: true)
+        )
+        let discovery = MutableDiscovery(applications)
+
+        var startSamples: [Double] = []
+        for _ in 0..<11 {
+            let catalog = ApplicationCatalog(
+                supportURL: supportURL,
+                recentStore: RecentStore(defaults: defaults),
+                blocklistStore: BlocklistStore(defaults: defaults),
+                deferDiscovery: true,
+                discoveryProvider: { discovery.snapshot() }
+            )
+            let start = ContinuousClock.now
+            try await catalog.start()
+            startSamples.append(milliseconds(start.duration(to: .now)))
+        }
+
+        let catalog = ApplicationCatalog(
+            supportURL: supportURL,
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            deferDiscovery: true,
+            discoveryProvider: { discovery.snapshot() }
+        )
+        try await catalog.start()
+        var refreshSamples: [Double] = []
+        for round in 0..<11 {
+            discovery.replace(with: round.isMultiple(of: 2) ? applications + [probe] : applications)
+            let start = ContinuousClock.now
+            _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+            refreshSamples.append(milliseconds(start.duration(to: .now)))
+        }
+
+        let storageWrites = try FileManager.default.fileExists(atPath: supportURL.path)
+            ? FileManager.default.subpathsOfDirectory(atPath: supportURL.path).count
+            : 0
+        print(
+            "FLOODLIGHT_BENCH app_cold_start_ms="
+                + String(format: "%.3f", median(startSamples))
+                + " app_refresh_ms="
+                + String(format: "%.3f", median(refreshSamples))
+                + " app_index_storage_writes=\(storageWrites)"
+        )
+        XCTAssertEqual(storageWrites, 0)
+        XCTAssertLessThan(median(startSamples), 500)
+        XCTAssertLessThan(median(refreshSamples), 500)
+    }
+
     func testNewSearchFeaturePerformanceBaselines() async throws {
         let catalog = SystemCatalog()
         try await catalog.start()
