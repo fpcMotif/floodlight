@@ -148,33 +148,25 @@ struct CatalogTests {
         #expect(catalog.immediatePage(for: "clash").items.isEmpty)
     }
 
-    @Test func blocklistExcludesApplicationFromTheIndexedPass() async throws {
-        let suiteName = "FloodlightBlocklistIndexedTests-\(UUID().uuidString)"
+    /// One retrieval mechanism: the in-memory snapshot is the whole answer,
+    /// so the protocol's default indexed contribution must stay empty even
+    /// when the snapshot holds eligible matches.
+    @Test func applicationIndexedContributionIsEmpty() async throws {
+        let suiteName = "FloodlightSingleMechanismTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightBlocklistIndexedTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
-
-        let blocklist = BlocklistStore(defaults: defaults)
-        blocklist.block(name: "Clash")
 
         let claude = URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true)
-        let clash = URL(fileURLWithPath: "/Applications/Clash.app", isDirectory: true)
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),
-            blocklistStore: blocklist,
-            supportURL: supportURL,
+            blocklistStore: BlocklistStore(defaults: defaults),
             deferDiscovery: true,
-            discoveryProvider: { [(name: "Claude", url: claude), (name: "Clash", url: clash)] }
+            discoveryProvider: { [(name: "Claude", url: claude)] }
         )
         try await catalog.start()
 
-        try await assertEventually("The marker index did not return Claude") {
-            try await catalog.indexedItems(for: "cl").contains { $0.fileURL == claude }
-        }
-        let indexed = try await catalog.indexedItems(for: "cl")
-        #expect(!indexed.contains { $0.fileURL == clash })
-        #expect(try await catalog.indexedItems(for: "clash").isEmpty)
+        #expect(catalog.immediatePage(for: "claude").items.contains { $0.fileURL == claude })
+        #expect(try await catalog.indexedItems(for: "claude", limit: 80).isEmpty)
     }
 
     @Test func blocklistNameRulesMatchRegardlessOfCaseAndDiacritics() throws {
@@ -218,7 +210,7 @@ struct CatalogTests {
             supportURL: supportURL
         )
         try await catalog.start()
-        let results = try await catalog.indexedItems(for: "safari")
+        let results = catalog.immediatePage(for: "safari").items
         #expect(results.contains { $0.fileURL?.lastPathComponent == "Safari.app" })
         #expect(results.filter { $0.fileURL?.lastPathComponent == "Safari.app" }.count == 1)
     }
@@ -263,7 +255,7 @@ struct CatalogTests {
         #expect(camera.first?.subtitle == "Matches: camera")
     }
 
-    @Test func fastApplicationSearchDoesNotWaitForFFF() throws {
+    @Test func applicationSearchRespondsWithinBudget() throws {
         let suiteName = "FloodlightTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -285,38 +277,28 @@ struct CatalogTests {
         }
     }
 
-    @Test func fastAndIndexedApplicationSearchAgreeOnScore() async throws {
-        let suiteName = "FloodlightScoreTests-\(UUID().uuidString)"
+    /// The regression issue #69 documented: a substitution typo introduces a
+    /// letter the candidate does not have, and the removed character-mask
+    /// prefilter rejected such candidates before the structural matcher — and
+    /// its edit budget — ever saw them. Nothing may sit in front of the
+    /// matcher again.
+    @Test func substitutionTypoWithNovelLetterReachesTheApplication() throws {
+        let suiteName = "FloodlightSubstitutionTypoTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightScoreTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
-        let orbital = (
-            name: "Orbital Launcher",
-            url: URL(fileURLWithPath: "/Applications/Orbital Launcher.app", isDirectory: true)
+        let nebula = (
+            name: "Nebula",
+            url: URL(fileURLWithPath: "/Applications/Nebula.app", isDirectory: true)
         )
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
-            deferDiscovery: true,
-            discoveryProvider: { [orbital] }
+            discoveryProvider: { [nebula] }
         )
-        try await catalog.start()
 
-        for query in ["orbital", "launcher"] {
-            try await assertEventually("The marker index did not return Orbital Launcher") {
-                try await catalog.indexedItems(for: query).contains { $0.fileURL == orbital.url }
-            }
-
-            let fast = try #require(
-                catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
-                "\(query)"
-            )
-            let indexed = try await catalog.indexedItems(for: query)
-                .first { $0.fileURL == orbital.url }
-            #expect(try #require(indexed, "\(query)").score == fast.score, "\(query)")
-        }
+        let page = catalog.immediatePage(for: "nebulx")
+        #expect(page.items.first?.fileURL == nebula.url)
+        #expect(page.totalMatched == 1)
     }
 
     // MARK: - Source Selection Learning
@@ -402,42 +384,34 @@ struct CatalogTests {
         #expect(catalog.immediatePage(for: "not").items.map(\.title) == ["Notion", "Notes"])
     }
 
-    /// `immediatePage` reads the whole boost map at once, `indexedItems` looks
-    /// each identifier up on its own. They have to land on the same number, or
-    /// rows reshuffle under the person's cursor as the slower pass arrives.
-    @Test func bothPassesAgreeOnScoreForAnApplicationWithLaunchHistory() async throws {
-        let suiteName = "FloodlightLearningPassParityTests-\(UUID().uuidString)"
+    /// Upgrading must not reset personalization: a catalog recreated over the
+    /// same RecentStore — what happens across app launches — awards the same
+    /// boost and returns the same order.
+    @Test func launchHistoryIsRetainedAcrossCatalogRecreation() throws {
+        let suiteName = "FloodlightLearningRetentionTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightLearningPassParityTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
-        let orbital = Self.application(named: "Orbital Launcher")
+        let notes = Self.application(named: "Notes")
+        let notion = Self.application(named: "Notion")
 
         let recentStore = RecentStore(defaults: defaults)
-        Self.saturateLaunches(of: Self.identifier(of: orbital), in: recentStore)
+        Self.saturateLaunches(of: Self.identifier(of: notion), in: recentStore)
 
-        let catalog = ApplicationCatalog(
+        let first = ApplicationCatalog(
             recentStore: recentStore,
-            supportURL: supportURL,
-            deferDiscovery: true,
-            discoveryProvider: { [orbital] }
+            discoveryProvider: { [notes, notion] }
         )
-        try await catalog.start()
+        let second = ApplicationCatalog(
+            recentStore: recentStore,
+            discoveryProvider: { [notes, notion] }
+        )
 
-        for query in ["orbital", "launcher"] {
-            try await assertEventually("The marker index did not return Orbital Launcher") {
-                try await catalog.indexedItems(for: query).contains { $0.fileURL == orbital.url }
-            }
-
-            let immediate = try #require(
-                catalog.immediatePage(for: query).items.first { $0.fileURL == orbital.url },
-                "\(query)"
-            )
-            let indexed = try await catalog.indexedItems(for: query)
-                .first { $0.fileURL == orbital.url }
-            #expect(try #require(indexed, "\(query)").score == immediate.score, "\(query)")
-        }
+        let firstPage = first.immediatePage(for: "not")
+        let secondPage = second.immediatePage(for: "not")
+        #expect(firstPage.items.map(\.title) == ["Notion", "Notes"])
+        #expect(secondPage.items == firstPage.items)
+        #expect(secondPage.totalMatched == firstPage.totalMatched)
     }
 
     private static func application(named name: String) -> (name: String, url: URL) {
@@ -476,12 +450,13 @@ struct CatalogTests {
         )
     }
 
-    @Test func applicationCatalogDiscardsRecalledCandidatesWithoutMatchEvidence() async throws {
-        let suiteName = "FloodlightZeroEvidenceTests-\(UUID().uuidString)"
+    /// Selection tracking for applications is the protocol's no-op: learning
+    /// comes from RecentStore alone, so reporting a selection must neither
+    /// create results nor reorder them.
+    @Test func selectionTrackingDoesNotChangeApplicationResults() async throws {
+        let suiteName = "FloodlightTrackingNoOpTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let supportURL = TemporaryDirectory.make(label: "FloodlightZeroEvidenceTests")
-        defer { try? FileManager.default.removeItem(at: supportURL) }
 
         let gemini = (
             name: "Gemini",
@@ -496,21 +471,19 @@ struct CatalogTests {
         )
         let catalog = ApplicationCatalog(
             recentStore: RecentStore(defaults: defaults),
-            supportURL: supportURL,
             deferDiscovery: true,
             discoveryProvider: { [gemini, migration] }
         )
         try await catalog.start()
 
-        catalog.track(query: "login", selectedURL: gemini.url)
+        let before = catalog.immediatePage(for: "migration")
+        catalog.track(query: "migration", selectedURL: gemini.url)
         catalog.track(query: "login", selectedURL: migration.url)
+        let after = catalog.immediatePage(for: "migration")
 
+        #expect(after.items == before.items)
+        #expect(after.totalMatched == before.totalMatched)
         #expect(catalog.immediatePage(for: "login").items.isEmpty)
-        let indexed = try await catalog.indexedItems(for: "login")
-        #expect(
-            indexed.isEmpty,
-            "Recalled applications with no match evidence must be discarded, but got: \(indexed.map(\.title))"
-        )
     }
 
     @Test func refreshTracksApplicationInstallRenameAndRemovalAfterStartup() async throws {
@@ -546,9 +519,6 @@ struct CatalogTests {
         )
         #expect(didAddRaycast)
         #expect(catalog.immediatePage(for: "raycast").items.first?.fileURL == raycast.url)
-        try await assertEventually("The application marker index did not add Raycast") {
-            try await catalog.indexedItems(for: "raycast").contains { $0.fileURL == raycast.url }
-        }
 
         let orbital = (
             name: "Orbital Launcher",
@@ -563,12 +533,6 @@ struct CatalogTests {
         #expect(!(catalog.immediatePage(for: "raycast").items
                 .contains { $0.fileURL == raycast.url }))
         #expect(catalog.immediatePage(for: "orbital launcher").items.first?.fileURL == orbital.url)
-        try await assertEventually("The application marker index did not replace renamed Raycast") {
-            let oldResults = try await catalog.indexedItems(for: "raycast")
-            let newResults = try await catalog.indexedItems(for: "orbital launcher")
-            return !oldResults.contains { $0.fileURL == raycast.url }
-                && newResults.contains { $0.fileURL == orbital.url }
-        }
 
         discovery.replace(with: [notes])
         let didRemoveOrbital = try await catalog.refreshIfNeeded(
@@ -578,10 +542,6 @@ struct CatalogTests {
         #expect(didRemoveOrbital)
         #expect(!(catalog.immediatePage(for: "orbital launcher").items
                 .contains { $0.fileURL == orbital.url }))
-        try await assertEventually("The application marker index did not remove Orbital") {
-            try await catalog.indexedItems(for: "orbital launcher")
-                .allSatisfy { $0.fileURL != orbital.url }
-        }
 
         let didChangeAgain = try await catalog.refreshIfNeeded(
             minimumInterval: 0,
@@ -692,19 +652,68 @@ struct CatalogTests {
                 .contains { $0.id == "setting:\(pane)" }))
     }
 
-    private func assertEventually(
-        _ message: String,
-        timeout: TimeInterval = 5,
-        sourceLocation: SourceLocation = #_sourceLocation,
-        _ condition: () async throws -> Bool
-    ) async throws {
-        let deadline = Date().addingTimeInterval(TestBudget.seconds(timeout))
-        repeat {
-            if try await condition() {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        } while Date() < deadline
-        Issue.record("\(message)", sourceLocation: sourceLocation)
+    // MARK: - Startup independence from legacy storage
+
+    /// The marker index is gone: starting a catalog pointed at a fresh
+    /// support directory must create nothing there — no marker files, no
+    /// application FFF databases.
+    @Test func startupLeavesSupportDirectoryFreeOfApplicationIndexArtifacts() async throws {
+        let suiteName = "FloodlightStartupIndependenceTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = TemporaryDirectory.make(label: "FloodlightStartupIndependenceTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [Self.application(named: "Notes")] }
+        )
+        try await catalog.start()
+        _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+
+        #expect(catalog.immediatePage(for: "notes").totalMatched == 1)
+        let contents = try FileManager.default.contentsOfDirectory(atPath: supportURL.path)
+        #expect(
+            contents.isEmpty,
+            "catalog startup wrote into its support directory: \(contents)"
+        )
+    }
+
+    /// Machines upgrading from a marker-index build still have those files on
+    /// disk. Search must work with them present and must leave every byte of
+    /// them alone — deletion is a separate, deliberate decision.
+    @Test func legacyApplicationIndexArtifactsRemainUntouched() async throws {
+        let suiteName = "FloodlightLegacyArtifactTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let supportURL = TemporaryDirectory.make(label: "FloodlightLegacyArtifactTests")
+        defer { try? FileManager.default.removeItem(at: supportURL) }
+
+        let fileManager = FileManager.default
+        let items = supportURL
+            .appendingPathComponent("ApplicationIndex/Items", isDirectory: true)
+        let database = supportURL
+            .appendingPathComponent("ApplicationIndex/Database", isDirectory: true)
+        try fileManager.createDirectory(at: items, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: database, withIntermediateDirectories: true)
+        let legacyMarker = items.appendingPathComponent("Notes.app")
+        let legacyDatabase = database.appendingPathComponent("history.lmdb")
+        try Data("legacy marker".utf8).write(to: legacyMarker)
+        try Data("legacy database".utf8).write(to: legacyDatabase)
+
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            supportURL: supportURL,
+            deferDiscovery: true,
+            discoveryProvider: { [Self.application(named: "Notes")] }
+        )
+        try await catalog.start()
+        _ = try await catalog.refreshIfNeeded(minimumInterval: 0, forceDiscovery: true)
+
+        #expect(catalog.immediatePage(for: "notes").totalMatched == 1)
+        #expect(try Data(contentsOf: legacyMarker) == Data("legacy marker".utf8))
+        #expect(try Data(contentsOf: legacyDatabase) == Data("legacy database".utf8))
     }
 }
