@@ -1,0 +1,19 @@
+services:
+  fff-exploration:
+    build:
+      context: ../../..
+      dockerfile: testing/fff-exploration/antithesis/Dockerfile
+    image: "${FFF_ANTITHESIS_IMAGE:-fff-exploration:local}"
+    platform: linux/amd64
+    container_name: fff-exploration
+    hostname: fff-exploration
+    init: true
+    environment:
+      ANTITHESIS_OUTPUT_DIR: /tmp/antithesis-output
+      ANTITHESIS_SDK_LOCAL_OUTPUT: /tmp/antithesis-output/sdk.jsonl
+      NO_COLOR: "1"
+    volumes:
+      - antithesis-output:/tmp/antithesis-output
+
+volumes:
+  antithesis-output:

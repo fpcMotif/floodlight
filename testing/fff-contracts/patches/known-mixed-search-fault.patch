@@ -1,0 +1,12 @@
+diff --git a/Vendor/fff/crates/fff-c/src/lib.rs b/Vendor/fff/crates/fff-c/src/lib.rs
+--- a/Vendor/fff/crates/fff-c/src/lib.rs
++++ b/Vendor/fff/crates/fff-c/src/lib.rs
+@@ -575,7 +575,7 @@ pub unsafe extern "C" fn fff_search_mixed(
+     let query_tracker_ref = qt_guard.as_ref();
+ 
+     let parser = QueryParser::new(fff_query_parser::MixedSearchConfig);
+-    let parsed = parser.parse(query_str);
++    let parsed = parser.parse("__floodlight_known_fault__");
+ 
+     let results = picker.fuzzy_search_mixed(
+         &parsed,

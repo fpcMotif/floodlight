@@ -1,0 +1,14 @@
+{
+  "name": "floodlight-fff-exploration",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "install:bombadil": "./scripts/install-bombadil.sh",
+    "campaign": "./scripts/run-local.sh",
+    "replay": "./scripts/replay.sh"
+  },
+  "devDependencies": {
+    "@antithesishq/bombadil": "https://github.com/antithesishq/bombadil/releases/download/v0.7.4/bombadil-npm-package.tar.gz",
+    "typescript": "5.9.2"
+  }
+}

@@ -1,0 +1,11 @@
+diff --git a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+--- a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
++++ b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+@@ -251,6 +251,7 @@ final class SelectedResultActionPerformer {
+                 }
+                 return
+             }
++            return
+         }
+ 
+         onDismiss()

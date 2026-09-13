@@ -1,6 +1,7 @@
-.PHONY: build bundle check check-architecture check-build check-dead-code check-format \
-	check-lint check-rules clean debug dmg docs format icons install install-tools run \
-	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer
+.PHONY: build bundle check check-architecture check-build check-dead-code check-fff-exploration \
+	check-format check-lint check-rules clean debug dmg docs format icons install install-tools run \
+	test test-address-sanitizer test-fff-boundary test-fff-contracts test-fff-mutations test-swift-mutations \
+	test-performance test-sanitizers test-thread-sanitizer
 
 debug:
 	swift build
@@ -49,6 +50,21 @@ run: debug
 
 test:
 	swift test
+
+test-fff-contracts:
+	./testing/fff-contracts/run-rust-contracts.sh
+
+test-fff-boundary:
+	./testing/fff-contracts/run-swift-boundary.sh
+
+test-fff-mutations:
+	./testing/fff-contracts/run-rust-mutations.sh
+
+test-swift-mutations:
+	./testing/swift-mutations/run.sh
+
+check-fff-exploration:
+	cd testing/fff-exploration && bun install --frozen-lockfile && bun run check
 
 test-address-sanitizer:
 	./scripts/test-address-sanitizer.sh

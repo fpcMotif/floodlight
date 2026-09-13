@@ -72,7 +72,8 @@ struct SourceSearchEngineTests {
         #expect(settled.candidates == [file])
     }
 
-    @Test func indexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
+    @Test("S03: source failure preserves healthy candidates and marks degradation")
+    func indexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
         let app = SearchFixtures.application(name: "Finder")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(indexedError: Failure.expected),
@@ -195,7 +196,8 @@ struct SourceSearchEngineTests {
         #expect(applications.refreshes == 1)
     }
 
-    @Test func warmUpRefreshUpdatesSettledLiveStream() async throws {
+    @Test("S04: source refresh replaces a settled snapshot coherently")
+    func warmUpRefreshUpdatesSettledLiveStream() async throws {
         let original = SearchFixtures.application(name: "Original")
         let refreshed = SearchFixtures.application(name: "Refreshed")
         let applications = ScriptedCatalog(immediate: [original])
@@ -263,9 +265,11 @@ struct SourceSearchEngineTests {
         #expect(!(recovered.isDegraded))
     }
 
-    @Test func failedScopeChangeResumesActiveQueryOnSameStream() async throws {
+    @Test("S05: failed scope change resumes the committed scope query")
+    func failedScopeChangeResumesActiveQueryOnSameStream() async throws {
         let file = SearchFixtures.file(name: "report.txt")
-        let files = ScriptedFileSource(indexed: [file], changeScopeError: Failure.expected)
+        let files = ScriptedFileSource(changeScopeError: Failure.expected)
+        files.setIndexed([file], forQuery: "report")
         let engine = SourceSearchEngine(
             files: files,
             applications: ScriptedCatalog(),
@@ -286,7 +290,8 @@ struct SourceSearchEngineTests {
         #expect(resumed.candidates == [file])
     }
 
-    @Test func newQueryDuringScopeChangeRemainsCurrent() async throws {
+    @Test("S06: successful scope change preserves the newest query")
+    func newQueryDuringScopeChangeRemainsCurrent() async throws {
         let file = SearchFixtures.file(name: "result.txt")
         let files = ScriptedFileSource(
             indexed: [file],

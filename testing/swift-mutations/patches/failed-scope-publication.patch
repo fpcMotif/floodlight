@@ -1,0 +1,14 @@
+diff --git a/Sources/FloodlightEngine/Search/SourceSearchEngine.swift b/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
+--- a/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
++++ b/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
+@@ -191,7 +191,9 @@ actor SourceSearchEngine: SourceSearching {
+         let result = await mutation.value
+         if sourceMutation?.token == token {
+             sourceMutation = nil
+-            if let active { restart(active) }
++            if let active {
++                restart((active.token, "__failed_scope__", active.immediate))
++            }
+         }
+         try result.get()
+     }
