@@ -1,5 +1,5 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-fff-exploration \
-	check-format check-lint check-rules clean debug dmg docs format icons install install-tools run \
+	check-format check-lint check-rules clean debug dmg docs fff format icons install-tools run \
 	test test-address-sanitizer test-fff-boundary test-fff-contracts test-fff-mutations test-swift-mutations \
 	test-performance test-sanitizers test-thread-sanitizer
 
@@ -79,7 +79,12 @@ test-sanitizers: test-address-sanitizer test-thread-sanitizer
 test-performance:
 	./scripts/test-performance.sh
 
-bundle: build
+# Its own target because it needs Rust and takes minutes: `build`, `check` and
+# `test` stay fast on the stock binary, and only what ships pays for this.
+fff:
+	./scripts/build-fff-xcframework.sh
+
+bundle: fff build
 	./scripts/bundle.sh
 
 icons:
