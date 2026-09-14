@@ -14,7 +14,7 @@ This directory drives the real `fff-test-harness` Rust workload. It covers porta
    ```
 
 3. The install script downloads Bombadil `v0.7.4` from its GitHub release. The scripts verify its version and SHA-256 from `bombadil.env`.
-4. Run `bun run check`, then `bun run campaign`. The campaign is limited to 30 seconds.
+4. Run `bun run check`, then `bun run campaign`. The local campaign defaults to a bounded 5-second run with 300 columns, 16 rows, five scrollback lines, and a 20ms quiescence timeout. Override these with `BOMBADIL_TIME_LIMIT`, `BOMBADIL_COLUMNS`, `BOMBADIL_ROWS`, `BOMBADIL_SCROLLBACK_LINES_MAX`, and `BOMBADIL_QUIESCENCE_TIMEOUT_MS`.
 
 Set `BOMBADIL_RUN_ID` or `BOMBADIL_OUTPUT_PATH` to override recording details. Every run writes `metadata.json` and Bombadil's nonempty `trace.jsonl` under `artifacts/`. Metadata records terminal geometry, driver options, and both executable checksums. Bombadil 0.7.4's terminal driver has no seed option; replay uses the recorded action trace instead.
 
@@ -39,7 +39,7 @@ docker compose -f testing/fff-exploration/antithesis/docker-compose.yaml exec ff
   /opt/antithesis/test/v1/fff/singleton_driver_explore
 ```
 
-The setup process writes the required `antithesis_setup` JSONL signal. The singleton command runs Bombadil against the same harness and fails on an empty trace, a property violation, or missing SDK output. Local Docker success proves image startup, command propagation, and local SDK emission only.
+The setup process invokes the harness setup mode, which emits the SDK-generated `antithesis_setup` JSONL signal. The singleton command runs Bombadil against the same harness and fails on an empty trace, a property violation, missing SDK output, or a missing reachable-property hit. Local Docker success proves image startup, command propagation, and local SDK emission only.
 
 Cloud exploration is separate. It requires a tenant, prebuilt images in its registry, and a config image built from `antithesis/config.Dockerfile`. Record the image digest, Antithesis run identifier, duration, property reachability, SDK output, commands, and observations for each cloud run. Never report the local Compose check as cloud exploration.
 

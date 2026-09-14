@@ -11,6 +11,18 @@ for seed in 17361641481138401537 17361641481138401538 17361641481138401539; do
         --package fff-test-harness \
         --locked
 done
+cargo test \
+    --manifest-path "$SOURCE/Vendor/fff/Cargo.toml" \
+    --package fff-query-parser \
+    --locked
+cargo test \
+    --manifest-path "$SOURCE/Vendor/fff/Cargo.toml" \
+    --package fff-search \
+    --locked
+cargo test \
+    --manifest-path "$SOURCE/Vendor/fff/Cargo.toml" \
+    --package fff-c \
+    --locked
 cargo build \
     --manifest-path "$SOURCE/Vendor/fff/Cargo.toml" \
     --package fff-c \
