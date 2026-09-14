@@ -764,10 +764,10 @@ index 0000000..e57b3e6
 +proptest = { version = "1", default-features = false, features = ["std", "fork"] }
 diff --git a/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
 new file mode 100644
-index 0000000..701bd42
+index 0000000..7e613db
 --- /dev/null
 +++ b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,312 @@
 +use std::env;
 +use std::io::{self, BufRead, IsTerminal, Write};
 +
@@ -892,10 +892,7 @@ index 0000000..701bd42
 +        let fallback_id = value
 +            .get("id")
 +            .and_then(Value::as_str)
-+            .unwrap_or("invalid")
-+            .chars()
-+            .take(128)
-+            .collect::<String>();
++            .map_or_else(|| "invalid".to_string(), bounded_id);
 +        if value
 +            .get("id")
 +            .and_then(Value::as_str)
@@ -982,14 +979,46 @@ index 0000000..701bd42
 +            (id, "shutdown", Ok(json!({"shutdown":true})))
 +        }
 +    };
-+    match result {
++    let mut response = match result {
 +        Ok(data) => json!({"type":"result","id":id,"op":op,"ok":true,"data":data}),
 +        Err(error) => failure(&id, op, &error),
++    };
++    if response
++        .get("id")
++        .and_then(Value::as_str)
++        .is_some_and(|id| id.len() > 128)
++    {
++        if let Some(id) = response.get("id").and_then(Value::as_str) {
++            response["id"] = Value::String(bounded_id(id));
++        }
 +    }
++    let well_formed = response.get("type").and_then(Value::as_str) == Some("result")
++        && response
++            .get("id")
++            .and_then(Value::as_str)
++            .is_some_and(|id| id.len() <= 128)
++        && response.get("op").and_then(Value::as_str).is_some();
++    antithesis_sdk::assert_always!(
++        well_formed,
++        "fff-terminal-response-well-formed",
++        &json!({
++            "type": response.get("type"),
++            "id": response.get("id"),
++            "op": response.get("op"),
++        })
++    );
++    response
 +}
 +
 +fn to_value(value: impl serde::Serialize) -> Result<Value, String> {
 +    serde_json::to_value(value).map_err(|error| error.to_string())
++}
++
++fn bounded_id(id: &str) -> String {
++    id.char_indices()
++        .take_while(|(offset, character)| *offset + character.len_utf8() <= 128)
++        .map(|(_, character)| character)
++        .collect()
 +}
 +
 +fn failure(id: &str, op: &str, error: &str) -> Value {

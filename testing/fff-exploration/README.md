@@ -14,9 +14,9 @@ This directory drives the real `fff-test-harness` Rust workload. It covers porta
    ```
 
 3. The install script downloads Bombadil `v0.7.4` from its GitHub release. The scripts verify its version and SHA-256 from `bombadil.env`.
-4. Run `bun run check`, then `bun run campaign`. The local campaign defaults to a bounded 5-second run with 300 columns, 16 rows, five scrollback lines, and a 20ms quiescence timeout. Override these with `BOMBADIL_TIME_LIMIT`, `BOMBADIL_COLUMNS`, `BOMBADIL_ROWS`, `BOMBADIL_SCROLLBACK_LINES_MAX`, and `BOMBADIL_QUIESCENCE_TIMEOUT_MS`.
+4. Run `bun run check`, then `bun run campaign`. The local campaign defaults to 5 seconds. It uses 300 columns, 16 rows, five scrollback lines, and a 20ms quiescence timeout. Override these with `BOMBADIL_TIME_LIMIT`, `BOMBADIL_COLUMNS`, `BOMBADIL_ROWS`, `BOMBADIL_SCROLLBACK_LINES_MAX`, and `BOMBADIL_QUIESCENCE_TIMEOUT_MS`.
 
-Set `BOMBADIL_RUN_ID` or `BOMBADIL_OUTPUT_PATH` to override recording details. Every run writes `metadata.json` and Bombadil's nonempty `trace.jsonl` under `artifacts/`. Metadata records terminal geometry, driver options, and both executable checksums. Bombadil 0.7.4's terminal driver has no seed option; replay uses the recorded action trace instead.
+Set `BOMBADIL_RUN_ID` or `BOMBADIL_OUTPUT_PATH` to override recording details. Every run writes `metadata.json` and Bombadil's nonempty `trace.jsonl` under `artifacts/`. Metadata records the time budget, unseeded-run status, terminal geometry, driver options, and both executable checksums. Bombadil 0.7.4 has no seed option. Replay uses the recorded action trace instead.
 
 Replay with the recorded geometry and options:
 

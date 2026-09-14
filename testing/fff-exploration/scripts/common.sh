@@ -46,15 +46,17 @@ require_tools() {
 }
 
 write_metadata() {
-  local destination=$1 columns=$2 rows=$3 scrollback=$4 quiescence=$5
+  local destination=$1 time_limit=$2 columns=$3 rows=$4 scrollback=$5 quiescence=$6
   mkdir -p "$destination"
   bun -e '
     import { writeFileSync } from "node:fs";
-    const [path, columns, rows, scrollback, quiescence, bombadil, bombadilSha, harness, harnessSha] = process.argv.slice(1);
+    const [path, timeLimit, columns, rows, scrollback, quiescence, bombadil, bombadilSha, harness, harnessSha] = process.argv.slice(1);
     writeFileSync(path, JSON.stringify({
       bombadil: { version: "0.7.4", path: bombadil, sha256: bombadilSha },
       harness: { path: harness, sha256: harnessSha },
-      options: { columns: Number(columns), rows: Number(rows), scrollbackLinesMax: Number(scrollback), quiescenceTimeoutMs: Number(quiescence) },
+      seed: null,
+      seedSupported: false,
+      options: { timeLimit, columns: Number(columns), rows: Number(rows), scrollbackLinesMax: Number(scrollback), quiescenceTimeoutMs: Number(quiescence) },
     }, null, 2) + "\n");
-  ' "$destination/metadata.json" "$columns" "$rows" "$scrollback" "$quiescence" "$BOMBADIL_BIN" "$(sha256 "$BOMBADIL_BIN")" "$HARNESS" "$(sha256 "$HARNESS")"
+  ' "$destination/metadata.json" "$time_limit" "$columns" "$rows" "$scrollback" "$quiescence" "$BOMBADIL_BIN" "$(sha256 "$BOMBADIL_BIN")" "$HARNESS" "$(sha256 "$HARNESS")"
 }

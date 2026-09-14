@@ -31,3 +31,7 @@ if ! grep -F '"message":"fff-terminal-harness-started"' "$SDK_OUTPUT" | grep -Fq
     echo "error: fff-terminal-harness Antithesis reachable property did not emit a hit" >&2
     exit 1
 fi
+if ! grep -F '"message":"fff-terminal-response-well-formed"' "$SDK_OUTPUT" | grep -Fq '"hit":true'; then
+    echo "error: terminal response safety property did not emit a hit" >&2
+    exit 1
+fi
