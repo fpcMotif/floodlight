@@ -19,5 +19,6 @@ Floodlight.xcodeproj/xcuserdata/
 *.xcuserstate
 *.bc
 
-# Local vendored checkouts (fff-swift etc.) that Package.swift does not reference.
-Vendor/
+# Size-optimized CFFF from `make fff`. The submodule itself is tracked;
+# this directory is the local rebuild of its released binary.
+Vendor/fff-swift/Artifacts/

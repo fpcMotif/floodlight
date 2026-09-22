@@ -1,0 +1,1680 @@
+diff --git a/Vendor/fff/Cargo.lock b/Vendor/fff/Cargo.lock
+index de93390..b9d36f3 100644
+--- a/Vendor/fff/Cargo.lock
++++ b/Vendor/fff/Cargo.lock
+@@ -89,6 +89,23 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "antithesis_sdk"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a8ed6751597568a284314fd9e2db420665898600109dedc7d8d9b588f00ae9c4"
++dependencies = [
++ "libc",
++ "libloading",
++ "linkme",
++ "once_cell",
++ "rand 0.8.5",
++ "rand_core 0.6.4",
++ "rustc_version_runtime",
++ "serde",
++ "serde_json",
++]
++
+ [[package]]
+ name = "anyhow"
+ version = "1.0.103"
+@@ -115,7 +132,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -156,7 +173,7 @@ dependencies = [
+  "regex",
+  "rustc-hash",
+  "shlex",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -347,7 +364,7 @@ dependencies = [
+  "heck",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -475,7 +492,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+ dependencies = [
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -515,7 +532,7 @@ dependencies = [
+  "proc-macro2",
+  "quote",
+  "strsim",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -526,7 +543,7 @@ checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
+ dependencies = [
+  "darling_core",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -579,7 +596,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -765,6 +782,19 @@ dependencies = [
+  "zlob",
+ ]
+ 
++[[package]]
++name = "fff-test-harness"
++version = "0.0.0"
++dependencies = [
++ "antithesis_sdk",
++ "fff-search",
++ "libc",
++ "proptest",
++ "serde",
++ "serde_json",
++ "tempfile",
++]
++
+ [[package]]
+ name = "file-id"
+ version = "0.2.3"
+@@ -857,7 +887,7 @@ checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -1386,6 +1416,26 @@ dependencies = [
+  "vcpkg",
+ ]
+ 
++[[package]]
++name = "linkme"
++version = "0.3.37"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3045e122bd98aef8ec3ad58ce84f0791f64e70163d1a02710af4aa11a4d54cc5"
++dependencies = [
++ "linkme-impl",
++]
++
++[[package]]
++name = "linkme-impl"
++version = "0.3.37"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "77060ebe535362c3da75682cd17b0431017b6e7c5661e714fc69a7ad017d1301"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.5",
++]
++
+ [[package]]
+ name = "linux-raw-sys"
+ version = "0.12.1"
+@@ -1521,7 +1571,7 @@ checksum = "465bddde514c4eb3b50b543250e97c1d4b284fa3ef7dc0ba2992c77545dbceb2"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -1744,7 +1794,7 @@ dependencies = [
+  "phf_shared",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -1833,7 +1883,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
+ dependencies = [
+  "proc-macro2",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -1909,7 +1959,7 @@ dependencies = [
+  "proc-macro2",
+  "pyo3-macros-backend",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -1922,7 +1972,7 @@ dependencies = [
+  "proc-macro2",
+  "pyo3-build-config",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2077,7 +2127,7 @@ checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2141,7 +2191,7 @@ dependencies = [
+  "proc-macro2",
+  "quote",
+  "serde_json",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2150,6 +2200,25 @@ version = "2.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
+ 
++[[package]]
++name = "rustc_version"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
++dependencies = [
++ "semver",
++]
++
++[[package]]
++name = "rustc_version_runtime"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2dd18cd2bae1820af0b6ad5e54f4a51d0f3fcc53b05f845675074efcc7af071d"
++dependencies = [
++ "rustc_version",
++ "semver",
++]
++
+ [[package]]
+ name = "rustix"
+ version = "1.1.4"
+@@ -2212,7 +2281,7 @@ dependencies = [
+  "proc-macro2",
+  "quote",
+  "serde_derive_internals",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2254,7 +2323,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2265,7 +2334,7 @@ checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2357,6 +2426,17 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "syn"
++version = "3.0.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "synchronoise"
+ version = "1.0.1"
+@@ -2374,7 +2454,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2422,7 +2502,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2433,7 +2513,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2521,7 +2601,7 @@ checksum = "5c55a2eff8b69ce66c84f85e1da1c233edc36ceb85a2058d11b0d6a3c7e7569c"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2568,7 +2648,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2742,7 +2822,7 @@ dependencies = [
+  "bumpalo",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+  "wasm-bindgen-shared",
+ ]
+ 
+@@ -2851,7 +2931,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -2862,7 +2942,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -3068,7 +3148,7 @@ dependencies = [
+  "heck",
+  "indexmap",
+  "prettyplease",
+- "syn",
++ "syn 2.0.117",
+  "wasm-metadata",
+  "wit-bindgen-core",
+  "wit-component",
+@@ -3084,7 +3164,7 @@ dependencies = [
+  "prettyplease",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+  "wit-bindgen-core",
+  "wit-bindgen-rust",
+ ]
+@@ -3157,7 +3237,7 @@ checksum = "b659052874eb698efe5b9e8cf382204678a0086ebf46982b79d6ca3182927e5d"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+  "synstructure",
+ ]
+ 
+@@ -3178,7 +3258,7 @@ checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -3198,7 +3278,7 @@ checksum = "d71e5d6e06ab090c67b5e44993ec16b72dcbaabc526db883a360057678b48502"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+  "synstructure",
+ ]
+ 
+@@ -3232,7 +3312,7 @@ checksum = "eadce39539ca5cb3985590102671f2567e659fca9666581ad3411d59207951f3"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+diff --git a/Vendor/fff/Cargo.toml b/Vendor/fff/Cargo.toml
+index 99854c5..1046c72 100644
+--- a/Vendor/fff/Cargo.toml
++++ b/Vendor/fff/Cargo.toml
+@@ -7,6 +7,7 @@ members = [
+   "crates/fff-python",
+   "crates/fff-query-parser",
+   "crates/fff-grep",
++  "crates/fff-test-harness",
+ ]
+ 
+ resolver = "2"
+diff --git a/Vendor/fff/Makefile b/Vendor/fff/Makefile
+index 00c5c07..6481d3f 100644
+--- a/Vendor/fff/Makefile
++++ b/Vendor/fff/Makefile
+@@ -14,7 +14,7 @@ SHELL := bash
+ # string rather than the literal `-o` / `pipefail` tokens.
+ .SHELLFLAGS := -o pipefail -euc
+ 
+-.PHONY: build build-c-lib install uninstall test test-rust test-rescan test-rescan-known-defects rescan-probe test-c-smoke test-c-api test-lua test-lua-snap test-version test-bun test-node prepare-bun prepare-bun-packaged prepare-node set-npm-version header test-stress test-stress-seeded test-stress-random test-stress-regressions test-stress-repos test-node-stress sync-js-api sync-js-api-check bump-homebrew-formula bump-install-mcp-sh test-bun-compile
++.PHONY: build build-c-lib install uninstall test test-rust test-harness test-harness-terminal test-rescan test-rescan-known-defects rescan-probe test-c-smoke test-c-api test-lua test-lua-snap test-version test-bun test-node prepare-bun prepare-bun-packaged prepare-node set-npm-version header test-stress test-stress-seeded test-stress-random test-stress-regressions test-stress-repos test-node-stress sync-js-api sync-js-api-check bump-homebrew-formula bump-install-mcp-sh test-bun-compile
+ 
+ all: format test lint
+ 
+@@ -97,6 +97,12 @@ test-setup:
+ test-rust:
+ 	cargo test --workspace --no-default-features --features zlob --exclude fff-nvim --exclude fff-python
+ 
++test-harness:
++	cargo test -p fff-test-harness
++
++test-harness-terminal:
++	printf '%s\n' '{"id":"stop","op":"shutdown"}' | cargo run -q -p fff-test-harness --bin fff-terminal-harness
++
+ # Watcher rescan harness: asserts that editing, build output, git activity and
+ # preview reads all stay on the incremental path instead of re-walking the tree.
+ test-rescan:
+diff --git a/Vendor/fff/crates/fff-c/src/lib.rs b/Vendor/fff/crates/fff-c/src/lib.rs
+index 8443cc3..c75de1d 100644
+--- a/Vendor/fff/crates/fff-c/src/lib.rs
++++ b/Vendor/fff/crates/fff-c/src/lib.rs
+@@ -1600,3 +1600,35 @@ pub unsafe extern "C" fn fff_mixed_search_result_get_score(
+     }
+     unsafe { result.scores.add(index as usize) }
+ }
++
++#[cfg(test)]
++mod issue_101_error_tests {
++    use super::*;
++    use std::ffi::CStr;
++    use std::ptr;
++
++    fn assert_error(result: *mut FffResult, expected: &str) {
++        assert!(!result.is_null());
++        assert!(!unsafe { accessors::fff_result_get_success(result) });
++        let error = unsafe { accessors::fff_result_get_error(result) };
++        assert!(!error.is_null());
++        let error = unsafe { CStr::from_ptr(error) }.to_str().unwrap();
++        assert_eq!(error, expected);
++        unsafe { fff_free_result(result) };
++    }
++
++    #[test]
++    fn null_create_options_produces_owned_error_result() {
++        let result = unsafe { fff_create_instance_with(ptr::null()) };
++        assert_error(result, "opts is null");
++    }
++
++    #[test]
++    fn null_instance_handle_produces_owned_error_result() {
++        let result = unsafe { fff_get_base_path(ptr::null_mut()) };
++        assert_error(
++            result,
++            "Instance handle is null. Create one with fff_create_instance first.",
++        );
++    }
++}
+diff --git a/Vendor/fff/crates/fff-c/tests/smoke.c b/Vendor/fff/crates/fff-c/tests/smoke.c
+index 68eaa9a..cfb41eb 100644
+--- a/Vendor/fff/crates/fff-c/tests/smoke.c
++++ b/Vendor/fff/crates/fff-c/tests/smoke.c
+@@ -31,6 +31,34 @@ static uint64_t watch_glob_id = 0;
+ static uint64_t watch_dir_id = 0;
+ static uint64_t watch_all_id = 0;
+ 
++static int expect_error(struct FffResult *result, const char *message) {
++    int matches = result && !result->success && !result->handle && result->error &&
++                  strcmp(result->error, message) == 0;
++    if (!matches) {
++        fprintf(stderr, "C contract expected error: %s\n", message);
++    }
++    fff_free_result(result);
++    return matches ? 0 : 1;
++}
++
++static int error_and_ownership_contract(void) {
++    int failed = 0;
++    failed += expect_error(fff_create_instance_with(NULL), "opts is null");
++    failed += expect_error(
++        fff_create_instance_with(&(struct FffCreateOptions){.version = 0}),
++        "Unsupported FffCreateOptions version 0 (library understands up to 3)");
++    failed += expect_error(
++        fff_create_instance_with(&(struct FffCreateOptions){
++            .version = FFF_CREATE_OPTIONS_VERSION,
++            .base_path = NULL,
++        }),
++        "opts.base_path is null or empty");
++    fff_free_result(NULL);
++    fff_free_search_result(NULL);
++    fff_destroy(NULL);
++    return failed;
++}
++
+ static void on_watch_batch(uint64_t watch_id, struct FffWatchEventBatch *batch, void *user_data) {
+     (void)user_data;
+     /* route by id like real SDKs do; unknown ids are benign no-ops */
+@@ -200,6 +228,10 @@ static int watch_smoke(void) {
+ int main(int argc, char **argv) {
+     const char *base_path = argc > 1 ? argv[1] : ".";
+ 
++    if (error_and_ownership_contract() != 0) {
++        return 1;
++    }
++
+     // make sure that FFF C api is designed more for FFI rather than for direct C usage (I'm sorry)
+     struct FffResult *create_result = fff_create_instance_with(&(struct FffCreateOptions){
+         .version = FFF_CREATE_OPTIONS_VERSION,
+@@ -246,6 +278,14 @@ int main(int argc, char **argv) {
+ 
+     struct FffSearchResult *sr = (struct FffSearchResult *)res->handle;
+     uint32_t total = sr->count;
++    if (fff_search_result_get_item(sr, sr->count) != NULL ||
++        fff_search_result_get_score(sr, sr->count) != NULL) {
++        fprintf(stderr, "FAIL: out-of-bounds search access was not rejected\n");
++        fff_free_search_result(sr);
++        fff_free_result(res);
++        fff_destroy(file_picker);
++        return 1;
++    }
+     int found = 0;
+     for (uint32_t i = 0; i < sr->count; i++) {
+         const char *path = sr->items[i].relative_path;
+diff --git a/Vendor/fff/crates/fff-core/src/dbs/frecency.rs b/Vendor/fff/crates/fff-core/src/dbs/frecency.rs
+index 863ce3f..dbc664e 100644
+--- a/Vendor/fff/crates/fff-core/src/dbs/frecency.rs
++++ b/Vendor/fff/crates/fff-core/src/dbs/frecency.rs
+@@ -255,15 +255,7 @@ impl FrecencyTracker {
+         Ok(self.get_accesses(path)?.map_or(0, |a| a.len()))
+     }
+ 
+-    pub fn track_access(&self, path: &Path) -> Result<()> {
+-        let key_hash = Self::path_to_hash_bytes(path)?;
+-        let mut accesses = self.get_accesses(path)?.unwrap_or_default();
+-
+-        let now = self.get_now();
+-        let cutoff_time = now.saturating_sub((MAX_HISTORY_DAYS * SECONDS_PER_DAY) as u64);
+-
+-        // Drop stale timestamps from the front while also enforcing the
+-        // per-file cap. Reserves one slot for the `push_back` below.
++    fn prune_stale_and_capped_accesses(accesses: &mut VecDeque<u64>, cutoff_time: u64) {
+         while let Some(&front_time) = accesses.front() {
+             if front_time < cutoff_time || accesses.len() >= MAX_TIMESTAMPS_PER_FILE {
+                 accesses.pop_front();
+@@ -271,6 +263,16 @@ impl FrecencyTracker {
+                 break;
+             }
+         }
++    }
++
++    pub fn track_access(&self, path: &Path) -> Result<()> {
++        let key_hash = Self::path_to_hash_bytes(path)?;
++        let mut accesses = self.get_accesses(path)?.unwrap_or_default();
++
++        let now = self.get_now();
++        let cutoff_time = now.saturating_sub((MAX_HISTORY_DAYS * SECONDS_PER_DAY) as u64);
++
++        Self::prune_stale_and_capped_accesses(&mut accesses, cutoff_time);
+ 
+         accesses.push_back(now);
+         tracing::debug!(?path, accesses = accesses.len(), "Tracking access");
+@@ -529,4 +531,43 @@ mod tests {
+ 
+         let _ = std::fs::remove_dir_all(&temp_dir);
+     }
++    #[test]
++    fn cutoff_timestamp_is_retained_at_the_boundary() {
++        let cutoff = 1_000_000;
++        let mut accesses = VecDeque::from([cutoff]);
++
++        FrecencyTracker::prune_stale_and_capped_accesses(&mut accesses, cutoff);
++
++        assert_eq!(accesses, VecDeque::from([cutoff]));
++    }
++
++    #[test]
++    fn track_access_preserves_recent_history_and_caps_growth() {
++        let temp_dir =
++            std::env::temp_dir().join(format!("fff_test_track_access_{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&temp_dir);
++        let tracker = FrecencyTracker::open(&temp_dir).unwrap();
++        let path = Path::new("/virtual/recent-history.rs");
++        let key = FrecencyTracker::path_to_hash_bytes(path).unwrap();
++        let now = tracker.get_now();
++        let stale = now.saturating_sub((MAX_HISTORY_DAYS * SECONDS_PER_DAY) as u64 + 1);
++        let recent = now.saturating_sub(172800);
++        let mut txn = tracker.env.write_txn().unwrap();
++        tracker
++            .db
++            .put(&mut txn, &key, &VecDeque::from([stale, recent]))
++            .unwrap();
++        txn.commit().unwrap();
++
++        tracker.track_access(path).unwrap();
++        assert_eq!(tracker.access_count(path).unwrap(), 2);
++
++        for _ in 0..MAX_TIMESTAMPS_PER_FILE {
++            tracker.track_access(path).unwrap();
++        }
++        assert_eq!(tracker.access_count(path).unwrap(), MAX_TIMESTAMPS_PER_FILE);
++
++        drop(tracker);
++        let _ = std::fs::remove_dir_all(&temp_dir);
++    }
+ }
+diff --git a/Vendor/fff/crates/fff-core/src/score.rs b/Vendor/fff/crates/fff-core/src/score.rs
+index 8fe21ce..b69eb60 100644
+--- a/Vendor/fff/crates/fff-core/src/score.rs
++++ b/Vendor/fff/crates/fff-core/src/score.rs
+@@ -591,12 +591,8 @@ fn sort_and_paginate_dirs<'a>(
+ 
+     sort_with_buffer(&mut results, |a, b| b.1.total.cmp(&a.1.total));
+ 
+-    if results.len() > limit {
+-        let page_end = std::cmp::min(offset + limit, results.len());
+-        let page_size = page_end - offset;
+-        results.drain(0..offset);
+-        results.truncate(page_size);
+-    }
++    results.drain(0..offset);
++    results.truncate(limit);
+ 
+     let (items, scores): (Vec<&DirItem>, Vec<Score>) = results.into_iter().unzip();
+     (items, scores, total_matched)
+@@ -1040,14 +1036,8 @@ fn sort_and_paginate<'a>(
+             .then_with(|| b.0.modified.cmp(&a.0.modified))
+     });
+ 
+-    // in the best scenario truncation happened in the select_nth step
+-    if results.len() > limit {
+-        let page_end = std::cmp::min(offset + limit, results.len());
+-        let page_size = page_end - offset;
+-
+-        results.drain(0..offset);
+-        results.truncate(page_size);
+-    }
++    results.drain(0..offset);
++    results.truncate(limit);
+ 
+     let (items, scores): (Vec<&FileItem>, Vec<Score>) = results.into_iter().unzip();
+     (items, scores, total_matched)
+diff --git a/Vendor/fff/crates/fff-query-parser/src/parser.rs b/Vendor/fff/crates/fff-query-parser/src/parser.rs
+index 6f129c1..22d8c6e 100644
+--- a/Vendor/fff/crates/fff-query-parser/src/parser.rs
++++ b/Vendor/fff/crates/fff-query-parser/src/parser.rs
+@@ -78,7 +78,7 @@ impl<C: ParserConfig> QueryParser<C> {
+                 // this, the leading `/` causes the entire path to be consumed as a
+                 // PathSegment, preventing location parsing from running.
+                 let has_location_suffix = matches!(constraint, Constraint::PathSegment(_))
+-                    && query.bytes().any(|b| b == b':')
++                    && query.contains(':')
+                     && query
+                         .bytes()
+                         .rev()
+@@ -1543,4 +1543,48 @@ mod tests {
+             result.constraints
+         );
+     }
++    #[test]
++    fn path_segment_without_colon_remains_a_constraint() {
++        let parser = QueryParser::new(PathConstraintConfig);
++        let result = parser.parse("/src/");
++
++        assert!(matches!(
++            result.constraints.as_slice(),
++            [Constraint::PathSegment("src")]
++        ));
++        assert!(matches!(result.fuzzy_query, FuzzyQuery::Empty));
++    }
++
++    #[test]
++    fn path_segment_without_colon_ending_in_digits_remains_a_constraint() {
++        let parser = QueryParser::new(PathConstraintConfig);
++        let result = parser.parse("/src/123");
++
++        assert!(matches!(
++            result.constraints.as_slice(),
++            [Constraint::PathSegment(_)]
++        ));
++        assert!(matches!(result.fuzzy_query, FuzzyQuery::Empty));
++    }
++
++    #[test]
++    fn path_segment_with_non_numeric_suffix_remains_a_constraint() {
++        let parser = QueryParser::new(PathConstraintConfig);
++        let result = parser.parse("/Users/project:notes");
++
++        assert!(matches!(
++            result.constraints.as_slice(),
++            [Constraint::PathSegment(_)]
++        ));
++        assert!(matches!(result.fuzzy_query, FuzzyQuery::Empty));
++    }
++
++    #[derive(Clone, Copy)]
++    struct PathConstraintConfig;
++
++    impl crate::config::ParserConfig for PathConstraintConfig {
++        fn treat_lone_path_as_text(&self) -> bool {
++            false
++        }
++    }
+ }
+diff --git a/Vendor/fff/crates/fff-test-harness/Cargo.toml b/Vendor/fff/crates/fff-test-harness/Cargo.toml
+new file mode 100644
+index 0000000..e57b3e6
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/Cargo.toml
+@@ -0,0 +1,28 @@
++[package]
++name = "fff-test-harness"
++version = "0.0.0"
++edition = "2024"
++publish = false
++
++[[bin]]
++name = "fff-terminal-harness"
++path = "src/bin/fff-test-terminal.rs"
++
++[lints]
++workspace = true
++
++[features]
++default = ["ripgrep"]
++ripgrep = ["fff-search/ripgrep"]
++zlob = ["fff-search/zlob"]
++
++[dependencies]
++fff-search = { path = "../fff-core", default-features = false }
++libc = "0.2"
++antithesis_sdk = "0.3.0"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++tempfile = "3.8"
++
++[dev-dependencies]
++proptest = { version = "1", default-features = false, features = ["std", "fork"] }
+diff --git a/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
+new file mode 100644
+index 0000000..7e613db
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/src/bin/fff-test-terminal.rs
+@@ -0,0 +1,312 @@
++use std::env;
++use std::io::{self, BufRead, IsTerminal, Write};
++
++use fff_test_harness::{FixtureFile, MAX_TIMEOUT_MS, SearchWorkload};
++use serde::Deserialize;
++use serde_json::{Value, json};
++
++const MAX_COMMANDS: usize = 10_000;
++const MAX_ERROR_BYTES: usize = 512;
++const MAX_LINE_BYTES: usize = 1024 * 1024;
++const SETUP_MODE_FLAG: &str = "--antithesis-setup";
++const WORKLOAD_NAME: &str = "fff-terminal-harness";
++
++#[derive(Deserialize)]
++#[serde(tag = "op", rename_all = "snake_case")]
++enum Command {
++    Init {
++        id: String,
++        #[serde(default)]
++        files: Vec<FixtureFile>,
++        #[serde(default)]
++        watch: bool,
++    },
++    Query {
++        id: String,
++        #[serde(default)]
++        query: String,
++        #[serde(default)]
++        offset: usize,
++        limit: usize,
++    },
++    Put {
++        id: String,
++        path: String,
++        #[serde(default)]
++        content: String,
++    },
++    Remove {
++        id: String,
++        path: String,
++    },
++    Rename {
++        id: String,
++        from: String,
++        to: String,
++    },
++    Rebuild {
++        id: String,
++    },
++    Quiesce {
++        id: String,
++        #[serde(default = "default_timeout")]
++        timeout_ms: u64,
++    },
++    Observe {
++        id: String,
++    },
++    Shutdown {
++        id: String,
++    },
++}
++
++fn main() {
++    antithesis_sdk::antithesis_init();
++
++    if is_setup_mode() {
++        antithesis_sdk::lifecycle::setup_complete(&setup_details());
++        return;
++    }
++
++    antithesis_sdk::assert_reachable!("fff-terminal-harness-started", &json!({"mode": "normal"}));
++    let _echo = EchoGuard::disable();
++    let mut output = io::stdout().lock();
++    let mut workload = match SearchWorkload::new() {
++        Ok(workload) => workload,
++        Err(error) => {
++            emit(&mut output, failure("startup", "startup", &error));
++            return;
++        }
++    };
++    if let Err(error) = workload.init(&[], false) {
++        emit(&mut output, failure("startup", "startup", &error));
++        return;
++    }
++    emit(
++        &mut output,
++        json!({"type":"ready","ready":true,"protocol":1}),
++    );
++
++    for line in io::stdin().lock().lines().take(MAX_COMMANDS) {
++        let line = match line {
++            Ok(line) if line.len() <= MAX_LINE_BYTES => line,
++            Ok(_) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", "command line is too large"),
++                );
++                continue;
++            }
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", &error.to_string()),
++                );
++                break;
++            }
++        };
++        let line = line.replace("\u{1b}[200~", "").replace("\u{1b}[201~", "");
++        if line.is_empty() {
++            continue;
++        }
++        let value: Value = match serde_json::from_str(&line) {
++            Ok(value) => value,
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure("invalid", "invalid", &error.to_string()),
++                );
++                continue;
++            }
++        };
++        let fallback_id = value
++            .get("id")
++            .and_then(Value::as_str)
++            .map_or_else(|| "invalid".to_string(), bounded_id);
++        if value
++            .get("id")
++            .and_then(Value::as_str)
++            .is_some_and(|id| id.len() > 128)
++        {
++            emit(
++                &mut output,
++                failure(&fallback_id, "invalid", "command id exceeds 128 bytes"),
++            );
++            continue;
++        }
++        let command: Command = match serde_json::from_value(value) {
++            Ok(command) => command,
++            Err(error) => {
++                emit(
++                    &mut output,
++                    failure(&fallback_id, "invalid", &error.to_string()),
++                );
++                continue;
++            }
++        };
++        let shutdown = matches!(command, Command::Shutdown { .. });
++        emit(&mut output, execute(&mut workload, command));
++        if shutdown {
++            break;
++        }
++    }
++}
++
++fn setup_details() -> Value {
++    json!({"workload": WORKLOAD_NAME, "mode": "setup"})
++}
++
++fn is_setup_mode() -> bool {
++    env::args()
++        .skip(1)
++        .any(|argument| argument == SETUP_MODE_FLAG)
++}
++
++fn execute(workload: &mut SearchWorkload, command: Command) -> Value {
++    let (id, op, result) = match command {
++        Command::Init { id, files, watch } => {
++            let result = workload.init(&files, watch).and_then(to_value);
++            (id, "init", result)
++        }
++        Command::Query {
++            id,
++            query,
++            offset,
++            limit,
++        } => {
++            let result = workload.query(&query, offset, limit).and_then(to_value);
++            (id, "query", result)
++        }
++        Command::Put { id, path, content } => {
++            let result = workload.put(&path, &content).and_then(to_value);
++            (id, "put", result)
++        }
++        Command::Remove { id, path } => {
++            let result = workload.remove(&path).and_then(to_value);
++            (id, "remove", result)
++        }
++        Command::Rename { id, from, to } => {
++            let result = workload.rename(&from, &to).and_then(to_value);
++            (id, "rename", result)
++        }
++        Command::Rebuild { id } => {
++            let result = workload
++                .rebuild()
++                .and_then(|_| workload.quiesce(MAX_TIMEOUT_MS))
++                .and_then(to_value);
++            (id, "rebuild", result)
++        }
++        Command::Quiesce { id, timeout_ms } => {
++            let result = workload.quiesce(timeout_ms).and_then(to_value);
++            (id, "quiesce", result)
++        }
++        Command::Observe { id } => {
++            let result = workload.observe().and_then(to_value);
++            (id, "observe", result)
++        }
++        Command::Shutdown { id } => {
++            workload.shutdown();
++            (id, "shutdown", Ok(json!({"shutdown":true})))
++        }
++    };
++    let mut response = match result {
++        Ok(data) => json!({"type":"result","id":id,"op":op,"ok":true,"data":data}),
++        Err(error) => failure(&id, op, &error),
++    };
++    if response
++        .get("id")
++        .and_then(Value::as_str)
++        .is_some_and(|id| id.len() > 128)
++    {
++        if let Some(id) = response.get("id").and_then(Value::as_str) {
++            response["id"] = Value::String(bounded_id(id));
++        }
++    }
++    let well_formed = response.get("type").and_then(Value::as_str) == Some("result")
++        && response
++            .get("id")
++            .and_then(Value::as_str)
++            .is_some_and(|id| id.len() <= 128)
++        && response.get("op").and_then(Value::as_str).is_some();
++    antithesis_sdk::assert_always!(
++        well_formed,
++        "fff-terminal-response-well-formed",
++        &json!({
++            "type": response.get("type"),
++            "id": response.get("id"),
++            "op": response.get("op"),
++        })
++    );
++    response
++}
++
++fn to_value(value: impl serde::Serialize) -> Result<Value, String> {
++    serde_json::to_value(value).map_err(|error| error.to_string())
++}
++
++fn bounded_id(id: &str) -> String {
++    id.char_indices()
++        .take_while(|(offset, character)| *offset + character.len_utf8() <= 128)
++        .map(|(_, character)| character)
++        .collect()
++}
++
++fn failure(id: &str, op: &str, error: &str) -> Value {
++    let error = error.chars().take(MAX_ERROR_BYTES).collect::<String>();
++    json!({"type":"result","id":id,"op":op,"ok":false,"error":error})
++}
++
++fn emit(output: &mut impl Write, value: Value) {
++    let _ = serde_json::to_writer(&mut *output, &value);
++    let _ = output.write_all(b"\n");
++    let _ = output.flush();
++}
++
++fn default_timeout() -> u64 {
++    MAX_TIMEOUT_MS
++}
++
++#[cfg(unix)]
++struct EchoGuard(Option<libc::termios>);
++
++#[cfg(unix)]
++impl EchoGuard {
++    fn disable() -> Self {
++        if !io::stdin().is_terminal() {
++            return Self(None);
++        }
++        unsafe {
++            let mut original = std::mem::zeroed();
++            if libc::tcgetattr(libc::STDIN_FILENO, &mut original) != 0 {
++                return Self(None);
++            }
++            let mut quiet = original;
++            quiet.c_lflag &= !libc::ECHO;
++            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &quiet) != 0 {
++                return Self(None);
++            }
++            Self(Some(original))
++        }
++    }
++}
++
++#[cfg(unix)]
++impl Drop for EchoGuard {
++    fn drop(&mut self) {
++        if let Some(original) = self.0 {
++            unsafe {
++                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original);
++            }
++        }
++    }
++}
++
++#[cfg(not(unix))]
++struct EchoGuard;
++
++#[cfg(not(unix))]
++impl EchoGuard {
++    fn disable() -> Self {
++        Self
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/src/lib.rs b/Vendor/fff/crates/fff-test-harness/src/lib.rs
+new file mode 100644
+index 0000000..8c579f1
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/src/lib.rs
+@@ -0,0 +1,358 @@
++use std::fs;
++use std::path::{Component, Path, PathBuf};
++use std::time::Duration;
++
++use fff_search::{
++    FFFMode, FilePicker, FilePickerOptions, FuzzySearchOptions, PaginationArgs, QueryParser,
++    SharedFilePicker, SharedFrecency,
++};
++use serde::{Deserialize, Serialize};
++use tempfile::TempDir;
++
++pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
++pub const MAX_FIXTURE_FILES: usize = 256;
++pub const MAX_LIMIT: usize = 100;
++pub const MAX_PATH_BYTES: usize = 512;
++pub const MAX_QUERY_BYTES: usize = 512;
++pub const MAX_TIMEOUT_MS: u64 = 10_000;
++
++#[derive(Clone, Debug, Deserialize, Serialize)]
++pub struct FixtureFile {
++    pub path: String,
++    #[serde(default)]
++    pub content: String,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct SearchItem {
++    pub path: String,
++    pub file_name: String,
++    pub score: i32,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct SearchPage {
++    pub items: Vec<SearchItem>,
++    pub total_matched: usize,
++    pub total_files: usize,
++    pub offset: usize,
++    pub limit: usize,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
++pub struct Observation {
++    pub initialized: bool,
++    pub root: String,
++    pub live_files: usize,
++    pub scanned_files: usize,
++    pub scanning: bool,
++    pub watcher_ready: bool,
++    pub generation: u64,
++}
++
++pub struct SearchWorkload {
++    fixture: TempDir,
++    picker: SharedFilePicker,
++    frecency: SharedFrecency,
++    initialized: bool,
++    watch: bool,
++    generation: u64,
++}
++
++impl SearchWorkload {
++    pub fn new() -> Result<Self, String> {
++        Ok(Self {
++            fixture: tempfile::tempdir().map_err(|error| error.to_string())?,
++            picker: SharedFilePicker::default(),
++            frecency: SharedFrecency::noop(),
++            initialized: false,
++            watch: false,
++            generation: 0,
++        })
++    }
++
++    pub fn init(&mut self, files: &[FixtureFile], watch: bool) -> Result<Observation, String> {
++        if files.len() > MAX_FIXTURE_FILES {
++            return Err(format!("fixture exceeds {MAX_FIXTURE_FILES} files"));
++        }
++        self.shutdown();
++        self.clear_fixture()?;
++        for file in files {
++            self.write_fixture(&file.path, &file.content)?;
++        }
++
++        self.picker = SharedFilePicker::default();
++        self.frecency = SharedFrecency::noop();
++        FilePicker::new_with_shared_state(
++            self.picker.clone(),
++            self.frecency.clone(),
++            FilePickerOptions {
++                base_path: self.root().to_string_lossy().into_owned(),
++                mode: FFFMode::Ai,
++                watch,
++                enable_content_indexing: false,
++                enable_mmap_cache: false,
++                ..Default::default()
++            },
++        )
++        .map_err(|error| error.to_string())?;
++        self.initialized = true;
++        self.watch = watch;
++        self.generation += 1;
++        self.quiesce(MAX_TIMEOUT_MS)
++    }
++
++    pub fn query(&self, query: &str, offset: usize, limit: usize) -> Result<SearchPage, String> {
++        if query.len() > MAX_QUERY_BYTES {
++            return Err(format!("query exceeds {MAX_QUERY_BYTES} bytes"));
++        }
++        if limit > MAX_LIMIT {
++            return Err(format!("limit exceeds {MAX_LIMIT}"));
++        }
++        let offset = offset.min(MAX_FIXTURE_FILES);
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let parsed = QueryParser::default().parse(query);
++        let results = picker.fuzzy_search(
++            &parsed,
++            None,
++            FuzzySearchOptions {
++                max_threads: 1,
++                pagination: PaginationArgs { offset, limit },
++                ..Default::default()
++            },
++        );
++        let items = results
++            .items
++            .iter()
++            .zip(&results.scores)
++            .map(|(item, score)| SearchItem {
++                path: item.relative_path(picker),
++                file_name: item.file_name(picker),
++                score: score.total,
++            })
++            .collect();
++        Ok(SearchPage {
++            items,
++            total_matched: results.total_matched,
++            total_files: results.total_files,
++            offset,
++            limit,
++        })
++    }
++
++    pub fn query_directories(
++        &self,
++        query: &str,
++        offset: usize,
++        limit: usize,
++    ) -> Result<SearchPage, String> {
++        if query.len() > MAX_QUERY_BYTES {
++            return Err(format!("query exceeds {MAX_QUERY_BYTES} bytes"));
++        }
++        if limit > MAX_LIMIT {
++            return Err(format!("limit exceeds {MAX_LIMIT}"));
++        }
++        let offset = offset.min(MAX_FIXTURE_FILES);
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let parsed = QueryParser::default().parse(query);
++        let results = picker.fuzzy_search_directories(
++            &parsed,
++            FuzzySearchOptions {
++                max_threads: 1,
++                pagination: PaginationArgs { offset, limit },
++                ..Default::default()
++            },
++        );
++        let items = results
++            .items
++            .iter()
++            .zip(&results.scores)
++            .map(|(item, score)| {
++                let path = item.relative_path(picker);
++                SearchItem {
++                    file_name: path
++                        .trim_end_matches('/')
++                        .rsplit('/')
++                        .next()
++                        .unwrap_or("")
++                        .to_string(),
++                    path,
++                    score: score.total,
++                }
++            })
++            .collect();
++        Ok(SearchPage {
++            items,
++            total_matched: results.total_matched,
++            total_files: results.total_dirs,
++            offset,
++            limit,
++        })
++    }
++
++    pub fn put(&mut self, path: &str, content: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let absolute = self.write_fixture(path, content)?;
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker
++            .handle_create_or_modify(&absolute)
++            .ok_or_else(|| "index rejected put; rebuild required".to_string())?;
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn remove(&mut self, path: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let absolute = self.resolve_path(path)?;
++        match fs::remove_file(&absolute) {
++            Ok(()) => {}
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++            Err(error) => return Err(error.to_string()),
++        }
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker.remove_file_by_path(&absolute);
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn rename(&mut self, from: &str, to: &str) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let source = self.resolve_path(from)?;
++        let destination = self.resolve_path(to)?;
++        if let Some(parent) = destination.parent() {
++            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
++        }
++        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
++        let mut guard = self.picker.write().map_err(|error| error.to_string())?;
++        let picker = guard.as_mut().ok_or("workload is not initialized")?;
++        picker.remove_file_by_path(&source);
++        picker
++            .handle_create_or_modify(&destination)
++            .ok_or_else(|| "index rejected rename; rebuild required".to_string())?;
++        drop(guard);
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn rebuild(&mut self) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        self.picker
++            .trigger_full_rescan_async(&self.frecency)
++            .map_err(|error| error.to_string())?;
++        self.generation += 1;
++        self.observe()
++    }
++
++    pub fn quiesce(&self, timeout_ms: u64) -> Result<Observation, String> {
++        self.ensure_initialized()?;
++        let timeout = Duration::from_millis(timeout_ms.min(MAX_TIMEOUT_MS));
++        if !self.picker.wait_for_indexing_complete(timeout) {
++            return Err("index did not quiesce before timeout".to_string());
++        }
++        if self.watch && !self.picker.wait_for_watcher(timeout) {
++            return Err("watcher was not ready before timeout".to_string());
++        }
++        self.observe()
++    }
++
++    pub fn observe(&self) -> Result<Observation, String> {
++        let root = self.root().to_string_lossy().into_owned();
++        if !self.initialized {
++            return Ok(Observation {
++                initialized: false,
++                root,
++                live_files: 0,
++                scanned_files: 0,
++                scanning: false,
++                watcher_ready: false,
++                generation: self.generation,
++            });
++        }
++        let guard = self.picker.read().map_err(|error| error.to_string())?;
++        let picker = guard.as_ref().ok_or("workload is not initialized")?;
++        let progress = picker.get_scan_progress();
++        Ok(Observation {
++            initialized: true,
++            root,
++            live_files: picker.live_file_count(),
++            scanned_files: progress.scanned_files_count,
++            scanning: progress.is_scanning || picker.is_post_scan_active(),
++            watcher_ready: progress.is_watcher_ready,
++            generation: self.generation,
++        })
++    }
++
++    pub fn shutdown(&mut self) {
++        self.picker.shutdown_watches_and_wait();
++        if let Ok(mut guard) = self.picker.write()
++            && let Some(mut picker) = guard.take()
++        {
++            picker.stop_background_monitor();
++        }
++        self.initialized = false;
++        self.watch = false;
++    }
++
++    pub fn root(&self) -> &Path {
++        self.fixture.path()
++    }
++
++    fn clear_fixture(&self) -> Result<(), String> {
++        for entry in fs::read_dir(self.root()).map_err(|error| error.to_string())? {
++            let path = entry.map_err(|error| error.to_string())?.path();
++            if path.is_dir() {
++                fs::remove_dir_all(path).map_err(|error| error.to_string())?;
++            } else {
++                fs::remove_file(path).map_err(|error| error.to_string())?;
++            }
++        }
++        Ok(())
++    }
++
++    fn ensure_initialized(&self) -> Result<(), String> {
++        if self.initialized {
++            Ok(())
++        } else {
++            Err("workload is not initialized".to_string())
++        }
++    }
++
++    fn resolve_path(&self, path: &str) -> Result<PathBuf, String> {
++        if path.is_empty() || path.len() > MAX_PATH_BYTES {
++            return Err(format!("path must contain 1..={MAX_PATH_BYTES} bytes"));
++        }
++        let path = Path::new(path);
++        if path.is_absolute()
++            || path
++                .components()
++                .any(|part| !matches!(part, Component::Normal(_)))
++        {
++            return Err("path must be a plain relative path".to_string());
++        }
++        Ok(self.root().join(path))
++    }
++
++    fn write_fixture(&self, path: &str, content: &str) -> Result<PathBuf, String> {
++        if content.len() > MAX_CONTENT_BYTES {
++            return Err(format!("content exceeds {MAX_CONTENT_BYTES} bytes"));
++        }
++        let absolute = self.resolve_path(path)?;
++        if let Some(parent) = absolute.parent() {
++            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
++        }
++        fs::write(&absolute, content).map_err(|error| error.to_string())?;
++        Ok(absolute)
++    }
++}
++
++impl Drop for SearchWorkload {
++    fn drop(&mut self) {
++        self.shutdown();
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/tests/contracts.rs b/Vendor/fff/crates/fff-test-harness/tests/contracts.rs
+new file mode 100644
+index 0000000..331de77
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/tests/contracts.rs
+@@ -0,0 +1,171 @@
++use std::collections::BTreeSet;
++
++use fff_test_harness::{FixtureFile, MAX_LIMIT, SearchWorkload};
++use proptest::prelude::*;
++
++fn fixture() -> Vec<FixtureFile> {
++    [
++        "src/main.rs",
++        "src/nested/main.rs",
++        "docs/résumé guide.md",
++        "quotes/a'b\"c.txt",
++        "space name.txt",
++        "empty",
++    ]
++    .into_iter()
++    .map(|path| FixtureFile {
++        path: path.to_string(),
++        content: format!("fixture for {path}"),
++    })
++    .collect()
++}
++fn pagination_fixture() -> Vec<FixtureFile> {
++    ["rank.txt", "ranked.txt", "rank-list.txt"]
++        .into_iter()
++        .map(|path| FixtureFile {
++            path: path.to_string(),
++            content: format!("fixture for {path}"),
++        })
++        .collect()
++}
++
++#[test]
++fn r01_results_are_bounded_unique_and_paginated() {
++    let mut workload = SearchWorkload::new().unwrap();
++    workload.init(&fixture(), false).unwrap();
++
++    let all = workload.query("", 0, MAX_LIMIT).unwrap();
++    let first = workload.query("", 0, 2).unwrap();
++    let second = workload.query("", 2, 2).unwrap();
++    let all_directories = workload.query_directories("", 0, MAX_LIMIT).unwrap();
++    let second_directory = workload.query_directories("", 1, 1).unwrap();
++    let identities = all
++        .items
++        .iter()
++        .map(|item| item.path.as_str())
++        .collect::<BTreeSet<_>>();
++
++    assert_eq!(all.items.len(), all.total_matched);
++    assert_eq!(identities.len(), all.items.len());
++    assert_eq!(first.items, all.items[0..2]);
++    assert_eq!(second.items, all.items[2..4]);
++    assert!(!all_directories.items.is_empty());
++    assert_eq!(second_directory.items, all_directories.items[1..2]);
++    assert!(
++        all.items
++            .iter()
++            .all(|item| workload.root().join(&item.path).is_file())
++    );
++    assert!(
++        workload
++            .query("résumé", 0, 4)
++            .unwrap()
++            .items
++            .iter()
++            .any(|item| item.path == "docs/résumé guide.md")
++    );
++}
++
++// The fixture model treats rank.txt as the exact top candidate in its rank family.
++// It checks eligibility and offset bounds without reproducing FFF's scoring algorithm.
++const ORACLE_ELIGIBLE_PATHS: &[&str] = &["rank.txt", "ranked.txt", "rank-list.txt"];
++const ORACLE_TOP_PATH: &str = "rank.txt";
++
++fn oracle_paths(query: &str) -> &'static [&'static str] {
++    match query {
++        "rank.txt" => ORACLE_ELIGIBLE_PATHS,
++        _ => &[],
++    }
++}
++
++proptest! {
++    #![proptest_config(ProptestConfig::with_cases(24))]
++
++    #[test]
++    fn r01_pages_match_independent_fixture_oracle(
++        offset in 0usize..10,
++        limit in 0usize..12,
++        query in prop::sample::select(vec!["rank.txt"])
++    ) {
++        let mut workload = SearchWorkload::new().unwrap();
++        workload.init(&pagination_fixture(), false).unwrap();
++        let expected_paths = oracle_paths(query);
++        let page = workload.query(query, offset, limit).unwrap();
++        let actual_paths = page
++            .items
++            .iter()
++            .map(|item| item.path.as_str())
++            .collect::<Vec<_>>();
++        let distinct_paths = actual_paths.iter().collect::<BTreeSet<_>>();
++        let remaining = expected_paths.len().saturating_sub(offset);
++
++        prop_assert!(limit == 0 || actual_paths.len() <= limit);
++        prop_assert!(actual_paths.len() <= remaining);
++        prop_assert_eq!(distinct_paths.len(), actual_paths.len());
++        prop_assert!(actual_paths.iter().all(|path| expected_paths.contains(path)));
++        prop_assert!(page.items.iter().all(|item| workload.root().join(&item.path).is_file()));
++        prop_assert_eq!(page.total_matched, expected_paths.len());
++        if limit != 0 && offset == 0 {
++            prop_assert_eq!(actual_paths.first().copied(), Some(ORACLE_TOP_PATH));
++        }
++        if limit != 0 && offset > 0 {
++            prop_assert!(!actual_paths.contains(&ORACLE_TOP_PATH));
++        }
++    }
++
++    #[test]
++    fn r03_bounded_filesystem_lifecycle_converges(
++        operations in prop::collection::vec((0u8..5, 0usize..8), 1..20)
++    ) {
++        let mut workload = SearchWorkload::new().unwrap();
++        workload.init(&[], false).unwrap();
++        let mut expected = BTreeSet::new();
++
++        for (kind, slot) in operations {
++            let path = format!("generated/item-{slot}.txt");
++            let renamed = format!("renamed/item-{slot}.txt");
++            match kind {
++                0 => {
++                    workload.put(&path, &format!("value {slot}")).unwrap();
++                    expected.insert(path);
++                }
++                1 => {
++                    workload.remove(&path).unwrap();
++                    expected.remove(&path);
++                }
++                2 if expected.contains(&path) => {
++                    workload.rename(&path, &renamed).unwrap();
++                    expected.remove(&path);
++                    expected.insert(renamed);
++                }
++                3 => {
++                    let files = expected
++                        .iter()
++                        .map(|path| FixtureFile {
++                            path: path.clone(),
++                            content: "restored".to_string(),
++                        })
++                        .collect::<Vec<_>>();
++                    workload.shutdown();
++                    workload.init(&files, false).unwrap();
++                }
++                _ => {
++                    workload.rebuild().unwrap();
++                    workload.quiesce(10_000).unwrap();
++                }
++            }
++        }
++
++        workload.rebuild().unwrap();
++        let observation = workload.quiesce(10_000).unwrap();
++        let found = workload
++            .query("", 0, MAX_LIMIT)
++            .unwrap()
++            .items
++            .into_iter()
++            .map(|item| item.path)
++            .collect::<BTreeSet<_>>();
++        prop_assert!(!observation.scanning);
++        prop_assert_eq!(found, expected);
++    }
++}
+diff --git a/Vendor/fff/crates/fff-test-harness/tests/terminal.rs b/Vendor/fff/crates/fff-test-harness/tests/terminal.rs
+new file mode 100644
+index 0000000..ba7d764
+--- /dev/null
++++ b/Vendor/fff/crates/fff-test-harness/tests/terminal.rs
+@@ -0,0 +1,51 @@
++use std::io::Write;
++use std::process::{Command, Stdio};
++
++use serde_json::Value;
++
++#[test]
++fn terminal_protocol_marks_ready_and_correlates_every_operation() {
++    let mut child = Command::new(env!("CARGO_BIN_EXE_fff-terminal-harness"))
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .spawn()
++        .unwrap();
++    let input = [
++        r#"{"id":"init","op":"init","files":[{"path":"alpha.txt","content":"a"}]}"#,
++        r#"{"id":"query","op":"query","query":"alpha","offset":0,"limit":5}"#,
++        r#"{"id":"put","op":"put","path":"beta.txt","content":"b"}"#,
++        r#"{"id":"rename","op":"rename","from":"beta.txt","to":"gamma.txt"}"#,
++        r#"{"id":"remove","op":"remove","path":"gamma.txt"}"#,
++        r#"{"id":"rebuild","op":"rebuild"}"#,
++        r#"{"id":"quiesce","op":"quiesce","timeout_ms":10000}"#,
++        r#"{"id":"observe","op":"observe"}"#,
++        r#"{"id":"shutdown","op":"shutdown"}"#,
++    ]
++    .into_iter()
++    .map(|line| format!("\u{1b}[200~{line}\n\u{1b}[201~"))
++    .collect::<String>();
++    child
++        .stdin
++        .take()
++        .unwrap()
++        .write_all(input.as_bytes())
++        .unwrap();
++
++    let output = child.wait_with_output().unwrap();
++    assert!(output.status.success());
++    let lines = String::from_utf8(output.stdout).unwrap();
++    let messages = lines
++        .lines()
++        .map(|line| serde_json::from_str::<Value>(line).unwrap())
++        .collect::<Vec<_>>();
++
++    assert_eq!(messages.len(), 10);
++    assert_eq!(messages[0]["type"], "ready");
++    assert_eq!(messages[0]["ready"], true);
++    for (message, id) in messages[1..].iter().zip([
++        "init", "query", "put", "rename", "remove", "rebuild", "quiesce", "observe", "shutdown",
++    ]) {
++        assert_eq!(message["id"], id);
++        assert_eq!(message["ok"], true, "{message}");
++    }
++}

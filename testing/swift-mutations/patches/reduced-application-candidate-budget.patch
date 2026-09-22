@@ -1,0 +1,13 @@
+diff --git a/Sources/FloodlightEngine/Search/SourceSearchEngine.swift b/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
+index 52300bd..43751c5 100644
+--- a/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
++++ b/Sources/FloodlightEngine/Search/SourceSearchEngine.swift
+@@ -239,7 +239,7 @@ package actor SourceSearchEngine: SourceSearching {
+     /// publication at 80 rows, so the catalog is asked for 80: every
+     /// application that could be published stays a candidate, and the
+     /// reported count covers all eligible matches before truncation.
+-    private static let applicationCandidateBudget = 80
++    private static let applicationCandidateBudget = 12
+ 
+     /// The pre-start page: whatever the catalogs hold in memory this moment,
+     /// published before any startup or refresh work so a keystroke never waits

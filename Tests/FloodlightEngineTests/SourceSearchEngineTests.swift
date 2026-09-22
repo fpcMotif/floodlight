@@ -72,7 +72,8 @@ struct SourceSearchEngineTests {
         #expect(settled.candidates == [file])
     }
 
-    @Test func indexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
+    @Test("S03: source failure preserves healthy candidates and marks degradation")
+    func indexedFailureKeepsHealthyCandidatesAndMarksDegraded() async throws {
         let app = SearchFixtures.application(name: "Finder")
         let engine = SourceSearchEngine(
             files: ScriptedFileSource(indexedError: Failure.expected),
@@ -177,6 +178,78 @@ struct SourceSearchEngineTests {
         #expect(!(settled.pendingKinds.contains(.systemSetting)))
     }
 
+    /// The 80-candidate application budget, end to end with a real catalog:
+    /// 50 eligible matches must all reach the settled snapshot. The pre-budget
+    /// page limit of 12 cannot pass this — which is what makes the budget a
+    /// contract rather than a constant nobody reads.
+    @Test func applicationPagesUseTheFullCandidateBudget() async throws {
+        let suiteName = "FloodlightEngineBudgetTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let applications = (0..<50).map { index in
+            (
+                name: "Studio Tool \(index)",
+                url: URL(
+                    fileURLWithPath: "/Applications/Studio Tool \(index).app",
+                    isDirectory: true
+                )
+            )
+        }
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            deferDiscovery: true,
+            discoveryProvider: { applications }
+        )
+        let engine = SourceSearchEngine(
+            files: ScriptedFileSource(),
+            applications: catalog,
+            settings: ScriptedCatalog()
+        )
+
+        var iterator = await engine.search("studio", immediate: true).makeAsyncIterator()
+        let preStart = try #require(await iterator.next())
+        #expect(
+            preStart.candidates.isEmpty,
+            "a deferred catalog holds nothing yet, so the first snapshot is empty"
+        )
+        let settled = try await nextSettled(&iterator)
+
+        let appCandidates = settled.candidates.filter { $0.kind == .application }
+        #expect(appCandidates.count == 50)
+        #expect(settled.totalMatches[.application] == 50)
+    }
+
+    /// Issue #69 at the engine seam: the very first snapshot — served from
+    /// whatever the catalog already holds in memory — must carry a
+    /// substitution-typo match. Nothing between the keystroke and the panel
+    /// may wait for an index to validate the candidate.
+    @Test func substitutionTypoIsServedFromTheFirstSnapshot() async throws {
+        let suiteName = "FloodlightEngineTypoTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let nebula = (
+            name: "Nebula",
+            url: URL(fileURLWithPath: "/Applications/Nebula.app", isDirectory: true)
+        )
+        let catalog = ApplicationCatalog(
+            recentStore: RecentStore(defaults: defaults),
+            blocklistStore: BlocklistStore(defaults: defaults),
+            discoveryProvider: { [nebula] }
+        )
+        let engine = SourceSearchEngine(
+            files: ScriptedFileSource(),
+            applications: catalog,
+            settings: ScriptedCatalog()
+        )
+
+        var iterator = await engine.search("nebulx", immediate: true).makeAsyncIterator()
+        let first = try #require(await iterator.next())
+        #expect(first.candidates.map(\.fileURL) == [nebula.url])
+    }
+
     @Test func refreshChangeAppearsInCurrentSnapshot() async throws {
         let app = SearchFixtures.application(name: "Fresh App")
         let applications = ScriptedCatalog(.init(
@@ -195,7 +268,8 @@ struct SourceSearchEngineTests {
         #expect(applications.refreshes == 1)
     }
 
-    @Test func warmUpRefreshUpdatesSettledLiveStream() async throws {
+    @Test("S04: source refresh replaces a settled snapshot coherently")
+    func warmUpRefreshUpdatesSettledLiveStream() async throws {
         let original = SearchFixtures.application(name: "Original")
         let refreshed = SearchFixtures.application(name: "Refreshed")
         let applications = ScriptedCatalog(immediate: [original])
@@ -263,9 +337,11 @@ struct SourceSearchEngineTests {
         #expect(!(recovered.isDegraded))
     }
 
-    @Test func failedScopeChangeResumesActiveQueryOnSameStream() async throws {
+    @Test("S05: failed scope change resumes the committed scope query")
+    func failedScopeChangeResumesActiveQueryOnSameStream() async throws {
         let file = SearchFixtures.file(name: "report.txt")
-        let files = ScriptedFileSource(indexed: [file], changeScopeError: Failure.expected)
+        let files = ScriptedFileSource(changeScopeError: Failure.expected)
+        files.setIndexed([file], forQuery: "report")
         let engine = SourceSearchEngine(
             files: files,
             applications: ScriptedCatalog(),
@@ -286,7 +362,8 @@ struct SourceSearchEngineTests {
         #expect(resumed.candidates == [file])
     }
 
-    @Test func newQueryDuringScopeChangeRemainsCurrent() async throws {
+    @Test("S06: successful scope change preserves the newest query")
+    func newQueryDuringScopeChangeRemainsCurrent() async throws {
         let file = SearchFixtures.file(name: "result.txt")
         let files = ScriptedFileSource(
             indexed: [file],

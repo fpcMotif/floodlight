@@ -13,6 +13,8 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
     private let changeScopeDelay: Duration
     private var recordedTracks: [(String, URL)] = []
     private var recordedLifecycle: [String] = []
+    private var indexedByQuery: [String: [SearchItem]] = [:]
+    private var indexedGates: [String: AsyncTestGate] = [:]
 
     package init(
         indexed: [SearchItem] = [],
@@ -42,6 +44,17 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
         lock.withLock { recordedLifecycle }
     }
 
+    package func setIndexed(
+        _ items: [SearchItem],
+        forQuery query: String,
+        gatedBy gate: AsyncTestGate? = nil
+    ) {
+        lock.withLock {
+            indexedByQuery[query] = items
+            indexedGates[query] = gate
+        }
+    }
+
     package func start() async throws {
         lock.withLock { recordedLifecycle.append("start") }
         if startDelay > .zero { try await Task.sleep(for: startDelay) }
@@ -49,9 +62,13 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
     }
 
     package func indexedItems(for query: String, limit: Int) async throws -> [SearchItem] {
+        let scripted = lock.withLock {
+            (items: indexedByQuery[query] ?? indexed, gate: indexedGates[query])
+        }
+        if let gate = scripted.gate { await gate.wait() }
         if indexedDelay > .zero { try await Task.sleep(for: indexedDelay) }
         if let indexedError { throw indexedError }
-        return Array(indexed.prefix(limit))
+        return Array(scripted.items.prefix(limit))
     }
 
     package func contentItems(for query: String) async throws -> [SearchItem] {
@@ -70,6 +87,31 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
 
     package func track(query: String, selectedURL: URL) {
         lock.withLock { recordedTracks.append((query, selectedURL)) }
+    }
+}
+
+package actor AsyncTestGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    package init() {}
+
+    package var waitingCount: Int {
+        waiters.count
+    }
+
+    package func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    package func open() {
+        isOpen = true
+        let blocked = waiters
+        waiters.removeAll()
+        for waiter in blocked {
+            waiter.resume()
+        }
     }
 }
 

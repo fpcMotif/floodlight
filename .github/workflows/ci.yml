@@ -65,6 +65,20 @@ jobs:
       - name: Run gates
         run: make check
 
+      - name: Check FFF exploration specification
+        run: make check-fff-exploration
+
+  fff-contracts:
+    name: FFF contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Test materialized Rust and C boundaries
+        run: make test-fff-contracts
+
   test:
     name: Tests
     runs-on: xcode-27
@@ -91,6 +105,9 @@ jobs:
       # variance — they catch an order-of-magnitude regression, not a 10% one.
       - name: Run performance budgets
         run: make test-performance
+
+      - name: Verify the source-built Swift–Rust boundary
+        run: make test-fff-boundary
 
       # The measured numbers, kept even on a green run, so a budget that starts
       # creeping is visible before it is breached.

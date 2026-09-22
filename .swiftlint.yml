@@ -102,16 +102,16 @@ identifier_name:
 # anything reaches, naming the rule and the value to set. The list below is
 # documentation; the check is the enforcement.
 #
-#   file_length           658  Tests/FloodlightTests/SelectedResultActionPerformerTests.swift
+#   file_length           657  Tests/FloodlightTests/SelectedResultActionPerformerTests.swift
 #   type_body_length      564  FFFIndexTests
-#   function_body_length  100  SourceSearchEngine.execute(token:query:immediate:)
-#   cyclomatic_complexity  11  that function, tied with ClipboardCaptureService.poll
+#   function_body_length  84   FFFIndexTests
+#   cyclomatic_complexity  11  SourceSearchEngine.execute, tied with ClipboardCaptureService.poll
 #   closure_body_length   108  OnboardingView.clipboardSection
 #
 # --strict means the `warning` value IS the failure threshold; `error` is just
 # documentation of a number nothing should ever approach.
 file_length:
-  warning: 658
+  warning: 657
   error: 800
   ignore_comment_only_lines: true
 
@@ -120,7 +120,7 @@ type_body_length:
   error: 700
 
 function_body_length:
-  warning: 100
+  warning: 84
   error: 150
 
 cyclomatic_complexity:

@@ -192,6 +192,7 @@ package final class FFFIndex: @unchecked Sendable {
         }
     }
 
+    // periphery:ignore - The file index's query seam, exercised by FFFIndexTests.
     package func searchFiles(
         _ query: String,
         limit: UInt32 = 60
@@ -370,6 +371,7 @@ package final class FFFIndex: @unchecked Sendable {
         }
     }
 
+    // periphery:ignore - Driven by the opt-in expanded-index scan benchmark.
     package func rescan() async throws {
         try await perform {
             guard let handle = self.handle else {

@@ -1,6 +1,7 @@
-.PHONY: build bundle check check-architecture check-build check-dead-code check-format \
-	check-lint check-rules clean debug dmg docs format icons install install-tools run \
-	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer
+.PHONY: build bundle check check-architecture check-build check-dead-code check-fff-exploration \
+	check-format check-lint check-rules clean debug dmg docs fff format icons install-tools run \
+	test test-address-sanitizer test-fff-boundary test-fff-contracts test-fff-mutations test-swift-mutations \
+	test-performance test-sanitizers test-thread-sanitizer
 
 debug:
 	swift build
@@ -50,6 +51,21 @@ run: debug
 test:
 	swift test
 
+test-fff-contracts:
+	./testing/fff-contracts/run-rust-contracts.sh
+
+test-fff-boundary:
+	./testing/fff-contracts/run-swift-boundary.sh
+
+test-fff-mutations:
+	./testing/fff-contracts/run-rust-mutations.sh
+
+test-swift-mutations:
+	./testing/swift-mutations/run.sh
+
+check-fff-exploration:
+	cd testing/fff-exploration && bun install --frozen-lockfile && bun run check
+
 test-address-sanitizer:
 	./scripts/test-address-sanitizer.sh
 
@@ -63,7 +79,12 @@ test-sanitizers: test-address-sanitizer test-thread-sanitizer
 test-performance:
 	./scripts/test-performance.sh
 
-bundle: build
+# Its own target because it needs Rust and takes minutes: `build`, `check` and
+# `test` stay fast on the stock binary, and only what ships pays for this.
+fff:
+	./scripts/build-fff-xcframework.sh
+
+bundle: fff build
 	./scripts/bundle.sh
 
 icons:

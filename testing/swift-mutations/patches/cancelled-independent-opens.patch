@@ -1,0 +1,24 @@
+diff --git a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+--- a/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
++++ b/Sources/Floodlight/Search/SelectedResultActionPerformer.swift
+@@ -159,6 +159,7 @@ final class SelectedResultActionPerformer {
+     private let clipboardRestorePayload: ClipboardRestoreLookup
+     private let trackSelection: TrackSelection
+     private let onDismiss: @MainActor () -> Void
++    private var openTask: Task<Void, Never>?
+ 
+     init(
+         effects: any SelectedResultActionEffects,
+@@ -254,9 +255,11 @@ final class SelectedResultActionPerformer {
+         }
+ 
+         onDismiss()
+-        Task { [effects, recentStore, trackSelection] in
++        openTask?.cancel()
++        openTask = Task { [effects, recentStore, trackSelection] in
+             do {
+                 try await effects.open(url, asApplication: isApplication)
++                guard !Task.isCancelled else { return }
+                 if isApplication {
+                     recentStore.record(item.id)
+                 }

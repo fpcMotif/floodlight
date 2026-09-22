@@ -235,13 +235,21 @@ package actor SourceSearchEngine: SourceSearching {
         }
     }
 
-    private func execute(token: UInt64, query: String, immediate: Bool) async {
-        let searchSignpost = FloodlightPerformance.begin("SourceSearch")
-        defer { FloodlightPerformance.end("SourceSearch", id: searchSignpost) }
+    /// Application candidates requested per page. Result Projection caps
+    /// publication at 80 rows, so the catalog is asked for 80: every
+    /// application that could be published stays a candidate, and the
+    /// reported count covers all eligible matches before truncation.
+    private static let applicationCandidateBudget = 80
 
-        if let sourceMutation { _ = await sourceMutation.task.value }
-        guard isCurrent(token), !Task.isCancelled else { return }
-        let appPage = applications.immediatePage(for: query, limit: 12)
+    /// The pre-start page: whatever the catalogs hold in memory this moment,
+    /// published before any startup or refresh work so a keystroke never waits
+    /// on either. The debounce paces itself on whether the page found
+    /// anything, so the application page is returned for it.
+    private func publishImmediatePage(token: UInt64, query: String) -> SearchItemPage {
+        let appPage = applications.immediatePage(
+            for: query,
+            limit: Self.applicationCandidateBudget
+        )
         let settingsPage = settings.immediatePage(for: query, limit: 24)
         let immediateCandidates = merge([
             (appPage.items, Provenance.applications),
@@ -262,6 +270,16 @@ package actor SourceSearchEngine: SourceSearching {
             ),
             provenance: immediateCandidates.provenance
         )
+        return appPage
+    }
+
+    private func execute(token: UInt64, query: String, immediate: Bool) async {
+        let searchSignpost = FloodlightPerformance.begin("SourceSearch")
+        defer { FloodlightPerformance.end("SourceSearch", id: searchSignpost) }
+
+        if let sourceMutation { _ = await sourceMutation.task.value }
+        guard isCurrent(token), !Task.isCancelled else { return }
+        let appPage = publishImmediatePage(token: token, query: query)
 
         if !immediate {
             try? await Task.sleep(for: .milliseconds(appPage.items.isEmpty ? 15 : 20))
@@ -283,7 +301,10 @@ package actor SourceSearchEngine: SourceSearching {
         // Both real catalogs can acquire their first snapshot in start(), and
         // refresh may replace it again. Never carry the pre-start pages into
         // an indexed or settled snapshot.
-        let currentAppPage = applications.immediatePage(for: query, limit: 12)
+        let currentAppPage = applications.immediatePage(
+            for: query,
+            limit: Self.applicationCandidateBudget
+        )
         let currentSettingsPage = settings.immediatePage(for: query, limit: 24)
 
         let indexedSignpost = FloodlightPerformance.begin("IndexedSourceSearch")

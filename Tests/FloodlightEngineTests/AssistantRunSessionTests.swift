@@ -22,7 +22,8 @@ struct AssistantRunSessionTests {
         }
     }
 
-    @Test func startingAnotherRequestCancelsAndReplacesTheFirst() async throws {
+    @Test("L07: only the current assistant run publishes")
+    func startingAnotherRequestCancelsAndReplacesTheFirst() async throws {
         let runner = ScriptedAssistantRunner(availableCommands: ["claude"])
         let session = AssistantRunSession(runner: runner)
         let first = makeRequest(itemID: "assistant:first", arguments: ["first"])

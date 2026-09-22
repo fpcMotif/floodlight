@@ -39,6 +39,7 @@ package final class RecentStore: Sendable {
         }
     }
 
+    // periphery:ignore - Single-id read is the learning assertions' seam in tests.
     package func boost(for id: String) -> Int {
         entries.withLock { entries in
             guard let entry = entries[id] else { return 0 }

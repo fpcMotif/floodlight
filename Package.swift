@@ -23,10 +23,9 @@ let package = Package(
         .executable(name: "Floodlight", targets: ["Floodlight"]),
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/vmg-dev/fff-swift",
-            from: "0.2.1"
-        ),
+        // A path dependency so `make fff` can hand it a size-optimized
+        // XCFramework. Absent that, it downloads its own released binary.
+        .package(path: "Vendor/fff-swift"),
     ],
     targets: [
         // The deep module: results, ranking, action execution. Zero `public`.

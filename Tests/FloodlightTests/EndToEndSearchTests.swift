@@ -16,12 +16,10 @@ import Testing
 struct EndToEndSearchTests {
     private let tree: TemporaryTree
     private let defaults: IsolatedDefaults
-    private let supportURL: URL
 
     init() throws {
         tree = try TemporaryTree(label: "FloodlightE2E")
         defaults = try IsolatedDefaults(label: "FloodlightE2E")
-        supportURL = tree.root.appendingPathComponent(".support", isDirectory: true)
 
         try tree.makeFile("Documents/quarterly-report.pdf", contents: "%PDF-1.4 quarterly")
         try tree.makeFile("Documents/meeting-notes.txt", contents: "notes about the roadmap")
@@ -38,7 +36,8 @@ struct EndToEndSearchTests {
     }
 
     private func makeCoordinator(
-        applications: [(name: String, url: URL)] = []
+        applications: [(name: String, url: URL)] = [],
+        blocklistStore: BlocklistStore? = nil
     ) async throws -> SearchCoordinator {
         let recentStore = RecentStore(defaults: defaults.defaults)
         let sourceSearch = SourceSearchEngine(
@@ -46,7 +45,7 @@ struct EndToEndSearchTests {
             storageURL: tree.root.appendingPathComponent(".index", isDirectory: true),
             applications: ApplicationCatalog(
                 recentStore: recentStore,
-                supportURL: supportURL,
+                blocklistStore: blocklistStore ?? BlocklistStore(defaults: defaults.defaults),
                 deferDiscovery: true,
                 discoveryProvider: { applications }
             ),
@@ -94,6 +93,16 @@ struct EndToEndSearchTests {
         try await waitUntil(description, sourceLocation: sourceLocation) {
             coordinator.results.contains(where: predicate)
         }
+    }
+
+    private func application(
+        _ name: String,
+        in directory: String = "/Applications"
+    ) -> (name: String, url: URL) {
+        (
+            name: name,
+            url: URL(fileURLWithPath: "\(directory)/\(name).app", isDirectory: true)
+        )
     }
 
     // MARK: - Files come back
@@ -368,27 +377,13 @@ struct EndToEndSearchTests {
     }
 
     @Test func ghQueryReturnsOnlyGhosttyInTopSlots() async throws {
-        let ghostty = (
-            name: "Ghostty",
-            url: URL(fileURLWithPath: "/Applications/Ghostty.app", isDirectory: true)
-        )
-        let googleChrome = (
-            name: "Google Chrome",
-            url: URL(fileURLWithPath: "/Applications/Google Chrome.app", isDirectory: true)
-        )
-        let grapher = (
-            name: "Grapher",
-            url: URL(
-                fileURLWithPath: "/System/Applications/Utilities/Grapher.app",
-                isDirectory: true
-            )
-        )
-        let zedNightly = (
-            name: "Zed Nightly",
-            url: URL(fileURLWithPath: "/Applications/Zed Nightly.app", isDirectory: true)
-        )
         let coordinator = try await makeCoordinator(
-            applications: [ghostty, googleChrome, grapher, zedNightly]
+            applications: [
+                application("Ghostty"),
+                application("Google Chrome"),
+                application("Grapher", in: "/System/Applications/Utilities"),
+                application("Zed Nightly"),
+            ]
         )
 
         coordinator.query = "gh"
@@ -417,6 +412,89 @@ struct EndToEndSearchTests {
         let firstResult = try #require(coordinator.results.first)
         #expect(firstResult.kind == .application)
         #expect(firstResult.title == "Safari")
+    }
+
+    /// The publication cap end to end: 100 eligible applications exceed the
+    /// 80-candidate Source Search budget, and Result Projection still has to
+    /// keep the last slot for the web fallback — 79 applications plus the
+    /// fallback, never more, never without it.
+    @Test func aHundredMatchingApplicationsStillFitThePublicationCap() async throws {
+        let applications = (0..<100).map { application("Studio Tool \($0)") }
+        let coordinator = try await makeCoordinator(applications: applications)
+
+        coordinator.query = "studio"
+        try await waitUntil("the search settles for a flood of applications") {
+            !coordinator.isSearching
+        }
+
+        let applicationRows = coordinator.results.filter { $0.kind == .application }
+        #expect(applicationRows.count == 79)
+        #expect(coordinator.results.count == 80)
+        #expect(coordinator.results.last?.id == "web-search")
+    }
+
+    /// A blocklisted application is excluded by the one retrieval path, so
+    /// it cannot reach the panel through any pass.
+    @Test func aBlockedApplicationNeverReachesThePanel() async throws {
+        let claude = application("Claude")
+        let clash = application("Clash")
+        let blocklist = BlocklistStore(defaults: defaults.defaults)
+        blocklist.block(name: "Clash")
+        let coordinator = try await makeCoordinator(
+            applications: [claude, clash],
+            blocklistStore: blocklist
+        )
+
+        coordinator.query = "cl"
+        try await waitUntil("the search settles for query cl") { !coordinator.isSearching }
+
+        #expect(coordinator.results.contains { $0.title == "Claude" })
+        #expect(
+            !(coordinator.results.contains { $0.title == "Clash" }),
+            "a blocklisted application must never appear"
+        )
+    }
+
+    /// Issue #69 end to end: a substitution typo whose letter the name does
+    /// not contain still finds the application, through the real coordinator.
+    @Test func aSubstitutionTypoWithANovelLetterFindsTheApplication() async throws {
+        let nebula = application("Nebula")
+        let coordinator = try await makeCoordinator(applications: [nebula])
+
+        try await search(
+            coordinator,
+            "nebulx",
+            forRowMatching: { $0.fileURL == nebula.url },
+            description: "the substitution typo finds Nebula"
+        )
+
+        let row = try #require(coordinator.results.first { $0.fileURL == nebula.url })
+        #expect(row.kind == .application)
+        #expect(row.title == "Nebula")
+    }
+
+    @Test func anAccentedApplicationIsFoundByItsPlainSpelling() async throws {
+        let cafe = application("Café Manager")
+        let coordinator = try await makeCoordinator(applications: [cafe])
+
+        try await search(
+            coordinator,
+            "cafe",
+            forRowMatching: { $0.fileURL == cafe.url },
+            description: "the accented application is found by its plain spelling"
+        )
+    }
+
+    @Test func initialsReachAMultiWordApplication() async throws {
+        let googleChrome = application("Google Chrome")
+        let coordinator = try await makeCoordinator(applications: [googleChrome])
+
+        try await search(
+            coordinator,
+            "gc",
+            forRowMatching: { $0.fileURL == googleChrome.url },
+            description: "the initials query finds Google Chrome"
+        )
     }
 
     @Test func loginQueryReturnsZeroApplicationsAndSurfacesSystemSettingsAtTop() async throws {
