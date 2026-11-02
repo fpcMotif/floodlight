@@ -453,7 +453,7 @@ package final class MutableDiscovery<Element>: @unchecked Sendable {
 /// A `FileManager` that counts the directory listings and existence checks
 /// made through it, so a test can assert that a keystroke costs at most one
 /// directory listing instead of re-walking the tree per character typed.
-package final class CountingFileManager: FileManager, @unchecked Sendable {
+package final class CountingFileManager: FileManager {
     private let lock = NSLock()
     private var listingCount = 0
     private var existenceCount = 0
