@@ -5,8 +5,8 @@ import Testing
 
 /// The board's decoded-image cache. Two caches with different lifetimes, and
 /// the difference between them is load-bearing: `FloodlightPanel.hide()` drops
-/// the full images and keeps the thumbnails, so reopening the board redraws
-/// every row without a fresh round of decodes.
+/// the full images and keeps the warm thumbnails, so reopening the board redraws
+/// the rows it opens on without a fresh round of decodes.
 @MainActor
 struct ClipboardImageCacheTests {
     /// A real bitmap. `ClipboardImageTestData.png` is 64 bytes of 0xAB, which
@@ -90,20 +90,37 @@ struct ClipboardImageCacheTests {
         #expect(await cache.fullImage(entryID: "missing") { nil } == nil)
     }
 
-    @Test func removeFullImagesDropsFullImagesAndKeepsThumbnails() async throws {
-        let cache = ClipboardImageCache()
+    @Test func aHideDropsFullImagesAndKeepsTheWarmThumbnails() async throws {
+        let cache = ClipboardImageCache(warmThumbnailCount: 1)
         let data = Self.png()
 
-        let thumb = try #require(cache.thumbnail(entryID: "a", data: data))
-        _ = try #require(await cache.fullImage(entryID: "a") { data })
+        let cold = try #require(cache.thumbnail(entryID: "cold", data: data))
+        let warm = try #require(cache.thumbnail(entryID: "warm", data: data))
+        _ = try #require(await cache.fullImage(entryID: "warm") { data })
 
-        cache.removeFullImages()
+        cache.purgeForHide()
 
-        #expect(cache.cachedFullImage(entryID: "a") == nil)
-        // By identity. `!= nil` would also pass if the thumbnail had been
+        #expect(cache.cachedFullImage(entryID: "warm") == nil)
+        // By identity. `!= nil` would also pass if the warm thumbnail had been
         // evicted and silently re-decoded, which is exactly the regression
         // this guards — `FloodlightPanel.hide()` calls this on every dismissal.
-        #expect(cache.thumbnail(entryID: "a", data: data) === thumb)
+        #expect(cache.thumbnail(entryID: "warm", data: data) === warm)
+        #expect(cache.thumbnail(entryID: "cold", data: data) !== cold)
+    }
+
+    /// A hit counts as use. Without it the warm set would be the thumbnails
+    /// decoded last, not the ones the board drew last.
+    @Test func aThumbnailDrawnFromTheCacheStaysWarm() throws {
+        let cache = ClipboardImageCache(warmThumbnailCount: 1)
+        let data = Self.png()
+
+        let first = try #require(cache.thumbnail(entryID: "first", data: data))
+        _ = try #require(cache.thumbnail(entryID: "second", data: data))
+        _ = cache.thumbnail(entryID: "first", data: data)
+
+        cache.purgeForHide()
+
+        #expect(cache.thumbnail(entryID: "first", data: data) === first)
     }
 }
 
