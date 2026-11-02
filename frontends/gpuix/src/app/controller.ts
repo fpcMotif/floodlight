@@ -137,6 +137,9 @@ export class Controller {
    */
   ensureWindow(): boolean {
     if (this.window > 0) return true;
+    // Before start() there is no app window to take, only whatever a test
+    // harness opened.
+    if (!this.started) return false;
     this.window = native.flg_adopt_window();
     if (this.window <= 0) return false;
     this.applyAppearance();
