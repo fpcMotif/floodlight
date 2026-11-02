@@ -87,6 +87,9 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
         package var totalMatched: Int?
         package var indexed: [SearchItem]
         package var indexedDelay: Duration
+        /// Held shut, the indexed pass parks until the test opens it — for a
+        /// test that must see a moment before the pass completes.
+        package var indexedGate: PassGate?
         package var startDelay: Duration
         package var startError: (any Error)?
         package var indexedError: (any Error)?
@@ -101,6 +104,7 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
             totalMatched: Int? = nil,
             indexed: [SearchItem] = [],
             indexedDelay: Duration = .zero,
+            indexedGate: PassGate? = nil,
             startDelay: Duration = .zero,
             startError: (any Error)? = nil,
             indexedError: (any Error)? = nil,
@@ -114,6 +118,7 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
             self.totalMatched = totalMatched
             self.indexed = indexed
             self.indexedDelay = indexedDelay
+            self.indexedGate = indexedGate
             self.startDelay = startDelay
             self.startError = startError
             self.indexedError = indexedError
@@ -263,6 +268,7 @@ package final class ScriptedCatalog: Catalog, @unchecked Sendable {
         if current.indexedDelay > .zero {
             try await Task.sleep(for: current.indexedDelay)
         }
+        try await current.indexedGate?.wait()
         if let error = current.indexedError { throw error }
         return Array(current.indexed.prefix(limit))
     }

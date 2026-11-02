@@ -110,14 +110,22 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
 
     @Test func warmUpCompletingDuringAnActiveQueryPublishesOneCoherentResult() async throws {
         let application = SearchFixtures.application(name: "Xcode", score: 120_000)
+        // The catalog's indexed pass is held shut until the arrival has been
+        // observed. A delay here once raced the poll: on a loaded sanitizer
+        // runner the pass finished before the first look, and the chip was
+        // no longer loading by the time anyone checked.
+        let indexedPass = PassGate()
         let applications = ScriptedCatalog(.init(
             immediate: [],
             totalMatched: 37,
-            indexedDelay: TestBudget.duration(.milliseconds(150)),
+            indexedGate: indexedPass,
             startDelay: TestBudget.duration(.milliseconds(100)),
             immediateAfterStart: [application]
         ))
         let coordinator = try await makeCoordinator(applications: applications)
+        // A moment that never arrives throws past the explicit open below;
+        // this keeps the parked pass from outliving the test.
+        defer { indexedPass.open() }
 
         coordinator.start()
         coordinator.query = "xcode"
@@ -127,10 +135,8 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
         // stays marked loading until the catalog's own pass finishes rather
         // than presenting that total as final.
         //
-        // Both are read in the step that first sees the row. Read on the line
-        // after and the pass may already have settled: `isSearching` outlives
-        // the chip's pending state by a few tens of milliseconds, which is
-        // exactly the gap a loaded runner lands in.
+        // Both are read in the step that first sees the row, so the gate
+        // stays shut only as long as the moment is being looked for.
         let onArrival = try await waitForMoment("the warmed-up row arrives") {
             () -> (count: Int, isLoading: Bool)? in
             guard coordinator.results.contains(where: { $0.id == application.id }),
@@ -140,6 +146,7 @@ final class SearchCoordinatorIntegrationTestsResults: SearchCoordinatorIntegrati
             }
             return (chip.count, chip.isLoading)
         }
+        indexedPass.open()
         #expect(onArrival.count == 37)
         #expect(onArrival.isLoading)
 
