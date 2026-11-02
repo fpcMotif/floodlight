@@ -31,3 +31,4 @@ frontends/scriptc/node_modules/
 frontends/scriptc/build/
 frontends/scriptc/.scriptc/
 frontends/scriptc/ffi-panel.json
+frontends/scriptc/ffi-tui.json

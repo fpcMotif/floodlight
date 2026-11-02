@@ -1,8 +1,9 @@
 /** File search through floodlight-core, the Zig index (ADR 0010). */
-import { fls_is_dir, fls_path, fls_search } from "./native";
+import { fls_is_dir, fls_path, fls_search, fls_stat } from "./native";
 import { fuzzyMatch } from "./match";
 import { baseName, displayPath, joinPath, parentPath } from "./paths";
-import { FileSource, KIND_FILE, KIND_FOLDER, Row } from "./session";
+import { ACTION_OPEN, extensionOf, KIND_FILE, KIND_FOLDER, Row } from "./row";
+import { FileSource } from "./session";
 
 /** fl_hit is a u32 id and an i32 score. */
 const HIT_BYTES = 8;
@@ -23,6 +24,8 @@ export class CoreFiles extends FileSource {
   private readonly hits = new Uint8Array(MAX_HITS * HIT_BYTES);
   private readonly view = new DataView(this.hits.buffer);
   private readonly pathBuf = new Uint8Array(4096);
+  private readonly statBuf = new Uint8Array(16);
+  private readonly statView = new DataView(this.statBuf.buffer);
   entries = -1;
 
   constructor(
@@ -52,8 +55,29 @@ export class CoreFiles extends FileSource {
       const title = baseName(relative);
       const match = fuzzyMatch(title, term);
       const marks = match === null ? [] : match.positions;
-      const kind = fls_is_dir(id) ? KIND_FOLDER : KIND_FILE;
-      rows.push(new Row(kind, title, displayPath(parentPath(path), this.home), path, marks, score));
+      const dir = fls_is_dir(id);
+      // Size and date for the subtitle; a vanished file keeps its row.
+      let size = -1;
+      let modified = 0;
+      if (fls_stat(path, this.statBuf) > 0) {
+        size = dir ? -1 : this.statView.getFloat64(0, true);
+        modified = this.statView.getFloat64(8, true);
+      }
+      rows.push(
+        new Row(
+          dir ? KIND_FOLDER : KIND_FILE,
+          "file:" + path,
+          title,
+          displayPath(parentPath(path), this.home),
+          path,
+          ACTION_OPEN,
+          marks,
+          score,
+          dir ? "" : extensionOf(title),
+          size,
+          modified,
+        ),
+      );
     }
     return rows;
   }

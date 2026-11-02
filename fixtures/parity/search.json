@@ -1,0 +1,349 @@
+{
+  "about": "Search parity: a file tree indexed by the Zig core, an app list, and queries with the ranked rows each frontend must publish. Paths are relative to the tree root, which is also the home folder for display.",
+  "tree": [
+    "Applications/Notes.app/Contents/Info.plist",
+    "Applications/Safari.app/Contents/Info.plist",
+    "Applications/Visual Studio Code.app/Contents/Info.plist",
+    "Documents/safari-notes.md",
+    "Documents/notes/",
+    "Documents/Reports/q3-report.pdf",
+    "Documents/Reports/q3-figures.png",
+    "Pictures/sunset.png",
+    "Pictures/sunset.jpg",
+    "Projects/floodlight/README.md",
+    "Projects/floodlight/Makefile"
+  ],
+  "apps": [
+    {
+      "name": "Notes",
+      "path": "Applications/Notes.app"
+    },
+    {
+      "name": "Safari",
+      "path": "Applications/Safari.app"
+    },
+    {
+      "name": "Visual Studio Code",
+      "path": "Applications/Visual Studio Code.app"
+    }
+  ],
+  "cases": [
+    {
+      "query": "saf",
+      "rows": [
+        {
+          "kind": "app",
+          "title": "Safari"
+        },
+        {
+          "kind": "file",
+          "title": "safari-notes.md",
+          "detail": "~/Documents"
+        },
+        {
+          "kind": "file",
+          "title": "Makefile",
+          "about": "a path match: s, a, f across Projects/floodlight/Makefile ranks below the name match"
+        },
+        {
+          "kind": "web",
+          "title": "Google",
+          "target": "https://www.google.com/search?q=saf"
+        }
+      ],
+      "top_hit": "Safari",
+      "counts": {
+        "all": 4,
+        "apps": 1,
+        "files": 2,
+        "folders": 0,
+        "pdfs": 0,
+        "images": 0
+      }
+    },
+    {
+      "query": "notes",
+      "rows": [
+        {
+          "kind": "app",
+          "title": "Notes"
+        },
+        {
+          "kind": "folder",
+          "title": "notes",
+          "detail": "~/Documents"
+        },
+        {
+          "kind": "file",
+          "title": "safari-notes.md"
+        },
+        {
+          "kind": "file",
+          "title": "q3-figures.png"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": "Notes",
+      "counts": {
+        "all": 5,
+        "apps": 1,
+        "files": 2,
+        "folders": 1,
+        "pdfs": 0,
+        "images": 1
+      }
+    },
+    {
+      "query": "q3 report",
+      "rows": [
+        {
+          "kind": "file",
+          "title": "q3-report.pdf",
+          "detail": "~/Documents/Reports"
+        },
+        {
+          "kind": "file",
+          "title": "q3-figures.png"
+        },
+        {
+          "kind": "web",
+          "title": "Google",
+          "target": "https://www.google.com/search?q=q3%20report"
+        }
+      ],
+      "top_hit": "q3-report.pdf",
+      "counts": {
+        "all": 3,
+        "apps": 0,
+        "files": 2,
+        "folders": 0,
+        "pdfs": 1,
+        "images": 1
+      }
+    },
+    {
+      "query": "sunset",
+      "filter": "images",
+      "rows": [
+        {
+          "kind": "file",
+          "title": "sunset.jpg"
+        },
+        {
+          "kind": "file",
+          "title": "sunset.png"
+        }
+      ],
+      "top_hit": "sunset.jpg",
+      "counts": {
+        "all": 3,
+        "apps": 0,
+        "files": 2,
+        "folders": 0,
+        "pdfs": 0,
+        "images": 2
+      }
+    },
+    {
+      "query": "vsc",
+      "rows": [
+        {
+          "kind": "app",
+          "title": "Visual Studio Code"
+        },
+        {
+          "kind": "setting",
+          "title": "Privacy & Security"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": "Visual Studio Code"
+    },
+    {
+      "query": "2*(3+4)",
+      "rows": [
+        {
+          "kind": "calculator",
+          "title": "14",
+          "target": "14"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": "14"
+    },
+    {
+      "query": "1000/8",
+      "rows": [
+        {
+          "kind": "calculator",
+          "title": "125"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ]
+    },
+    {
+      "query": "10 km to mi",
+      "rows": [
+        {
+          "kind": "calculator",
+          "title": "6.213712 mi"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ]
+    },
+    {
+      "query": "yt lofi beats",
+      "rows": [
+        {
+          "kind": "web",
+          "title": "YouTube",
+          "target": "https://www.youtube.com/results?search_query=lofi%20beats"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": "YouTube"
+    },
+    {
+      "query": "x.com/abc",
+      "rows": [
+        {
+          "kind": "web",
+          "title": "x.com",
+          "target": "https://x.com/abc"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ]
+    },
+    {
+      "query": "me@x.com",
+      "rows": [
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": ""
+    },
+    {
+      "query": "wifi",
+      "rows": [
+        {
+          "kind": "setting",
+          "title": "Wi-Fi",
+          "target": "x-apple.systempreferences:com.apple.wifi-settings-extension"
+        },
+        {
+          "kind": "setting",
+          "title": "Network"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": "Wi-Fi"
+    },
+    {
+      "query": "makefile floodlight",
+      "rows": [
+        {
+          "kind": "file",
+          "title": "Makefile",
+          "detail": "~/Projects/floodlight"
+        },
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ]
+    },
+    {
+      "query": "zzzz",
+      "rows": [
+        {
+          "kind": "web",
+          "title": "Google"
+        }
+      ],
+      "top_hit": ""
+    }
+  ],
+  "modes": [
+    {
+      "about": "Tab on a web keyword enters that engine's mode with the remainder; Esc puts the field back as typed.",
+      "query": "gh floodlight",
+      "events": ["tab"],
+      "mode": "web",
+      "engine": "github",
+      "field": "floodlight",
+      "rows": [
+        "GitHub",
+        "Google",
+        "Wikipedia",
+        "Stack Overflow",
+        "Twitter/X",
+        "YouTube"
+      ],
+      "exit": "escape",
+      "field_after_exit": "gh floodlight"
+    },
+    {
+      "about": "Tab on plain text enters the default engine with the query unchanged.",
+      "query": "floodlight",
+      "events": ["tab"],
+      "mode": "web",
+      "engine": "google",
+      "field": "floodlight",
+      "rows": [
+        "Google",
+        "Wikipedia",
+        "GitHub",
+        "Stack Overflow",
+        "Twitter/X",
+        "YouTube"
+      ],
+      "exit": "shift+tab",
+      "field_after_exit": "floodlight"
+    },
+    {
+      "about": "An edited query leaves with the engine's canonical keyword.",
+      "query": "YouTube cats",
+      "events": ["tab", "type: dogs"],
+      "mode": "web",
+      "engine": "youtube",
+      "field": "cats dogs",
+      "exit": "escape",
+      "field_after_exit": "yt cats dogs"
+    },
+    {
+      "about": "Tab on clip opens the clipboard board; Backspace on an empty query leaves it.",
+      "query": "clip",
+      "events": ["tab"],
+      "mode": "clipboard",
+      "field": "",
+      "exit": "backspace",
+      "field_after_exit": "clip"
+    }
+  ]
+}

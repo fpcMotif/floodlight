@@ -45,13 +45,55 @@ export function textWidth(text: string): number {
   return width;
 }
 
+/** A background colour from the style's high bits (`swatch(rgb)`), for colour entries. */
+export const STYLE_SWATCH = 16;
+const FLAG_BITS = 32;
+
+/** A style that paints the cell's background in `rgb` (0xRRGGBB). */
+export function swatch(rgb: number): number {
+  return STYLE_SWATCH + rgb * FLAG_BITS;
+}
+
+/**
+ * Truecolor where the terminal says it has it (`COLORTERM`), else the 16
+ * ANSI colours, which follow the terminal's own theme. Set once at start.
+ */
+export class Palette {
+  static truecolor = false;
+
+  static detect(colorterm: string): void {
+    Palette.truecolor = colorterm === "truecolor" || colorterm === "24bit";
+  }
+}
+
+function rgbCodes(rgb: number): string {
+  return Math.floor(rgb / 65536) + ";" + (Math.floor(rgb / 256) % 256) + ";" + (rgb % 256);
+}
+
+/** The nearest of the 8 basic ANSI background colours, when truecolor is out. */
+function ansiBackground(rgb: number): string {
+  const r = Math.floor(rgb / 65536) >= 128 ? 1 : 0;
+  const g = Math.floor(rgb / 256) % 256 >= 128 ? 2 : 0;
+  const b = rgb % 256 >= 128 ? 4 : 0;
+  return String(40 + r + g + b);
+}
+
 export function sgr(style: number): string {
+  const flags = style % FLAG_BITS;
   let codes = "0";
-  if ((style & STYLE_BOLD) !== 0) codes += ";1";
-  if ((style & STYLE_DIM) !== 0) codes += ";2";
-  // The terminal's own blue, so the accent follows its theme.
-  if ((style & STYLE_ACCENT) !== 0) codes += ";34";
-  if ((style & STYLE_SELECTED) !== 0) codes += ";7";
+  if ((flags & STYLE_BOLD) !== 0) codes += ";1";
+  if ((flags & STYLE_DIM) !== 0) codes += ";2";
+  if ((flags & STYLE_SWATCH) !== 0) {
+    const rgb = Math.floor(style / FLAG_BITS);
+    codes += Palette.truecolor ? ";48;2;" + rgbCodes(rgb) : ";" + ansiBackground(rgb);
+    return "\x1b[" + codes + "m";
+  }
+  if ((flags & STYLE_SELECTED) !== 0) {
+    // System blue behind white text, or the terminal's reverse video.
+    codes += Palette.truecolor ? ";48;2;10;132;255;38;2;255;255;255" : ";7";
+  } else if ((flags & STYLE_ACCENT) !== 0) {
+    codes += Palette.truecolor ? ";38;2;10;132;255" : ";34";
+  }
   return "\x1b[" + codes + "m";
 }
 

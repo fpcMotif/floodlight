@@ -8,39 +8,18 @@
  * job — emit less, but never leave a stale cell behind.
  */
 import { fuzzyMatch } from "../src/match";
-import {
-  Key,
-  KEY_DOWN,
-  KEY_ESCAPE,
-  KEY_REVEAL,
-  KEY_TEXT,
-  KEY_UP,
-  KEY_PAGE_DOWN,
-  KeyParser,
-} from "../src/keys";
-import { App, FileSource, KIND_APP, KIND_FILE, Row, SearchSession } from "../src/session";
+import { Key, KEY_DOWN, KEY_ESCAPE, KEY_REVEAL, KEY_TEXT, KEY_UP, KEY_PAGE_DOWN, KeyParser } from "../src/keys";
+import { App, FileSource, KIND_APP, KIND_FILE, KIND_FOLDER, Row, SearchSession } from "../src/session";
+import { ACTION_OPEN, extensionOf } from "../src/row";
+import { check, eq, eqn, Tally } from "./check";
+import { boardKeyName } from "../src/keys";
+import { FDA_GRANTED, FDA_JUST_GRANTED, FDA_MISSING, FDA_WAITING, FdaFlow } from "../src/fda";
+import { Palette, sgr, STYLE_SELECTED, swatch } from "../src/screen";
+import { formatBytes, formatNumber } from "../src/format";
+import { runParity } from "./parity";
 import { Screen, STYLE_PLAIN, charWidth } from "../src/screen";
 import { render, scrollTop, Status } from "../src/view";
 import { displayPath } from "../src/paths";
-
-let failures = 0;
-let checks = 0;
-
-function check(ok: boolean, what: string): void {
-  checks++;
-  if (!ok) {
-    failures++;
-    console.error("FAIL: " + what);
-  }
-}
-
-function eq(actual: string, expected: string, what: string): void {
-  check(actual === expected, what + "\n  expected: " + JSON.stringify(expected) + "\n  actual:   " + JSON.stringify(actual));
-}
-
-function eqn(actual: number, expected: number, what: string): void {
-  eq(String(actual), String(expected), what);
-}
 
 // ---- a minimal VT emulator ------------------------------------------------
 
@@ -120,8 +99,9 @@ class FakeFiles extends FileSource {
   }
 }
 
-function file(title: string, dir: string): Row {
-  return new Row(KIND_FILE, title, dir, dir + "/" + title, [], 1);
+function file(title: string, dir: string, kind: number = KIND_FILE): Row {
+  const path = dir + "/" + title;
+  return new Row(kind, "file:" + path, title, dir, path, ACTION_OPEN, [], 1, extensionOf(title));
 }
 
 const APPS = [
@@ -136,7 +116,7 @@ const FILES = [
   file("safari-notes.md", "~/Documents"),
   file("terminal.log", "~/Library/Logs"),
   file("日本語メモ.txt", "~/Desktop"),
-  file("Safari.app", "/Applications"),
+  file("Safari.app", "/Applications", KIND_FOLDER),
 ];
 
 // ---- matcher --------------------------------------------------------------
@@ -208,12 +188,16 @@ function testSession(): void {
   eqn(files.queries.length, 0, "empty query never reaches the index");
 
   s.setQuery("saf");
-  eq(s.rows.map((r) => r.title).join("|"), "Safari|safari-notes.md", "apps first, duplicate bundle hidden");
+  eq(
+    s.rows.map((r) => r.title).join("|"),
+    "Safari|safari-notes.md|Google",
+    "apps first, duplicate bundle hidden, web row last",
+  );
   eqn(s.rows[0].kind, KIND_APP, "top row is the app");
   eq(s.rows[0].marks.join(","), "0,1,2", "app row carries highlight marks");
 
   s.move(5);
-  eqn(s.selected, 1, "move clamps at the end");
+  eqn(s.selected, 2, "move clamps at the end");
   s.move(-5);
   eqn(s.selected, 0, "move clamps at the start");
   s.move(1);
@@ -265,7 +249,7 @@ function testView(): void {
   render(screen, s, new Status(-1, true));
   term.feed(screen.flush());
   sameScreen(term, screen, "empty view");
-  check(screen.rowText(2).indexOf("Type to search") >= 0, "empty state hint");
+  check(screen.rowText(3).indexOf("Type to search") >= 0, "empty state hint");
   check(screen.rowText(9).indexOf("indexing…") >= 0, "first build shows indexing");
 
   s.setQuery("t");
@@ -273,7 +257,9 @@ function testView(): void {
   term.feed(screen.flush());
   sameScreen(term, screen, "results view");
   check(screen.rowText(0).indexOf(" t") >= 0, "query on the prompt row");
-  check(screen.rowText(2).indexOf("Terminal") >= 0, "best app on the first row");
+  check(screen.rowText(3).indexOf("Terminal") >= 0, "best app on the first row");
+  check(screen.rowText(3).indexOf("★") >= 0, "the top hit is marked");
+  check(screen.rowText(1).indexOf("Apps") >= 0, "filter chips under the prompt");
   check(screen.rowText(9).indexOf("1,234,567 files") >= 0, "file count is grouped");
   eqn(screen.cursorRow, 0, "cursor sits on the prompt");
 
@@ -298,7 +284,59 @@ function testWidth(): void {
   eqn(charWidth(0x301), 0, "combining marks take no cell");
 }
 
+function testBoardKeys(): void {
+  const p = new KeyParser();
+  const names = (text: string): string => {
+    const b = bytes(text);
+    return p
+      .feed(b, b.length)
+      .map((k) => boardKeyName(k))
+      .join(" ");
+  };
+  eq(names("\r"), "return", "Enter pastes");
+  eq(names("\x1b\r"), "option+return", "Alt-Enter is ⌥Return");
+  eq(names("\x1bc\x1br\x1by\x1bk\x1b.\x1bd\x1b3"), "cmd+c cmd+r cmd+y cmd+k cmd+. cmd+d cmd+3", "Alt stands in for ⌘");
+  eq(names("\x19\x0b\x04\x0f"), "cmd+y cmd+k cmd+d cmd+return", "Ctrl chords are a second spelling");
+  eq(names(" "), "space", "a lone space");
+  eq(names("ab"), "text:ab", "typing");
+  eq(names("\t\x1b[Z"), " ", "Tab and Shift-Tab mean nothing on the board");
+}
+
+function testFda(): void {
+  const f = new FdaFlow();
+  f.start(1);
+  eqn(f.state, FDA_GRANTED, "granted at start: no notice");
+  check(!f.polling(), "granted: no polling");
+  f.start(0);
+  eqn(f.state, FDA_MISSING, "missing: the notice shows");
+  check(f.notice("Ghostty.app").indexOf("^G") >= 0, "the notice names the key");
+  check(f.beginGrant(), "the grant starts");
+  eqn(f.state, FDA_WAITING, "waiting for the drag");
+  check(f.notice("Ghostty.app").indexOf("Ghostty.app") >= 0, "the notice names the terminal");
+  check(!f.tick(0, 100), "no grant yet");
+  check(f.tick(1, 101), "the grant lands once");
+  eqn(f.state, FDA_JUST_GRANTED, "says granted");
+  check(!f.tick(1, 102), "and only once");
+  f.tick(1, 105);
+  eqn(f.state, FDA_GRANTED, "then the notice goes");
+}
+
+function testPalette(): void {
+  Palette.detect("truecolor");
+  check(sgr(STYLE_SELECTED).indexOf("48;2;10;132;255") >= 0, "truecolor selection is system blue");
+  check(sgr(swatch(0xff8800)).indexOf("48;2;255;136;0") >= 0, "a colour swatch in truecolor");
+  Palette.detect("");
+  check(sgr(STYLE_SELECTED).indexOf(";7") >= 0, "16 colours: reverse video");
+  check(sgr(swatch(0xff8800)).indexOf(";43") >= 0, "16 colours: the nearest ANSI background");
+  eq(formatNumber(1234567.5), "1,234,567.5", "grouped answer");
+  eq(formatNumber(0.1 + 0.2), "0.3", "ten fraction digits, trailing zeros dropped");
+  eq(formatBytes(12345), "12 KB", "Finder-style sizes");
+}
+
 testMatcher();
+testBoardKeys();
+testFda();
+testPalette();
 testKeys();
 testSession();
 testDiffRenderer();
@@ -306,5 +344,8 @@ testView();
 testPaths();
 testWidth();
 
-console.log("selftest: " + (checks - failures) + "/" + checks + " checks passed");
-if (failures > 0) process.exit(1);
+const fixtures = process.argv.length > 2 ? process.argv[2] : "../../fixtures/parity";
+runParity(fixtures);
+
+console.log("selftest: " + (Tally.checks - Tally.failures) + "/" + Tally.checks + " checks passed");
+if (Tally.failures > 0) process.exit(1);

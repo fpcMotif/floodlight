@@ -1,0 +1,101 @@
+{
+  "about": "Board parity: key sequences over one history, each with the action the board requests. Keys are logical names; each frontend maps its own key events onto them (the TUI's ⌥ and ^ chords are listed in its help line). The history lists pinned entries first, then the newest.",
+  "now": 1800000000,
+  "entries": [
+    { "id": "t1", "text": "newest text", "kind": "text", "age": 10 },
+    {
+      "id": "f1",
+      "text": "/Users/me/Pictures/sunset.png",
+      "kind": "file",
+      "age": 60
+    },
+    {
+      "id": "i1",
+      "text": "",
+      "kind": "image",
+      "age": 120,
+      "width": 10,
+      "height": 10
+    },
+    {
+      "id": "p1",
+      "text": "pinned link https://x.com",
+      "kind": "text",
+      "age": 9000,
+      "pinned": 5
+    },
+    { "id": "t2", "text": "older text", "kind": "text", "age": 600 }
+  ],
+  "order": ["p1", "t1", "f1", "i1", "t2"],
+  "cases": [
+    { "keys": ["return"], "action": "paste", "entry": "p1" },
+    { "keys": ["down", "return"], "action": "paste", "entry": "t1" },
+    { "keys": ["down", "option+return"], "action": "copy", "entry": "t1" },
+    { "keys": ["down", "cmd+c"], "action": "copy", "entry": "t1" },
+    {
+      "keys": ["down", "down", "cmd+return"],
+      "action": "reveal",
+      "entry": "f1"
+    },
+    { "keys": ["down", "down", "cmd+r"], "action": "reveal", "entry": "f1" },
+    {
+      "keys": ["down", "cmd+r"],
+      "action": "none",
+      "about": "plain text has nothing to reveal"
+    },
+    { "keys": ["down", "down", "space"], "action": "preview", "entry": "f1" },
+    { "keys": ["down", "down", "cmd+y"], "action": "preview", "entry": "f1" },
+    { "keys": ["cmd+k"], "action": "actions", "entry": "p1" },
+    {
+      "keys": ["cmd+k", "down", "return"],
+      "action": "copy",
+      "entry": "p1",
+      "about": "the menu: Paste, Copy, …"
+    },
+    { "keys": ["cmd+k", "escape", "return"], "action": "paste", "entry": "p1" },
+    {
+      "keys": ["down", "cmd+."],
+      "action": "pin",
+      "entry": "t1",
+      "order_after": ["p1", "t1", "f1", "i1", "t2"]
+    },
+    {
+      "keys": ["cmd+."],
+      "action": "unpin",
+      "entry": "p1",
+      "order_after": ["t1", "f1", "i1", "t2", "p1"]
+    },
+    {
+      "keys": ["down", "cmd+d"],
+      "action": "delete",
+      "entry": "t1",
+      "order_after": ["p1", "f1", "i1", "t2"],
+      "selected_after": "f1"
+    },
+    {
+      "keys": ["cmd+2"],
+      "action": "filter",
+      "order_after": ["p1", "t1", "t2"]
+    },
+    { "keys": ["cmd+3"], "action": "filter", "order_after": ["f1"] },
+    { "keys": ["cmd+4"], "action": "filter", "order_after": ["i1"] },
+    {
+      "keys": ["cmd+4", "cmd+1"],
+      "action": "filter",
+      "order_after": ["p1", "t1", "f1", "i1", "t2"]
+    },
+    {
+      "keys": ["text:older"],
+      "action": "type",
+      "entry": "t2",
+      "order_after": ["t2"]
+    },
+    {
+      "keys": ["text:o", "space"],
+      "action": "type",
+      "about": "with a query, space is typed"
+    },
+    { "keys": ["text:x", "backspace", "backspace"], "action": "exit" },
+    { "keys": ["escape"], "action": "close" }
+  ]
+}
