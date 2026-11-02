@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core gpuix test-gpuix measure-gpuix
 
 debug:
 	swift build
@@ -92,3 +92,15 @@ install-zig:
 
 test-core:
 	./scripts/test-core.sh
+
+# The GPUIX frontend in frontends/gpuix (ADR 0014): React components painted
+# by GPUI, on Bun, searching through core/. Its own Makefile and its own CI
+# job; nothing here touches the Swift app.
+gpuix:
+	$(MAKE) -C frontends/gpuix
+
+test-gpuix:
+	$(MAKE) -C frontends/gpuix test
+
+measure-gpuix:
+	$(MAKE) -C frontends/gpuix measure

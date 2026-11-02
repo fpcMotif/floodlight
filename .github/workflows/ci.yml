@@ -124,6 +124,47 @@ jobs:
       - name: Test, cross-build, and bench the core
         run: make test-core
 
+  # The GPUIX frontend (ADR 0014). Its own job: it needs Bun and the GPUIX
+  # native addon on top of Zig, and nothing in the Swift jobs needs them.
+  gpuix:
+    name: GPUIX frontend
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore pinned Zig
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      - name: Install pinned Zig
+        run: make install-zig
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: frontends/gpuix/.bun-version
+
+      - name: Report tool versions
+        run: |
+          bun --version
+          clang --version | head -1
+          sw_vers
+
+      # Typecheck, the parity fixtures, the controller, and the React tree on
+      # GPUIX's headless renderer, which exists on macOS only.
+      - name: Build and test the frontend
+        run: make test-gpuix
+
+      # The feasibility gate: an empty panel's floor, then the full app's
+      # idle footprint, JS heap, summon and query latency and size, written
+      # to the job summary.
+      - name: Measure the frontend
+        run: make measure-gpuix
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27
