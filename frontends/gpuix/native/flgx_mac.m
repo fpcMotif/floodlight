@@ -16,6 +16,7 @@
 #import <objc/runtime.h>
 
 #include <malloc/malloc.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "flgx.h"
@@ -25,6 +26,8 @@ static const CGFloat kCornerRadius = 30;           /* FloodlightMetrics.cornerRa
 
 static NSWindow *panel;
 static BOOL nonactivating;
+/* flg_adopt_window's answer once adopted: 2 swapped, 3 private flag, 1 neither. */
+static int32_t adoptCode;
 static NSView *materialView;
 static int32_t queue[16];
 static int queueCount;
@@ -106,17 +109,40 @@ static NSView *gpui_view(void) {
     return nil;
 }
 
+/* Why adoption went the way it did, for the measure script. */
+static char adoptDetail[256];
+
 static BOOL swap_to_panel_class(NSWindow *window) {
     Class from = object_getClass(window);
     Class to = objc_getClass("GPUIPanel");
+    snprintf(adoptDetail, sizeof adoptDetail, "%s:%zu>GPUIPanel:%zu", class_getName(from),
+             class_getInstanceSize(from), to == Nil ? (size_t)0 : class_getInstanceSize(to));
     if (to == Nil || strcmp(class_getName(from), "GPUIWindow") != 0) return NO;
     if (class_getInstanceSize(from) != class_getInstanceSize(to)) return NO;
     object_setClass(window, to);
     return YES;
 }
 
+/* The fallback when the class cannot be swapped (a KVO subclass, say): the
+ * WindowServer flag behind NSWindowStyleMaskNonactivatingPanel, which
+ * launchers set on plain windows. Private, so it is probed, never assumed. */
+static BOOL prevent_activation(NSWindow *window) {
+    SEL sel = NSSelectorFromString(@"_setPreventsActivation:");
+    if (![window respondsToSelector:sel]) return NO;
+    void (*set)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[window methodForSelector:sel];
+    set(window, sel, YES);
+    return YES;
+}
+
+size_t flg_adopt_detail(uint8_t *out, size_t cap) {
+    size_t n = strlen(adoptDetail);
+    if (n > cap) return 0;
+    memcpy(out, adoptDetail, n);
+    return n;
+}
+
 int32_t flg_adopt_window(void) {
-    if (panel != nil) return nonactivating ? 2 : 1;
+    if (panel != nil) return adoptCode;
     NSArray<NSWindow *> *windows = NSApp.windows;
     if (windows.count == 0) return -1;
     /* GPUIX opens its window on a later run-loop pass than render(), so the
@@ -133,11 +159,12 @@ int32_t flg_adopt_window(void) {
     if (found == nil) return -2;
     panel = found;
 
-    nonactivating = swap_to_panel_class(panel);
+    BOOL swapped = swap_to_panel_class(panel);
     NSWindowStyleMask mask = NSWindowStyleMaskBorderless | NSWindowStyleMaskFullSizeContentView;
-    if (nonactivating) mask |= NSWindowStyleMaskNonactivatingPanel;
+    if (swapped) mask |= NSWindowStyleMaskNonactivatingPanel;
     panel.styleMask = mask;
-    if (nonactivating) {
+    nonactivating = swapped || prevent_activation(panel);
+    if (swapped) {
         NSPanel *p = (NSPanel *)panel;
         p.floatingPanel = YES;
         p.becomesKeyOnlyIfNeeded = NO;
@@ -164,7 +191,8 @@ int32_t flg_adopt_window(void) {
                                                     if (panel.alphaValue > 0) push(FLG_EV_RESIGNED);
                                                 }];
     [panel orderOut:nil];
-    return nonactivating ? 2 : 1;
+    adoptCode = swapped ? 2 : nonactivating ? 3 : 1;
+    return adoptCode;
 }
 
 int32_t flg_dark(void) {
@@ -273,6 +301,8 @@ void flg_order_out(void) {
 }
 
 uint8_t flg_visible(void) { return panel != nil && panel.visible && panel.alphaValue > 0 ? 1 : 0; }
+
+uint8_t flg_is_key(void) { return panel != nil && panel.isKeyWindow ? 1 : 0; }
 
 /* ---- the run loop while hidden ---------------------------------------- */
 

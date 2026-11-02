@@ -7,7 +7,7 @@
  */
 import { heapStats } from "bun:jsc";
 import type { Controller } from "./app/controller";
-import { native } from "./platform/native";
+import { adoptDetail, native } from "./platform/native";
 
 const WARMUP = 3;
 const SUMMONS = 20;
@@ -34,6 +34,8 @@ export async function runBench(controller: Controller, hotkeys: number): Promise
   // timing anything; a summon without the window would time nothing.
   for (let i = 0; i < 60 && !controller.ensureWindow(); i++) await sleep(50);
   report("adopt", controller.window);
+  console.log("FLOODLIGHT_GPUIX adopt_detail=" + adoptDetail());
+  report("material", controller.material);
   if (controller.window <= 0) process.exit(1);
   await sleep(2000);
 
@@ -43,6 +45,8 @@ export async function runBench(controller: Controller, hotkeys: number): Promise
     const start = native.fls_now_ms();
     controller.handleEvent(1);
     const shown = native.fls_now_ms() - start;
+    // Keys reach the panel only while it is key; a summon that is not key is broken.
+    if (i === WARMUP) report("key_after_summon", native.flg_is_key());
     if (i >= WARMUP) summons.push(shown);
     for (const q of QUERIES) {
       const t = native.fls_now_ms();

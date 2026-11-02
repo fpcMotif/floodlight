@@ -66,6 +66,8 @@ const SYMBOLS = {
   flg_hide: { args: [], returns: none },
   flg_order_out: { args: [], returns: none },
   flg_visible: { args: [], returns: u8 },
+  flg_is_key: { args: [], returns: u8 },
+  flg_adopt_detail: { args: [ptr, u64], returns: u64 },
   flg_wait: { args: [i32], returns: i32 },
   flg_next_event: { args: [], returns: i32 },
   flg_post_hotkey: { args: [i32], returns: none },
@@ -168,4 +170,9 @@ export function settingsFrame(): { x: number; y: number; width: number; height: 
 export function dragSource(x: number, y: number, width: number, height: number, path: string): void {
   const p = utf8(path);
   lib.flg_drag_source(x, y, width, height, p, p.length);
+}
+
+/** Why the window was adopted the way it was, for the measure script. */
+export function adoptDetail(): string {
+  return decode(nameBuf, Number(lib.flg_adopt_detail(nameBuf, nameBuf.length)));
 }

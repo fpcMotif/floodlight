@@ -36,8 +36,9 @@ enum {
  * the main thread. A hotkey another app holds is left out, not fatal. */
 int32_t flg_start(void);
 
-/* Restyles the window GPUIX opened. 2: a non-activating panel. 1: restyled,
- * but the class swap was refused, so showing activates the app. -1: no
+/* Restyles the window GPUIX opened. 2: a non-activating panel (class swap).
+ * 3: the class swap was refused, so the private prevents-activation flag is
+ * set instead. 1: neither, so showing activates the app. -1: no
  * window yet; -2: windows, but none of them GPUI's. Safe to call again. */
 int32_t flg_adopt_window(void);
 
@@ -63,6 +64,10 @@ void flg_show_at(double x, double y, double width, double height);
 void flg_hide(void);
 void flg_order_out(void);
 uint8_t flg_visible(void);
+/* 1 while the panel is the key window: keys reach it, not the app below. */
+uint8_t flg_is_key(void);
+/* Writes the window class, its size and GPUIPanel's size: why a swap was refused. */
+size_t flg_adopt_detail(uint8_t *out, size_t cap);
 
 /* Pumps AppKit until an event or the timeout; returns the event or NONE. */
 int32_t flg_wait(int32_t timeout_ms);

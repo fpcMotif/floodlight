@@ -29,6 +29,12 @@ void flg_show_at(double x, double y, double width, double height) {
 void flg_hide(void) {}
 void flg_order_out(void) {}
 uint8_t flg_visible(void) { return 0; }
+uint8_t flg_is_key(void) { return 0; }
+size_t flg_adopt_detail(uint8_t *out, size_t cap) {
+    (void)out;
+    (void)cap;
+    return 0;
+}
 int32_t flg_wait(int32_t timeout_ms) {
     fls_sleep_ms(timeout_ms);
     return FLG_EV_NONE;

@@ -59,8 +59,23 @@ window leaves the screen (alpha 0 at once, `orderOut` 50 ms later), so the
 frame left in the window is the right one. A summon is then only
 `setFrame` + `orderFront` + `makeKey`, with no React work in front of it.
 
-**Measurements.** Not taken yet: this was written in a Linux container with no
-Mac. `make measure-gpuix` in the new `gpuix` CI job takes them on the CI Mac:
+**Measurements.** First run on the CI Mac (xcode-27 runner, macOS 27.0.1,
+commit `63f6847`):
+
+| | measured | target |
+|---|---|---|
+| empty panel, idle footprint 10 s after hide | 35.1 MB | — |
+| app, idle footprint 10 s after hide | 60.3 MB | ≤ 60 MB |
+| app, JS heap | 5.9 MB | — |
+| summon p50 / p95 (hotkey handler to ordered front) | 9.5 / 19.5 ms | < 30 ms |
+| query p50 / p95 (search and publish) | 0.21 / 3.1 ms | — |
+| cold start (exec to window) | 889 ms | — |
+| `.app` (89 MB is Bun) | 111 MB | — |
+
+The window was adopted, but the class swap was refused (`adopt=1`), so that
+run's panel activated the app. Bun, React and GPUI cost 35 MB before
+Floodlight loads anything; Floodlight adds 25 MB. The numbers come from
+`make measure-gpuix` in the `gpuix` CI job:
 
 | | what | from |
 |---|---|---|
