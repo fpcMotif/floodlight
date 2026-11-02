@@ -34,7 +34,24 @@ Out of scope: clipboard, inspector, settings, QuickLook, accessibility parity wi
 
 The hot key is pressed with a synthesized ⌥Space through the HID event tap where the runner allows it (`hotkey_path: carbon`). Otherwise the run calls the hot key's own handler on the main thread (`hotkey_path: handler`), which skips only the Carbon dispatch.
 
-Numbers are in the PR that adds this ADR and in each CI run's step summary.
+First run, 2026-11-02, `xcode-27` runner, MyGo v0.7.4, Go 1.27.3:
+
+| measure | empty window | launcher |
+|---|---|---|
+| phys_footprint, idle 10 s after hide | 22.3 MB | 30.7 MB |
+| RSS, idle 10 s after hide | 91.6 MB | 114.9 MB |
+| Go heap in use, idle | | 4.1 MB |
+| ⌥Space → first painted frame (Carbon path), warm p50 / cold | | 15.4 ms / 334 ms |
+| query p50 / p95, keystroke → rows on the main thread | | 6.8 ms / 29.7 ms |
+| binary, stripped | 9.0 MB | 9.3 MB |
+
+The index covered `/Users/runner`: 374,481 entries, built in 13.4 s.
+
+RSS counts shared, clean pages: AppKit, Metal, the WebKit framework, and the mapped index. phys_footprint is the figure macOS charges the app.
+
+Against #112's targets, MyGo itself fits: the empty window idles at 22.3 MB. The launcher is about 7 MB over 24 MB. Warm summon is at the 15 ms target; the first summon after launch is not.
+
+Each CI run's step summary repeats these measurements.
 
 ## Decision to make
 
