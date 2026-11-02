@@ -1,0 +1,5 @@
+# The toolchain the pinned zed tree builds with (its own rust-toolchain.toml).
+[toolchain]
+channel = "1.94.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
