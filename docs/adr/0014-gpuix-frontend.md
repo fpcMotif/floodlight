@@ -67,7 +67,7 @@ Mac. `make measure-gpuix` in the new `gpuix` CI job takes them on the CI Mac:
 | floor | idle footprint of the empty panel 10 s after hide; JS heap | `--bench-empty` |
 | app | summon p50/p95, query p50/p95 | `--bench`, through the hotkey handler |
 | app | idle footprint, resident, JS heap 10 s after hide | `--bench` |
-| size | executable, platform library, `.app` | `du` |
+| size | executable, platform library, GPUIX renderer addon, `.app` | `du` |
 
 Summons go through the same handler a Carbon hotkey reaches; a runner cannot
 post a real key press without Accessibility.

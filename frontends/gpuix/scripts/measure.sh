@@ -36,6 +36,7 @@ kb() { du -sk "$1" | cut -f1; }
   grep "^FLOODLIGHT_GPUIX" "$out.log"
   echo "FLOODLIGHT_GPUIX exe_kb=$(kb "$exe")"
   echo "FLOODLIGHT_GPUIX lib_kb=$(kb "$app/Contents/MacOS/libfloodlight_gpuix.dylib")"
+  echo "FLOODLIGHT_GPUIX renderer_kb=$(kb "$(ls "$app"/Contents/MacOS/gpuix-native.*.node)")"
   echo "FLOODLIGHT_GPUIX app_kb=$(kb "$app")"
 } | tee "$out"
 rm -f "$out.log"
