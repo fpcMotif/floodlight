@@ -30,12 +30,15 @@ On this repo's Linux CI-class container (4 vCPU), release build, numbers from `f
 |---|---|---|---|---|---|
 | `/usr` (real scan, 49 ms warm) | 91k | 3.1 MB | 3.3 MB | 0.5–2.0 ms | 2.0 ms |
 | synthetic home folder | 1M | 37 MB | 36 MB | 2.5–4.5 ms | 70 ms |
+| synthetic, scan order (`flcore synth`) | 1M | 37 MB | 36 MB | 3–7 ms | 7.5–9 ms |
 
 RSS here means the whole process, with the index fully paged in. Against the issue's figure of about 358 MB for FFF, that is one to two orders of magnitude, and the remainder is evictable. No Mac numbers yet. `make test-core` runs the same bench on the macOS CI runner.
 
+The first two rows predate slash-term summaries. The 70 ms row used a tree whose siblings were scattered across the table, which `flcore synth --scatter` still writes. `flcore synth` now writes entries in the order a scan does, siblings together. Name queries on the third row ran on a busier host than the first two; they are unchanged by the summaries.
+
 ## Known gaps
 
-- **Path queries do not prune.** A term containing `/` has no tight score bound, so every mask survivor gets scored. A per-directory pre-match is the next step if path queries matter.
+- **Path queries need siblings together.** A term containing `/` (up to 16 characters) is scored from a per-directory summary: how the term's match can end inside each directory's path, built from the parent's summary and the directory's own name. A file is scored from its parent's summary and its own name, and most files are rejected on that summary's score bound without being scored at all. The ranking is the same as scoring every full path. The summaries live in a small per-thread memo, which only works when a directory's files sit near each other in the table, as a scan writes them. On a table with scattered siblings the memo sees itself thrashing and steps aside, and path queries cost what they did before (about 130 ms at 1M on the bench host). A live-update overlay must keep its own entries grouped by directory, or path queries slow down by that much.
 - **No live updates yet.** FSEvents should feed a small overlay merged at query time and compacted into a fresh file in the background. Until that lands, the shell rebuilds on its existing refresh triggers.
 - **No content search.** FFF's grep keeps that job until the Swift side decides whether content search earns its memory.
 
