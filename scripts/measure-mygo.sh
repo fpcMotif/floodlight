@@ -27,6 +27,9 @@ summary=$(cat <<MD
 | empty window idle 10 s after hide: RSS / phys_footprint | $(echo "$empty" | mb .rss) MB / $(echo "$empty" | mb .phys_footprint) MB (drew frame: $(echo "$empty" | jq -r .drew_frame)) |
 | launcher idle 10 s after hide: RSS / phys_footprint | $(echo "$app" | mb .idle_after_hide.rss) MB / $(echo "$app" | mb .idle_after_hide.phys_footprint) MB |
 | launcher Go heap in use, idle | $(echo "$app" | mb .idle_go_heap_inuse) MB |
+| launcher footprint after launch (warm frame drawn, index open), before any summon | $(echo "$app" | mb .after_launch.phys_footprint) MB |
+| idle breakdown: Go resident (heap in use / heap idle, unreleased / stacks / runtime) | $(echo "$app" | mb .idle_go_resident) MB ($(echo "$app" | mb .idle_go_heap_inuse) / $(echo "$app" | mb .idle_go_heap_idle_unreleased) / $(echo "$app" | mb .idle_go_stacks) / $(echo "$app" | mb .idle_go_runtime_metadata)) |
+| idle breakdown: native (AppKit, Metal, MyGo glyphs and textures, SQLite) | $(echo "$app" | mb .idle_native) MB |
 | hotkey → first frame, cold / warm p50 ($(echo "$app" | jq -r .hotkey_path)) | $(echo "$app" | jq -r .hotkey_first_frame_cold_ms) ms / $(echo "$app" | jq -r .hotkey_first_frame_warm_p50_ms) ms |
 | query p50 / p95, keystroke → rows on main thread | $(echo "$app" | jq -r .query_p50_ms) ms / $(echo "$app" | jq -r .query_p95_ms) ms |
 | query p50, engine only | $(echo "$app" | jq -r .query_engine_p50_ms) ms |

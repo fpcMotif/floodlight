@@ -1,59 +1,35 @@
 // Package search runs every query on one goroutine, away from the UI.
 //
-// The UI calls Submit on each keystroke and gets results back through the
-// publish callback. Only the newest query counts: a query still waiting is
-// replaced, and a result that finishes after a newer Submit is dropped. A
+// The UI calls Submit on each keystroke and gets a Publication back through
+// the publish callback. Only the newest query counts: a query still waiting
+// is replaced, and a result that finishes after a newer Submit is dropped. A
 // core search cannot be interrupted once in C, so the engine checks between
 // the steps of a query instead.
 package search
 
 import (
 	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/fpcMotif/floodlight/frontends/mygo/internal/apps"
 	"github.com/fpcMotif/floodlight/frontends/mygo/internal/core"
+	"github.com/fpcMotif/floodlight/frontends/mygo/internal/query"
 )
-
-// Row limits per section. A launcher shows about ten rows, so more files
-// than this only cost path rebuilds nobody sees.
-const (
-	maxApps  = 6
-	maxFiles = 40
-)
-
-// Kind tells what a row opens.
-type Kind uint8
-
-const (
-	KindApp Kind = iota
-	KindFile
-	KindFolder
-)
-
-// Row is one result as the panel shows it.
-type Row struct {
-	Kind     Kind
-	Title    string
-	Subtitle string
-	Path     string // absolute
-}
 
 // Result answers one Submit.
 type Result struct {
 	Gen   uint64
 	Query string
-	Rows  []Row
-	Took  time.Duration // on the engine goroutine, queue wait excluded
+	Mode  query.Mode
+	Publication
+	Took time.Duration // on the engine goroutine, queue wait excluded
 }
 
 type request struct {
 	gen   uint64
 	query string
+	mode  query.Mode
 }
 
 // Engine owns the file index and the app list. All its state lives on its
@@ -66,30 +42,38 @@ type Engine struct {
 	done    chan struct{}
 
 	// Engine goroutine only.
-	index   *core.Index
-	root    string
-	apps    []apps.App
-	last    request
-	hitsBuf [maxFiles]core.Hit
+	cat  Catalog
+	last request
 }
 
 // New starts the engine. publish runs on the engine goroutine, once per
 // query that is still the newest when it finishes.
 func New(publish func(Result)) *Engine {
+	home, _ := os.UserHomeDir()
+	return NewAt(home, publish)
+}
+
+// NewAt is New with home, the folder subtitles show as ~, given; the
+// parity fixtures set it so their rows read the same on every machine.
+func NewAt(home string, publish func(Result)) *Engine {
 	e := &Engine{
 		publish: publish,
 		req:     make(chan request, 1),
 		ctl:     make(chan func(), 4),
 		done:    make(chan struct{}),
+		cat:     Catalog{Home: home},
 	}
 	go e.loop()
 	return e
 }
 
-// Submit queues query and returns its generation. A query still waiting is
-// replaced, so a fast typist never builds a backlog.
-func (e *Engine) Submit(query string) uint64 {
-	r := request{gen: e.latest.Add(1), query: query}
+// Submit queues a local query and returns its generation.
+func (e *Engine) Submit(q string) uint64 { return e.SubmitMode(q, query.Mode{}) }
+
+// SubmitMode queues q in mode. A query still waiting is replaced, so a fast
+// typist never builds a backlog.
+func (e *Engine) SubmitMode(q string, mode query.Mode) uint64 {
+	r := request{gen: e.latest.Add(1), query: q, mode: mode}
 	for {
 		select {
 		case e.req <- r:
@@ -112,7 +96,7 @@ func (e *Engine) Latest() uint64 { return e.latest.Load() }
 func (e *Engine) Clear(then func()) {
 	e.latest.Add(1)
 	e.do(func() {
-		e.apps, e.last = nil, request{}
+		e.cat.Apps, e.last = nil, request{}
 		if then != nil {
 			then()
 		}
@@ -123,7 +107,7 @@ func (e *Engine) Clear(then func()) {
 // since the apps usually arrive after the first keystroke.
 func (e *Engine) SetApps(list []apps.App) {
 	e.do(func() {
-		e.apps = list
+		e.cat.Apps = list
 		e.run(e.last)
 	})
 }
@@ -135,13 +119,14 @@ func (e *Engine) UseIndex(path, root string, done func(entries int, err error)) 
 	e.do(func() {
 		ix, err := core.Open(path)
 		if err == nil {
-			e.index.Close()
-			e.index, e.root = ix, root
+			e.cat.Index.Close()
+			e.cat.Index, e.cat.Root = ix, root
+			e.run(e.last)
 		}
 		if done != nil {
 			n := 0
-			if e.index != nil {
-				n = e.index.Count()
+			if e.cat.Index != nil {
+				n = e.cat.Index.Count()
 			}
 			done(n, err)
 		}
@@ -172,7 +157,7 @@ func (e *Engine) loop() {
 			e.last = r
 			e.run(r)
 		case <-e.done:
-			e.index.Close()
+			e.cat.Index.Close()
 			return
 		}
 	}
@@ -185,56 +170,11 @@ func (e *Engine) run(r request) {
 		return
 	}
 	start := time.Now()
-	q := strings.TrimSpace(r.query)
-	var rows []Row
-	if q != "" {
-		matched := apps.Match(e.apps, q, maxApps)
-		for _, a := range matched {
-			rows = append(rows, Row{Kind: KindApp, Title: a.Name, Subtitle: Abbrev(filepath.Dir(a.Path)), Path: a.Path})
-		}
-		hits := e.index.Search(q, e.hitsBuf[:])
-		// The C search is the slow step and cannot be interrupted; skip the
-		// path rebuilds if the user typed again while it ran.
-		if e.stale(r) {
-			return
-		}
-		for _, h := range hits {
-			rel, err := e.index.RelativePath(h.ID)
-			if err != nil {
-				continue
-			}
-			// A bundle's insides match by path but are never what a launcher
-			// user wants; Spotlight hides them too.
-			if strings.Contains(rel, ".app/") {
-				continue
-			}
-			abs := filepath.Join(e.root, rel)
-			// An app under the indexed root, ~/Applications say, is also a
-			// folder hit; the app row already stands for it.
-			if slices.ContainsFunc(matched, func(a apps.App) bool { return a.Path == abs }) {
-				continue
-			}
-			kind := KindFile
-			if e.index.IsDir(h.ID) {
-				kind = KindFolder
-			}
-			rows = append(rows, Row{Kind: kind, Title: filepath.Base(rel), Subtitle: Abbrev(filepath.Dir(abs)), Path: abs})
-		}
-	}
-	if e.stale(r) {
+	p, ok := e.cat.Publish(r.query, r.mode, func() bool { return e.stale(r) })
+	if !ok || e.stale(r) {
 		return
 	}
-	e.publish(Result{Gen: r.gen, Query: r.query, Rows: rows, Took: time.Since(start)})
-}
-
-var home, _ = os.UserHomeDir()
-
-// Abbrev shortens a path under the home folder to ~/….
-func Abbrev(path string) string {
-	if home != "" && (path == home || strings.HasPrefix(path, home+"/")) {
-		return "~" + path[len(home):]
-	}
-	return path
+	e.publish(Result{Gen: r.gen, Query: r.query, Mode: r.mode, Publication: p, Took: time.Since(start)})
 }
 
 func (e *Engine) drainCtl() {

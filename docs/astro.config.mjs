@@ -122,6 +122,10 @@ export default defineConfig({
               label: "Build from source",
               slug: "development/building",
             },
+            {
+              label: "Go frontend (MyGo)",
+              slug: "development/mygo-port",
+            },
           ],
         },
       ],

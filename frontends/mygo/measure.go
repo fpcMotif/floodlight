@@ -42,7 +42,17 @@ type report struct {
 	QueryP95Ms          float64      `json:"query_p95_ms"`
 	EngineP50Ms         float64      `json:"query_engine_p50_ms"`
 	Idle                memstat.Stat `json:"idle_after_hide"`
-	IdleGoHeapInuse     uint64       `json:"idle_go_heap_inuse"`
+	// The breakdown #112 asks for before a footprint fix is chosen: what
+	// the Go runtime holds resident (heap in use, heap kept but idle,
+	// stacks, runtime metadata) and the native rest, which is AppKit,
+	// Metal, MyGo's glyph atlas and textures, and SQLite's page cache.
+	AfterLaunch     memstat.Stat `json:"after_launch"`
+	IdleGoRetained  uint64       `json:"idle_go_heap_idle_unreleased"`
+	IdleGoStacks    uint64       `json:"idle_go_stacks"`
+	IdleGoRuntime   uint64       `json:"idle_go_runtime_metadata"`
+	IdleGoResident  uint64       `json:"idle_go_resident"`
+	IdleNativeBytes uint64       `json:"idle_native"`
+	IdleGoHeapInuse uint64       `json:"idle_go_heap_inuse"`
 }
 
 func runMeasurement(p *panel, indexed <-chan int) {
@@ -60,6 +70,7 @@ func runMeasurement(p *panel, indexed <-chan int) {
 	rowsHook := func(r search.Result) { rows <- r }
 	p.onRows.Store(&rowsHook)
 
+	var err error
 	rep := report{MyGo: moduleVersion("github.com/egoist/mygo"), Go: runtime.Version(), Root: filesRoot()}
 	select {
 	case rep.Entries = <-indexed:
@@ -67,6 +78,9 @@ func runMeasurement(p *panel, indexed <-chan int) {
 		fail("index never opened")
 	}
 	time.Sleep(time.Second)
+	if rep.AfterLaunch, err = memstat.Read(); err != nil {
+		fail("%v", err)
+	}
 
 	// Cold summon: a real ⌥Space through the HID tap if the system lets this
 	// process post one, else the hot key's own handler on the main thread.
@@ -133,13 +147,19 @@ func runMeasurement(p *panel, indexed <-chan int) {
 	p.onRows.Store(nil)
 	p.win.Update(p.win.Hide)
 	time.Sleep(idleAfter)
-	var err error
 	if rep.Idle, err = memstat.Read(); err != nil {
 		fail("%v", err)
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	rep.IdleGoHeapInuse = mem.HeapInuse
+	rep.IdleGoRetained = mem.HeapIdle - mem.HeapReleased
+	rep.IdleGoStacks = mem.StackSys
+	rep.IdleGoRuntime = mem.MSpanSys + mem.MCacheSys + mem.BuckHashSys + mem.GCSys + mem.OtherSys
+	rep.IdleGoResident = mem.Sys - mem.HeapReleased
+	if rep.Idle.Footprint > rep.IdleGoResident {
+		rep.IdleNativeBytes = rep.Idle.Footprint - rep.IdleGoResident
+	}
 
 	out, _ := json.Marshal(rep)
 	fmt.Printf("FLOODLIGHT_MYGO %s\n", out)

@@ -6,8 +6,12 @@
 // GlobalShortcut handler.
 package hotkey
 
-// Carbon virtual key codes and modifier masks used by Floodlight.
+// Carbon virtual key codes and modifier masks used by Floodlight. While the
+// Swift app is installed it owns ⌘Space and ⇧⌘C, so this frontend takes
+// ⌥Space and ⌥⇧C.
 const (
 	KeySpace uint32 = 0x31
+	KeyC     uint32 = 0x08
+	Shift    uint32 = 1 << 9
 	Option   uint32 = 1 << 11
 )

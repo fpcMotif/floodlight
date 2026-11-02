@@ -1,0 +1,35 @@
+{
+  "about": "Board parity fixture (#112). The board lists `entries` (newest first) with an empty search field unless `query` is set. Each case presses `keys` in order; `actions` is what each key asks of the shell (null when the key does nothing), and `selected` the title selected at the end.",
+  "entries": [
+    {"title": "Hello world", "kind": "text", "text": "Hello world"},
+    {"title": "report.pdf", "kind": "file", "text": "/Users/ada/report.pdf"},
+    {"title": "Screenshot", "kind": "image", "text": "Screenshot"},
+    {"title": "notes.txt", "kind": "text", "text": "/Users/ada/notes.txt"}
+  ],
+  "cases": [
+    {"keys": ["return"], "actions": ["paste"], "selected": "Hello world"},
+    {"keys": ["alt+return"], "actions": ["copy"]},
+    {"keys": ["cmd+c"], "actions": ["copy"]},
+    {"keys": ["down", "cmd+return"], "actions": ["down", "reveal"], "selected": "report.pdf"},
+    {"keys": ["cmd+r"], "actions": [null], "selected": "Hello world"},
+    {"keys": ["down", "down", "down", "cmd+r"], "actions": ["down", "down", "down", "reveal"], "selected": "notes.txt"},
+    {"keys": ["space"], "actions": ["preview"]},
+    {"keys": ["space"], "query": "hel", "actions": [null]},
+    {"keys": ["cmd+y"], "query": "hel", "actions": ["preview"]},
+    {"keys": ["cmd+k"], "actions": ["actions"]},
+    {"keys": ["cmd+."], "actions": ["pin"]},
+    {"keys": ["cmd+d"], "actions": ["delete"]},
+    {"keys": ["cmd+3", "return"], "actions": ["filter", "paste"], "selected": "report.pdf"},
+    {"keys": ["cmd+4"], "actions": ["filter"], "selected": "Screenshot"},
+    {"keys": ["cmd+2", "down", "down"], "actions": ["filter", "down", "down"], "selected": "notes.txt"},
+    {"keys": ["up", "up"], "actions": ["up", "up"], "selected": "Hello world"},
+    {"keys": ["cmd+1"], "actions": ["filter"], "selected": "Hello world"},
+    {"keys": ["escape"], "actions": ["close"]},
+    {"keys": ["cmd+z"], "actions": [null]}
+  ],
+  "menus": [
+    {"entry": "Hello world", "items": ["Paste", "Copy", "Pin", "Delete"]},
+    {"entry": "report.pdf", "items": ["Paste", "Copy", "Show in Finder", "Quick Look", "Pin", "Delete"]},
+    {"entry": "Screenshot", "items": ["Paste", "Copy", "Quick Look", "Pin", "Delete"]}
+  ]
+}
