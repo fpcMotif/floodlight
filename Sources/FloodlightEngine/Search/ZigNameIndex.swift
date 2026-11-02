@@ -78,11 +78,12 @@ final class ZigNameIndex: @unchecked Sendable {
         var items: [IndexedSearchItem] = []
         for hit in hits.prefix(Int(count)) where items.count < limit {
             let length = fl_relative_path(handle, hit.id, &path, UInt32(Self.maxPathBytes))
-            guard length > 0 else { continue }
-            let relativePath = String(
-                decoding: path.prefix(Int(length)).map { UInt8(bitPattern: $0) },
-                as: UTF8.self
-            )
+            guard length > 0,
+                  let relativePath = String(
+                      validating: path.prefix(Int(length)).map { UInt8(bitPattern: $0) },
+                      as: UTF8.self
+                  )
+            else { continue }
             if FFFIndex.hasApplicationBundleComponent(in: relativePath) { continue }
             let isDirectory = fl_is_dir(handle, hit.id)
             let url = rootURL.appendingPathComponent(relativePath, isDirectory: isDirectory)
