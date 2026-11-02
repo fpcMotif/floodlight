@@ -28,7 +28,7 @@ pub const board_metrics = struct {
     pub const info_label_width: f32 = 84;
 };
 
-pub const summon_label = "⇧⌘ C";
+pub const summon_label = "⌥⇧ C";
 
 /// What the board asks of the shell. Pin and delete it does itself.
 pub const Action = union(enum) {

@@ -22,7 +22,6 @@ const carbon = struct {
     const hot_key_pressed: u32 = 5;
     const direct_object: u32 = 0x2d2d2d2d; // '----'
     const hot_key_id_type: u32 = 0x686b6964; // 'hkid'
-    const cmd_key: u32 = 1 << 8;
     const shift_key: u32 = 1 << 9;
     const option_key: u32 = 1 << 11;
     const space: u32 = 49;
@@ -32,7 +31,7 @@ const carbon = struct {
 pub const HotKey = enum(u32) {
     /// ⌥Space, so ⌘Space stays Spotlight's.
     search = 1,
-    /// ⇧⌘C, the Swift board's default.
+    /// ⌥⇧C, so ⇧⌘C stays the Swift board's.
     clipboard = 2,
 };
 
@@ -60,7 +59,7 @@ pub fn registerHotKeys(ctx: ?*anyopaque, f: *const fn (?*anyopaque, HotKey) void
     if (carbon.InstallEventHandler(target, &onHotKey, 1, &spec, null, null) != 0) return error.HotKeyHandler;
     const keys = [_]struct { HotKey, u32, u32 }{
         .{ .search, carbon.space, carbon.option_key },
-        .{ .clipboard, carbon.c_key, carbon.cmd_key | carbon.shift_key },
+        .{ .clipboard, carbon.c_key, carbon.option_key | carbon.shift_key },
     };
     for (keys) |k| {
         var ref: ?*anyopaque = null;
@@ -142,6 +141,7 @@ pub fn installSlab(window: *nanoui.Window, radius: f64, level: Level, style: Gla
     surface.setTransparent(true);
 
     const content = surface.nsview;
+    objc.msg(void, objc.msg(objc.Object, content, "layer", .{}), "setContentsGravity:", .{objc.nsString("bottom")});
     objc.msg(void, content, "retain", .{});
     defer objc.msg(void, content, "release", .{});
     const frame = objc.msg(objc.CGRect, content, "frame", .{});

@@ -13,6 +13,7 @@ const board_mod = @import("board.zig");
 const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
+const resize_redraw_ms = 50;
 
 /// Icons drawn per session at most; all go when the panel hides.
 const max_icons = 64;
@@ -98,6 +99,12 @@ const Shell = struct {
         const mid = f.x + f.w / 2;
         s.panel_window.setSize(w, h);
         mac.setFrameOrigin(s.panel_window, .{ .x = mid - w / 2, .y = top - h, .w = w, .h = h });
+        nanoui.App.after(resize_redraw_ms, s, redrawPanel);
+    }
+
+    fn redrawPanel(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.panel_window.redraw();
     }
 
     fn hidePanel(s: *Shell) void {
