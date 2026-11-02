@@ -35,7 +35,19 @@ build/floodlight-tui --root ~/code   # index a different folder
 
 `--stay` keeps it running after opening a result.
 
-## Global hotkey
+## Native panel (macOS)
+
+`make` also builds `build/floodlight-panel`. It is the same search in a
+Spotlight-style floating panel drawn by AppKit, with no Dock icon. ⌥Space shows
+and hides it. Enter opens the result, ⌘Enter reveals it in Finder, and Esc or a
+click elsewhere dismisses it.
+
+```sh
+build/floodlight-panel &        # runs in the background; press ⌥Space
+build/floodlight-panel --show   # show it right away
+```
+
+## Global hotkey for the TUI
 
 A terminal program cannot register a system hotkey. Instead,
 `launch/floodlight-popup` opens a small borderless terminal window running the

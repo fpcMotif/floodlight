@@ -28,9 +28,21 @@ Checked before any frontend code was written.
 
 The FFI calls a small C shim cleanly, so #111's Cocoa bridge is possible too. The terminal UI still came first, for three reasons:
 
-1. **Fewest unknowns.** It needs termios, `poll`, `write` and `posix_spawn`, all plain C. A Cocoa bridge also has to answer how the AppKit run loop and scriptc's event loop share the main thread. That question is worth its own change.
+1. **Fewest unknowns.** It needs termios, `poll`, `write` and `posix_spawn`, all plain C. A Cocoa bridge also has to answer how the AppKit run loop and scriptc's event loop share the main thread. That question is answered below, but only after the TUI proved the rest of the stack.
 2. **It tests the whole stack.** TypeScript domain logic, FFI into the Zig core, an OS action, and resource measurement all run end to end in CI without a window server.
 3. **It sets the floor.** Its idle memory is the lower bound any scriptc frontend can reach. A Cocoa build adds AppKit and WindowServer costs on top.
+
+### Then the panel (#111), on the same session
+
+The TUI cannot match a launcher's feel on a Mac: no hotkey of its own, a terminal window's chrome, no icons. So `floodlight-panel` adds #111's native GUI on top of the same TypeScript `SearchSession`, apps catalog and core index. The bridge is Objective-C (`native/flpanel.m`, ~350 lines), not Metal: AppKit already draws text, icons and vibrancy well, and a custom Metal pipeline would only add work and memory.
+
+The hard question was the run loop. AppKit wants `-[NSApplication run]` on the main thread, and scriptc's script thread *is* the main thread. The answer is to invert it. TypeScript calls `flp_wait`, which pumps `nextEventMatchingMask:` until something the script cares about happens (the query changed, an arrow key, Enter, Esc, the hotkey, a click) and returns it as an integer. The script updates the session and pushes rows back with `flp_add_row`/`flp_commit`. No script code runs inside an AppKit callback, so scriptc's thread rules hold without its callback machinery.
+
+- A borderless, non-activating `NSPanel` at pop-up level that joins all Spaces and full-screen apps. It takes keyboard focus without stealing activation from the app underneath, the way Alfred and Raycast do.
+- An `NSVisualEffectView` background that follows light and dark mode. Rows are drawn in one view: Finder icons, matched characters in semibold, the path truncated from the head.
+- ⌥Space through Carbon `RegisterEventHotKey`, which needs no Accessibility permission. ⌘Space stays Spotlight's.
+- Hiding drops the rows and the icon cache, so idle memory falls back to the baseline between summons.
+- The panel is built and smoke-tested on macOS only. Its coverage gate (no Node islands, no dynamic tier) runs there too.
 
 ## Shape
 
@@ -43,8 +55,11 @@ frontends/scriptc/
   src/screen.ts    double-buffered cell grid; per-row diff; DEC 2026 sync
   src/view.ts      layout: prompt, results, footer
   src/keys.ts      raw bytes → keys (CSI/SS3, split UTF-8, lone-ESC timing)
-  src/main.ts      the loop, plus --bench / --exit-after-paint / --idle-report
+  src/main.ts      the TUI loop, plus --bench / --exit-after-paint / --idle-report
+  src/panel.ts     the panel loop (macOS), plus --smoke
+  src/index-file.ts  index location, open, background rebuild
   native/flshim.c  the C shim: termios, poll/read/write, posix_spawn, core
+  native/flpanel.m the Cocoa shim: NSPanel, rows view, Carbon hotkey
   launch/floodlight-popup  floating-terminal launcher for a global hotkey
 ```
 

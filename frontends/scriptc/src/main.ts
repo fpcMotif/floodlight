@@ -7,7 +7,6 @@
  * without any cancellation machinery, because nothing runs concurrently.
  * The only other thread is the index rebuild inside the C shim.
  */
-import { existsSync, mkdirSync } from "node:fs";
 import { applicationFolders, loadApps } from "./apps";
 import { CoreFiles } from "./files";
 import {
@@ -27,12 +26,7 @@ import {
   KeyParser,
 } from "./keys";
 import {
-  fls_file_age_s,
   fls_footprint_bytes,
-  fls_index_build_async,
-  fls_index_build_result,
-  fls_index_open,
-  fls_index_poll,
   fls_now_ms,
   fls_open,
   fls_process_age_ms,
@@ -44,14 +38,12 @@ import {
   fls_tty_size,
   fls_write,
 } from "./native";
-import { parentPath } from "./paths";
+import { absorbBuild, defaultIndexPath, prepareIndex } from "./index-file";
 import { SearchSession } from "./session";
 import { Screen } from "./screen";
 import { listRows, render, Status } from "./view";
 
 const VERSION = "0.1.0";
-/** Older than this, the index is rebuilt in the background at start-up. */
-const STALE_SECONDS = 15 * 60;
 /** How long a lone ESC waits for the rest of an escape sequence. */
 const ESCAPE_WAIT_MS = 25;
 const BUILD_POLL_MS = 100;
@@ -114,35 +106,6 @@ function parseOptions(args: string[], home: string): Options {
   if (o.root.length === 0) o.root = home;
   if (o.index.length === 0) o.index = defaultIndexPath(home);
   return o;
-}
-
-function defaultIndexPath(home: string): string {
-  if (process.platform === "darwin") return home + "/Library/Caches/Floodlight/tui-files.flix";
-  const xdg = process.env.XDG_CACHE_HOME ?? "";
-  return (xdg.length > 0 ? xdg : home + "/.cache") + "/floodlight/tui-files.flix";
-}
-
-/** Opens the index file if there is one and rebuilds it when missing or
- * stale. Returns the entry count, or -1 while the first build runs. */
-function prepareIndex(o: Options, files: CoreFiles): boolean {
-  const age = fls_file_age_s(o.index);
-  if (age >= 0) {
-    const count = fls_index_open(o.index);
-    files.entries = count >= 0 ? count : -1;
-  }
-  if (age >= 0 && age < STALE_SECONDS && files.entries >= 0) return false;
-  const dir = parentPath(o.index);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return fls_index_build_async(o.root, o.index) > 0;
-}
-
-/** Folds a finished background build into the session. True if it landed. */
-function absorbBuild(o: Options, files: CoreFiles): boolean {
-  if (fls_index_poll() !== 2) return false;
-  if (fls_index_build_result() < 0) return true; // keep the old index, if any
-  const count = fls_index_open(o.index);
-  if (count >= 0) files.entries = count;
-  return true;
 }
 
 function deleteLastWord(text: string): string {
@@ -251,7 +214,7 @@ class App {
       const before = this.session.generation;
       this.apply(keys);
       if (!this.running) break;
-      if (this.building && absorbBuild(this.o, this.files)) {
+      if (this.building && absorbBuild(this.o.index, this.files)) {
         this.building = false;
         this.session.refresh();
       }
@@ -262,7 +225,7 @@ class App {
 
 function runBench(o: Options, session: SearchSession, files: CoreFiles, screen: Screen, building: boolean): void {
   if (building) {
-    while (!absorbBuild(o, files)) fls_sleep_ms(20);
+    while (!absorbBuild(o.index, files)) fls_sleep_ms(20);
   }
   const words = ["safari", "terminal", "readme", "notes", "config", "swift", "package", "xcode", "makefile", "index"];
   const search: number[] = [];
@@ -309,7 +272,7 @@ function main(): void {
 
   const apps = loadApps(applicationFolders(home), home);
   const files = new CoreFiles(o.root, home);
-  const building = prepareIndex(o, files);
+  const building = prepareIndex(o.index, o.root, files);
   const session = new SearchSession(apps, files);
 
   if (o.bench > 0) {

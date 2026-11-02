@@ -1,0 +1,24 @@
+{
+  "ffi_format": 7,
+  "functions": [
+    { "name": "flp_start", "symbol": "flp_start", "params": ["i32"], "returns": "i32" },
+    { "name": "flp_wait", "symbol": "flp_wait", "params": ["i32"], "returns": "i32" },
+    { "name": "flp_event_arg", "symbol": "flp_event_arg", "params": [], "returns": "i32" },
+    { "name": "flp_query", "symbol": "flp_query", "params": ["mutable-bytes"], "returns": "u32" },
+    { "name": "flp_clear_rows", "symbol": "flp_clear_rows", "params": [], "returns": "void" },
+    {
+      "name": "flp_add_row",
+      "symbol": "flp_add_row",
+      "params": ["i32", "string", "string", "string", "string"],
+      "returns": "void"
+    },
+    { "name": "flp_commit", "symbol": "flp_commit", "params": ["i32"], "returns": "void" },
+    { "name": "flp_select", "symbol": "flp_select", "params": ["i32"], "returns": "void" },
+    { "name": "flp_show", "symbol": "flp_show", "params": [], "returns": "f64" },
+    { "name": "flp_hide", "symbol": "flp_hide", "params": [], "returns": "void" },
+    { "name": "flp_visible", "symbol": "flp_visible", "params": [], "returns": "bool" }
+  ],
+  "libraries": ["./build/libflpanel.a", "./build/libflshim.a", "../../.build/core-scriptc/lib/libfloodlight_core.a"],
+  "system_libraries": [],
+  "frameworks": ["AppKit", "Carbon", "QuartzCore"]
+}
