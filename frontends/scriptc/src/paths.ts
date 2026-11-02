@@ -35,3 +35,6 @@ export function dataDir(home: string): string {
 }
 
 export const BUNDLE_ID = "com.floodlight.tui";
+
+/** Bundle id → display name, one per line, written by floodlight-clipd. */
+export const APP_NAMES_FILE = "app-names.tsv";

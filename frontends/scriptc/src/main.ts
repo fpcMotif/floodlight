@@ -8,10 +8,10 @@
  * without any cancellation machinery, because nothing runs concurrently.
  * The only other thread is the index rebuild inside the C shim.
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { applicationFolders, loadApps } from "./apps";
 import { BoardAction, ClipBoard } from "./clip-board";
-import { CLIP_FILE, CLIP_IMAGE, ClipEntry, entryPath } from "./clip-entry";
+import { CLIP_IMAGE, ClipEntry, entryPath } from "./clip-entry";
 import { SqliteClipStore } from "./clip-sqlite";
 import { BoardFacts, renderBoard } from "./board-view";
 import { FDA_SETTINGS_URL, FdaFlow, POLL_MS } from "./fda";
@@ -41,12 +41,8 @@ import {
   KeyParser,
 } from "./keys";
 import {
-  flm_app_name,
   flm_full_disk_access,
   flm_host_app,
-  flm_paste_to,
-  flm_write_file,
-  flm_write_text,
   fls_footprint_bytes,
   fls_now_ms,
   fls_open,
@@ -63,7 +59,7 @@ import {
   fls_write,
 } from "./native";
 import { absorbBuild, defaultIndexPath, ensureDir, prepareIndex, rebuildIndex } from "./index-file";
-import { baseName, dataDir } from "./paths";
+import { APP_NAMES_FILE, baseName, dataDir, parentPath } from "./paths";
 import { ACTION_COPY, KIND_APP, KIND_FILE, KIND_FOLDER, Row } from "./row";
 import { MODE_CLIPBOARD, SearchSession } from "./session";
 import { Palette, Screen } from "./screen";
@@ -77,6 +73,11 @@ const US = "\x1f";
 
 const VIEW_SEARCH = 0;
 const VIEW_BOARD = 1;
+
+/** floodlight-clipd sits beside this binary unless FLOODLIGHT_CLIPD says otherwise. */
+function clipdPath(): string {
+  return process.env.FLOODLIGHT_CLIPD ?? parentPath(process.execPath) + "/floodlight-clipd";
+}
 
 class Options {
   root = "";
@@ -176,28 +177,41 @@ const KNOWN_APPS = new Map<string, string>([
 ]);
 
 class NativeFacts extends BoardFacts {
-  private readonly names = new Map<string, string>();
-  private readonly buf = new Uint8Array(1024);
+  private readonly names = new Map<string, string>(KNOWN_APPS);
+  private namesLoaded = false;
   private readonly statBuf = new Uint8Array(16);
   private readonly statView = new DataView(this.statBuf.buffer);
 
-  constructor(private readonly store: SqliteClipStore) {
+  constructor(
+    private readonly store: SqliteClipStore,
+    private readonly data: string,
+  ) {
     super();
+  }
+
+  /** The names floodlight-clipd resolved when it recorded each entry: the
+   * TUI has no AppKit to ask Launch Services itself. */
+  private loadNames(): void {
+    this.namesLoaded = true;
+    let text = "";
+    try {
+      text = readFileSync(this.data + "/" + APP_NAMES_FILE, "utf8");
+    } catch {
+      return;
+    }
+    for (const line of text.split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab > 0 && !this.names.has(line.slice(0, tab))) this.names.set(line.slice(0, tab), line.slice(tab + 1));
+    }
   }
 
   appName(bundleId: string): string {
     if (bundleId.length === 0) return "Clipboard";
+    if (!this.namesLoaded) this.loadNames();
     const cached = this.names.get(bundleId);
     if (cached !== undefined) return cached;
-    let name = KNOWN_APPS.get(bundleId) ?? "";
-    if (name.length === 0) {
-      const n = flm_app_name(bundleId, this.buf);
-      if (n > 0) name = Buffer.from(this.buf.buffer, 0, n).toString("utf8");
-    }
-    if (name.length === 0) {
-      const last = bundleId.slice(bundleId.lastIndexOf(".") + 1);
-      name = last.length > 0 ? last.charAt(0).toUpperCase() + last.slice(1) : bundleId;
-    }
+    const last = bundleId.slice(bundleId.lastIndexOf(".") + 1);
+    const name = last.length > 0 ? last.charAt(0).toUpperCase() + last.slice(1) : bundleId;
     this.names.set(bundleId, name);
     return name;
   }
@@ -224,8 +238,9 @@ class Tui {
   boardOnly = false;
   building = false;
   running = true;
-  /** Set when an entry is on the pasteboard and ⌘V should follow the exit. */
-  pasteAfterExit = false;
+  /** floodlight-clipd arguments to run once the TUI has left the terminal:
+   * a copy, and for a paste the ⌘V that must land after the popup closes. */
+  afterExit = "";
   hostApp = "";
   lastProbeMs = 0;
 
@@ -237,7 +252,7 @@ class Tui {
     readonly store: SqliteClipStore,
   ) {
     this.board = new ClipBoard(store, () => fls_wall_s());
-    this.facts = new NativeFacts(store);
+    this.facts = new NativeFacts(store, o.data);
   }
 
   status(): Status {
@@ -348,9 +363,9 @@ class Tui {
       this.view = VIEW_SEARCH;
       this.session.exitMode();
     } else if (entry !== null && (action.name === "paste" || action.name === "copy")) {
-      this.copyEntry(entry);
-      this.pasteAfterExit = action.name === "paste" && this.o.pastePid > 0;
-      if (!this.o.stay) this.running = false;
+      let args = "--data" + US + this.o.data + US + "--copy" + US + entry.id;
+      if (action.name === "paste" && this.o.pastePid > 0) args += US + "--paste-pid" + US + this.o.pastePid;
+      this.copy(args);
     } else if (entry !== null && action.name === "reveal") {
       fls_open(entryPath(entry), 1);
     } else if (entry !== null && action.name === "preview") {
@@ -358,10 +373,15 @@ class Tui {
     }
   }
 
-  private copyEntry(entry: ClipEntry): void {
-    if (entry.kind === CLIP_IMAGE) this.store.copyImage(entry.id);
-    else if (entry.kind === CLIP_FILE) flm_write_file(entry.text);
-    else flm_write_text(this.facts.fullText(entry));
+  /** Hands the pasteboard work to floodlight-clipd, after the exit when
+   * there is one, so a paste lands in the app the popup covered. */
+  private copy(args: string): void {
+    if (this.o.stay) {
+      fls_spawn(clipdPath() + US + args);
+      return;
+    }
+    this.afterExit = args;
+    this.running = false;
   }
 
   private quickLook(path: string): void {
@@ -393,12 +413,14 @@ class Tui {
 
   perform(row: Row | null, reveal: boolean): void {
     if (row === null) return;
-    if (row.action === ACTION_COPY) flm_write_text(row.target);
-    else
-      fls_open(
-        row.target,
-        reveal && (row.kind === KIND_FILE || row.kind === KIND_FOLDER || row.kind === KIND_APP) ? 1 : 0,
-      );
+    if (row.action === ACTION_COPY) {
+      this.copy("--copy-text" + US + row.target);
+      return;
+    }
+    fls_open(
+      row.target,
+      reveal && (row.kind === KIND_FILE || row.kind === KIND_FOLDER || row.kind === KIND_APP) ? 1 : 0,
+    );
     if (!this.o.stay) this.running = false;
   }
 
@@ -527,10 +549,6 @@ function main(): void {
   const store = new SqliteClipStore(o.data + "/clipboard.sqlite");
   const tui = new Tui(o, session, files, screen, store);
   tui.building = building;
-  const hostBuf = new Uint8Array(4096);
-  const hostLen = flm_host_app(hostBuf);
-  if (hostLen > 0) tui.hostApp = Buffer.from(hostBuf.buffer, 0, hostLen).toString("utf8");
-  tui.fda.start(tui.probeFda());
   if (o.board) {
     tui.boardOnly = true;
     session.openClipboard();
@@ -557,6 +575,14 @@ function main(): void {
     fls_tty_leave();
     return;
   }
+  // After the first paint: without Full Disk Access, opening TCC.db waits on
+  // tccd, which would spend the whole cold-start budget. The notice can
+  // arrive a frame later.
+  const hostBuf = new Uint8Array(4096);
+  const hostLen = flm_host_app(hostBuf);
+  if (hostLen > 0) tui.hostApp = Buffer.from(hostBuf.buffer, 0, hostLen).toString("utf8");
+  tui.fda.start(tui.probeFda());
+  if (tui.fda.polling() && tui.view === VIEW_SEARCH) tui.frame();
   if (o.idleReport > 0) {
     // Idle the way the launcher idles: parked in poll(), touching nothing.
     fls_sleep_ms(o.idleReport * 1000);
@@ -573,9 +599,7 @@ function main(): void {
   }
   tui.run();
   fls_tty_leave();
-  // The popup closes with this process; the target app is frontmost again
-  // by the time ⌘V lands.
-  if (tui.pasteAfterExit) flm_paste_to(o.pastePid);
+  if (tui.afterExit.length > 0) fls_spawn(clipdPath() + US + tui.afterExit);
 }
 
 main();

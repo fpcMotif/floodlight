@@ -77,8 +77,10 @@ size, or an image's dimensions and size.
 | Esc | Esc | close |
 
 Paste needs the target's process id: `floodlight-popup` records the frontmost
-app and passes `--paste-pid`. macOS asks for Accessibility once, the first
-time ⌘V is posted (#66).
+app and passes `--paste-pid`. Copy and paste run in `floodlight-clipd`, which
+sits beside the TUI (or set `FLOODLIGHT_CLIPD`), so the TUI starts without
+loading AppKit. macOS asks for Accessibility once, for `floodlight-clipd`, the
+first time ⌘V is posted (#66).
 
 ### Clipboard capture
 
@@ -127,7 +129,7 @@ TUI. It uses the first of Ghostty, kitty, Alacritty or WezTerm it finds, and
 falls back to Terminal.app. Copy both files onto your `PATH`:
 
 ```sh
-install -m 755 build/floodlight-tui launch/floodlight-popup ~/.local/bin/
+install -m 755 build/floodlight-tui build/floodlight-clipd launch/floodlight-popup ~/.local/bin/
 ```
 
 Then bind `floodlight-popup` to ⌥Space and `floodlight-popup --board` to ⌥⇧C:

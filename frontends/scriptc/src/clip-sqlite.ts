@@ -2,15 +2,14 @@
 import { CLIP_IMAGE, ClipEntry } from "./clip-entry";
 import { ClipStore, MATCH_LIMIT, RECENT_LIMIT } from "./clip-store";
 import {
-  flc_copy_image,
   flc_delete,
+  flc_entry,
   flc_export_image,
   flc_list,
   flc_newest,
   flc_open,
   flc_prune,
   flc_record,
-  flc_record_image,
   flc_set_pinned,
   flc_text,
 } from "./native";
@@ -87,21 +86,10 @@ export class SqliteClipStore extends ClipStore {
     return parseRecords(this.read((out) => flc_list(q, limit, out)));
   }
 
+  /** Images are recorded only by the agent, which holds their data. */
   record(entry: ClipEntry, imageHash: string): boolean {
     this.open();
-    if (entry.kind === CLIP_IMAGE) {
-      return (
-        flc_record_image(
-          entry.id,
-          entry.createdAt,
-          entry.sourceApp,
-          imageHash,
-          entry.imageWidth,
-          entry.imageHeight,
-          entry.imageBytes,
-        ) > 0
-      );
-    }
+    if (entry.kind === CLIP_IMAGE) return this.recordImage(entry, imageHash);
     return (
       flc_record(
         entry.id,
@@ -144,13 +132,20 @@ export class SqliteClipStore extends ClipStore {
     return entries.length > 0 ? entries[0] : null;
   }
 
+  /** One entry by id, whole text included; null when it is gone. */
+  entry(id: string): ClipEntry | null {
+    const entries = parseRecords(this.read((out) => flc_entry(id, out)));
+    return entries.length > 0 ? entries[0] : null;
+  }
+
   newestImageHash(): string {
     return hashField(this.read((out) => flc_newest(out)));
   }
 
-  copyImage(id: string): boolean {
-    this.open();
-    return flc_copy_image(id) > 0;
+  protected recordImage(entry: ClipEntry, imageHash: string): boolean {
+    void entry;
+    void imageHash;
+    return false;
   }
 
   exportImage(id: string, path: string): boolean {

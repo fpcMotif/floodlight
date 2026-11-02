@@ -52,9 +52,3 @@ int32_t flm_app_name(const uint8_t *bundle_id, size_t len, uint8_t *out, size_t 
     (void)cap;
     return 0;
 }
-int32_t flm_full_disk_access(void) { return 1; }
-int32_t flm_host_app(uint8_t *out, size_t cap) {
-    (void)out;
-    (void)cap;
-    return 0;
-}

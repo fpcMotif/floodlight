@@ -11,6 +11,7 @@
 int32_t flc_open(const uint8_t *path, size_t len);
 int32_t flc_list(const uint8_t *query, size_t qlen, int32_t limit, uint8_t *out, size_t cap);
 int32_t flc_newest(uint8_t *out, size_t cap);
+int32_t flc_entry(const uint8_t *id, size_t id_len, uint8_t *out, size_t cap);
 int32_t flc_record(const uint8_t *id, size_t id_len, const uint8_t *text, size_t text_len, const uint8_t *kind,
                    size_t kind_len, double created, const uint8_t *source, size_t source_len,
                    const uint8_t *content_kind, size_t ck_len, const uint8_t *content_detail, size_t cd_len);

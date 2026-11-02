@@ -70,7 +70,8 @@ frontends/scriptc/
   native/flshim.c  the C shim: termios, poll/read/write, posix_spawn, core
   native/flpanel.m the Cocoa shim: NSPanel, rows view, Carbon hotkey
   native/flclip.c  Clipboard History on SQLite, the Swift schema
-  native/flmac.m   the platform layer: pasteboard, paste, TCC (stub elsewhere)
+  native/flplatform.c  the TUI's platform calls: TCC probe, host terminal
+  native/flmac.m   the AppKit half: pasteboard, paste, app names (stub elsewhere)
   launch/floodlight-popup  floating-terminal launcher for a global hotkey
 ```
 
@@ -123,15 +124,22 @@ Cocoa panel:
   `clipboard_entries` schema, migrations and trigram FTS table (ADR 0008):
   every pinned entry plus the 1000 newest, or up to 200 matches. If the file
   will not open, history lives in memory for the run.
-- **Platform layer** (`native/flmac.m`, a stub elsewhere). Every AppKit,
-  CoreGraphics, ImageIO and TCC call: the pasteboard, ⌘V to the paste target,
-  app names, the Full Disk Access probe and the host terminal's bundle. The
-  domain modules never call the OS, so the parity fixtures run headless.
+- **Platform layer**, in two halves. `native/flplatform.c` is plain C: the
+  Full Disk Access probe and the host terminal's bundle. `native/flmac.m`
+  (a stub elsewhere) holds every AppKit, CoreGraphics and ImageIO call: the
+  pasteboard, ⌘V to the paste target, app names. Only `floodlight-clipd`
+  and the panel link the AppKit half. Linking it into the TUI cost 12 ms of
+  cold start on the CI Mac (exec → first paint 8.3 → 20.3 ms), so the TUI
+  hands copy and paste to `floodlight-clipd --copy ID [--paste-pid PID]`
+  and reads the app names the agent caches in `app-names.tsv`. The Full
+  Disk Access probe also runs after the first paint: without the grant,
+  opening `TCC.db` waits on tccd. The domain modules never call the OS, so
+  the parity fixtures run headless.
 
 | Shared contract | In the TUI |
 |---|---|
 | Carbon hotkey, non-activating panel | `floodlight-popup` (⌥Space) and `floodlight-popup --board` (⌥⇧C), bound in Shortcuts.app, skhd or Hammerspoon |
-| Paste target | The launcher records the frontmost app (`lsappinfo`) and passes `--paste-pid`; ⌘V is posted after the TUI exits |
+| Paste target | The launcher records the frontmost app (`lsappinfo`) and passes `--paste-pid`; after the TUI exits, `floodlight-clipd` writes the entry and posts ⌘V |
 | Liquid Glass, resize without stale frames | Not applicable: the TUI fills its terminal and redraws on resize |
 | Icons and thumbnails | A kind badge per row; images show dimensions and size |
 | Quick Look | Ctrl-Y (Space on an empty board query) runs `qlmanage -p` |

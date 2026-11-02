@@ -1,8 +1,8 @@
 /*
- * The platform layer: every AppKit, CoreGraphics, ImageIO and TCC call the
- * terminal frontend and the capture agent make. flmac.m implements it on
- * macOS; flnative_stub.c answers "not available" elsewhere, so the domain
- * code and its tests build and run on Linux.
+ * The AppKit half of the platform layer: the pasteboard, paste delivery and
+ * app names. Only floodlight-clipd and the panel link it, so the TUI starts
+ * without loading AppKit (flplatform.h has the TUI's own calls). flmac.m
+ * implements it on macOS; flnative_stub.c answers "not available" elsewhere.
  */
 #ifndef FLNATIVE_H
 #define FLNATIVE_H
@@ -31,11 +31,5 @@ int32_t flm_paste_to(int32_t pid);
 int32_t flm_frontmost_pid(void);
 /* The display name of the app with this bundle id; 0 when unknown. */
 int32_t flm_app_name(const uint8_t *bundle_id, size_t len, uint8_t *out, size_t cap);
-
-/* 1 with Full Disk Access, 0 without, -1 when it cannot be told. */
-int32_t flm_full_disk_access(void);
-/* The .app bundle of the terminal this process runs in, the one the grant
- * belongs to; 0 when there is none. */
-int32_t flm_host_app(uint8_t *out, size_t cap);
 
 #endif

@@ -240,6 +240,16 @@ int32_t flc_newest(uint8_t *out, size_t cap) {
     return run_list(st, out, cap);
 }
 
+/* One entry by id, in the list's record form; 0 bytes when it is gone. */
+int32_t flc_entry(const uint8_t *id, size_t id_len, uint8_t *out, size_t cap) {
+    if (db == NULL) return 0;
+    sqlite3_stmt *st = NULL;
+    const char *sql = "SELECT " COLUMNS " FROM clipboard_entries WHERE id = ?;";
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    bind_span(st, 1, id, id_len);
+    return run_list(st, out, cap);
+}
+
 static int32_t step_done(sqlite3_stmt *st) {
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
@@ -265,6 +275,9 @@ int32_t flc_record(const uint8_t *id, size_t id_len, const uint8_t *text, size_t
     return step_done(st);
 }
 
+/* The two calls that touch the pasteboard, built only into the capture
+ * agent's copy of this file (FLCLIP_PASTEBOARD): the TUI links no AppKit. */
+#if defined(FLCLIP_PASTEBOARD)
 static void bind_blob(sqlite3_stmt *st, int i, const uint8_t *bytes, size_t len) {
     if (bytes == NULL || len == 0) sqlite3_bind_null(st, i);
     else sqlite3_bind_blob(st, i, bytes, (int)len, SQLITE_TRANSIENT);
@@ -297,6 +310,7 @@ int32_t flc_record_image(const uint8_t *id, size_t id_len, double created, const
     bind_blob(st, 10, tiff, tiff_len);
     return step_done(st);
 }
+#endif
 
 int32_t flc_set_pinned(const uint8_t *id, size_t id_len, int32_t pinned, double now) {
     if (db == NULL) return -1;
@@ -369,10 +383,6 @@ static int32_t with_image(const uint8_t *id, size_t id_len, int32_t (*use)(const
     return rc;
 }
 
-static int32_t write_pasteboard(const uint8_t *png, size_t png_len, const uint8_t *tiff, size_t tiff_len, void *ctx) {
-    (void)ctx;
-    return flm_write_image(png, png_len, tiff, tiff_len);
-}
 
 static int32_t write_file(const uint8_t *png, size_t png_len, const uint8_t *tiff, size_t tiff_len, void *ctx) {
     const uint8_t *bytes = png_len > 0 ? png : tiff;
@@ -385,7 +395,14 @@ static int32_t write_file(const uint8_t *png, size_t png_len, const uint8_t *tif
     return wrote == len ? 1 : -1;
 }
 
+#if defined(FLCLIP_PASTEBOARD)
+static int32_t write_pasteboard(const uint8_t *png, size_t png_len, const uint8_t *tiff, size_t tiff_len, void *ctx) {
+    (void)ctx;
+    return flm_write_image(png, png_len, tiff, tiff_len);
+}
+
 int32_t flc_copy_image(const uint8_t *id, size_t id_len) { return with_image(id, id_len, write_pasteboard, NULL); }
+#endif
 
 /* Writes an image entry to `path` (PNG when there is one) for Quick Look. */
 int32_t flc_export_image(const uint8_t *id, size_t id_len, const uint8_t *path, size_t path_len) {

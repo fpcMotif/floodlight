@@ -10,7 +10,6 @@ import { applicationFolders, loadApps } from "./apps";
 import { CoreFiles } from "./files";
 import { absorbBuild, defaultIndexPath, prepareIndex } from "./index-file";
 import {
-  flm_write_text,
   fls_footprint_bytes,
   fls_now_ms,
   fls_open,
@@ -30,6 +29,7 @@ import {
   flp_start,
   flp_wait,
 } from "./panel-native";
+import { flm_write_text } from "./native-agent";
 import { ACTION_COPY, KIND_FILE } from "./row";
 import { SearchSession } from "./session";
 

@@ -1,9 +1,9 @@
 /*
- * The macOS platform layer (flnative.h): the pasteboard, paste delivery,
- * app names, Full Disk Access, and the terminal that hosts this process.
+ * The AppKit half of the platform layer (flnative.h): the pasteboard, paste
+ * delivery and app names, for floodlight-clipd and the panel only.
  *
  * Called from the script thread only. Nothing here starts a run loop: the
- * TUI and the capture agent are plain processes, and every call below works
+ * capture agent is a plain process, and every call below works
  * without NSApplication.
  */
 #import <AppKit/AppKit.h>
@@ -15,9 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <libproc.h>
-#include <sys/proc_info.h>
 #include <unistd.h>
 
 #include "flnative.h"
@@ -246,41 +243,4 @@ int32_t flm_app_name(const uint8_t *bundle_id, size_t len, uint8_t *out, size_t 
         if (url == nil) return 0;
         return copy_out(url.URLByDeletingPathExtension.lastPathComponent, out, cap);
     }
-}
-
-/* The TCC database is readable only with Full Disk Access: a plain open is
- * the cheapest probe, and it prompts nothing. */
-int32_t flm_full_disk_access(void) {
-    const char *home = getenv("HOME");
-    if (home == NULL) return -1;
-    char path[1024];
-    snprintf(path, sizeof path, "%s/Library/Application Support/com.apple.TCC/TCC.db", home);
-    int fd = open(path, O_RDONLY);
-    if (fd >= 0) {
-        close(fd);
-        return 1;
-    }
-    return errno == EPERM || errno == EACCES ? 0 : -1;
-}
-
-/* Walks up the parent processes to the first one running from an app
- * bundle: the terminal, which is what TCC grants access to. */
-int32_t flm_host_app(uint8_t *out, size_t cap) {
-    pid_t pid = getppid();
-    for (int depth = 0; depth < 16 && pid > 1; depth++) {
-        char path[PROC_PIDPATHINFO_MAXSIZE];
-        if (proc_pidpath(pid, path, sizeof path) > 0) {
-            char *marker = strstr(path, ".app/Contents/MacOS/");
-            if (marker != NULL) {
-                size_t n = (size_t)(marker - path) + 4;
-                if (n > cap) return 0;
-                memcpy(out, path, n);
-                return (int32_t)n;
-            }
-        }
-        struct proc_bsdinfo info;
-        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) break;
-        pid = (pid_t)info.pbi_ppid;
-    }
-    return 0;
 }
