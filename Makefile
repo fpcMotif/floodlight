@@ -1,6 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
-	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer
+	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
+	install-zig test-core
 
 debug:
 	swift build
@@ -83,3 +84,11 @@ install: bundle
 # means by "clean". Remove it by hand to force a re-fetch.
 clean:
 	swift package clean
+
+# The Zig file index in core/. Separate from `make check` and `make test` so a
+# Swift-only change never waits on a second toolchain; CI runs it as its own job.
+install-zig:
+	./scripts/install-zig.sh
+
+test-core:
+	./scripts/test-core.sh
