@@ -87,12 +87,15 @@ final class ZigNameIndex: @unchecked Sendable {
             if FFFIndex.hasApplicationBundleComponent(in: relativePath) { continue }
             let isDirectory = fl_is_dir(handle, hit.id)
             let url = rootURL.appendingPathComponent(relativePath, isDirectory: isDirectory)
+            // FFF ends a directory's name and path with a slash, and the panel
+            // shows the name as-is; matching it keeps folder rows unchanged.
+            let suffix = isDirectory ? "/" : ""
             // The index stores names only. A stat per result to fill in date
             // and size would be disk I/O on every keystroke, and the result
             // row already hides a zero size.
             items.append(IndexedSearchItem(
-                name: url.lastPathComponent,
-                relativePath: relativePath,
+                name: url.lastPathComponent + suffix,
+                relativePath: relativePath + suffix,
                 url: url,
                 isDirectory: isDirectory,
                 score: Int(hit.score),

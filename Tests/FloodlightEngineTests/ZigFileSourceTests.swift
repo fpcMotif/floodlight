@@ -105,7 +105,7 @@ struct ZigFileSourceTests {
         #expect(!files.contains { $0.fileURL == executable })
 
         let folders = try await source.indexedItems(for: "projects", limit: 12)
-        #expect(folders.contains { $0.title == "Projects" && $0.kind == .folder })
+        #expect(folders.contains { $0.title == "Projects/" && $0.kind == .folder })
     }
 
     @Test func contentSearchAndSelectionTrackingStayOnTheWrappedSource() async throws {
