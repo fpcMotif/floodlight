@@ -188,6 +188,15 @@ final class ClipboardSearch {
         refreshSelectionFacts()
     }
 
+    /// The Search Session ended: the panel hid. The row memo exists to make a
+    /// chip switch or a re-entry within one session cheap; across a hide it
+    /// would only keep every row alive, thumbnail bytes included, while
+    /// nothing is on screen.
+    func endSession() {
+        rowMemo = nil
+        selectionDidMove(to: nil)
+    }
+
     // MARK: - Commands
 
     /// Each command applies to the selected entry and reports whether the

@@ -7,7 +7,7 @@ final class FileIconCache {
 
     private let cache = NSCache<NSString, NSImage>()
 
-    private init() {
+    init() {
         cache.countLimit = 256
     }
 
@@ -26,6 +26,14 @@ final class FileIconCache {
             cache.setObject(icon, forKey: path as NSString)
         }
         return icon
+    }
+
+    /// Drops everything. A hide resets the query, and an empty query shows
+    /// no file rows, so nothing here is on screen at the next summon; the
+    /// next search refills it off the main actor, where a miss costs the
+    /// row a placeholder for a frame and never costs a keystroke.
+    func purgeForHide() {
+        cache.removeAllObjects()
     }
 
     /// `@concurrent` is deliberate. Under approachable concurrency a plain
