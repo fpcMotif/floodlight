@@ -62,7 +62,7 @@ func TestEngineAppsThenFiles(t *testing.T) {
 		if row.Kind == KindApp {
 			t.Fatalf("app row %q for \"plan\"", row.Title)
 		}
-		if !filepath.IsAbs(row.Path) {
+		if row.IsFile() && !filepath.IsAbs(row.Path) {
 			t.Fatalf("row path %q is not absolute", row.Path)
 		}
 	}
@@ -139,7 +139,7 @@ func TestEmptyQueryHasNoRows(t *testing.T) {
 	e := New(func(r Result) { results <- r })
 	defer e.Close()
 	e.Submit("   ")
-	if r := waitFor(t, results); len(r.Rows) != 0 {
+	if r := waitFor(t, results); len(r.Rows) != 0 || r.Counts[FilterAll] != 0 {
 		t.Fatalf("rows for a blank query: %+v", r.Rows)
 	}
 }

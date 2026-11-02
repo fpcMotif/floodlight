@@ -1,0 +1,127 @@
+{
+  "about": "Search parity fixture (#112). Every frontend builds an index of `files` under a fresh root, scans `apps` under the same root, treats the root as the home folder, and checks each query's publication. `rows` is the expected head of the list, in order; `absent` titles must not appear; `counts` are the chip counts; the web row is always last.",
+  "files": [
+    "notes/plan.md",
+    "notes/Plan Q3.pdf",
+    "notes/calendar-ideas.txt",
+    "Pictures/cat.png",
+    "Pictures/plan-sketch.jpg",
+    "src/planner.go",
+    "Projects/launch/readme.md",
+    "Applications/Calendar.app/Contents/Info.plist",
+    "Applications/Calculator.app/Contents/Info.plist",
+    "Applications/Notes.app/Contents/Info.plist",
+    "Applications/Visual Studio Code.app/Contents/Info.plist"
+  ],
+  "apps": ["Applications"],
+  "queries": [
+    {
+      "query": "cal",
+      "rows": [
+        {"kind": "app", "title": "Calendar", "subtitle": "~/Applications"},
+        {"kind": "app", "title": "Calculator", "subtitle": "~/Applications"}
+      ],
+      "top_hit": "Calendar",
+      "absent": ["Info.plist", "Calendar.app"],
+      "counts": {"all": 5, "apps": 2, "files": 1, "folders": 0, "pdfs": 0, "images": 0},
+      "web_row": {"title": "Google", "subtitle": "google.com", "url": "https://www.google.com/search?q=cal"}
+    },
+    {
+      "query": "plan",
+      "rows": [
+        {"kind": "file", "title": "plan.md", "subtitle": "~/notes"}
+      ],
+      "top_hit": "plan.md",
+      "counts": {"all": 7, "apps": 0, "files": 5, "folders": 2, "pdfs": 1, "images": 1},
+      "web_row": {"title": "Google", "subtitle": "google.com", "url": "https://www.google.com/search?q=plan"}
+    },
+    {
+      "query": "plan q3",
+      "rows": [
+        {"kind": "file", "title": "Plan Q3.pdf", "subtitle": "~/notes"}
+      ],
+      "top_hit": "Plan Q3.pdf",
+      "counts": {"all": 1, "apps": 0, "files": 1, "folders": 0, "pdfs": 1, "images": 0},
+      "web_row": {"title": "Google", "subtitle": "google.com", "url": "https://www.google.com/search?q=plan%20q3"}
+    },
+    {
+      "query": "notes",
+      "rows": [
+        {"kind": "app", "title": "Notes", "subtitle": "~/Applications"},
+        {"kind": "folder", "title": "notes", "subtitle": "~"}
+      ],
+      "top_hit": "Notes",
+      "absent": ["Notes.app"],
+      "counts": {"all": 5, "apps": 1, "files": 3, "folders": 1, "pdfs": 1, "images": 0}
+    },
+    {
+      "query": "vsc",
+      "rows": [{"kind": "app", "title": "Visual Studio Code"}],
+      "top_hit": "Visual Studio Code"
+    },
+    {
+      "query": "2*(3+4)",
+      "rows": [{"kind": "calculator", "title": "14", "subtitle": "2*(3+4) = 14 · Press Return to copy", "copy": "14"}],
+      "top_hit": "14"
+    },
+    {
+      "query": "1200 + 34.5",
+      "rows": [{"kind": "calculator", "title": "1,234.5", "copy": "1,234.5"}]
+    },
+    {
+      "query": "10 km to mi",
+      "rows": [{"kind": "calculator", "title": "6.2137 mi", "copy": "6.2137 mi"}]
+    },
+    {
+      "query": "212 f to c",
+      "rows": [{"kind": "calculator", "title": "100 °C"}]
+    },
+    {
+      "query": "github.com/fpcMotif",
+      "rows": [{"kind": "web", "title": "github.com", "subtitle": "https://github.com/fpcMotif", "url": "https://github.com/fpcMotif"}],
+      "top_hit": "github.com"
+    },
+    {
+      "query": "yt lofi beats",
+      "rows": [{"kind": "web", "title": "YouTube", "subtitle": "youtube.com", "url": "https://www.youtube.com/results?search_query=lofi%20beats"}],
+      "top_hit": "YouTube",
+      "web_row": {"title": "Google", "url": "https://www.google.com/search?q=yt%20lofi%20beats"}
+    },
+    {
+      "query": "bluetooth",
+      "rows": [{"kind": "setting", "title": "Bluetooth", "subtitle": "System Settings", "url": "x-apple.systempreferences:com.apple.BluetoothSettings"}],
+      "top_hit": "Bluetooth"
+    },
+    {
+      "query": "wallpaper",
+      "rows": [{"kind": "setting", "title": "Wallpaper", "subtitle": "System Settings"}]
+    },
+    {
+      "query": "zzqqxx",
+      "rows": [],
+      "counts": {"all": 0, "apps": 0, "files": 0, "folders": 0, "pdfs": 0, "images": 0},
+      "web_row": {"title": "Google", "subtitle": "google.com", "url": "https://www.google.com/search?q=zzqqxx"}
+    },
+    {
+      "query": "lofi",
+      "mode": "web:youtube",
+      "rows": [
+        {"kind": "web", "title": "YouTube", "url": "https://www.youtube.com/results?search_query=lofi"},
+        {"kind": "web", "title": "Google", "url": "https://www.google.com/search?q=lofi"},
+        {"kind": "web", "title": "Wikipedia"}
+      ],
+      "no_web_row": true
+    }
+  ],
+  "modes": [
+    {"from": "local", "query": "yt lofi", "event": "tab", "to": "web:youtube", "text": "lofi"},
+    {"from": "local", "query": "lofi", "event": "tab", "to": "web:google", "text": "lofi"},
+    {"from": "local", "query": "clip foo", "event": "tab", "to": "clipboard", "text": "foo"},
+    {"from": "web:youtube", "typed": "YT", "entry": "lofi", "query": "lofi", "event": "escape", "to": "local", "text": "YT lofi"},
+    {"from": "web:youtube", "typed": "YT", "entry": "lofi", "query": "lofi hip", "event": "shift_tab", "to": "local", "text": "yt lofi hip"},
+    {"from": "web:google", "entry": "lofi", "query": "", "event": "backspace_on_empty", "to": "local", "text": ""},
+    {"from": "clipboard", "typed": "clip", "entry": "", "query": "", "event": "escape", "to": "local", "text": "clip"},
+    {"from": "local", "query": "anything", "event": "clipboard_shortcut", "to": "clipboard", "text": ""},
+    {"from": "web:github", "query": "x", "event": "tab", "to": "web:github", "text": "x"}
+  ]
+}

@@ -3,6 +3,7 @@ package apps
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -18,48 +19,44 @@ func TestScanFindsBundlesOneLevelDown(t *testing.T) {
 	for _, a := range got {
 		names = append(names, a.Name)
 	}
-	if len(names) != 2 || names[0] != "Safari" || names[1] != "Terminal" {
+	if !slices.Equal(names, []string{"Safari", "Terminal"}) {
 		t.Fatalf("Scan found %q, want [Safari Terminal]", names)
 	}
 }
 
-func TestMatchRanks(t *testing.T) {
-	all := []App{
-		{Name: "Visual Studio Code", key: "visual studio code"},
-		{Name: "Calendar", key: "calendar"},
-		{Name: "System Settings", key: "system settings"},
-		{Name: "Calculator", key: "calculator"},
-		{Name: "Music", key: "music"},
+func names(hits []Hit) []string {
+	var out []string
+	for _, h := range hits {
+		out = append(out, h.Name)
 	}
+	return out
+}
+
+func TestMatchRanks(t *testing.T) {
+	all := []App{{Name: "Visual Studio Code"}, {Name: "Calendar"}, {Name: "System Settings"}, {Name: "Calculator"}, {Name: "Music"}}
 	cases := []struct {
 		query string
 		want  []string
 	}{
 		{"cal", []string{"Calendar", "Calculator"}},
-		{"set", []string{"System Settings"}},
 		{"vsc", []string{"Visual Studio Code"}},
-		{"usi", []string{"Music", "Visual Studio Code"}},
+		{"system set", []string{"System Settings"}},
 		{"  ", nil},
 		{"zzz", nil},
 	}
 	for _, c := range cases {
-		got := Match(all, c.query, 5)
-		var names []string
-		for _, a := range got {
-			names = append(names, a.Name)
-		}
-		if len(names) != len(c.want) {
-			t.Errorf("Match(%q) = %q, want %q", c.query, names, c.want)
-			continue
-		}
-		for i := range names {
-			if names[i] != c.want[i] {
-				t.Errorf("Match(%q) = %q, want %q", c.query, names, c.want)
-				break
-			}
+		if got := names(Match(all, c.query, 5)); !slices.Equal(got, c.want) {
+			t.Errorf("Match(%q) = %q, want %q", c.query, got, c.want)
 		}
 	}
 	if got := Match(all, "c", 1); len(got) != 1 {
 		t.Errorf("limit 1 gave %d", len(got))
+	}
+}
+
+func TestMatchAddsTheAppBonus(t *testing.T) {
+	h := Match([]App{{Name: "Notes"}}, "notes", 1)
+	if len(h) != 1 || h[0].Score <= Bonus {
+		t.Fatalf("hits %+v, want one scored above the bonus", h)
 	}
 }

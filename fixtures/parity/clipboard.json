@@ -1,0 +1,62 @@
+{
+  "about": "Clipboard parity fixture (#112). Captures are fed in order into an empty store at `now` seconds, with ~ meaning `home`. Each says what is stored, or why it is skipped, and the stored entry's kind, content, detail, title and subtitle. `source` is the copying app's bundle id; its display name is the bundle id's last component unless the known table names it.",
+  "home": "/Users/ada",
+  "now": 1800000000,
+  "captures": [
+    {"name": "plain text", "source": "com.apple.TextEdit", "text": "Hello\n\nworld  ",
+     "expect": {"kind": "text", "content": "plain", "title": "Hello world", "subtitle": "TextEdit · just now"}},
+    {"name": "repeat of the newest", "source": "com.apple.TextEdit", "text": "Hello\n\nworld  ",
+     "expect": {"skipped": "repeat"}},
+    {"name": "link", "source": "com.apple.Safari", "text": "https://www.example.com/a?b=c",
+     "expect": {"kind": "text", "content": "link", "detail": "example.com", "title": "https://www.example.com/a?b=c", "subtitle": "Safari · just now"}},
+    {"name": "short hex colour", "text": "#0af",
+     "expect": {"kind": "text", "content": "color", "detail": "#00AAFF", "title": "#0af", "subtitle": "Clipboard · just now"}},
+    {"name": "colour with alpha", "text": "#11223380",
+     "expect": {"kind": "text", "content": "color", "detail": "#11223380"}},
+    {"name": "json", "text": "{\"a\": [1, 2]}",
+     "expect": {"kind": "text", "content": "code", "detail": "JSON"}},
+    {"name": "swift code", "text": "func main() {\n  print(1)\n}",
+     "expect": {"kind": "text", "content": "code", "detail": "Code", "title": "func main() {   print(1) }"}},
+    {"name": "html", "text": "<p>hi</p>",
+     "expect": {"kind": "text", "content": "code", "detail": "HTML"}},
+    {"name": "home path", "source": "com.apple.finder", "text": "~/Documents/Report Q3.pdf",
+     "expect": {"kind": "text", "content": "path", "detail": "file:///Users/ada/Documents/Report%20Q3.pdf", "title": "Report Q3.pdf", "subtitle": "Finder · just now · Documents"}},
+    {"name": "multi-line slash text is not a path", "text": "/usr/bin\n/usr/local/bin",
+     "expect": {"kind": "text", "content": "plain"}},
+    {"name": "copied file", "source": "com.apple.finder", "files": ["/Users/ada/Desktop/photo.heic"],
+     "expect": {"kind": "file", "title": "photo.heic", "subtitle": "Finder · just now · Desktop"}},
+    {"name": "image", "source": "com.apple.screencaptureui", "image": {"name": "Screenshot", "width": 1440, "height": 900, "bytes": 2048},
+     "expect": {"kind": "image", "title": "Screenshot", "subtitle": "Screenshot · just now · 1440×900"}},
+    {"name": "the same image again", "source": "com.apple.screencaptureui", "image": {"name": "Screenshot", "width": 1440, "height": 900, "bytes": 2048},
+     "expect": {"skipped": "repeat"}},
+    {"name": "password manager copy", "types": ["org.nspasteboard.ConcealedType"], "text": "hunter2",
+     "expect": {"skipped": "concealed"}},
+    {"name": "transient copy", "types": ["org.nspasteboard.TransientType"], "text": "otp 123456",
+     "expect": {"skipped": "concealed"}},
+    {"name": "Floodlight's own paste", "types": ["com.floodlight.own-write"], "text": "Hello world",
+     "expect": {"skipped": "own write"}},
+    {"name": "text past 32,000 bytes", "text_repeat": {"text": "a", "count": 32001},
+     "expect": {"skipped": "too large"}},
+    {"name": "nothing readable", "expect": {"skipped": "empty"}}
+  ],
+  "ages": [
+    {"seconds": 59, "age": "just now"},
+    {"seconds": 60, "age": "1m"},
+    {"seconds": 7200, "age": "2h"},
+    {"seconds": 259200, "age": "3d"},
+    {"seconds": 5184000, "age": "2mo"},
+    {"seconds": 63072000, "age": "2y"}
+  ],
+  "counts": [
+    {"text": "one two\nthree", "characters": 13, "words": 3, "lines": 2}
+  ],
+  "list": {
+    "about": "After the captures, the board's empty-query list starts with the newest; pinning `pin` moves it to the top; `query` returns `matches` in order.",
+    "first": "Screenshot",
+    "pin": "plain text",
+    "query": "example",
+    "matches": ["https://www.example.com/a?b=c"],
+    "prune_after_days": 31,
+    "remaining_after_prune": ["Hello world"]
+  }
+}
