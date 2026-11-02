@@ -101,6 +101,29 @@ jobs:
             grep FLOODLIGHT_BENCH .build/performance.log >> "$GITHUB_STEP_SUMMARY" || true
           fi
 
+  # The Zig file index. Its own job so a Swift change never waits on a second
+  # toolchain, and on the Mac runner because only there does the
+  # getattrlistbulk scanner run against a real APFS volume.
+  core:
+    name: Zig core
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore pinned Zig
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      - name: Install pinned Zig
+        run: make install-zig
+
+      - name: Test, cross-build, and bench the core
+        run: make test-core
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27

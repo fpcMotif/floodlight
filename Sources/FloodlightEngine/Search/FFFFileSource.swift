@@ -102,6 +102,7 @@ package extension SourceSearchEngine {
                     rootURL: rootURL,
                     storageURL: storageURL,
                     enableHomeDirectoryScanning: true,
+                    contentCacheBudget: .launcher,
                     logFilePath: logFilePath,
                     logLevel: logLevel
                 ),
