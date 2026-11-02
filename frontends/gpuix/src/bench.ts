@@ -45,8 +45,6 @@ export async function runBench(controller: Controller, hotkeys: number): Promise
     const start = native.fls_now_ms();
     controller.handleEvent(1);
     const shown = native.fls_now_ms() - start;
-    // Keys reach the panel only while it is key; a summon that is not key is broken.
-    if (i === WARMUP) report("key_after_summon", native.flg_is_key());
     if (i >= WARMUP) summons.push(shown);
     for (const q of QUERIES) {
       const t = native.fls_now_ms();
@@ -54,6 +52,9 @@ export async function runBench(controller: Controller, hotkeys: number): Promise
       if (i >= WARMUP) queries.push(native.fls_now_ms() - t);
       await sleep(16);
     }
+    // Keys reach the panel only while it is key. Read after the queries, not
+    // at once: activation lands on a later run-loop pass than the show.
+    if (i === WARMUP) report("key_after_summon", native.flg_is_key());
     controller.handleEvent(1);
     await sleep(100);
   }
