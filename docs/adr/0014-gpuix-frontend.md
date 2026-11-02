@@ -36,6 +36,15 @@ a panel, a window level, Spaces, or hiding. The platform layer
   panel takes keys and the app the user came from stays active and can take a
   paste. The swap is refused if the two instance sizes ever differ; the panel
   then activates the app on show, as the Swift panel does today.
+  **Gate result: refused on the CI Mac.** AppKit observes the window with
+  KVO, so its class is `NSKVONotifying_GPUIWindow`, and that subclass's KVO
+  bookkeeping is keyed by the class itself, so swapping it out is unsafe. The
+  private `_setPreventsActivation:` flag was tried as a fallback and measured
+  `key_after_summon=0`: the panel never became key, so keys went to the app
+  below. It was removed. The panel therefore activates Floodlight on show,
+  like the Swift panel, and `[NSApp hide:]` hands activation back on hide.
+  The real fix belongs in GPUIX: a window option for GPUI's existing
+  `WindowKind::PopUp`, which opens a non-activating `GPUIPanel` from the start.
 - Borderless, status level, `canJoinAllSpaces | fullScreenAuxiliary |
   transient`, clear background, shadow.
 - **Glass.** On macOS 26 a clear `NSGlassEffectView` (corner radius 30)
@@ -72,8 +81,9 @@ commit `63f6847`):
 | cold start (exec to window) | 889 ms | — |
 | `.app` (89 MB is Bun) | 111 MB | — |
 
-The window was adopted, but the class swap was refused (`adopt=1`), so that
-run's panel activated the app. Bun, React and GPUI cost 35 MB before
+The window was adopted, but the class swap was refused (`adopt=1`; see
+**Non-activating** above). A later run on `17c5071` matched: 60.0 MB idle,
+summon p50 / p95 2.4 / 3.8 ms. Bun, React and GPUI cost 35 MB before
 Floodlight loads anything; Floodlight adds 25 MB. The numbers come from
 `make measure-gpuix` in the `gpuix` CI job:
 

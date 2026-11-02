@@ -26,7 +26,7 @@ static const CGFloat kCornerRadius = 30;           /* FloodlightMetrics.cornerRa
 
 static NSWindow *panel;
 static BOOL nonactivating;
-/* flg_adopt_window's answer once adopted: 2 swapped, 3 private flag, 1 neither. */
+/* flg_adopt_window's answer once adopted: 2 panel, 1 activating fallback. */
 static int32_t adoptCode;
 static NSView *materialView;
 static int32_t queue[16];
@@ -123,17 +123,6 @@ static BOOL swap_to_panel_class(NSWindow *window) {
     return YES;
 }
 
-/* The fallback when the class cannot be swapped (a KVO subclass, say): the
- * WindowServer flag behind NSWindowStyleMaskNonactivatingPanel, which
- * launchers set on plain windows. Private, so it is probed, never assumed. */
-static BOOL prevent_activation(NSWindow *window) {
-    SEL sel = NSSelectorFromString(@"_setPreventsActivation:");
-    if (![window respondsToSelector:sel]) return NO;
-    void (*set)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[window methodForSelector:sel];
-    set(window, sel, YES);
-    return YES;
-}
-
 size_t flg_adopt_detail(uint8_t *out, size_t cap) {
     size_t n = strlen(adoptDetail);
     if (n > cap) return 0;
@@ -163,7 +152,7 @@ int32_t flg_adopt_window(void) {
     NSWindowStyleMask mask = NSWindowStyleMaskBorderless | NSWindowStyleMaskFullSizeContentView;
     if (swapped) mask |= NSWindowStyleMaskNonactivatingPanel;
     panel.styleMask = mask;
-    nonactivating = swapped || prevent_activation(panel);
+    nonactivating = swapped;
     if (swapped) {
         NSPanel *p = (NSPanel *)panel;
         p.floatingPanel = YES;
@@ -191,7 +180,7 @@ int32_t flg_adopt_window(void) {
                                                     if (panel.alphaValue > 0) push(FLG_EV_RESIGNED);
                                                 }];
     [panel orderOut:nil];
-    adoptCode = swapped ? 2 : nonactivating ? 3 : 1;
+    adoptCode = swapped ? 2 : 1;
     return adoptCode;
 }
 

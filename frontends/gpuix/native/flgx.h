@@ -37,8 +37,8 @@ enum {
 int32_t flg_start(void);
 
 /* Restyles the window GPUIX opened. 2: a non-activating panel (class swap).
- * 3: the class swap was refused, so the private prevents-activation flag is
- * set instead. 1: neither, so showing activates the app. -1: no
+ * 1: the swap was refused (AppKit's KVO subclass is in the way), so showing
+ * activates the app, as the Swift panel does. -1: no
  * window yet; -2: windows, but none of them GPUI's. Safe to call again. */
 int32_t flg_adopt_window(void);
 
