@@ -80,8 +80,8 @@ final class ZigNameIndex: @unchecked Sendable {
             let length = fl_relative_path(handle, hit.id, &path, UInt32(Self.maxPathBytes))
             guard length > 0,
                   let relativePath = String(
-                      validating: path.prefix(Int(length)).map { UInt8(bitPattern: $0) },
-                      as: UTF8.self
+                      bytes: path.prefix(Int(length)).map { UInt8(bitPattern: $0) },
+                      encoding: .utf8
                   )
             else { continue }
             if FFFIndex.hasApplicationBundleComponent(in: relativePath) { continue }
