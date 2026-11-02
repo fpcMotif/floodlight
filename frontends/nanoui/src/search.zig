@@ -3,7 +3,30 @@
 const std = @import("std");
 const core = @import("floodlight_core");
 
-pub const Kind = enum { app, file, folder };
+pub const Kind = enum {
+    app,
+    file,
+    folder,
+    web,
+
+    pub fn label(k: Kind) []const u8 {
+        return switch (k) {
+            .app => "Application",
+            .file => "File",
+            .folder => "Folder",
+            .web => "Web",
+        };
+    }
+
+    pub fn symbol(k: Kind) []const u8 {
+        return switch (k) {
+            .app => "square.grid.2x2.fill",
+            .file => "doc.text.fill",
+            .folder => "folder.fill",
+            .web => "globe.americas.fill",
+        };
+    }
+};
 
 pub const Row = struct {
     kind: Kind,
@@ -12,7 +35,17 @@ pub const Row = struct {
     subtitle: []const u8,
     path: []const u8,
     score: i32,
+    size: ?u64 = null,
+    modified: ?i64 = null,
+
+    pub fn extension(r: Row) []const u8 {
+        if (r.kind != .file) return "";
+        const ext = std.fs.path.extension(r.title);
+        return if (ext.len > 1) ext[1..] else "";
+    }
 };
+
+pub const web_search_url = "https://www.google.com/search?q=";
 
 pub const App = struct {
     /// The bundle's name without `.app`.
@@ -22,7 +55,7 @@ pub const App = struct {
 
 /// Apps outrank files that score the same: a launcher's first job.
 pub const app_bonus: i32 = 60;
-pub const max_rows = 7;
+pub const max_rows = 80;
 
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
@@ -59,11 +92,11 @@ pub const Catalog = struct {
         const needle = std.ascii.lowerString(&needle_buf, trimmed[0..@min(trimmed.len, needle_buf.len)]);
         for (cat.apps.items) |a| {
             const s = core.match.score(a.name, needle, 0) orelse continue;
-            try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = "Application", .path = a.path, .score = s + app_bonus });
+            try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 
         if (cat.files) |m| {
-            var hits: [max_rows * 2]core.search.Hit = undefined;
+            var hits: [max_rows]core.search.Hit = undefined;
             const n = core.search.search(m.view, trimmed, &hits);
             const root = m.view.root;
             for (hits[0..n]) |h| {
@@ -72,31 +105,55 @@ pub const Catalog = struct {
                 const path = try std.fs.path.join(arena, &.{ root, rel });
                 // Bundles are apps, listed above from the catalog; their insides are no one's.
                 if (std.mem.endsWith(u8, rel, ".app") or std.mem.indexOf(u8, rel, ".app/") != null) continue;
-                const dir = std.fs.path.dirname(path) orelse "/";
                 try rows.append(arena, .{
                     .kind = if (m.view.flags[h.id].dir) .folder else .file,
                     .title = std.fs.path.basename(path),
-                    .subtitle = try tildify(arena, dir, cat.home),
+                    .subtitle = try arena.dupe(u8, rel),
                     .path = path,
                     .score = h.score,
                 });
             }
         }
         std.mem.sort(Row, rows.items, {}, better);
-        return rows.items[0..@min(rows.items.len, max_rows)];
+        const ranked = rows.items[0..@min(rows.items.len, max_rows - 1)];
+        for (ranked) |*r| if (r.kind != .app) stamp(arena, r);
+        var out = try arena.alloc(Row, ranked.len + 1);
+        @memcpy(out[0..ranked.len], ranked);
+        out[ranked.len] = .{
+            .kind = .web,
+            .title = "Google",
+            .subtitle = "google.com",
+            .path = try webSearchUrl(arena, trimmed),
+            .score = 0,
+        };
+        return out;
     }
 };
+
+fn stamp(arena: std.mem.Allocator, r: *Row) void {
+    const z = arena.dupeSentinel(u8, r.path, 0) catch return;
+    var st: std.c.Stat = undefined;
+    if (std.c.stat(z, &st) != 0) return;
+    r.modified = st.mtime().sec;
+    if (r.kind == .file) r.size = @intCast(st.size);
+}
+
+pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(arena, web_search_url);
+    for (query) |b| {
+        if (std.ascii.isAlphanumeric(b) or b == '-' or b == '.' or b == '_' or b == '~') {
+            try out.append(arena, b);
+        } else {
+            try out.print(arena, "%{X:0>2}", .{b});
+        }
+    }
+    return out.items;
+}
 
 fn better(_: void, a: Row, b: Row) bool {
     if (a.score != b.score) return a.score > b.score;
     return a.title.len < b.title.len;
-}
-
-pub fn tildify(arena: std.mem.Allocator, path: []const u8, home: []const u8) ![]const u8 {
-    if (home.len == 0 or !std.mem.startsWith(u8, path, home)) return path;
-    const rest = path[home.len..];
-    if (rest.len != 0 and rest[0] != '/') return path;
-    return std.mem.concat(arena, u8, &.{ "~", rest });
 }
 
 /// Where apps are installed. The user's own folder comes from `home`.

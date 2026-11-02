@@ -9,6 +9,8 @@ const search = @import("search.zig");
 const panel_mod = @import("panel.zig");
 const permission = @import("permission.zig");
 const mac = @import("mac.zig");
+const clipboard = @import("clipboard.zig");
+const board_mod = @import("board.zig");
 const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
@@ -175,10 +177,21 @@ test "a query finds apps and files, apps first" {
         if (r.kind != .app) try t.expect(std.mem.indexOf(u8, r.path, ".app/") == null);
     }
 
+    try t.expectStringEndsWith(calc[0].subtitle, "/Apps");
+
     const tax = try cat.query(arena.allocator(), "return");
-    try t.expect(tax.len >= 1);
+    try t.expect(tax.len >= 2);
     try t.expectEqualStrings("2025-return.pdf", tax[0].title);
-    try t.expectEqualStrings("~/Documents/tax", tax[0].subtitle);
+    try t.expectEqualStrings("Documents/tax/2025-return.pdf", tax[0].subtitle);
+    try t.expectEqual(@as(?u64, 0), tax[0].size);
+    try t.expect(tax[0].modified != null);
+
+    const web = tax[tax.len - 1];
+    try t.expectEqual(search.Kind.web, web.kind);
+    try t.expectEqualStrings("Google", web.title);
+    try t.expectEqualStrings("google.com", web.subtitle);
+    const spaced = try cat.query(arena.allocator(), "tax return");
+    try t.expectEqualStrings("https://www.google.com/search?q=tax%20return", spaced[spaced.len - 1].path);
 
     try t.expectEqual(@as(usize, 0), (try cat.query(arena.allocator(), "  ")).len);
 }
@@ -192,6 +205,15 @@ const NoHooks = struct {
     fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
         return null;
     }
+    fn date(_: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
+        return "Today at 9:41 AM";
+    }
+    fn detailed(_: ?*anyopaque, _: f64, _: std.mem.Allocator) []const u8 {
+        return "Today at 9:41 AM";
+    }
+    fn hooks(h: *NoHooks) panel_mod.Hooks {
+        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = date, .detailed_date = detailed };
+    }
 };
 
 test "typing shows rows; Return opens the selected one; hiding forgets the session" {
@@ -201,23 +223,31 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     var cat = try tmpCatalog(&tmp, &buf);
     defer cat.deinit();
     var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, .{ .ctx = &hooks, .request = NoHooks.request, .app_icon = NoHooks.icon });
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 480 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
     defer tester.deinit();
     tester.settle(0.2);
-    try t.expectEqual(panel_mod.metrics.search_height, p.fitHeight());
+    try t.expectEqual(panel_mod.metrics.search_height, p.panelHeight());
+    try t.expect(tester.hasText("Floodlight"));
+    try t.expect(tester.hasText(panel_mod.summon_label));
 
     tester.typeText("cal");
     tester.settle(0.2);
-    try t.expect(p.rows.len >= 2);
+    try t.expect(p.visible.len >= 3);
     try t.expect(tester.hasText("Calculator"));
     try t.expect(tester.hasText("Calendar"));
-    try t.expect(p.fitHeight() > panel_mod.metrics.search_height);
+    try t.expect(tester.hasText("Top Hit"));
+    try t.expect(tester.hasText("Application"));
+    try t.expect(tester.hasText("Google"));
+    try t.expect(!tester.hasText(panel_mod.summon_label));
+    try t.expectEqual(@as(f32, 521), p.panelHeight());
     try t.expect(hooks.requests > 0);
 
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.up }));
+    try t.expectEqual(@as(usize, 0), p.selected);
     // A window offers every key to the view first, as a shortcut.
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
     tester.settle(0.1);
@@ -226,19 +256,55 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     tester.key(.enter);
     tester.settle(0.1);
     const pending = p.pending orelse return error.NoAction;
-    try t.expectEqualStrings(p.rows[1].path, pending.open);
+    try t.expectEqualStrings(p.visible[1].path, pending.open);
+
+    p.pending = null;
+    for (0..p.visible.len + 2) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    try t.expectEqual(p.visible.len - 1, p.selected);
 
     p.reset();
     try t.expectEqual(@as(usize, 0), p.rows.len);
     try t.expectEqualStrings("", p.field.text());
-    try t.expectEqual(panel_mod.metrics.search_height, p.fitHeight());
+    try t.expectEqual(panel_mod.metrics.search_height, p.panelHeight());
+}
+
+test "filter chips count, narrow the rows, and drop Top Hit" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("return");
+    tester.settle(0.2);
+    for ([_][]const u8{ "All", "Apps", "Files", "Folders", "PDFs" }) |chip| try t.expect(tester.hasText(chip));
+    try t.expect(!tester.hasText("Images"));
+    try t.expectEqual(@as(usize, 1), p.count(.pdfs));
+
+    try t.expect(tester.shortcut(.{ .key = '3', .cmd = true }));
+    tester.settle(0.1);
+    try t.expectEqual(panel_mod.Filter.files, p.filter);
+    for (p.visible) |r| try t.expectEqual(search.Kind.file, r.kind);
+    try t.expect(!p.isTopHit(0));
+
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    tester.settle(0.1);
+    try t.expectEqual(@as(usize, 0), p.visible.len);
+    try t.expect(tester.hasText("No apps results for \u{201C}return\u{201D}"));
 }
 
 test "Escape asks to hide" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
     var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, .{ .ctx = &hooks, .request = NoHooks.request, .app_icon = NoHooks.icon });
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 120 });
@@ -248,26 +314,159 @@ test "Escape asks to hide" {
     try t.expect(p.pending != null and p.pending.? == .hide);
 }
 
-test "without access the panel offers the grant" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, .{ .ctx = &hooks, .request = NoHooks.request, .app_icon = NoHooks.icon });
-    defer p.deinit();
-    p.needs_access = true;
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 120 });
-    defer tester.deinit();
-    tester.settle(0.1);
-    try tester.clickText("Grant…");
-    tester.settle(0.1);
-    try t.expect(p.pending != null and p.pending.? == .grant_access);
-}
-
 test "the access probe names a file that exists" {
     const failed = std.c.access(mac.full_disk_access_probe, 0) != 0;
     const missing = failed and @as(std.c.E, @fromBackingInt(@intCast(std.c._errno().*))) == .NOENT;
     try t.expect(!missing);
+}
+
+// The clipboard board. Expected values are the Swift suite's
+// (ClipboardTextContentTests, ClipboardHistoryStoreTests, SearchResultProjection).
+
+test "copied text is classified as the Swift store classifies it" {
+    try t.expectEqual(clipboard.Content.link, clipboard.classify("https://www.example.com/a?b"));
+    try t.expectEqualStrings("example.com", clipboard.domain("https://www.example.com/a?b").?);
+    try t.expectEqual(clipboard.Content.color, clipboard.classify(" #fff "));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    try t.expectEqualStrings("rgb(255, 255, 255)", clipboard.rgbDescription(arena.allocator(), clipboard.parseColor("#fff").?));
+    try t.expectEqualStrings("rgba(17, 34, 51, 0.50)", clipboard.rgbDescription(arena.allocator(), clipboard.parseColor("#11223380").?));
+    try t.expectEqual(clipboard.Content.code, clipboard.classify("{\"a\": 1}"));
+    try t.expectEqualStrings("JSON", clipboard.codeLanguage("{\"a\": 1}").?);
+    try t.expectEqualStrings("Code", clipboard.codeLanguage("const x = 1;").?);
+    try t.expectEqualStrings("HTML", clipboard.codeLanguage("<p>hi</p>").?);
+    try t.expectEqual(clipboard.Content.path, clipboard.classify("/Users/me/a.txt"));
+    try t.expectEqual(clipboard.Content.plain, clipboard.classify("a\n/b"));
+    try t.expectEqual(clipboard.Content.plain, clipboard.classify("{not json}"));
+    try t.expectEqual(clipboard.Content.plain, clipboard.classify("#12345"));
+}
+
+test "rows name an entry's age, source and place" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ages = [_]struct { f64, []const u8 }{ .{ 30, "just now" }, .{ 120, "2m" }, .{ 7200, "2h" }, .{ 3 * 86400, "3d" }, .{ 65 * 86400, "2mo" }, .{ 400 * 86400, "1y" } };
+    for (ages) |x| try t.expectEqualStrings(x[1], clipboard.age(a, x[0]));
+
+    const file: clipboard.Entry = .{ .id = 1, .kind = .file, .text = "/Users/me/Docs/a.txt", .created_at = 1000, .source_name = "Finder" };
+    try t.expectEqualStrings("a.txt", file.title(a));
+    try t.expectEqualStrings("Finder \u{00B7} 2m \u{00B7} Docs", file.subtitle(a, 1120));
+    const img: clipboard.Entry = .{ .id = 2, .kind = .image, .text = "PNG Image", .created_at = 1000, .width = 3, .height = 4 };
+    try t.expectEqualStrings("Clipboard \u{00B7} just now \u{00B7} 3\u{00D7}4", img.subtitle(a, 1001));
+    const text: clipboard.Entry = .{ .id = 3, .kind = .text, .text = "a\n\nb\u{2028}c ", .created_at = 0 };
+    try t.expectEqualStrings("a b c", text.title(a));
+    const blank: clipboard.Entry = .{ .id = 4, .kind = .text, .text = "\n\n", .created_at = 0 };
+    try t.expectEqualStrings("(Empty text)", blank.title(a));
+}
+
+test "the store skips a repeat of the newest entry only, pins, finds and prunes" {
+    const store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expect(try store.add(.{ .text = "alpha" }, "", "Notes", 100));
+    try t.expect(try store.add(.{ .text = "beta" }, "", "Notes", 200));
+    try t.expect(!try store.add(.{ .text = "beta" }, "", "Notes", 250));
+    try t.expect(try store.add(.{ .text = "alpha" }, "", "Notes", 300));
+    try t.expect(try store.add(.{ .file = "/tmp/x.pdf" }, "com.apple.finder", "Finder", 400));
+    var rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 4), rows.len);
+    try t.expectEqualStrings("/tmp/x.pdf", rows[0].text);
+    try t.expectEqual(clipboard.Kind.file, rows[0].kind);
+
+    // The oldest "alpha" pinned: first, ahead of newer entries.
+    try store.togglePin(rows[3].id, 500);
+    rows = try store.list(a, "");
+    try t.expectEqual(@as(f64, 100), rows[0].created_at);
+    try t.expectEqual(@as(?f64, 500), rows[0].pinned_at);
+
+    rows = try store.list(a, "ALP");
+    try t.expectEqual(@as(usize, 2), rows.len);
+
+    try store.prune(250 + 30 * 86400, 30);
+    rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 3), rows.len);
+    try store.delete(rows[1].id);
+    try t.expectEqual(@as(usize, 2), (try store.list(a, "")).len);
+}
+
+test "the board lists history, inspects the selection, and filters" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    _ = try store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
+    _ = try store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
+    _ = try store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    p.board.now = 2060;
+    try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
+    try t.expectEqual(@as(f32, 840), p.panelWidth());
+    try t.expectEqual(@as(f32, 560), p.panelHeight());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    try t.expect(tester.hasText("Filter clipboard"));
+    try t.expect(tester.hasText("Information"));
+    try t.expect(tester.hasText("Link"));
+    try t.expect(tester.hasText("example.com"));
+    try t.expect(tester.hasText("Safari \u{00B7} 1m"));
+    try t.expect(tester.hasText("3 entries"));
+    try t.expect(tester.hasText("Copy"));
+    try t.expect(tester.hasText("Today at 9:41 AM"));
+
+    p.board.paste_target = "Notes";
+    tester.settle(1);
+    try t.expect(tester.hasText("Paste to Notes"));
+
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    try t.expect(tester.hasText("Words"));
+    try t.expect(tester.hasText("3"));
+
+    _ = tester.shortcut(.{ .key = '2', .cmd = true });
+    tester.settle(1);
+    try t.expect(tester.hasText("2 entries"));
+    _ = tester.shortcut(.{ .key = '4', .cmd = true });
+    tester.settle(1);
+    try t.expect(tester.hasText("No images clipboard entries"));
+    _ = tester.shortcut(.{ .key = '1', .cmd = true });
+    tester.settle(1);
+
+    tester.key(.enter);
+    try t.expect(p.pending != null);
+    try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.paste.text);
+    p.pending = null;
+
+    _ = tester.shortcut(.{ .key = 'd', .cmd = true });
+    tester.settle(1);
+    try t.expect(tester.hasText("2 entries"));
+
+    tester.typeText("zzz");
+    tester.settle(1);
+    try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
+}
+
+test "an empty history says so" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    try t.expect(tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
 }
 
 test {

@@ -7,9 +7,12 @@ const search = @import("search.zig");
 const panel_mod = @import("panel.zig");
 const permission = @import("permission.zig");
 const mac = @import("mac.zig");
+const clipboard = @import("clipboard.zig");
+const board_mod = @import("board.zig");
 
 const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
+const clipboard_poll_ms = 500;
 
 /// Icons drawn per session at most; all go when the panel hides.
 const max_icons = 64;
@@ -28,11 +31,39 @@ const Shell = struct {
     drag: ?*mac.FileDragSource = null,
     icons: std.StringHashMapUnmanaged([]u8) = .empty,
     polling: bool = false,
+    store: clipboard.Store = undefined,
+    change_count: objc.NSInteger = 0,
+    /// The app that was frontmost when the panel opened: Return pastes there.
+    paste_target: mac.RunningApp = .{},
+    accessibility_prompted: bool = false,
 
-    fn togglePanel(ctx: ?*anyopaque) void {
+    fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.panel_window.isVisible() and s.panel_window.isFocused()) return s.hidePanel();
-        s.showPanel();
+        const shown = s.panel_window.isVisible() and s.panel_window.isFocused();
+        switch (which) {
+            .search => {
+                if (shown) return s.hidePanel();
+                s.showPanel();
+            },
+            .clipboard => {
+                if (shown and s.panel.mode == .clipboard) return s.hidePanel();
+                if (!s.panel_window.isVisible()) s.notePasteTarget();
+                s.panel.showClipboard();
+                s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
+                s.panel.board.now = clipboard.wallClock();
+                s.positionOnPointerScreen();
+                s.panel_window.show();
+                s.panel_window.redraw();
+            },
+        }
+    }
+
+    fn notePasteTarget(s: *Shell) void {
+        const front = mac.frontmostApp(gpa);
+        if (front.pid == 0 or front.pid == mac.ownPid()) return;
+        gpa.free(s.paste_target.bundle_id);
+        gpa.free(s.paste_target.name);
+        s.paste_target = front;
     }
 
     fn reopened(ctx: ?*anyopaque) void {
@@ -47,18 +78,26 @@ const Shell = struct {
     }
 
     fn showPanel(s: *Shell) void {
-        s.panel.needs_access = !mac.fullDiskAccessGranted();
-        s.placePanel();
+        if (!s.panel_window.isVisible()) s.notePasteTarget();
+        s.positionOnPointerScreen();
         s.panel_window.show();
     }
 
-    /// Centered, a fifth of the way down the screen the pointer is on.
-    fn placePanel(s: *Shell) void {
-        const screen = mac.mainScreenVisibleFrame();
-        s.panel_window.setSize(metrics.width, s.panel.fitHeight());
+    fn positionOnPointerScreen(s: *Shell) void {
+        const screen = mac.pointerScreenVisibleFrame();
+        s.panel_window.setSize(s.panel.panelWidth(), s.panel.panelHeight());
         const f = mac.frameOf(s.panel_window);
-        const top = screen.y + screen.h * 0.8;
-        mac.setFrameOrigin(s.panel_window, .{ .x = screen.x + (screen.w - f.w) / 2, .y = top - f.h, .w = f.w, .h = f.h });
+        mac.setFrameOrigin(s.panel_window, .{ .x = screen.x + (screen.w - f.w) / 2, .y = screen.y + screen.h * 0.68 - f.h / 2, .w = f.w, .h = f.h });
+    }
+
+    /// Keeps the top edge and the horizontal centre where they are.
+    fn resizeKeepingTop(s: *Shell, w: f32, h: f32) void {
+        const f = mac.frameOf(s.panel_window);
+        if (@abs(f.h - h) < 0.5 and @abs(f.w - w) < 0.5) return;
+        const top = f.y + f.h;
+        const mid = f.x + f.w / 2;
+        s.panel_window.setSize(w, h);
+        mac.setFrameOrigin(s.panel_window, .{ .x = mid - w / 2, .y = top - h, .w = w, .h = h });
     }
 
     fn hidePanel(s: *Shell) void {
@@ -72,8 +111,9 @@ const Shell = struct {
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        // A click anywhere else dismisses it, as Spotlight.
-        if (!w.isFocused() and w.isVisible()) s.hidePanel();
+        // A click anywhere else dismisses it, as Spotlight; Quick Look over
+        // the board does not.
+        if (!w.isFocused() and w.isVisible() and !mac.previewVisible()) s.hidePanel();
     }
 
     fn panelRequest(ctx: ?*anyopaque) void {
@@ -87,21 +127,130 @@ const Shell = struct {
             switch (a) {
                 .open => |path| mac.open(path),
                 .reveal => |path| mac.reveal(path),
-                .grant_access => {},
+                .copy => |row| mac.copy(row.path),
                 .hide => {},
+                .clipboard => |b| if (!s.applyBoard(b)) return s.panel_window.redraw(),
             }
             s.hidePanel();
-            if (a == .grant_access) s.flow.begin();
             return;
         }
-        s.panel_window.setSize(metrics.width, s.panel.height);
+        s.resizeKeepingTop(s.panel.width, s.panel.height);
+    }
+
+    /// Carries out a board action; true when the panel should hide.
+    fn applyBoard(s: *Shell, a: board_mod.Action) bool {
+        switch (a) {
+            .paste => |e| {
+                s.writeEntry(e);
+                const pid = s.paste_target.pid;
+                s.hidePanel();
+                if (pid == 0) return false;
+                if (!mac.canDeliverPaste()) {
+                    if (!s.accessibility_prompted) mac.promptAccessibility();
+                    s.accessibility_prompted = true;
+                    return false;
+                }
+                _ = mac.deliverPaste(pid);
+                return false;
+            },
+            .copy => |e| s.writeEntry(e),
+            .reveal => |path| {
+                mac.reveal(path);
+                return true;
+            },
+            .preview => |e| s.preview(e),
+            .actions => |e| s.actionsMenu(e),
+        }
+        return false;
+    }
+
+    fn writeEntry(s: *Shell, e: clipboard.Entry) void {
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const png = if (e.kind == .image) s.store.image(arena.allocator(), e.id) else null;
+        mac.writeClipboard(e.kind, e.filePath() orelse e.text, png);
+        // The marker keeps capture from storing it again; this keeps the count current.
+        s.change_count = mac.pasteboardChangeCount();
+    }
+
+    fn preview(s: *Shell, e: clipboard.Entry) void {
+        if (e.filePath()) |path| return mac.togglePreview(path);
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const png = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
+        const path = mac.previewFile(gpa, e.id, png) orelse return;
+        defer gpa.free(path);
+        mac.togglePreview(path);
+    }
+
+    fn actionsMenu(s: *Shell, e: clipboard.Entry) void {
+        var label_buf: [128]u8 = undefined;
+        const paste_label = if (s.panel.board.paste_target.len > 0) std.fmt.bufPrint(&label_buf, "Paste to {s}", .{s.panel.board.paste_target}) catch "Paste" else "Copy";
+        const cmd = mac.command_modifier;
+        const items = [_]mac.MenuItem{
+            .{ .title = paste_label, .key = "\r", .modifiers = 0 },
+            .{ .title = "Copy", .key = "c", .modifiers = cmd },
+            .{ .title = "Quick Look", .key = " ", .modifiers = 0, .enabled = s.panel.board.previewable(e), .separator_before = true },
+            .{ .title = "Show in Finder", .key = "r", .modifiers = cmd, .enabled = e.filePath() != null },
+            .{ .title = if (e.pinned_at != null) "Unpin" else "Pin", .key = ".", .modifiers = cmd, .separator_before = true },
+            .{ .title = "Delete", .key = "d", .modifiers = cmd },
+        };
+        const f = mac.frameOf(s.panel_window);
+        const at = [2]f64{ f.w - board_mod.board_metrics.well_inset - 110, f.h - board_mod.board_metrics.well_inset - board_mod.board_metrics.footer_height };
+        const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
+        switch (choice) {
+            0 => if (s.applyBoard(.{ .paste = e })) s.hidePanel(),
+            1 => s.writeEntry(e),
+            2 => s.preview(e),
+            3 => if (e.filePath()) |p| {
+                mac.reveal(p);
+                s.hidePanel();
+            },
+            4 => {
+                s.panel.board.togglePin();
+                s.panel.refresh();
+            },
+            5 => s.panel.board.delete(),
+            else => {},
+        }
+        s.panel_window.redraw();
+    }
+
+    // Clipboard capture: the pasteboard's change count, every half second.
+
+    fn captureTick(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        defer nanoui.App.after(clipboard_poll_ms, s, captureTick);
+        const count = mac.pasteboardChangeCount();
+        if (count == s.change_count) return;
+        s.change_count = count;
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const front = mac.frontmostApp(arena.allocator());
+        var stored = false;
+        for (mac.readPasteboard(arena.allocator(), front.bundle_id)) |cap| {
+            stored = (s.store.add(cap, front.bundle_id, front.name, clipboard.wallClock()) catch false) or stored;
+        }
+        if (!stored or s.panel.mode != .clipboard) return;
+        s.panel.board.stale = true;
+        s.panel.board.now = clipboard.wallClock();
+        s.panel.refresh();
+        s.panel_window.redraw();
+    }
+
+    fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
+        return mac.detailedDate(secs, arena);
+    }
+
+    fn describeDate(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {
+        return mac.relativeDate(secs, arena);
     }
 
     fn appIcon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (s.icons.get(path)) |png| return png;
         if (s.icons.count() >= max_icons) return null;
-        const png = mac.iconPng(gpa, path, metrics.icon_size * 2) orelse return null;
+        const png = mac.iconPng(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
         const key = gpa.dupe(u8, path) catch return png;
         s.icons.put(gpa, key, png) catch {};
         return png;
@@ -140,7 +289,6 @@ const Shell = struct {
 
     fn granted(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel.needs_access = false;
         if (!s.guide_window.isVisible()) return s.rebuildIndex();
         s.guidance.phase = .granted;
         s.guide_window.redraw();
@@ -230,7 +378,18 @@ pub fn main(init: std.process.Init) !void {
     try search.scanApps(&shell.catalog, init.io, try std.fs.path.join(gpa, &.{ home, "Applications" }));
     if (@import("floodlight_core").index.Mapped.open(@import("floodlight_core").sys.cwd, index_path)) |m| shell.catalog.setFiles(m) else |_| {}
 
-    shell.panel = .init(gpa, &shell.catalog, .{ .ctx = &shell, .request = Shell.panelRequest, .app_icon = Shell.appIcon });
+    const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
+    shell.store = clipboard.Store.open(store_path) catch try clipboard.Store.open(":memory:");
+    defer shell.store.close();
+    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
+
+    shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
+        .ctx = &shell,
+        .request = Shell.panelRequest,
+        .app_icon = Shell.appIcon,
+        .describe_date = Shell.describeDate,
+        .detailed_date = Shell.detailedDate,
+    });
     defer shell.panel.deinit();
     shell.panel_window = try app.newWindow(.{
         .title = "Floodlight",
@@ -279,7 +438,9 @@ pub fn main(init: std.process.Init) !void {
     // hotkey, no System Settings, no scan of the home folder.
     const headless = app.flags.hidden or app.flags.snapshot != null;
     if (!headless) {
-        try mac.registerHotKey(&shell, Shell.togglePanel);
+        try mac.registerHotKeys(&shell, Shell.hotKey);
+        shell.change_count = mac.pasteboardChangeCount();
+        nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
         nanoui.App.after(0, &shell, Shell.launched);
