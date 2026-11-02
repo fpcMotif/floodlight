@@ -13,17 +13,14 @@ const builtin = @import("builtin");
 const core = @import("root.zig");
 const index = core.index;
 const search = core.search;
+const sys = core.sys;
 
-pub fn main() !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa_state.deinit();
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
-
-    const args = try std.process.argsAlloc(gpa);
-    defer std.process.argsFree(gpa, args);
+pub fn main(init: std.process.Init) !void {
+    const gpa = std.heap.smp_allocator;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var out_buf: [16 * 1024]u8 = undefined;
-    var fw = std.fs.File.stdout().writer(&out_buf);
+    var fw: std.Io.File.Writer = .init(.stdout(), init.io, &out_buf);
     const out = &fw.interface;
     defer out.flush() catch {};
 
@@ -50,12 +47,12 @@ fn usage(out: *std.Io.Writer) !void {
 fn cmdIndex(gpa: std.mem.Allocator, out: *std.Io.Writer, root: []const u8, path: []const u8) !void {
     var b = index.Builder.init(gpa);
     defer b.deinit();
-    var timer = try std.time.Timer.start();
+    var timer = Timer.begin();
     try core.scan.scan(&b, root, .{});
     const scan_ns = timer.lap();
-    try b.writeFile(std.fs.cwd(), path);
+    try b.writeFile(sys.cwd, path);
     const write_ns = timer.read();
-    const size = (try std.fs.cwd().statFile(path)).size;
+    const size = try fileSize(path);
     try out.print("entries={d} scan_ms={d:.1} write_ms={d:.1} file_bytes={d} bytes_per_entry={d:.1}\n", .{
         b.count(),
         ms(scan_ns),
@@ -65,14 +62,14 @@ fn cmdIndex(gpa: std.mem.Allocator, out: *std.Io.Writer, root: []const u8, path:
     });
 }
 
-fn cmdSearch(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, words: []const [:0]u8) !void {
-    var m = try index.Mapped.open(std.fs.cwd(), path);
+fn cmdSearch(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, words: []const [:0]const u8) !void {
+    var m = try index.Mapped.open(sys.cwd, path);
     defer m.close();
     const q = try std.mem.join(gpa, " ", @ptrCast(words));
     defer gpa.free(q);
 
     var hits: [20]search.Hit = undefined;
-    var timer = try std.time.Timer.start();
+    var timer = Timer.begin();
     const n = search.search(m.view, q, &hits);
     const ns = timer.read();
     var buf: [4096]u8 = undefined;
@@ -86,10 +83,10 @@ const default_queries = [_][]const u8{
     "r", "re", "rea", "read", "readme", "pkg", "main.zig", "conf", "lib/x", "zzzq", "doc tax", "png",
 };
 
-fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given: []const [:0]u8) !void {
+fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given: []const [:0]const u8) !void {
     const rss_before = residentBytes();
-    var timer = try std.time.Timer.start();
-    var m = try index.Mapped.open(std.fs.cwd(), path);
+    var timer = Timer.begin();
+    var m = try index.Mapped.open(sys.cwd, path);
     defer m.close();
     const open_ns = timer.read();
 
@@ -163,8 +160,8 @@ fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count
         const id = try b.add(parent, nm, .{ .dir = is_dir });
         if (is_dir) try dirs.append(gpa, id);
     }
-    try b.writeFile(std.fs.cwd(), path);
-    const size = (try std.fs.cwd().statFile(path)).size;
+    try b.writeFile(sys.cwd, path);
+    const size = try fileSize(path);
     try out.print("entries={d} file_bytes={d}\n", .{ b.count(), size });
 }
 
@@ -176,15 +173,43 @@ fn us(ns: u64) f64 {
     return @as(f64, @floatFromInt(ns)) / 1e3;
 }
 
+const Timer = struct {
+    start: u64,
+
+    fn begin() Timer {
+        return .{ .start = sys.monotonicNs() };
+    }
+
+    fn read(t: *const Timer) u64 {
+        return sys.monotonicNs() - t.start;
+    }
+
+    fn lap(t: *Timer) u64 {
+        const now = sys.monotonicNs();
+        defer t.start = now;
+        return now - t.start;
+    }
+
+    fn reset(t: *Timer) void {
+        t.start = sys.monotonicNs();
+    }
+};
+
+fn fileSize(path: []const u8) !u64 {
+    const fd = try sys.openat(sys.cwd, path, .read);
+    defer sys.close(fd);
+    return sys.size(fd);
+}
+
 /// Current resident set, not the peak: the peak would include whatever the
 /// argument parsing and the first search touched and forgot.
 fn residentBytes() usize {
     switch (builtin.os.tag) {
         .linux => {
             var buf: [256]u8 = undefined;
-            const f = std.fs.openFileAbsolute("/proc/self/statm", .{}) catch return 0;
-            defer f.close();
-            const n = f.read(&buf) catch return 0;
+            const fd = sys.openat(sys.cwd, "/proc/self/statm", .read) catch return 0;
+            defer sys.close(fd);
+            const n = std.posix.read(fd, &buf) catch return 0;
             var it = std.mem.tokenizeScalar(u8, buf[0..n], ' ');
             _ = it.next();
             const pages = std.fmt.parseInt(usize, it.next() orelse return 0, 10) catch return 0;

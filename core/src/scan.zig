@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+const sys = @import("sys.zig");
 const index = @import("index.zig");
 
 pub const Options = struct {
@@ -36,8 +37,8 @@ const buffer_len = 64 * 1024;
 
 pub fn scan(b: *index.Builder, root: []const u8, opts: Options) !void {
     try b.setRoot(root);
-    const fd = try posix.open(root, .{ .DIRECTORY = true, .CLOEXEC = true }, 0);
-    defer posix.close(fd);
+    const fd = try sys.openRoot(root);
+    defer sys.close(fd);
     // One buffer serves every level: each directory is drained into the
     // builder before any child is opened.
     const buf = try b.gpa.alignedAlloc(u8, .@"8", buffer_len);
@@ -63,12 +64,8 @@ fn walk(
         if (!b.isDir(id)) continue;
         // `openat` copies the name before it returns, so the slice into the
         // builder's buffer may move during the recursive call that follows.
-        const child = posix.openat(fd, b.name(id), .{
-            .DIRECTORY = true,
-            .NOFOLLOW = true,
-            .CLOEXEC = true,
-        }, 0) catch continue;
-        defer posix.close(child);
+        const child = sys.openat(fd, b.name(id), .dir) catch continue;
+        defer sys.close(child);
         try walk(b, child, id, depth + 1, buf, opts);
     }
 }
@@ -95,7 +92,7 @@ const Linux = struct {
 
     fn drain(b: *index.Builder, fd: posix.fd_t, parent: u32, buf: []align(8) u8, opts: Options) !void {
         while (true) {
-            const rc = linux.getdents64(fd, buf.ptr, buf.len);
+            const rc = linux.getdents64(fd, buf.ptr, @intCast(buf.len));
             // An unreadable directory (permissions, raced away) is skipped,
             // not fatal: a home folder always has a few.
             if (posix.errno(rc) != .SUCCESS) return;
@@ -119,12 +116,13 @@ const Linux = struct {
         }
     }
 
+    /// For filesystems that leave `d_type` blank. Opening as a directory
+    /// with NOFOLLOW answers "is this a real directory" in one syscall; a
+    /// symlink to a directory fails it, which is the answer the walk wants.
     fn statFlags(fd: posix.fd_t, name: []const u8) ?index.Flags {
-        const st = posix.fstatat(fd, name, posix.AT.SYMLINK_NOFOLLOW) catch return null;
-        return .{
-            .dir = posix.S.ISDIR(st.mode),
-            .symlink = posix.S.ISLNK(st.mode),
-        };
+        const probe = sys.openat(fd, name, .dir) catch return .{};
+        sys.close(probe);
+        return .{ .dir = true };
     }
 };
 
@@ -218,15 +216,15 @@ const t = std.testing;
 test "walks, prunes, and skips hidden" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("docs/tax");
-    try tmp.dir.makePath("node_modules/left-pad");
-    try tmp.dir.makePath(".git/objects");
-    try tmp.dir.writeFile(.{ .sub_path = "docs/tax/2025.pdf", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "docs/.secret", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "readme.md", .data = "" });
+    try tmp.dir.createDirPath(t.io, "docs/tax");
+    try tmp.dir.createDirPath(t.io, "node_modules/left-pad");
+    try tmp.dir.createDirPath(t.io, ".git/objects");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "docs/tax/2025.pdf", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "docs/.secret", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "readme.md", .data = "" });
 
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = try tmp.dir.realpath(".", &root_buf);
+    const root = root_buf[0..try tmp.dir.realPath(t.io, &root_buf)];
 
     var b = index.Builder.init(t.allocator);
     defer b.deinit();

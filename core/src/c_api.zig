@@ -5,6 +5,7 @@ const std = @import("std");
 const index = @import("index.zig");
 const scan = @import("scan.zig");
 const search = @import("search.zig");
+const sys = @import("sys.zig");
 
 const Handle = struct {
     mapped: index.Mapped,
@@ -20,6 +21,8 @@ fn errnoOf(err: anyerror) c_int {
         error.FileNotFound => -2,
         error.AccessDenied => -13,
         error.NotDir => -20,
+        error.NoSpaceLeft => -28,
+        error.NameTooLong => -63,
         error.CorruptIndex => -1001,
         error.IndexTooLarge => -1002,
         else => -1000,
@@ -30,13 +33,13 @@ export fn fl_index_build(root: [*:0]const u8, out_path: [*:0]const u8) c_int {
     var b = index.Builder.init(gpa);
     defer b.deinit();
     scan.scan(&b, std.mem.span(root), .{}) catch |e| return errnoOf(e);
-    b.writeFile(std.fs.cwd(), std.mem.span(out_path)) catch |e| return errnoOf(e);
+    b.writeFile(sys.cwd, std.mem.span(out_path)) catch |e| return errnoOf(e);
     return @intCast(@min(b.count(), std.math.maxInt(c_int)));
 }
 
 export fn fl_index_open(path: [*:0]const u8, out: *?*Handle) c_int {
     out.* = null;
-    const mapped = index.Mapped.open(std.fs.cwd(), std.mem.span(path)) catch |e| return errnoOf(e);
+    const mapped = index.Mapped.open(sys.cwd, std.mem.span(path)) catch |e| return errnoOf(e);
     const h = gpa.create(Handle) catch {
         var m = mapped;
         m.close();
@@ -82,13 +85,13 @@ test "build, open, search through the ABI" {
     const t = std.testing;
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("Music/Albums");
-    try tmp.dir.writeFile(.{ .sub_path = "Music/Albums/kind-of-blue.flac", .data = "" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = try tmp.dir.realpath(".", &root_buf);
-    var idx_buf: [std.fs.max_path_bytes + 8]u8 = undefined;
-    const idx = try std.fmt.bufPrintZ(&idx_buf, "{s}/i.flix", .{root});
-    var root_z: [std.fs.max_path_bytes + 1]u8 = undefined;
+    try tmp.dir.createDirPath(t.io, "Music/Albums");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Music/Albums/kind-of-blue.flac", .data = "" });
+    var root_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(t.io, &root_buf)];
+    var idx_buf: [std.posix.PATH_MAX + 8]u8 = undefined;
+    const idx = try std.fmt.bufPrintSentinel(&idx_buf, "{s}/i.flix", .{root}, 0);
+    var root_z: [std.posix.PATH_MAX + 1]u8 = undefined;
     @memcpy(root_z[0..root.len], root);
     root_z[root.len] = 0;
 

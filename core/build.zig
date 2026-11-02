@@ -35,10 +35,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
-    const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
-    b.step("run", "Run flcore").dependOn(&run.step);
-
     const tests = b.addTest(.{ .root_module = core });
     b.step("test", "Run engine tests").dependOn(&b.addRunArtifact(tests).step);
 }

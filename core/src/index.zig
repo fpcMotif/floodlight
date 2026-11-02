@@ -2,13 +2,13 @@
 //! written once and memory-mapped read-only.
 //!
 //! Storing each name once with a parent id, rather than each full path,
-//! keeps a million-entry home folder near 20 MB instead of 80. Mapping the
+//! keeps a million-entry home folder near 37 MB instead of 90. Mapping the
 //! file read-only means those pages are clean: macOS can drop them under
 //! pressure and fault them back from disk, so the index never counts as
 //! dirty memory the way a heap-built table does.
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys.zig");
 const mask = @import("mask.zig");
 
 pub const no_parent: u32 = std.math.maxInt(u32);
@@ -169,22 +169,22 @@ pub const Builder = struct {
 
     /// Writes to `path` through a temporary sibling and a rename, so a reader
     /// mapping the old index never sees a half-written one.
-    pub fn writeFile(b: *const Builder, dir: std.fs.Dir, path: []const u8) !void {
-        var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    pub fn writeFile(b: *const Builder, dir: sys.fd_t, path: []const u8) !void {
+        var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
         const tmp = try std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{path});
-        const file = try dir.createFile(tmp, .{ .truncate = true });
-        errdefer dir.deleteFile(tmp) catch {};
+        const fd = try sys.openat(dir, tmp, .create);
+        errdefer sys.unlinkat(dir, tmp);
         {
-            defer file.close();
-            var io_buf: [64 * 1024]u8 = undefined;
-            var fw = file.writer(&io_buf);
-            try b.serialize(&fw.interface);
-            try fw.interface.flush();
+            defer sys.close(fd);
+            try b.writeTo(fd);
         }
-        try dir.rename(tmp, path);
+        try sys.renameat(dir, tmp, path);
     }
 
-    pub fn serialize(b: *const Builder, w: *std.Io.Writer) !void {
+    /// Sizes the file first, then writes each section at its offset. The
+    /// alignment padding between sections is never written: `ftruncate`
+    /// already reads back as zeros there.
+    fn writeTo(b: *const Builder, fd: sys.fd_t) !void {
         const n: u64 = b.count();
         var off: u64 = std.mem.alignForward(u64, @sizeOf(Header), section_align);
         var h: Header = undefined;
@@ -204,18 +204,17 @@ pub const Builder = struct {
         h.off_root = take(&off, b.root.items.len);
         h.total = off;
 
-        var written: u64 = 0;
-        try writeAt(w, &written, 0, std.mem.asBytes(&h));
-        try writeAt(w, &written, h.off_path_mask, std.mem.sliceAsBytes(b.path_mask.items));
-        try writeAt(w, &written, h.off_name_mask, std.mem.sliceAsBytes(b.name_mask.items));
-        try writeAt(w, &written, h.off_parent, std.mem.sliceAsBytes(b.parent.items));
-        try writeAt(w, &written, h.off_name_off, std.mem.sliceAsBytes(b.name_off.items));
-        try writeAt(w, &written, h.off_name_len, std.mem.sliceAsBytes(b.name_len.items));
-        try writeAt(w, &written, h.off_flags, std.mem.sliceAsBytes(b.flags.items));
-        try writeAt(w, &written, h.off_depth, b.depth.items);
-        try writeAt(w, &written, h.off_names, b.names.items);
-        try writeAt(w, &written, h.off_root, b.root.items);
-        try w.splatByteAll(0, h.total - written);
+        try sys.ftruncate(fd, h.total);
+        try sys.pwriteAll(fd, std.mem.asBytes(&h), 0);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.path_mask.items), h.off_path_mask);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.name_mask.items), h.off_name_mask);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.parent.items), h.off_parent);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.name_off.items), h.off_name_off);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.name_len.items), h.off_name_len);
+        try sys.pwriteAll(fd, std.mem.sliceAsBytes(b.flags.items), h.off_flags);
+        try sys.pwriteAll(fd, b.depth.items, h.off_depth);
+        try sys.pwriteAll(fd, b.names.items, h.off_names);
+        try sys.pwriteAll(fd, b.root.items, h.off_root);
     }
 };
 
@@ -225,37 +224,24 @@ fn take(off: *u64, len: u64) u64 {
     return at;
 }
 
-fn writeAt(w: *std.Io.Writer, written: *u64, at: u64, bytes: []const u8) !void {
-    try w.splatByteAll(0, at - written.*);
-    try w.writeAll(bytes);
-    written.* = at + bytes.len;
-}
-
 /// An index file mapped read-only. Opening costs one `mmap`; nothing is read
 /// until a search touches it.
 pub const Mapped = struct {
     bytes: []align(std.heap.page_size_min) const u8,
     view: View,
 
-    pub fn open(dir: std.fs.Dir, path: []const u8) !Mapped {
-        const file = try dir.openFile(path, .{});
-        defer file.close();
-        const size = (try file.stat()).size;
-        if (size < @sizeOf(Header)) return error.CorruptIndex;
-        const bytes = try posix.mmap(
-            null,
-            size,
-            posix.PROT.READ,
-            .{ .TYPE = .PRIVATE },
-            file.handle,
-            0,
-        );
-        errdefer posix.munmap(bytes);
+    pub fn open(dir: sys.fd_t, path: []const u8) !Mapped {
+        const fd = try sys.openat(dir, path, .read);
+        defer sys.close(fd);
+        const len = try sys.size(fd);
+        if (len < @sizeOf(Header)) return error.CorruptIndex;
+        const bytes = try sys.mmapRead(fd, @intCast(len));
+        errdefer sys.munmap(bytes);
         return .{ .bytes = bytes, .view = try parse(bytes) };
     }
 
     pub fn close(m: *Mapped) void {
-        posix.munmap(m.bytes);
+        sys.munmap(m.bytes);
         m.* = undefined;
     }
 };
@@ -307,9 +293,9 @@ test "round trip through a mapped file" {
     try b.setRoot("/Users/me");
     const a = try b.add(no_parent, "a", .{ .dir = true });
     _ = try b.add(a, "hello.txt", .{});
-    try b.writeFile(tmp.dir, "idx");
+    try b.writeFile(tmp.dir.handle, "idx");
 
-    var m = try Mapped.open(tmp.dir, "idx");
+    var m = try Mapped.open(tmp.dir.handle, "idx");
     defer m.close();
     try t.expectEqual(@as(u32, 2), m.view.count());
     try t.expectEqualStrings("/Users/me", m.view.root);
@@ -321,6 +307,6 @@ test "round trip through a mapped file" {
 test "rejects a truncated file" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "bad", .data = "FLIX" ++ ("\x00" ** 200) });
-    try t.expectError(error.CorruptIndex, Mapped.open(tmp.dir, "bad"));
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bad", .data = "FLIX" ++ @as([200]u8, @splat(0)) });
+    try t.expectError(error.CorruptIndex, Mapped.open(tmp.dir.handle, "bad"));
 }

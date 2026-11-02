@@ -243,7 +243,7 @@ pub fn search(v: index.View, text: []const u8, out: []Hit) usize {
     }
 
     var heaps: [max_threads]TopK = undefined;
-    var handles: [max_threads]?std.Thread = .{null} ** max_threads;
+    var handles: [max_threads]?std.Thread = @splat(null);
     const per = (n + threads - 1) / threads;
     for (0..threads) |ti| {
         heaps[ti] = TopK.init(out.len);

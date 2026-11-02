@@ -19,6 +19,9 @@ Issues #110, #116, and #118 set the goal as a lower memory floor and less per-ke
 - **Index:** a struct-of-arrays table: name mask, path mask, parent id, name offset and length, flags, and depth. Each name is stored once. Paths are rebuilt from parent links only when a query needs them. The file is written through a temporary file and a rename, and opened with one read-only `mmap`. The pages are clean and file-backed, so the system can evict them and fault them back in. This is the main memory claim: the index never counts as dirty memory.
 - **Search:** a 32-bit character mask per entry rejects candidates eight at a time with one SIMD compare. Survivors are scored with fzf's v1 two-pass window. A bounded min-heap keeps the top k. Once the heap is full, each candidate is first checked against an upper bound on its best possible score. A candidate that cannot place is usually rejected by one prefix compare. Name matches always outrank folder-only matches, the order Spotlight uses, which lets the path fallback be pruned too. Tables over 200k entries split across up to eight threads. A query allocates nothing.
 
+- **Syscalls, not `std.Io`:** the engine reaches the kernel through `core/src/sys.zig`: `openat`, `pwrite`, `ftruncate`, `renameat`, `mmap`. That goes straight to Linux syscalls on Linux and to libSystem on macOS. Every call is one blocking syscall on a path that is already off the main thread, so an event-loop handle would add nothing, and Zig's reworked I/O API has no way into the hot path. Only the `flcore` CLI uses `std.Io`.
+- **Zig 0.17.0:** 0.15.2 cannot link against the macOS 27 SDK's libSystem stubs. Its build runner fails with every libc symbol undefined on the `xcode-27` runner.
+
 ## Measured
 
 On this repo's Linux CI-class container (4 vCPU), release build, numbers from `flcore bench`:
