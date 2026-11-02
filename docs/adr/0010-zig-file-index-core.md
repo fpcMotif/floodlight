@@ -22,6 +22,19 @@ Issues #110, #116, and #118 set the goal as a lower memory floor and less per-ke
 - **Syscalls, not `std.Io`:** the engine reaches the kernel through `core/src/sys.zig`: `openat`, `pwrite`, `ftruncate`, `renameat`, `mmap`. That goes straight to Linux syscalls on Linux and to libSystem on macOS. Every call is one blocking syscall on a path that is already off the main thread, so an event-loop handle would add nothing, and Zig's reworked I/O API has no way into the hot path. Only the `flcore` CLI uses `std.Io`.
 - **Zig 0.17.0:** 0.15.2 cannot link against the macOS 27 SDK's libSystem stubs. Its build runner fails with every libc symbol undefined on the `xcode-27` runner.
 
+## Live updates
+
+The index stays current without a full rescan. `core/src/live.zig` wraps one mapped file in a *generation*: the file, a tombstone bitset, and an overlay.
+
+- **Events in:** FSEvents through the CoreServices C API on macOS, one stream for the whole tree with file-level events, delivered on a private dispatch queue. inotify on Linux, one watch per indexed folder, so the same path runs under `make test-core` off a Mac. A shell with its own source calls `fl_live_notify`. Each event names a path; the engine looks at the disk (one `openat` probe) rather than trusting the event's verb, because FSEvents coalesces and inotify splits a rename in two. Dropped-event flags, a queue overflow, and a moved root ask for a rescan of the subtree instead.
+- **Tombstones:** a deleted mapped entry gets a bit. A deleted folder takes its whole subtree in one forward pass, since every descendant follows its first child and every parent precedes its children. Search skips set bits after the mask test, so the check costs nothing for the rejected majority.
+- **Overlay:** new entries sit in a small heap table with stored paths. Its ids start at 2³¹, so one `u32` names either kind. It is append-only between swaps, so an id keeps naming the same entry for the whole generation. A folder that appears with contents (moved in, unpacked) is listed into the overlay at once, off the lock, if it fits.
+- **Compaction:** every change marks its folder dirty. Past `overlay_limit` changes (4096 by default), a background thread builds a fresh table: clean folders are copied from the old mapping, dirty folders are listed again with one `getdents64` / `getattrlistbulk` pass, and folders new since the last write are walked. The file goes through the existing temporary-file-and-rename path, is mapped, and swapped in under the write lock. Events that arrived while the table was built are queued and replayed onto the new generation in the same critical section, so nothing falls between the old listing and the new one.
+- **Reads stay allocation-free:** a query takes a shared lock and walks the mapping, the bitset, and the overlay with stack buffers only. The overlay's slots are fixed at four times `overlay_limit` when the generation is created; past that, entries wait for the compaction already queued.
+- **Ids carry a generation:** `fl_live_search` returns the generation its hits belong to. `fl_live_relative_path` takes it back and answers nothing once a swap has replaced it, rather than a different file's path.
+
+On the `/usr` corpus (91k entries, release build, same container): a compaction takes 26 ms end to end, tombstoning `share` (most of the tree) 0.3 ms, and resolving a path for an event 9 µs. Compaction is linear in entries; the write lock is held only for the swap.
+
 ## Measured
 
 On this repo's Linux CI-class container (4 vCPU), release build, numbers from `flcore bench`:
@@ -36,9 +49,11 @@ RSS here means the whole process, with the index fully paged in. Against the iss
 ## Known gaps
 
 - **Path queries do not prune.** A term containing `/` has no tight score bound, so every mask survivor gets scored. A per-directory pre-match is the next step if path queries matter.
-- **No live updates yet.** FSEvents should feed a small overlay merged at query time and compacted into a fresh file in the background. Until that lands, the shell rebuilds on its existing refresh triggers.
+- **Event lookups are linear in the worst case.** Resolving a path finds each folder's child run with one vectorised scan of the parent column, not a hash. Fine at event rates (9 µs on 91k entries); a child index would be the fix if a million-entry tree shows it.
+- **inotify has a watch limit.** Linux watches each folder, and a tree past `max_user_watches` goes partly unwatched. Linux is the test platform, not a shipping one, so this stays.
+- **FSEvents is compile-checked, not run, in CI on Linux.** The cross-build keeps it compiling; the macOS runner is where it runs.
 - **No content search.** FFF's grep keeps that job until the Swift side decides whether content search earns its memory.
 
 ## Gate
 
-`make install-zig && make test-core`: unit tests on the host, a release cross-build for the other OS so both scanners keep compiling, and a CLI smoke run that ends in `flcore bench`. Zig is pinned by version and SHA-256 in `scripts/tool-versions.env`, like every other gate tool.
+`make install-zig && make test-core`: unit tests on the host (including create, rename, and delete through the live index, searches racing compactions, and the overlay bound triggering one), a release cross-build for the other OS so both scanners and both watchers keep compiling, and a CLI smoke run that ends in `flcore bench`. Zig is pinned by version and SHA-256 in `scripts/tool-versions.env`, like every other gate tool.

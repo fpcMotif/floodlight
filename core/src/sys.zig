@@ -135,3 +135,31 @@ pub fn monotonicNs() u64 {
     _ = system.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
 }
+
+/// An `Io` used only for its futex, so `std.Io.Mutex`, `RwLock`, and
+/// `Condition` work across the engine's own threads. Its futex calls touch no
+/// instance state, so one static instance serves every thread.
+pub const sync_io = std.Io.Threaded.global_single_threaded.io();
+
+pub const Kind = enum { missing, file, dir, symlink };
+
+/// What sits at `path` under `dir`, in one syscall and without following a
+/// final symlink. Opening as a NOFOLLOW directory answers all four cases: a
+/// symlink fails with ELOOP and anything else that is not a folder with
+/// ENOTDIR.
+pub fn probe(dir: fd_t, path: []const u8) Kind {
+    const fd = posix.openat(dir, path, .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true }, 0) catch |e| return switch (e) {
+        error.FileNotFound => .missing,
+        error.SymLinkLoop => .symlink,
+        // A folder that exists but cannot be listed is still a folder.
+        error.AccessDenied, error.PermissionDenied => .dir,
+        else => .file,
+    };
+    close(fd);
+    return .dir;
+}
+
+pub fn sleepMs(ms: u32) void {
+    const ts: posix.timespec = .{ .sec = @intCast(ms / 1000), .nsec = @intCast(@as(u64, ms % 1000) * std.time.ns_per_ms) };
+    _ = system.nanosleep(&ts, null);
+}

@@ -136,8 +136,17 @@ pub const TopK = struct {
 const lanes = 8;
 const Vec = @Vector(lanes, u32);
 
-/// Scores ids in `[lo, hi)` into `heap`.
-pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
+/// One bit per id, set when the entry is gone from disk but still in the
+/// mapped file. Null means nothing is deleted.
+pub const Dead = ?[]const u64;
+
+pub inline fn isDead(dead: Dead, id: u32) bool {
+    const bits = dead orelse return false;
+    return (bits[id >> 6] >> @intCast(id & 63)) & 1 != 0;
+}
+
+/// Scores ids in `[lo, hi)` into `heap`, skipping ids marked in `dead`.
+pub fn searchRange(v: index.View, dead: Dead, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
     const need: Vec = @splat(q.path_mask);
     var i = lo;
@@ -150,11 +159,11 @@ pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK
         var m = bits;
         while (m != 0) : (m &= m - 1) {
             const lane: u32 = @ctz(m);
-            scoreOne(v, q, i + lane, heap, &paths);
+            if (!isDead(dead, i + lane)) scoreOne(v, q, i + lane, heap, &paths);
         }
     }
     while (i < hi) : (i += 1) {
-        if (v.path_mask[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, &paths);
+        if (v.path_mask[i] & q.path_mask == q.path_mask and !isDead(dead, i)) scoreOne(v, q, i, heap, &paths);
     }
 }
 
@@ -191,17 +200,37 @@ const PathCache = struct {
 pub const path_only_penalty: i32 = 1000;
 
 fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCache) void {
-    const name = v.name(id);
-    const name_mask = v.name_mask[id];
+    const lazy: struct {
+        v: index.View,
+        id: u32,
+        cache: *PathCache,
+        pub fn path(s: @This()) ?[]const u8 {
+            return s.cache.of(s.v, s.id);
+        }
+    } = .{ .v = v, .id = id, .cache = paths };
+    scoreEntry(q, .{ .id = id, .name = v.name(id), .name_mask = v.name_mask[id], .depth = v.depth[id] }, heap, lazy);
+}
 
+/// What the scorer needs to know about one entry before it has a path.
+pub const Entry = struct {
+    id: u32,
+    name: []const u8,
+    name_mask: u32,
+    depth: u8,
+};
+
+/// Scores one mask survivor into `heap`. `source.path()` yields the entry's
+/// relative path and is called only when a term misses the name, so mapped
+/// entries build theirs lazily and overlay entries hand back a stored one.
+pub fn scoreEntry(q: *const Query, e: Entry, heap: *TopK, source: anytype) void {
     if (heap.floor()) |floor| {
         var bound: i32 = 0;
         for (0..q.n) |ti| {
             const term = q.term(ti);
             bound += if (q.has_slash[ti])
                 match.upperBoundAnywhere(term.len)
-            else if (name_mask & q.term_mask[ti] == q.term_mask[ti])
-                match.upperBound(name, term)
+            else if (e.name_mask & q.term_mask[ti] == q.term_mask[ti])
+                match.upperBound(e.name, term)
             else
                 match.upperBoundAnywhere(term.len) - path_only_penalty;
         }
@@ -212,55 +241,57 @@ fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCa
     var total: i32 = 0;
     for (0..q.n) |ti| {
         const term = q.term(ti);
-        if (!q.has_slash[ti] and name_mask & q.term_mask[ti] == q.term_mask[ti]) {
-            if (match.score(name, term, 0)) |s| {
+        if (!q.has_slash[ti] and e.name_mask & q.term_mask[ti] == q.term_mask[ti]) {
+            if (match.score(e.name, term, 0)) |s| {
                 total += s;
                 continue;
             }
         }
-        if (path == null) path = paths.of(v, id) orelse return;
+        if (path == null) path = source.path() orelse return;
         const p = path.?;
-        total += match.score(p, term, p.len - name.len) orelse return;
+        total += match.score(p, term, p.len - e.name.len) orelse return;
         if (!q.has_slash[ti]) total -= path_only_penalty;
     }
     // Fewer path components and a shorter name break ties, so `Documents`
     // beats `Documents/old/Documents` for the query "documents". The id comes
     // last so equal hits order the same however the table was split.
-    const tie = @as(u64, v.depth[id]) << 48 | @as(u64, @min(name.len, 0xffff)) << 32 | id;
-    heap.offer(.{ .id = id, .score = total }, tie);
+    const tie = @as(u64, e.depth) << 48 | @as(u64, @min(e.name.len, 0xffff)) << 32 | e.id;
+    heap.offer(.{ .id = e.id, .score = total }, tie);
 }
 
-/// Splits the table across threads when it is large enough to pay for them.
 pub fn search(v: index.View, text: []const u8, out: []Hit) usize {
     const q = Query.parse(text);
     if (q.n == 0) return 0;
+    var heap = TopK.init(out.len);
+    searchInto(v, null, &q, &heap);
+    return heap.sorted(out);
+}
+
+/// Offers every live match in `v` to `heap`. Splits the table across threads
+/// when it is large enough to pay for them; the per-thread heaps live on this
+/// stack frame, so a parallel query allocates nothing either.
+pub fn searchInto(v: index.View, dead: Dead, q: *const Query, heap: *TopK) void {
     const n = v.count();
     const threads = threadCount(n);
-    if (threads <= 1) {
-        var heap = TopK.init(out.len);
-        searchRange(v, &q, 0, n, &heap);
-        return heap.sorted(out);
-    }
+    if (threads <= 1) return searchRange(v, dead, q, 0, n, heap);
 
     var heaps: [max_threads]TopK = undefined;
     var handles: [max_threads]?std.Thread = @splat(null);
     const per = (n + threads - 1) / threads;
     for (0..threads) |ti| {
-        heaps[ti] = TopK.init(out.len);
+        heaps[ti] = TopK.init(heap.k);
         const lo: u32 = @intCast(@min(n, ti * per));
         const hi: u32 = @intCast(@min(n, lo + per));
         if (ti == 0) continue;
-        handles[ti] = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, searchRange, .{ v, &q, lo, hi, &heaps[ti] }) catch null;
-        if (handles[ti] == null) searchRange(v, &q, lo, hi, &heaps[ti]);
+        handles[ti] = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, searchRange, .{ v, dead, q, lo, hi, &heaps[ti] }) catch null;
+        if (handles[ti] == null) searchRange(v, dead, q, lo, hi, &heaps[ti]);
     }
-    searchRange(v, &q, 0, @intCast(@min(n, per)), &heaps[0]);
+    searchRange(v, dead, q, 0, @intCast(@min(n, per)), &heaps[0]);
 
-    var merged = TopK.init(out.len);
     for (0..threads) |ti| {
         if (handles[ti]) |h| h.join();
-        for (heaps[ti].items[0..heaps[ti].len], heaps[ti].tie[0..heaps[ti].len]) |hit, tie| merged.offer(hit, tie);
+        for (heaps[ti].items[0..heaps[ti].len], heaps[ti].tie[0..heaps[ti].len]) |hit, tie| heap.offer(hit, tie);
     }
-    return merged.sorted(out);
 }
 
 const max_threads = 8;
@@ -328,7 +359,7 @@ test "parallel path agrees with serial" {
     const np = search(b.view(), "file12345", &par);
     var heap = TopK.init(16);
     const q = Query.parse("file12345");
-    searchRange(b.view(), &q, 0, b.count(), &heap);
+    searchRange(b.view(), null, &q, 0, b.count(), &heap);
     var ser: [16]Hit = undefined;
     const ns = heap.sorted(&ser);
     try t.expectEqual(ns, np);
