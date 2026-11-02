@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core gpui-core test-gpui bench-gpui
 
 debug:
 	swift build
@@ -92,3 +92,14 @@ install-zig:
 
 test-core:
 	./scripts/test-core.sh
+
+# The GPUI frontend in frontends/gpui/ (ADR 0011). Like the core, its own
+# targets and its own CI job; it needs Rust from rustup plus `make install-zig`.
+gpui-core:
+	./scripts/build-gpui-core.sh
+
+test-gpui: gpui-core
+	./scripts/test-gpui.sh
+
+bench-gpui:
+	./scripts/bench-gpui.sh
