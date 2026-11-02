@@ -128,6 +128,9 @@ pub const Builder = struct {
 
     pub fn add(b: *Builder, parent: u32, entry_name: []const u8, flags: Flags) !u32 {
         if (entry_name.len > std.math.maxInt(u16)) return error.NameTooLong;
+        // Search scores a path from its components and relies on this: a `/`
+        // inside a name would read as a component boundary that is not one.
+        if (std.mem.indexOfScalar(u8, entry_name, '/') != null) return error.InvalidName;
         if (b.names.items.len + entry_name.len > std.math.maxInt(u32)) return error.IndexTooLarge;
         const id = b.count();
         if (id == no_parent) return error.IndexTooLarge;

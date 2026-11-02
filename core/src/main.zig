@@ -3,7 +3,7 @@
 //!   flcore index <root> <out.flix>
 //!   flcore search <in.flix> <query...>
 //!   flcore bench <in.flix> [query ...]
-//!   flcore synth <out.flix> <count>
+//!   flcore synth <out.flix> <count> [--scatter]
 //!
 //! `bench` exists so a latency or memory claim about the engine is a number
 //! someone can reproduce, not a sentence in an issue.
@@ -29,7 +29,8 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, cmd, "index") and args.len == 4) return cmdIndex(gpa, out, args[2], args[3]);
     if (std.mem.eql(u8, cmd, "search") and args.len >= 4) return cmdSearch(gpa, out, args[2], args[3..]);
     if (std.mem.eql(u8, cmd, "bench")) return cmdBench(gpa, out, args[2], args[3..]);
-    if (std.mem.eql(u8, cmd, "synth") and args.len == 4) return cmdSynth(gpa, out, args[2], args[3]);
+    if (std.mem.eql(u8, cmd, "synth") and args.len == 4) return cmdSynth(gpa, out, args[2], args[3], false);
+    if (std.mem.eql(u8, cmd, "synth") and args.len == 5 and std.mem.eql(u8, args[4], "--scatter")) return cmdSynth(gpa, out, args[2], args[3], true);
     return usage(out);
 }
 
@@ -39,7 +40,7 @@ fn usage(out: *std.Io.Writer) !void {
         \\  flcore index <root> <out.flix>
         \\  flcore search <in.flix> <query...>
         \\  flcore bench <in.flix> [query ...]
-        \\  flcore synth <out.flix> <count>
+        \\  flcore synth <out.flix> <count> [--scatter]
         \\
     );
 }
@@ -124,7 +125,9 @@ fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given
 
 /// A deterministic tree shaped like a home folder: a few wide directories,
 /// a long tail of deep ones, names drawn from words people actually type.
-fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count_text: []const u8) !void {
+/// Written in the order a scan writes entries; `--scatter` keeps generation
+/// order instead, which puts siblings far apart, as a worst case.
+fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count_text: []const u8, scatter: bool) !void {
     const want = try std.fmt.parseInt(u32, count_text, 10);
     var b = index.Builder.init(gpa);
     defer b.deinit();
@@ -160,9 +163,68 @@ fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count
         const id = try b.add(parent, nm, .{ .dir = is_dir });
         if (is_dir) try dirs.append(gpa, id);
     }
-    try b.writeFile(sys.cwd, path);
+    if (scatter) {
+        try b.writeFile(sys.cwd, path);
+    } else {
+        var scanned = index.Builder.init(gpa);
+        defer scanned.deinit();
+        try scanned.setRoot(b.root.items);
+        try inScanOrder(gpa, b.view(), &scanned);
+        try scanned.writeFile(sys.cwd, path);
+    }
     const size = try fileSize(path);
     try out.print("entries={d} file_bytes={d}\n", .{ b.count(), size });
+}
+
+/// Re-adds `v`'s entries in the order `scan.walk` would have added them: a
+/// directory's children together, then each child directory's subtree in
+/// turn. The generator above picks parents at random, so without this a
+/// file's siblings are scattered across the table, which no real index is,
+/// and every parent lookup in a benchmark would miss the cache.
+fn inScanOrder(gpa: std.mem.Allocator, v: index.View, dst: *index.Builder) !void {
+    const n = v.count();
+    // Children of each directory as a linked list, in id order.
+    const first = try gpa.alloc(u32, n);
+    defer gpa.free(first);
+    const next = try gpa.alloc(u32, n);
+    defer gpa.free(next);
+    const renamed = try gpa.alloc(u32, n);
+    defer gpa.free(renamed);
+    @memset(first, index.no_parent);
+    var roots: u32 = index.no_parent;
+    var id = n;
+    while (id > 0) {
+        id -= 1;
+        const head = if (v.parent[id] == index.no_parent) &roots else &first[v.parent[id]];
+        next[id] = head.*;
+        head.* = id;
+    }
+
+    // Each frame is a directory whose children are listed but whose
+    // subdirectories are not walked yet, holding the next child to visit.
+    var stack: std.ArrayList(u32) = .empty;
+    defer stack.deinit(gpa);
+    try stack.append(gpa, try addChildren(v, dst, roots, index.no_parent, next, renamed));
+    while (stack.items.len > 0) {
+        const top = &stack.items[stack.items.len - 1];
+        var c = top.*;
+        while (c != index.no_parent and !v.flags[c].dir) c = next[c];
+        if (c == index.no_parent) {
+            _ = stack.pop();
+            continue;
+        }
+        top.* = next[c];
+        try stack.append(gpa, try addChildren(v, dst, first[c], renamed[c], next, renamed));
+    }
+}
+
+/// Adds the list starting at `head` under `parent` and returns `head`.
+fn addChildren(v: index.View, dst: *index.Builder, head: u32, parent: u32, next: []const u32, renamed: []u32) !u32 {
+    var c = head;
+    while (c != index.no_parent) : (c = next[c]) {
+        renamed[c] = try dst.add(parent, v.name(c), v.flags[c]);
+    }
+    return head;
 }
 
 fn ms(ns: u64) f64 {
