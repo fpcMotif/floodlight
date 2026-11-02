@@ -453,6 +453,95 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
 }
 
+fn holdPastEnd(tester: *ui.Tester, x: f32, y: f32, dy: f32, events: usize) void {
+    tester.moveTo(x, y);
+    const c = &tester.ctx;
+    c.input.precise = true;
+    for (0..events) |i| {
+        c.scroll_holding = true;
+        c.input.scroll_phase = if (i == 0) .began else .changed;
+        _ = c.applyScroll(0);
+        _ = c.applyScroll(dy);
+        tester.frame();
+    }
+}
+
+fn release(tester: *ui.Tester) void {
+    tester.ctx.scroll_holding = false;
+    tester.ctx.input.scroll_phase = .ended;
+    tester.settle(2);
+}
+
+test "a push past the board's ends stretches half a row at most, then rests" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    var buf: [32]u8 = undefined;
+    for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    const bound = panel_mod.metrics.max_overscroll + 0.5;
+
+    // The list's top: the newest entry may not leave its resting place by more.
+    const top_rest = tester.findText("entry number 29").?.y;
+    holdPastEnd(&tester, 150, 300, 40, 80);
+    try t.expect(tester.findText("entry number 29").?.y - top_rest <= bound);
+    release(&tester);
+    try t.expectApproxEqAbs(top_rest, tester.findText("entry number 29").?.y, 0.5);
+
+    // The list's bottom, reached and pushed on.
+    holdPastEnd(&tester, 150, 300, -40, 40);
+    release(&tester);
+    const bottom_rest = tester.findText("entry number 0").?.y;
+    holdPastEnd(&tester, 150, 300, -40, 80);
+    try t.expect(bottom_rest - tester.findText("entry number 0").?.y <= bound);
+    release(&tester);
+    try t.expectApproxEqAbs(bottom_rest, tester.findText("entry number 0").?.y, 0.5);
+
+    // The inspector, which fits and so has nothing to scroll.
+    const info_rest = tester.findText("Information").?.y;
+    holdPastEnd(&tester, 600, 300, -40, 80);
+    try t.expect(info_rest - tester.findText("Information").?.y <= bound);
+    release(&tester);
+    try t.expectApproxEqAbs(info_rest, tester.findText("Information").?.y, 0.5);
+}
+
+test "a long history builds the rows in view only, and still reaches its end" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    var buf: [32]u8 = undefined;
+    for (0..1000) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    try t.expect(tester.hasText("entry number 999"));
+    try t.expect(!tester.hasText("entry number 900"));
+    try t.expect(tester.ctx.nodes.items.len < 400);
+
+    tester.scroll(150, 300, -1e6);
+    tester.settle(1);
+    try t.expect(tester.hasText("entry number 0"));
+    try t.expect(!tester.hasText("entry number 998"));
+
+    tester.typeText("number 77");
+    tester.settle(1);
+    try t.expect(tester.hasText("entry number 778"));
+}
+
 test "an empty history says so" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();

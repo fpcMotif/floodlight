@@ -281,6 +281,7 @@ pub const Board = struct {
         const m = board_metrics;
         const col = ui.div(c).column().w(m.list_width).h(m.list_height).scrollY().p(metrics.row_padding);
         defer col.end();
+        panel.boundOverscroll(c, col.id());
         if (b.reveal_selection) {
             b.reveal_selection = false;
             const id = col.id();
@@ -289,11 +290,20 @@ pub const Board = struct {
             const now = c.scroll.get(id) orelse 0;
             if (top < now) c.setScroll(id, .y, top) else if (top + metrics.row_height > now + view_h) c.setScroll(id, .y, top + metrics.row_height - view_h);
         }
+        const shown = rowsInView(c.scroll.get(col.id()) orelse 0, b.visible.len);
+        spacer(c, "above", shown.first);
         var asked: ?Action = null;
-        for (b.visible, 0..) |e, i| if (b.rowView(c, p, e, i)) |a| {
+        for (b.visible[shown.first..shown.end], shown.first..) |e, i| if (b.rowView(c, p, e, i)) |a| {
             asked = a;
         };
+        spacer(c, "below", b.visible.len - shown.end);
         return asked;
+    }
+
+    fn spacer(c: *ui.Context, name: []const u8, rows: usize) void {
+        if (rows == 0) return;
+        ui.key(c, name);
+        ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
     }
 
     fn rowView(b: *Board, c: *ui.Context, p: *panel.Panel, e: Entry, i: usize) ?Action {
@@ -360,6 +370,7 @@ pub const Board = struct {
         const th = c.theme;
         const pane = ui.div(c).column().grow().hFull().bg(th.text.alpha(0.03)).scrollY().p(14).gap(14);
         defer pane.end();
+        panel.boundOverscroll(c, pane.id());
         const e = b.selection() orelse {
             ui.text(c, "Select an entry", .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6) });
             return;
@@ -487,6 +498,17 @@ const gray: ui.Color = .hex(0x8e8e93);
 
 const text_preview_bytes = 16 * 1024;
 const max_code_lines = 40;
+
+const RowRange = struct { first: usize, end: usize };
+
+fn rowsInView(offset: f32, len: usize) RowRange {
+    const m = board_metrics;
+    const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
+    const top_row: usize = @intFromFloat(@max(0, @floor(offset / metrics.row_height)));
+    const first = @min(len, top_row -| margin_rows);
+    const in_view: usize = @intFromFloat(@ceil(m.list_height / metrics.row_height));
+    return .{ .first = first, .end = @min(len, top_row + in_view + margin_rows) };
+}
 
 fn infoRow(c: *ui.Context, label: []const u8, value: []const u8) void {
     const row = ui.div(c).row().wFull().gap(12).itemsStart();

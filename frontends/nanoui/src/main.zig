@@ -36,7 +36,6 @@ const Shell = struct {
     change_count: objc.NSInteger = 0,
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
-    accessibility_prompted: bool = false,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -153,8 +152,7 @@ const Shell = struct {
                 s.hidePanel();
                 if (pid == 0) return false;
                 if (!mac.canDeliverPaste()) {
-                    if (!s.accessibility_prompted) mac.promptAccessibility();
-                    s.accessibility_prompted = true;
+                    mac.promptAccessibility();
                     return false;
                 }
                 _ = mac.deliverPaste(pid);

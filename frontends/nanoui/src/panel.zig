@@ -22,6 +22,7 @@ pub const metrics = struct {
     pub const search_icon_size: f32 = 22;
     pub const clear_button_size: f32 = 18;
     pub const icon_tile_radius: f32 = row_radius - 3;
+    pub const max_overscroll: f32 = row_height / 2;
     pub const expanded_height: f32 = search_height + 1 + filter_bar_height + row_padding * 2 + max_visible_rows * row_height;
     pub const list_height: f32 = expanded_height - search_height - 1 - filter_bar_height;
 };
@@ -358,6 +359,7 @@ pub const Panel = struct {
         }
         const list = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
         defer list.end();
+        boundOverscroll(c, list.id());
         if (p.reveal_selection) {
             p.reveal_selection = false;
             const id = list.id();
@@ -430,6 +432,11 @@ pub const Panel = struct {
         ui.icon(c, row.kind.symbol(), .{ .size = size * 0.58, .color = c.theme.accent });
     }
 };
+
+pub fn boundOverscroll(c: *ui.Context, scroll_box: u64) void {
+    const over = c.overscroll.getPtr(scroll_box) orelse return;
+    over.* = std.math.clamp(over.*, -metrics.max_overscroll, metrics.max_overscroll);
+}
 
 pub fn rowFill(th: ui.Theme, selected: bool, hovered: bool, top_hit: bool) ui.Color {
     const ink: ui.Color = if (th.dark) .hex(0xffffff) else .hex(0x000000);
