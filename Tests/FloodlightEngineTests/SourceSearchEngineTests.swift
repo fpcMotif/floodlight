@@ -467,13 +467,21 @@ struct SourceSearchEngineTests {
     /// immediate task runs `search` up to its first suspension — the wait on
     /// the in-flight mutation — before this loop moves on, so the order is the
     /// one written.
+    ///
+    /// Before macOS 26 there is no immediate task. The fallback enqueues each
+    /// task on the engine in turn, which a default actor runs in order but
+    /// does not promise to.
     private func queueSearches(
         _ queries: [String],
         on engine: isolated SourceSearchEngine
     ) -> [Task<AsyncStream<SearchSnapshot>, Never>] {
         var tasks: [Task<AsyncStream<SearchSnapshot>, Never>] = []
         for query in queries {
-            tasks.append(Task.immediate { await engine.search(query, immediate: true) })
+            if #available(macOS 26, *) {
+                tasks.append(Task.immediate { await engine.search(query, immediate: true) })
+            } else {
+                tasks.append(Task { await engine.search(query, immediate: true) })
+            }
         }
         return tasks
     }
