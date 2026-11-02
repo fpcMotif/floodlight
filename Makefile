@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core test-nanoui
 
 debug:
 	swift build
@@ -92,3 +92,6 @@ install-zig:
 
 test-core:
 	./scripts/test-core.sh
+
+test-nanoui:
+	./scripts/test-nanoui.sh
