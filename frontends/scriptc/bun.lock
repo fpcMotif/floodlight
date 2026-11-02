@@ -1,0 +1,60 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "floodlight-scriptc-frontend",
+      "devDependencies": {
+        "scriptc": "0.4.7",
+      },
+    },
+  },
+  "trustedDependencies": [
+    "scriptc",
+  ],
+  "packages": {
+    "@scriptc/cli-darwin-arm64": ["@scriptc/cli-darwin-arm64@0.4.7", "", { "dependencies": { "@scriptc/llvm-darwin-arm64": "0.4.7", "@scriptc/runtime-darwin-arm64": "0.4.7" }, "os": "darwin", "cpu": "arm64" }, "sha512-gSy0PaiV8PKl2VIXF8gnMbKc+9kXvPUPvsb9sgQccm5dr4KvF5qVgGmfb4uHgWrZMuqjYusky2bpNVuEatYcPw=="],
+
+    "@scriptc/cli-darwin-x64": ["@scriptc/cli-darwin-x64@0.4.7", "", { "dependencies": { "@scriptc/llvm-darwin-x64": "0.4.7", "@scriptc/runtime-darwin-x64": "0.4.7" }, "os": "darwin", "cpu": "x64" }, "sha512-fKTfP66NTFZ42Tj6qAU/iE8h6YF9h7QWEcEev6ogV4JGTMAhKwJYNuN6BqroYJ3EroJRObuyhQeyLwXuqnhZLg=="],
+
+    "@scriptc/cli-linux-arm64-gnu": ["@scriptc/cli-linux-arm64-gnu@0.4.7", "", { "dependencies": { "@scriptc/llvm-linux-arm64-gnu": "0.4.7", "@scriptc/runtime-linux-arm64-gnu": "0.4.7" }, "os": "linux", "cpu": "arm64", "libc": "glibc" }, "sha512-J/qtttHAIDAoDKkSb9tow+LO81kjPT7GvAOMWK7WL7DfPp9RHQpF+RlL//weZQoi/Lthu1GZejku053mgOWxdg=="],
+
+    "@scriptc/cli-linux-arm64-musl": ["@scriptc/cli-linux-arm64-musl@0.4.7", "", { "dependencies": { "@scriptc/llvm-linux-arm64-musl": "0.4.7", "@scriptc/runtime-linux-arm64-musl": "0.4.7" }, "os": "linux", "cpu": "arm64", "libc": "musl" }, "sha512-xr3tVByLQ0les8mJ7bjx4Vl+rdVao9UirxKhQhDspHfLVVuCiRUXpwCccMM5t2uAHc3HJ2Uu7CrxtT2ZRppjlQ=="],
+
+    "@scriptc/cli-linux-x64-gnu": ["@scriptc/cli-linux-x64-gnu@0.4.7", "", { "dependencies": { "@scriptc/llvm-linux-x64-gnu": "0.4.7", "@scriptc/runtime-linux-x64-gnu": "0.4.7" }, "os": "linux", "cpu": "x64", "libc": "glibc" }, "sha512-Ftbuen21ZM5nNRWBUDqIUtBqyek0m7YXce8C7J7cz2DO9ouFX51KCJZHXT/yoHTec0+YUh1wr9QAEDGhLw3BRw=="],
+
+    "@scriptc/cli-linux-x64-musl": ["@scriptc/cli-linux-x64-musl@0.4.7", "", { "dependencies": { "@scriptc/llvm-linux-x64-musl": "0.4.7", "@scriptc/runtime-linux-x64-musl": "0.4.7" }, "os": "linux", "cpu": "x64", "libc": "musl" }, "sha512-nL1FQjZTaBtde+79x9MpG0e7fr82MDJbvsZ0VIXRxkYPjFaLSpNU3lt1kettf35TCxk9xtyDAILFy2vg6/WFOQ=="],
+
+    "@scriptc/cli-win32-x64-msvc": ["@scriptc/cli-win32-x64-msvc@0.4.7", "", { "dependencies": { "@scriptc/llvm-win32-x64-msvc": "0.4.7", "@scriptc/runtime-win32-x64-msvc": "0.4.7" }, "os": "win32", "cpu": "x64" }, "sha512-Fl9Wr0Bjbi2v4YvggO4gnfoz1XVX72Xw1w5iixY0ciHqGSV6a8Jh9ssyHQO0wCSWApczF+EcI3MSHNrOeJ/O1Q=="],
+
+    "@scriptc/llvm-darwin-arm64": ["@scriptc/llvm-darwin-arm64@0.4.7", "", { "os": "darwin", "cpu": "arm64", "bin": { "scriptc-llvm-codegen": "bin/scriptc-llvm-codegen" } }, "sha512-7ebKccmgGlddOCLfWbNPO27KwyaVswRr45+Faaf9lsZDgSC2jEpJYvcz1izrFITp+MyrhYQb2bZiEivv3RPfvQ=="],
+
+    "@scriptc/llvm-darwin-x64": ["@scriptc/llvm-darwin-x64@0.4.7", "", { "os": "darwin", "cpu": "x64", "bin": { "scriptc-llvm-codegen": "bin/scriptc-llvm-codegen" } }, "sha512-IqvvyXn4quKxYwHXsY2jk/hyEzmxDw1n2dqkCAQEncKGRuUdlo/6wqlU79EAkwb5c7otPhTXt5XoMUYYG6JPTw=="],
+
+    "@scriptc/llvm-linux-arm64-gnu": ["@scriptc/llvm-linux-arm64-gnu@0.4.7", "", { "os": "linux", "cpu": "arm64", "bin": { "scriptc-llvm-linux-arm64-gnu": "bin/scriptc-llvm-codegen" } }, "sha512-o3kmIW8Lf7kK6d8+tayS6XQe3pDGGBTG8vuyC+v3sJ40DA955BJhaTMEO0iqKB7gw7LDDqIM4TUg0YijZJg+QQ=="],
+
+    "@scriptc/llvm-linux-arm64-musl": ["@scriptc/llvm-linux-arm64-musl@0.4.7", "", { "os": "linux", "cpu": "arm64", "bin": { "scriptc-llvm-linux-arm64-musl": "bin/scriptc-llvm-codegen" } }, "sha512-4E76jXggnRPd/DdxV96t3TG2DwX14A1NLNNEeZ991EJkU8h/sR5+HGSH0U+TV69W1YW4j7WjxyVDm0vCBUsijw=="],
+
+    "@scriptc/llvm-linux-x64-gnu": ["@scriptc/llvm-linux-x64-gnu@0.4.7", "", { "os": "linux", "cpu": "x64", "bin": { "scriptc-llvm-linux-x64-gnu": "bin/scriptc-llvm-codegen" } }, "sha512-6cqebbHdOQDk+kEAHmix2bbb4RxD0k0k/xNLGQvprDdot2zw+4g44/frM5VI/ZP2ryCPuPIfG0KRVAh2RX2v5Q=="],
+
+    "@scriptc/llvm-linux-x64-musl": ["@scriptc/llvm-linux-x64-musl@0.4.7", "", { "os": "linux", "cpu": "x64", "bin": { "scriptc-llvm-linux-x64-musl": "bin/scriptc-llvm-codegen" } }, "sha512-3Yq5xpFYSLzFI6m+b1HOSYrY6MOs1VNCkUAFo8B++l+i8NTKlScOTZR07cqnI36O9z7YOtfFqJqeC2oZPod0hg=="],
+
+    "@scriptc/llvm-win32-x64-msvc": ["@scriptc/llvm-win32-x64-msvc@0.4.7", "", { "os": "win32", "cpu": "x64" }, "sha512-pNTo1d/tarCiN40PYbYoREc84NiaPEY6IghWsiE1/cKySdGzqC1Oi9ItHEQRTkEKayuj0eVngOYy+HvNJUAolw=="],
+
+    "@scriptc/runtime-darwin-arm64": ["@scriptc/runtime-darwin-arm64@0.4.7", "", {}, "sha512-Q3gppg3p518PLNnDRC/xjdb9J+/lrzJ8dwl6oepNDytXJ4WX3RJLNORfAWbTDlsUGVBHsnc3Uei/dlgEGexXhg=="],
+
+    "@scriptc/runtime-darwin-x64": ["@scriptc/runtime-darwin-x64@0.4.7", "", {}, "sha512-S5JICvn0RbVutvb/KzZ806bSqBtnnKYLLj/xa5hq1QPyG+YnKC4wWUjpJvXI54VncTGD5QqH3qdjvoRaXUDsWQ=="],
+
+    "@scriptc/runtime-linux-arm64-gnu": ["@scriptc/runtime-linux-arm64-gnu@0.4.7", "", {}, "sha512-704xNDuQq/WhfqcFN7DiSQdI5AXV0Q2/zeD8feD55szpPawpBYzUL580Xu0sGkGSS6+qj3nWCePTEFDbQ5emdg=="],
+
+    "@scriptc/runtime-linux-arm64-musl": ["@scriptc/runtime-linux-arm64-musl@0.4.7", "", {}, "sha512-JAJJ4m/1sSH0pdr6unX9toWcDgm/H6JM6MQ+VClmJYiCgz8miOvvKjVxHeAJQ7IRCIi9LOfd6JCtQHUeCsHg7g=="],
+
+    "@scriptc/runtime-linux-x64-gnu": ["@scriptc/runtime-linux-x64-gnu@0.4.7", "", {}, "sha512-Y2mJStbP9LcktnRUHNXP5voux4K/IBUusLTxF1pdP48bK/SQWgqKZGYJBLJysd+iRc2cGjWJ0uklK0a/yM6hqg=="],
+
+    "@scriptc/runtime-linux-x64-musl": ["@scriptc/runtime-linux-x64-musl@0.4.7", "", {}, "sha512-oW9GwqzY0MHIG04ujNw2Vvke21opU5iekib1gI7AVK6j40gJkhjPWpfI5rUHSfVqeqavzwjdi8x0hnjwaZQYnw=="],
+
+    "@scriptc/runtime-win32-x64-msvc": ["@scriptc/runtime-win32-x64-msvc@0.4.7", "", {}, "sha512-QP3N6a0MBOj9I/tDD3rbndXLivPdprqQmKmXvZ1IlTe4UWwXYyOKR0P9IwP0OUqcR2FqNwCZojG8nV7UKIOGTw=="],
+
+    "scriptc": ["scriptc@0.4.7", "", { "optionalDependencies": { "@scriptc/cli-darwin-arm64": "0.4.7", "@scriptc/cli-darwin-x64": "0.4.7", "@scriptc/cli-linux-arm64-gnu": "0.4.7", "@scriptc/cli-linux-arm64-musl": "0.4.7", "@scriptc/cli-linux-x64-gnu": "0.4.7", "@scriptc/cli-linux-x64-musl": "0.4.7", "@scriptc/cli-win32-x64-msvc": "0.4.7" }, "hasInstallScript": true, "bin": { "scriptc": "bin/scriptc.exe" } }, "sha512-ItYZ47OWpLRiNGMTup6erhZJDImWyAQC5XYKPZDDPMby42QUKs8hNWD4r+MHOl5ndEiHv2CM5Lz91s2L6qnfvA=="],
+  }
+}

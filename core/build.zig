@@ -3,11 +3,15 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
+    // Linux links executables as PIE by default, so an archive linked into
+    // one (the scriptc frontend) must be position-independent. Mach-O always is.
+    const pic = b.option(bool, "pic", "Build position-independent code") orelse false;
 
     const core = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .pic = if (pic) true else null,
         // getattrlistbulk comes from libSystem; Linux needs no libc at all.
         .link_libc = target.result.os.tag == .macos,
     });

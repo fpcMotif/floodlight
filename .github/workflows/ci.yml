@@ -124,6 +124,46 @@ jobs:
       - name: Test, cross-build, and bench the core
         run: make test-core
 
+  # The scriptc terminal frontend (ADR 0013). Its own job: it needs bun and
+  # the scriptc compiler on top of Zig, and nothing in the Swift jobs needs it.
+  scriptc:
+    name: scriptc frontend
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore pinned Zig
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      - name: Install pinned Zig
+        run: make install-zig
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Report tool versions
+        run: |
+          bun --version
+          clang --version | head -1
+          sw_vers
+
+      # Self-test compiled by scriptc, the no-V8 coverage gate, and an
+      # end-to-end run of the binary against a real index.
+      - name: Build and test the frontend
+        run: make test-scriptc
+
+      # Size, cold start, idle memory and query latency on this runner,
+      # written to the job summary.
+      - name: Measure the frontend
+        run: make measure-scriptc
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27

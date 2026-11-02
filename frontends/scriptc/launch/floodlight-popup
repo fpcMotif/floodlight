@@ -1,0 +1,63 @@
+#!/bin/sh
+# Opens floodlight-tui in a small floating terminal window, for a global
+# hotkey. The TUI exits after opening a result or on Esc, which closes the
+# window with it.
+#
+# Bind it to a key with any of:
+#   - Shortcuts.app: a "Run Shell Script" action running this file, then
+#     Shortcut Details → Add Keyboard Shortcut (⌥Space, for example).
+#   - skhd:        alt - space : ~/.local/bin/floodlight-popup
+#   - Hammerspoon: hs.hotkey.bind({"alt"}, "space", function()
+#                    hs.task.new(os.getenv("HOME") .. "/.local/bin/floodlight-popup", nil):start() end)
+#
+# The first terminal found wins; set FLOODLIGHT_TERMINAL to pick one
+# (ghostty, kitty, alacritty, wezterm, terminal).
+set -eu
+
+tui=${FLOODLIGHT_TUI:-$(command -v floodlight-tui || echo "$HOME/.local/bin/floodlight-tui")}
+cols=${FLOODLIGHT_COLS:-90}
+rows=${FLOODLIGHT_ROWS:-16}
+
+has_app() { [ -d "/Applications/$1.app" ] || [ -d "$HOME/Applications/$1.app" ]; }
+
+pick() {
+    if [ -n "${FLOODLIGHT_TERMINAL:-}" ]; then echo "$FLOODLIGHT_TERMINAL"; return; fi
+    if has_app Ghostty; then echo ghostty; return; fi
+    if has_app kitty; then echo kitty; return; fi
+    if has_app Alacritty; then echo alacritty; return; fi
+    if has_app WezTerm; then echo wezterm; return; fi
+    echo terminal
+}
+
+case $(pick) in
+    ghostty)
+        exec open -na Ghostty --args \
+            --title=Floodlight --window-decoration=none \
+            --window-width="$cols" --window-height="$rows" \
+            --quit-after-last-window-closed=true -e "$tui"
+        ;;
+    kitty)
+        exec open -na kitty --args \
+            -o hide_window_decorations=yes -o macos_quit_when_last_window_closed=yes \
+            -o initial_window_width="${cols}c" -o initial_window_height="${rows}c" \
+            --title Floodlight "$tui"
+        ;;
+    alacritty)
+        exec open -na Alacritty --args \
+            -o window.decorations=\"None\" -o window.dimensions.columns="$cols" \
+            -o window.dimensions.lines="$rows" --title Floodlight -e "$tui"
+        ;;
+    wezterm)
+        exec open -na WezTerm --args start --always-new-process -- "$tui"
+        ;;
+    *)
+        # Terminal.app has no borderless mode; a new window closed on exit.
+        exec osascript \
+            -e 'tell application "Terminal"' \
+            -e "  set w to do script \"clear; exec '$tui'\"" \
+            -e "  set number of columns of window 1 to $cols" \
+            -e "  set number of rows of window 1 to $rows" \
+            -e '  activate' \
+            -e 'end tell'
+        ;;
+esac
