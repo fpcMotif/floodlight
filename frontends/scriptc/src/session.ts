@@ -54,8 +54,10 @@ export abstract class FileSource {
 
 export const APP_BONUS = 60;
 export const MAX_ROWS = 80;
-/** How many file hits to ask for: some are dropped as app bundle contents. */
-const FILE_REQUEST = 120;
+/** File hits asked for: no more than a publication can hold. Resolving a hit's
+ * path is most of a keystroke's cost, so asking for spares to replace dropped
+ * app-bundle contents would cost every query for a rare case. */
+const FILE_REQUEST = MAX_ROWS;
 const RANK_CALCULATOR = 100000;
 
 export const MODE_LOCAL = 0;

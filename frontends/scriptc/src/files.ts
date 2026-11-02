@@ -2,7 +2,7 @@
 import { fls_is_dir, fls_path, fls_search, fls_stat } from "./native";
 import { fuzzyMatch } from "./match";
 import { baseName, displayPath, joinPath, parentPath } from "./paths";
-import { ACTION_OPEN, extensionOf, KIND_FILE, KIND_FOLDER, Row } from "./row";
+import { ACTION_OPEN, extensionOf, KIND_FILE, KIND_FOLDER, Row, RowDescriber } from "./row";
 import { FileSource } from "./session";
 
 /** fl_hit is a u32 id and an i32 score. */
@@ -24,8 +24,6 @@ export class CoreFiles extends FileSource {
   private readonly hits = new Uint8Array(MAX_HITS * HIT_BYTES);
   private readonly view = new DataView(this.hits.buffer);
   private readonly pathBuf = new Uint8Array(4096);
-  private readonly statBuf = new Uint8Array(16);
-  private readonly statView = new DataView(this.statBuf.buffer);
   entries = -1;
 
   constructor(
@@ -56,13 +54,6 @@ export class CoreFiles extends FileSource {
       const match = fuzzyMatch(title, term);
       const marks = match === null ? [] : match.positions;
       const dir = fls_is_dir(id);
-      // Size and date for the subtitle; a vanished file keeps its row.
-      let size = -1;
-      let modified = 0;
-      if (fls_stat(path, this.statBuf) > 0) {
-        size = dir ? -1 : this.statView.getFloat64(0, true);
-        modified = this.statView.getFloat64(8, true);
-      }
       rows.push(
         new Row(
           dir ? KIND_FOLDER : KIND_FILE,
@@ -74,11 +65,24 @@ export class CoreFiles extends FileSource {
           marks,
           score,
           dir ? "" : extensionOf(title),
-          size,
-          modified,
         ),
       );
     }
     return rows;
+  }
+}
+
+/** Size and date for a drawn file row; a vanished file keeps its row. */
+export class FileDescriber extends RowDescriber {
+  private readonly statBuf = new Uint8Array(16);
+  private readonly statView = new DataView(this.statBuf.buffer);
+
+  describe(row: Row): void {
+    row.described = true;
+    if (row.kind !== KIND_FILE && row.kind !== KIND_FOLDER) return;
+    const kind = fls_stat(row.target, this.statBuf);
+    if (kind === 0) return;
+    if (kind === 1) row.size = this.statView.getFloat64(0, true);
+    row.modified = this.statView.getFloat64(8, true);
   }
 }

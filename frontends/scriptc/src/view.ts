@@ -15,7 +15,7 @@
 import { engineById } from "./engines";
 import { FILTER_TITLES, visibleFilters } from "./filters";
 import { formatBytes, formatDay, group } from "./format";
-import { KIND_APP, KIND_CALCULATOR, KIND_FILE, KIND_FOLDER, KIND_SETTING, KIND_WEB, Row } from "./row";
+import { KIND_APP, KIND_CALCULATOR, KIND_FILE, KIND_FOLDER, KIND_SETTING, KIND_WEB, Row, RowDescriber } from "./row";
 import { isImageExtension } from "./filters";
 import { MODE_WEB, SearchSession } from "./session";
 import { Screen, STYLE_ACCENT, STYLE_BOLD, STYLE_DIM, STYLE_PLAIN, STYLE_SELECTED, textWidth } from "./screen";
@@ -29,6 +29,8 @@ export class Status {
     readonly notice: string = "",
     /** Seconds since 1970, for "Today" in subtitles. */
     readonly now: number = 0,
+    /** Reads sizes and dates for the rows drawn; null leaves them out. */
+    readonly describer: RowDescriber | null = null,
   ) {}
 }
 
@@ -164,6 +166,7 @@ export function render(screen: Screen, session: SearchSession, status: Status): 
     const best = session.topHit();
     for (let i = 0; i < visible && top + i < count; i++) {
       const row = session.rows[top + i];
+      if (!row.described && status.describer !== null) status.describer.describe(row);
       drawRow(screen, HEADER_ROWS + i, row, top + i === session.selected, row === best && top + i === 0, status.now);
     }
   }

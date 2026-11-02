@@ -15,7 +15,7 @@ import { CLIP_IMAGE, ClipEntry, entryPath } from "./clip-entry";
 import { SqliteClipStore } from "./clip-sqlite";
 import { BoardFacts, renderBoard } from "./board-view";
 import { FDA_SETTINGS_URL, FdaFlow, POLL_MS } from "./fda";
-import { CoreFiles } from "./files";
+import { CoreFiles, FileDescriber } from "./files";
 import { FILTER_COUNT, visibleFilters } from "./filters";
 import {
   boardKeyName,
@@ -231,6 +231,7 @@ class Tui {
   readonly parser = new KeyParser();
   readonly input = new Uint8Array(4096);
   readonly fda = new FdaFlow();
+  readonly describer = new FileDescriber();
   readonly board: ClipBoard;
   readonly facts: NativeFacts;
   view = VIEW_SEARCH;
@@ -256,7 +257,13 @@ class Tui {
   }
 
   status(): Status {
-    return new Status(this.files.count(), this.building, this.fda.notice(baseName(this.hostApp)), fls_wall_s());
+    return new Status(
+      this.files.count(),
+      this.building,
+      this.fda.notice(baseName(this.hostApp)),
+      fls_wall_s(),
+      this.describer,
+    );
   }
 
   frame(): void {
@@ -486,6 +493,7 @@ function runBench(o: Options, session: SearchSession, files: CoreFiles, screen: 
   const search: number[] = [];
   const frame: number[] = [];
   const now = fls_wall_s();
+  const describer = new FileDescriber();
   for (let round = 0; round < o.bench; round++) {
     for (const word of words) {
       // Typing one character at a time, the way a user produces queries.
@@ -493,7 +501,7 @@ function runBench(o: Options, session: SearchSession, files: CoreFiles, screen: 
         const t0 = fls_now_ms();
         session.setQuery(word.slice(0, i));
         const t1 = fls_now_ms();
-        render(screen, session, new Status(files.count(), false, "", now));
+        render(screen, session, new Status(files.count(), false, "", now, describer));
         screen.flush();
         const t2 = fls_now_ms();
         search.push(t1 - t0);

@@ -42,14 +42,29 @@ export class Row {
     /** Lowercased file extension, or "" when the row is not a file. */
     readonly ext: string = "",
     /** Bytes, or -1 when unknown or not a file. */
-    readonly size: number = -1,
+    public size: number = -1,
     /** Seconds since the epoch, or 0 when unknown. */
-    readonly modified: number = 0,
+    public modified: number = 0,
   ) {}
+
+  /** False until a file row's size and date are read. They are read only
+   * for the rows drawn: a stat per hit would double a keystroke's cost. */
+  described = false;
 
   /** Back-compat name for the target of a file or app row. */
   get path(): string {
     return this.target;
+  }
+}
+
+/**
+ * Fills in a row's size and date when it is first drawn. Concrete, and a
+ * no-op here: scriptc cannot compile a call on an abstract class that has no
+ * subclass in the binary, which the self-test is.
+ */
+export class RowDescriber {
+  describe(row: Row): void {
+    row.described = true;
   }
 }
 
