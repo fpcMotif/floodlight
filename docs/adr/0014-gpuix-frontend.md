@@ -82,8 +82,8 @@ commit `63f6847`):
 | `.app` (89 MB is Bun) | 111 MB | — |
 
 The window was adopted, but the class swap was refused (`adopt=1`; see
-**Non-activating** above). A later run on `17c5071` matched: 60.0 MB idle,
-summon p50 / p95 2.4 / 3.8 ms. Bun, React and GPUI cost 35 MB before
+**Non-activating** above). A later run on `17c5071` measured 60.0 MB idle; its 2.4 / 3.8 ms summon
+used the dropped fallback that never took key, so it does not count. Bun, React and GPUI cost 35 MB before
 Floodlight loads anything; Floodlight adds 25 MB. The numbers come from
 `make measure-gpuix` in the `gpuix` CI job:
 
