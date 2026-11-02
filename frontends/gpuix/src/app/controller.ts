@@ -83,6 +83,8 @@ export class Controller {
   private lastGrantPoll = 0;
   /** False in tests: nothing pumps AppKit until start() took the window. */
   private started = false;
+  /** flg_adopt_window's last answer: 2 panel, 1 activating fallback, < 1 not yet. */
+  window = 0;
 
   constructor(
     private readonly paths: Paths,
@@ -122,11 +124,23 @@ export class Controller {
   /** Takes over the GPUIX window and starts the hidden-state pump. */
   start(): number {
     const hotkeys = native.flg_start();
-    native.flg_adopt_window();
     this.started = true;
-    this.applyAppearance();
+    this.ensureWindow();
     this.scheduleIdle();
     return hotkeys;
+  }
+
+  /**
+   * Takes over the GPUIX window once it exists: GPUIX opens it on a later
+   * run-loop pass than render(), so this is retried until it succeeds. The
+   * last result is kept for the measure script (FLG adopt codes).
+   */
+  ensureWindow(): boolean {
+    if (this.window > 0) return true;
+    this.window = native.flg_adopt_window();
+    if (this.window <= 0) return false;
+    this.applyAppearance();
+    return true;
   }
 
   private applyAppearance(): void {
@@ -145,6 +159,7 @@ export class Controller {
   private idle(): void {
     if (this.surface !== "hidden") return;
     const event = native.flg_wait(IDLE_WAIT_MS);
+    this.ensureWindow();
     this.background();
     if (event !== 0) this.handleEvent(event);
     if (this.surface === "hidden") this.scheduleIdle();
@@ -241,6 +256,7 @@ export class Controller {
       if (from === "hidden" || from === "search") this.capturePasteTarget();
       this.board.setQuery("");
     }
+    this.ensureWindow();
     if (surface === "guidance") {
       this.showGuidance();
     } else {

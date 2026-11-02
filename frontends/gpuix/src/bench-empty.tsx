@@ -17,13 +17,26 @@ render(<div style={{ width: "100%", height: "100%" }} />, {
   focus: false,
 });
 native.flg_start();
-const adopted = native.flg_adopt_window();
-const material = native.flg_apply_material();
-console.log("FLOODLIGHT_GPUIX empty_adopt=" + adopted + " empty_material=" + material);
 
-setTimeout(() => {
-  const shown = native.flg_show(680, 60);
-  console.log("FLOODLIGHT_GPUIX empty_show_ms=" + shown.toFixed(2));
+function report(key: string, value: number): void {
+  console.log("FLOODLIGHT_GPUIX empty_" + key + "=" + value.toFixed(2));
+}
+
+/** GPUIX opens the window on a later run-loop pass than render(): retry. */
+function adopt(tries: number): void {
+  const adopted = native.flg_adopt_window();
+  if (adopted <= 0 && tries > 0) {
+    setTimeout(() => adopt(tries - 1), 50);
+    return;
+  }
+  report("adopt", adopted);
+  if (adopted <= 0) process.exit(1);
+  report("material", native.flg_apply_material());
+  setTimeout(measure, 1000);
+}
+
+function measure(): void {
+  report("show_ms", native.flg_show(680, 60));
   native.flg_hide();
   setTimeout(() => native.flg_order_out(), 50);
   setTimeout(() => {
@@ -32,9 +45,11 @@ setTimeout(() => {
   }, 1000);
   setTimeout(() => {
     const heap = heapStats();
-    console.log("FLOODLIGHT_GPUIX empty_idle_footprint_mb=" + (native.fls_footprint_bytes() / 1048576).toFixed(2));
-    console.log("FLOODLIGHT_GPUIX empty_idle_resident_mb=" + (native.fls_resident_bytes() / 1048576).toFixed(2));
-    console.log("FLOODLIGHT_GPUIX empty_js_heap_mb=" + (heap.heapSize / 1048576).toFixed(2));
+    report("idle_footprint_mb", native.fls_footprint_bytes() / 1048576);
+    report("idle_resident_mb", native.fls_resident_bytes() / 1048576);
+    report("js_heap_mb", heap.heapSize / 1048576);
     process.exit(0);
   }, 11_000);
-}, 1000);
+}
+
+adopt(60);

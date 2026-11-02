@@ -30,7 +30,11 @@ function report(key: string, value: number | string): void {
 export async function runBench(controller: Controller, hotkeys: number): Promise<void> {
   report("hotkeys", hotkeys);
   report("cold_start_ms", native.fls_process_age_ms());
-  // Let the index open and the first frame land before timing anything.
+  // Let the window open, the index load and the first frame land before
+  // timing anything; a summon without the window would time nothing.
+  for (let i = 0; i < 60 && !controller.ensureWindow(); i++) await sleep(50);
+  report("adopt", controller.window);
+  if (controller.window <= 0) process.exit(1);
   await sleep(2000);
 
   const summons: number[] = [];

@@ -38,7 +38,7 @@ int32_t flg_start(void);
 
 /* Restyles the window GPUIX opened. 2: a non-activating panel. 1: restyled,
  * but the class swap was refused, so showing activates the app. -1: no
- * window yet. */
+ * window yet; -2: windows, but none of them GPUI's. Safe to call again. */
 int32_t flg_adopt_window(void);
 
 /* Picks the material for the current settings and installs it under GPUI's

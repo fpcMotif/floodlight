@@ -117,14 +117,20 @@ static BOOL swap_to_panel_class(NSWindow *window) {
 
 int32_t flg_adopt_window(void) {
     if (panel != nil) return nonactivating ? 2 : 1;
+    NSArray<NSWindow *> *windows = NSApp.windows;
+    if (windows.count == 0) return -1;
+    /* GPUIX opens its window on a later run-loop pass than render(), so the
+     * caller retries; any window holding GPUI's view is the one. */
     NSWindow *found = nil;
-    for (NSWindow *window in NSApp.windows) {
-        if (strncmp(object_getClassName(window), "GPUI", 4) == 0) {
-            found = window;
-            break;
+    for (NSWindow *window in windows) {
+        for (NSView *view in window.contentView.subviews) {
+            if (strcmp(object_getClassName(view), "GPUIView") == 0) found = window;
         }
+        if (found == nil && strncmp(object_getClassName(window), "GPUI", 4) == 0) found = window;
+        if (found != nil) break;
     }
-    if (found == nil) return -1;
+    if (found == nil && windows.count == 1) found = windows.firstObject;
+    if (found == nil) return -2;
     panel = found;
 
     nonactivating = swap_to_panel_class(panel);
