@@ -1,0 +1,5 @@
+module FloodlightCore [system] {
+    header "floodlight_core.h"
+    link "floodlight_core"
+    export *
+}

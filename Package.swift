@@ -14,6 +14,10 @@ let shellSettings: [SwiftSetting] = upcoming + [
     .unsafeFlags(["-Osize"]),
 ]
 
+/// Where `scripts/build-core.sh` installs `libfloodlight_core.a`. Absolute,
+/// because the linker does not run from the package directory.
+let coreLibraryPath = Context.packageDirectory + "/core/zig-out/lib"
+
 let package = Package(
     name: "Floodlight",
     platforms: [
@@ -29,14 +33,25 @@ let package = Package(
         ),
     ],
     targets: [
+        // The Zig file index (ADR 0010): the C header and a module map that
+        // links the archive scripts/build-core.sh builds. Run `make debug`, or
+        // that script, before a bare `swift build`.
+        .systemLibrary(
+            name: "FloodlightCore",
+            path: "core/include"
+        ),
         // The deep module: results, ranking, action execution. Zero `public`.
         .target(
             name: "FloodlightEngine",
             dependencies: [
+                "FloodlightCore",
                 .product(name: "FFFKit", package: "fff-swift"),
             ],
             path: "Sources/FloodlightEngine",
-            swiftSettings: upcoming
+            swiftSettings: upcoming,
+            linkerSettings: [
+                .unsafeFlags(["-L", coreLibraryPath]),
+            ]
         ),
         // The macOS shell: panel, hotkey, menu bar, onboarding, QuickLook, login item.
         .executableTarget(

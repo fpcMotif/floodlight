@@ -4,8 +4,9 @@ Floodlight is a keyboard-first Spotlight alternative for macOS, written in
 SwiftUI and powered by the [FFF Swift](https://github.com/vmg-dev/fff-swift)
 package.
 
-It searches files and folders with FFF's fuzzy ranking, live filesystem watcher,
-query history, and frecency database. Native catalogs add applications and
+It searches file and folder names with a memory-mapped Zig index in `core/`,
+and file contents with FFF's grep, live filesystem watcher, query history, and
+frecency database. Native catalogs add applications and
 System Settings. Floodlight also evaluates arithmetic, provides a web-search
 fallback, supports Quick Look, and opens or reveals results without touching the
 mouse.
@@ -16,11 +17,12 @@ mouse.
   Spotlight still owns the shortcut
 - Global `⇧⌘C` opens Clipboard History from any app, with automatic
   `⇧⌘Space` fallback
-- FFF fuzzy search across files and folders
+- Fuzzy file and folder name search on a memory-mapped Zig index
 - Relative, absolute, and `~/` path queries with directory-only trailing-slash
   search
 - Time-budgeted FFF content search when filename matches are sparse
-- Live file and folder index updates
+- Live content index updates; the name index refreshes on scope change and
+  rebuild
 - Persistent FFF frecency and query history
 - FFF-ranked application search via a package-marker index
 - Native System Settings search
@@ -43,7 +45,10 @@ make run
 ```
 
 Swift Package Manager downloads the versioned FFFKit XCFramework automatically.
-Building Floodlight does not require Rust or a separate FFF checkout.
+Building Floodlight does not require Rust or a separate FFF checkout. The file
+index in `core/` is Zig: every `make` target that builds Swift runs `make core`
+first, which fetches the pinned Zig into `.tools` on first use. Run `make core`
+once before a bare `swift build`.
 
 Create a signed ad-hoc application bundle:
 
@@ -219,7 +224,8 @@ FloodlightPanelController
   ├─ SwiftUI search panel
   │   └─ SearchCoordinator (Search Session and selection)
   │       ├─ SourceSearchEngine actor
-  │       │   ├─ FFFFileSource → FFFKit → vendored fff-search
+  │       │   ├─ ZigFileSource → core/ (names, ADR 0010)
+  │       │   │   └─ FFFFileSource → FFFKit → vendored fff-search (content)
   │       │   ├─ ApplicationCatalog → private app markers → a second FFFIndex
   │       │   └─ SystemCatalog
   │       ├─ Calculator
@@ -249,8 +255,9 @@ elsewhere inside the selected scope are also recognized by the main FFF index.
 ## Search scope and privacy
 
 Floodlight indexes the current user's home directory by default. Change the
-scope with `⌘L`, or from the menu-bar flashlight. The main file
-index uses FFF's native macOS scanner and file-system watcher. Startup, rebuild,
+scope with `⌘L`, or from the menu-bar flashlight. The name
+index is a Zig scan written to one memory-mapped file; content search uses
+FFF's native macOS scanner and file-system watcher. Startup, rebuild,
 and scope changes wait until the new snapshot is searchable before results are
 marked settled. Persistent FFF history, frecency data, and private app markers stay on the Mac under
 `~/Library/Application Support/Floodlight`.

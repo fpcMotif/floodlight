@@ -5,7 +5,7 @@ date: 2026-11-02
 
 # File search moves to a memory-mapped Zig index in `core/`
 
-File search will run on `floodlight-core`, a Zig engine in `core/` that the Swift shell links as a static library through `core/include/floodlight_core.h`. It replaces FFF for file search only. Applications, System Settings, the clipboard, and the UI stay in Swift. This ADR covers the engine. Wiring it behind the `FileSource` seam is the next change, and that change is what flips this ADR to accepted.
+File search will run on `floodlight-core`, a Zig engine in `core/` that the Swift shell links as a static library through `core/include/floodlight_core.h`. It replaces FFF for file search only. Applications, System Settings, the clipboard, and the UI stay in Swift. `ZigFileSource` puts it behind the existing `FileSource` seam.
 
 ## Why
 
@@ -38,6 +38,12 @@ RSS here means the whole process, with the index fully paged in. Against the iss
 - **Path queries do not prune.** A term containing `/` has no tight score bound, so every mask survivor gets scored. A per-directory pre-match is the next step if path queries matter.
 - **No live updates yet.** FSEvents should feed a small overlay merged at query time and compacted into a fresh file in the background. Until that lands, the shell rebuilds on its existing refresh triggers.
 - **No content search.** FFF's grep keeps that job until the Swift side decides whether content search earns its memory.
+
+## Wiring
+
+- **`ZigFileSource`** builds the index into `Application Support/Floodlight/FileIndex/names.flix`, maps it, and answers `indexedItems` from it. A scope change or rebuild builds a new file, maps it, and only then drops the old handle. The handle is a refcounted Swift object, so a query still reading the old map keeps it alive until it returns. `contentItems` and `track` go to the wrapped `FFFFileSource`, so content search and its frecency are unchanged.
+- **Off the main actor:** builds run on a dispatch thread, because one `fl_index_build` blocks for seconds on a home folder. Searches run in a `@concurrent` function, so they never inherit the caller's actor.
+- **Linking: a system-library target, not a binary target.** `Package.swift` declares `FloodlightCore` as `.systemLibrary` over `core/include`, whose module map links `floodlight_core`, and FloodlightEngine adds `-L core/zig-out/lib`. `make core` (`scripts/build-core.sh`) builds the archive, fetching the pinned Zig on first use, and every Make target that builds Swift depends on it. A binary target was rejected: SwiftPM resolves it at manifest load, so it needs either a committed archive that drifts from `core/src` or a hosted artifact with a checksum bumped on every core change. A missing system library fails only at link time, with the library name in the error. SwiftPM build plugins cannot produce a linkable archive, so a build step outside SwiftPM is unavoidable. The cost: a bare `swift build` on a clean checkout needs `make core` once first.
 
 ## Gate
 

@@ -439,7 +439,7 @@ package final class FFFIndex: @unchecked Sendable {
     /// relative path with a separator, and `split` drops the empty component
     /// that produces, so a bare `Safari.app/` still reads as one component and
     /// is left alone.
-    private static func hasApplicationBundleComponent(in relativePath: String) -> Bool {
+    static func hasApplicationBundleComponent(in relativePath: String) -> Bool {
         relativePath.split(separator: "/").dropLast()
             .contains { $0.lowercased().hasSuffix(".app") }
     }
@@ -481,7 +481,7 @@ package final class FFFIndex: @unchecked Sendable {
         return value.withCString(body)
     }
 
-    private static func canonicalFileURL(_ url: URL) -> URL {
+    static func canonicalFileURL(_ url: URL) -> URL {
         let standardized = url.standardizedFileURL
         let resolvedPath = standardized.path.withCString { path -> String? in
             guard let resolved = realpath(path, nil) else { return nil }
