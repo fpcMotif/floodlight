@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { flushSync } from "@gpuix/react";
 import { createTestRoot, hasNativeTestRenderer } from "@gpuix/react/testing";
 import { Controller } from "../src/app/controller";
 import { ClipEntry } from "../src/domain/clip-entry";
@@ -50,14 +51,16 @@ function mount() {
 describe.skipIf(!hasNativeTestRenderer)("panel on the GPUIX test renderer", () => {
   test("typed keys reach the session and publish rows; hiding removes them", () => {
     const { controller, t, text, done } = mount();
-    controller.show("search");
+    flushSync(() => controller.show("search"));
     t.renderer.simulateKeystrokes("s a f");
     expect(controller.session.query).toBe("saf");
     expect(text()).toContain("Safari");
     expect(text()).toContain("APP");
     expect(text()).toContain("Google");
 
-    controller.hide();
+    // A hotkey arrives outside any GPUIX event, so React commits it in a
+    // microtask; flushSync commits it before the tree is read.
+    flushSync(() => controller.hide());
     expect(text()).not.toContain("Safari");
     done();
   });
@@ -65,7 +68,7 @@ describe.skipIf(!hasNativeTestRenderer)("panel on the GPUIX test renderer", () =
   test("the board lists entries and inspects the selection", () => {
     const { controller, store, text, done } = mount();
     store.record(new ClipEntry("a", "meeting notes for tuesday", "text", NOW - 30, "", 0, "plain", ""), "");
-    controller.show("board");
+    flushSync(() => controller.show("board"));
     const shown = text();
     expect(shown).toContain("meeting notes for tuesday");
     expect(shown).toContain("Characters");
