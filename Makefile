@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core install-go test-mygo measure-mygo
 
 debug:
 	swift build
@@ -92,3 +92,14 @@ install-zig:
 
 test-core:
 	./scripts/test-core.sh
+
+# The MyGo frontend trial in frontends/mygo (ADR 0012). Its own toolchain and
+# its own CI job, like the core: nothing in the Swift app depends on it.
+install-go:
+	./scripts/install-go.sh
+
+test-mygo:
+	./scripts/test-mygo.sh
+
+measure-mygo: test-mygo
+	./scripts/measure-mygo.sh

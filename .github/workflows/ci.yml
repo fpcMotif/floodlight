@@ -124,6 +124,43 @@ jobs:
       - name: Test, cross-build, and bench the core
         run: make test-core
 
+  # The MyGo frontend trial (ADR 0012). Its own job, like the core, so the
+  # Swift gates never wait on Go; on the Mac runner because the numbers it
+  # exists to produce (idle memory, hotkey to first frame) are macOS numbers.
+  mygo:
+    name: MyGo frontend
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore pinned Zig and Go
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-zig-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      - name: Restore Go modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/go/pkg/mod
+          key: floodlight-gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontends/mygo/go.sum') }}
+
+      - name: Install pinned Zig and Go
+        run: |
+          make install-zig
+          make install-go
+
+      - name: Format, vet, test, and build
+        run: make test-mygo
+
+      # Numbers, not budgets: ADR 0012 is proposed, and these runs are what
+      # it will be decided on.
+      - name: Measure idle memory, hotkey latency, and queries
+        timeout-minutes: 10
+        run: ./scripts/measure-mygo.sh
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27
