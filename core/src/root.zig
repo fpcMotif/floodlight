@@ -5,6 +5,9 @@ pub const scan = @import("scan.zig");
 pub const search = @import("search.zig");
 pub const c_api = @import("c_api.zig");
 pub const sys = @import("sys.zig");
+pub const overlay = @import("overlay.zig");
+pub const live = @import("live.zig");
+pub const watch = @import("watch.zig");
 
 // Zig analyses lazily: without this reference the `export fn`s are never
 // compiled and the static library ships with no symbols.

@@ -87,6 +87,39 @@ pub const View = struct {
         }
         return buf[end..];
     }
+
+    /// The child of `parent` called `child_name`. A scan appends a folder's
+    /// children as one contiguous run after the folder itself, so this finds
+    /// the run with one vectorised scan of `parent` and compares names only
+    /// inside it.
+    pub fn findChild(v: View, parent: u32, child_name: []const u8) ?u32 {
+        const from: usize = if (parent == no_parent) 0 else @as(usize, parent) + 1;
+        var i = std.mem.indexOfScalarPos(u32, v.parent, from, parent) orelse return null;
+        while (i < v.parent.len and v.parent[i] == parent) : (i += 1) {
+            if (std.mem.eql(u8, v.name(@intCast(i)), child_name)) return @intCast(i);
+        }
+        return null;
+    }
+
+    /// The id at a root-relative path.
+    pub fn lookup(v: View, rel: []const u8) ?u32 {
+        return v.walkTo(rel, false);
+    }
+
+    /// The deepest entry on the way to `rel` that the index holds: `rel`
+    /// itself, or the nearest folder above it.
+    pub fn deepestExisting(v: View, rel: []const u8) ?u32 {
+        return v.walkTo(rel, true);
+    }
+
+    fn walkTo(v: View, rel: []const u8, deepest: bool) ?u32 {
+        var cur: u32 = no_parent;
+        var it = std.mem.splitScalar(u8, rel, '/');
+        while (it.next()) |part| {
+            cur = v.findChild(cur, part) orelse return if (deepest and cur != no_parent) cur else null;
+        }
+        return if (cur == no_parent) null else cur;
+    }
 };
 
 pub const Builder = struct {

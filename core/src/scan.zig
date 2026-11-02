@@ -19,6 +19,9 @@ pub const Options = struct {
     skip_hidden: bool = true,
     /// Bound on recursion, and so on open descriptors.
     max_depth: u16 = 48,
+    /// Stop with `error.LimitReached` once this many entries are in the
+    /// builder. Live updates list a new folder only if it fits the overlay.
+    limit: u32 = std.math.maxInt(u32),
 };
 
 /// Directory names never worth descending into for a launcher: generated,
@@ -33,7 +36,7 @@ fn isPruned(name: []const u8) bool {
     return false;
 }
 
-const buffer_len = 64 * 1024;
+pub const buffer_len = 64 * 1024;
 
 pub fn scan(b: *index.Builder, root: []const u8, opts: Options) !void {
     try b.setRoot(root);
@@ -46,7 +49,7 @@ pub fn scan(b: *index.Builder, root: []const u8, opts: Options) !void {
     try walk(b, fd, index.no_parent, 0, buf, opts);
 }
 
-fn walk(
+pub fn walk(
     b: *index.Builder,
     fd: posix.fd_t,
     parent: u32,
@@ -57,6 +60,7 @@ fn walk(
     const first = b.count();
     try listing.drain(b, fd, parent, buf, opts);
     const last = b.count();
+    if (last > opts.limit) return error.LimitReached;
     if (depth + 1 >= opts.max_depth) return;
 
     var id = first;
@@ -70,11 +74,36 @@ fn walk(
     }
 }
 
-fn keep(name: []const u8, is_dir: bool, opts: Options) bool {
+pub fn keep(name: []const u8, is_dir: bool, opts: Options) bool {
     if (name.len == 0) return false;
     if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
     if (opts.skip_hidden and name[0] == '.') return false;
     if (is_dir and isPruned(name)) return false;
+    return true;
+}
+
+/// Lists one directory into `b` under `parent`, without descending. The
+/// compactor uses it to refresh a changed folder and keep its unchanged
+/// subfolders from the old index.
+pub fn drain(b: *index.Builder, fd: posix.fd_t, parent: u32, buf: []align(8) u8, opts: Options) !void {
+    try listing.drain(b, fd, parent, buf, opts);
+}
+
+/// Whether a full scan would index `rel`: no component hidden, no folder on
+/// the way pruned, no deeper than the scan goes. Live updates use it so an
+/// event inside `.git` or `node_modules` never reaches the index.
+pub fn tracked(rel: []const u8, opts: Options) bool {
+    if (rel.len == 0) return false;
+    var it = std.mem.splitScalar(u8, rel, '/');
+    var depth: u16 = 0;
+    while (it.next()) |part| {
+        depth += 1;
+        if (depth > opts.max_depth) return false;
+        // Every component but the last is a folder; the last may be either,
+        // and a pruned name is pruned only as a folder.
+        const is_dir = it.peek() != null;
+        if (!keep(part, is_dir, opts)) return false;
+    }
     return true;
 }
 

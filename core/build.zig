@@ -11,6 +11,11 @@ pub fn build(b: *std.Build) void {
         // getattrlistbulk comes from libSystem; Linux needs no libc at all.
         .link_libc = target.result.os.tag == .macos,
     });
+    // FSEvents. A static archive records the framework for whoever links it;
+    // the test binary, linked here, needs the SDK, which only a Mac host has.
+    if (target.result.os.tag == .macos and b.graph.host.result.os.tag == .macos) {
+        core.linkFramework("CoreServices", .{});
+    }
 
     // What the Swift shell links: one static archive plus the header.
     const lib = b.addLibrary(.{
