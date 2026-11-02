@@ -5,12 +5,14 @@ import Testing
 
 /// The FFFFileSource lifecycle tests in FFFIndexTests, run against the Zig
 /// index through the same `FileSource` seam: each operation returns only once
-/// a query can see its result.
+/// a query can see its result. The build is one synchronous call, so a few
+/// hundred decoys are enough to bury the sentinel; FFF's tests use thousands
+/// to outlast its background scan, and this suite runs beside them.
 struct ZigFileSourceTests {
     @Test func startReturnsWithASearchableInitialSnapshot() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
-        fixture.createFiles(count: 4_000, in: fixture.root)
+        fixture.createFiles(count: 400, in: fixture.root)
         let sentinel = try fixture.write("ready-source-sentinel.txt", in: fixture.root)
 
         let source = fixture.source(rootURL: fixture.root)
@@ -25,7 +27,7 @@ struct ZigFileSourceTests {
         defer { fixture.remove() }
         let original = try fixture.directory("Original")
         let selected = try fixture.directory("Selected")
-        fixture.createFiles(count: 4_000, in: selected)
+        fixture.createFiles(count: 400, in: selected)
         let sentinel = try fixture.write("ready-scope-sentinel.txt", in: selected)
 
         let content = ScriptedFileSource()
@@ -45,7 +47,7 @@ struct ZigFileSourceTests {
         let source = fixture.source(rootURL: fixture.root, content: content)
         try await source.start()
 
-        fixture.createFiles(count: 4_000, in: fixture.root)
+        fixture.createFiles(count: 400, in: fixture.root)
         let sentinel = try fixture.write("ready-rebuild-sentinel.txt", in: fixture.root)
         try await source.rebuild()
 
