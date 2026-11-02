@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core scriptc-tui test-scriptc measure-scriptc
 
 debug:
 	swift build
@@ -92,3 +92,15 @@ install-zig:
 
 test-core:
 	./scripts/test-core.sh
+
+# The scriptc terminal frontend in frontends/scriptc (ADR 0013): TypeScript
+# compiled to a native binary, searching through core/. Its own Makefile and
+# its own CI job; nothing here touches the Swift app.
+scriptc-tui:
+	$(MAKE) -C frontends/scriptc build
+
+test-scriptc:
+	$(MAKE) -C frontends/scriptc test
+
+measure-scriptc:
+	$(MAKE) -C frontends/scriptc measure

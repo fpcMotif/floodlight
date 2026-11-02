@@ -1,0 +1,9 @@
+{
+  "name": "floodlight-scriptc-frontend",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "scriptc": "0.4.7"
+  },
+  "trustedDependencies": ["scriptc"]
+}

@@ -25,3 +25,8 @@ Vendor/
 # Zig build output for core/.
 core/.zig-cache/
 core/zig-out/
+
+# scriptc frontend: dependencies and build output.
+frontends/scriptc/node_modules/
+frontends/scriptc/build/
+frontends/scriptc/.scriptc/
