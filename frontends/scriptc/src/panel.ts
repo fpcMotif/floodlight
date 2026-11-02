@@ -182,9 +182,22 @@ function smoke(panel: Panel, query: string, idleSeconds: number): void {
   const visibleRss = fls_resident_bytes();
   panel.hide();
   flp_wait(0);
+
+  // A launcher is summoned many times per launch; the second summon, with
+  // AppKit, fonts and icons already loaded, is the one users feel.
+  const warmShowMs = panel.show();
+  const t1 = fls_now_ms();
+  panel.session.setQuery(query);
+  panel.publish();
+  const warmQueryMs = fls_now_ms() - t1;
+  panel.hide();
+  flp_wait(0);
+
   console.log(
     JSON.stringify({
       event: "panel_smoke",
+      warm_show_ms: r3(warmShowMs),
+      warm_query_to_rows_ms: r3(warmQueryMs),
       exec_to_visible_ms: r3(firstFrame),
       show_ms: r3(showMs),
       query_to_rows_ms: r3(queryMs),
