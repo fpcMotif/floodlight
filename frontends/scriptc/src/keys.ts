@@ -21,8 +21,16 @@ export const KEY_BACKSPACE = 8;
 export const KEY_CLEAR = 9;
 /** Ctrl-W or Alt-Backspace: delete the last word. */
 export const KEY_DELETE_WORD = 10;
-/** Ctrl-C or Ctrl-D: quit regardless of state. */
+/** Ctrl-C: quit regardless of state. */
 export const KEY_QUIT = 11;
+export const KEY_TAB = 12;
+export const KEY_SHIFT_TAB = 13;
+/** Alt/Option plus a key, the terminal's stand-in for ⌘: `text` is the key. */
+export const KEY_ALT = 14;
+/** An otherwise unbound Ctrl-letter: `text` is the lowercase letter. */
+export const KEY_CTRL = 15;
+export const KEY_LEFT = 16;
+export const KEY_RIGHT = 17;
 
 export class Key {
   constructor(
@@ -74,9 +82,13 @@ export class KeyParser {
       else if (b === 127 || b === 8) keys.push(new Key(KEY_BACKSPACE, ""));
       else if (b === 21) keys.push(new Key(KEY_CLEAR, ""));
       else if (b === 23) keys.push(new Key(KEY_DELETE_WORD, ""));
-      else if (b === 3 || b === 4) keys.push(new Key(KEY_QUIT, ""));
-      else if (b === 16) keys.push(new Key(KEY_UP, "")); // Ctrl-P
-      else if (b === 14) keys.push(new Key(KEY_DOWN, "")); // Ctrl-N
+      else if (b === 3) keys.push(new Key(KEY_QUIT, ""));
+      else if (b === 9) keys.push(new Key(KEY_TAB, ""));
+      else if (b === 16)
+        keys.push(new Key(KEY_UP, "")); // Ctrl-P
+      else if (b === 14)
+        keys.push(new Key(KEY_DOWN, "")); // Ctrl-N
+      else if (b >= 1 && b <= 26) keys.push(new Key(KEY_CTRL, String.fromCharCode(b + 96)));
       else if (b >= 0x20) {
         const n = utf8Length(b);
         if (n === 0) {
@@ -111,7 +123,8 @@ export class KeyParser {
       return 1;
     }
     if (next !== 0x5b && next !== 0x4f) {
-      // ESC + printable is Alt+key; the launcher has no Alt bindings yet.
+      // ESC + printable is Alt+key, which stands in for ⌘ (#115).
+      if (next >= 0x20 && next < 0x7f) keys.push(new Key(KEY_ALT, String.fromCharCode(next)));
       return 2;
     }
     // CSI / SS3: parameters, then one final byte in 0x40..0x7e.
@@ -122,9 +135,13 @@ export class KeyParser {
     const params = Buffer.from(buf.slice(i + 2, j)).toString("utf8");
     if (final === 0x41) keys.push(new Key(KEY_UP, ""));
     else if (final === 0x42) keys.push(new Key(KEY_DOWN, ""));
+    else if (final === 0x43 && params === "") keys.push(new Key(KEY_RIGHT, ""));
+    else if (final === 0x44 && params === "") keys.push(new Key(KEY_LEFT, ""));
+    else if (final === 0x5a) keys.push(new Key(KEY_SHIFT_TAB, ""));
     else if (final === 0x7e && params === "5") keys.push(new Key(KEY_PAGE_UP, ""));
     else if (final === 0x7e && params === "6") keys.push(new Key(KEY_PAGE_DOWN, ""));
-    else if (final === 0x75 && params === "27") keys.push(new Key(KEY_ESCAPE, "")); // kitty CSI u
+    else if (final === 0x75 && params === "27")
+      keys.push(new Key(KEY_ESCAPE, "")); // kitty CSI u
     else if (final === 0x75 && params === "13;3") keys.push(new Key(KEY_REVEAL, ""));
     return j - i + 1;
   }
@@ -143,4 +160,29 @@ function mergeText(keys: Key[]): Key[] {
     }
   }
   return out;
+}
+
+/**
+ * The board's logical key for a terminal key, the names the parity fixtures
+ * use. A terminal sees no ⌘, so Alt stands in for it (⌥C is ⌘C), with Ctrl
+ * chords as a second spelling for the ones terminals tend to keep.
+ */
+export function boardKeyName(key: Key): string {
+  if (key.code === KEY_ENTER) return "return";
+  if (key.code === KEY_REVEAL) return "option+return";
+  if (key.code === KEY_UP) return "up";
+  if (key.code === KEY_DOWN) return "down";
+  if (key.code === KEY_ESCAPE) return "escape";
+  if (key.code === KEY_BACKSPACE) return "backspace";
+  if (key.code === KEY_TEXT) return key.text === " " ? "space" : "text:" + key.text;
+  if (key.code === KEY_ALT) {
+    const k = key.text.toLowerCase();
+    if ("cryk.d1234".indexOf(k) >= 0) return "cmd+" + k;
+    return "";
+  }
+  if (key.code === KEY_CTRL) {
+    if (key.text === "y" || key.text === "k" || key.text === "r" || key.text === "d") return "cmd+" + key.text;
+    if (key.text === "o") return "cmd+return";
+  }
+  return "";
 }

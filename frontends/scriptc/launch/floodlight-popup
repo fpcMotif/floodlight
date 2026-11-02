@@ -10,9 +10,18 @@
 #   - Hammerspoon: hs.hotkey.bind({"alt"}, "space", function()
 #                    hs.task.new(os.getenv("HOME") .. "/.local/bin/floodlight-popup", nil):start() end)
 #
+# `floodlight-popup --board` opens the clipboard board instead; bind it to
+# ⌥⇧C the same way. Either way the app that was frontmost is recorded first,
+# so Return on the board pastes into it once the popup closes.
+#
 # The first terminal found wins; set FLOODLIGHT_TERMINAL to pick one
 # (ghostty, kitty, alacritty, wezterm, terminal).
 set -eu
+
+# Before any window opens: the paste target is the app the user came from.
+front=$(lsappinfo front 2>/dev/null || true)
+pid=$(lsappinfo info -only pid "$front" 2>/dev/null | sed -n "s/.*=//p" || true)
+set -- "$@" ${pid:+--paste-pid "$pid"}
 
 tui=${FLOODLIGHT_TUI:-$(command -v floodlight-tui || echo "$HOME/.local/bin/floodlight-tui")}
 cols=${FLOODLIGHT_COLS:-90}
@@ -34,27 +43,27 @@ case $(pick) in
         exec open -na Ghostty --args \
             --title=Floodlight --window-decoration=none \
             --window-width="$cols" --window-height="$rows" \
-            --quit-after-last-window-closed=true -e "$tui"
+            --quit-after-last-window-closed=true -e "$tui" "$@"
         ;;
     kitty)
         exec open -na kitty --args \
             -o hide_window_decorations=yes -o macos_quit_when_last_window_closed=yes \
             -o initial_window_width="${cols}c" -o initial_window_height="${rows}c" \
-            --title Floodlight "$tui"
+            --title Floodlight "$tui" "$@"
         ;;
     alacritty)
         exec open -na Alacritty --args \
             -o window.decorations=\"None\" -o window.dimensions.columns="$cols" \
-            -o window.dimensions.lines="$rows" --title Floodlight -e "$tui"
+            -o window.dimensions.lines="$rows" --title Floodlight -e "$tui" "$@"
         ;;
     wezterm)
-        exec open -na WezTerm --args start --always-new-process -- "$tui"
+        exec open -na WezTerm --args start --always-new-process -- "$tui" "$@"
         ;;
     *)
         # Terminal.app has no borderless mode; a new window closed on exit.
         exec osascript \
             -e 'tell application "Terminal"' \
-            -e "  set w to do script \"clear; exec '$tui'\"" \
+            -e "  set w to do script \"clear; exec '$tui' $*\"" \
             -e "  set number of columns of window 1 to $cols" \
             -e "  set number of rows of window 1 to $rows" \
             -e '  activate' \

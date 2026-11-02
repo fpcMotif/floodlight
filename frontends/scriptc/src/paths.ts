@@ -23,3 +23,18 @@ export function joinPath(root: string, relative: string): string {
   if (relative.length === 0) return root;
   return root.endsWith("/") ? root + relative : root + "/" + relative;
 }
+
+/**
+ * The frontend's own data folder, apart from the Swift app's, so the two can
+ * be tried side by side: the index and the clipboard history live here.
+ */
+export function dataDir(home: string): string {
+  if (process.platform === "darwin") return home + "/Library/Application Support/" + BUNDLE_ID;
+  const xdg = process.env.XDG_DATA_HOME ?? "";
+  return (xdg.length > 0 ? xdg : home + "/.local/share") + "/floodlight-tui";
+}
+
+export const BUNDLE_ID = "com.floodlight.tui";
+
+/** Bundle id → display name, one per line, written by floodlight-clipd. */
+export const APP_NAMES_FILE = "app-names.tsv";

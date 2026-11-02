@@ -29,6 +29,8 @@ import {
   flp_start,
   flp_wait,
 } from "./panel-native";
+import { flm_write_text } from "./native-agent";
+import { ACTION_COPY, KIND_FILE } from "./row";
 import { SearchSession } from "./session";
 
 const EV_NONE = 0;
@@ -102,7 +104,7 @@ class Panel {
   publish(): void {
     flp_clear_rows();
     for (const row of this.session.rows) {
-      flp_add_row(row.kind, row.title, row.detail, row.path, row.marks.join(","));
+      flp_add_row(row.kind, row.title, row.detail, row.target, row.marks.join(","));
     }
     flp_commit(this.session.selected);
   }
@@ -127,7 +129,9 @@ class Panel {
     const row = this.session.current();
     if (row === null) return;
     this.hide();
-    fls_open(row.path, reveal ? 1 : 0);
+    // Calculator answers copy; every other row opens a path or a URL.
+    if (row.action === ACTION_COPY) flm_write_text(row.target);
+    else fls_open(row.target, reveal && row.kind <= KIND_FILE ? 1 : 0);
   }
 
   handle(event: number): void {

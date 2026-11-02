@@ -27,3 +27,30 @@ export declare function fls_search(query: string, out: Uint8Array): number;
 export declare function fls_path(id: number, out: Uint8Array): number;
 export declare function fls_is_dir(id: number): boolean;
 export declare function fls_file_age_s(path: string): number;
+export declare function fls_spawn(args: string): number;
+export declare function fls_stat(path: string, out: Uint8Array): number;
+export declare function fls_wall_s(): number;
+
+// Clipboard History on SQLite (native/flclip.c).
+export declare function flc_open(path: string): number;
+export declare function flc_list(query: string, limit: number, out: Uint8Array): number;
+export declare function flc_newest(out: Uint8Array): number;
+export declare function flc_entry(id: string, out: Uint8Array): number;
+export declare function flc_record(
+  id: string,
+  text: string,
+  kind: string,
+  created: number,
+  source: string,
+  contentKind: string,
+  contentDetail: string,
+): number;
+export declare function flc_set_pinned(id: string, pinned: number, now: number): number;
+export declare function flc_delete(id: string): number;
+export declare function flc_prune(cutoff: number): number;
+export declare function flc_text(id: string, out: Uint8Array): number;
+export declare function flc_export_image(id: string, path: string): number;
+
+// The TUI's own platform calls (native/flplatform.c), plain C with no frameworks.
+export declare function flm_full_disk_access(): number;
+export declare function flm_host_app(out: Uint8Array): number;

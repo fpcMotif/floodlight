@@ -1,0 +1,175 @@
+{
+  "about": "Clipboard capture parity: captures applied in order to an empty history. Each expects the stored entry or \"skipped\". Times are seconds; `now` is the capture time and the subtitle's clock.",
+  "home": "/Users/me",
+  "now": 1800000000,
+  "captures": [
+    {
+      "name": "plain text",
+      "types": ["public.utf8-plain-text"],
+      "text": "Meeting notes\n\nfor Tuesday ",
+      "expect": {
+        "kind": "text",
+        "content": "plain",
+        "detail": "",
+        "title": "Meeting notes for Tuesday",
+        "subtitle": "Clipboard · just now"
+      }
+    },
+    {
+      "name": "a repeat of the newest entry",
+      "types": ["public.utf8-plain-text"],
+      "text": "Meeting notes\n\nfor Tuesday ",
+      "expect": "skipped"
+    },
+    {
+      "name": "link",
+      "types": ["public.utf8-plain-text"],
+      "text": "https://www.github.com/fpcMotif/floodlight/issues/115",
+      "expect": {
+        "kind": "text",
+        "content": "link",
+        "detail": "github.com",
+        "title": "https://www.github.com/fpcMotif/floodlight/issues/115"
+      }
+    },
+    {
+      "name": "colour",
+      "types": ["public.utf8-plain-text"],
+      "text": " #0a84ff ",
+      "expect": { "kind": "text", "content": "color", "detail": "#0A84FF" }
+    },
+    {
+      "name": "short colour",
+      "types": ["public.utf8-plain-text"],
+      "text": "#f80",
+      "expect": { "kind": "text", "content": "color", "detail": "#FF8800" }
+    },
+    {
+      "name": "JSON",
+      "types": ["public.utf8-plain-text"],
+      "text": "{\"a\": [1, 2]}",
+      "expect": { "kind": "text", "content": "code", "detail": "JSON" }
+    },
+    {
+      "name": "code",
+      "types": ["public.utf8-plain-text"],
+      "text": "export function main() {}",
+      "expect": { "kind": "text", "content": "code", "detail": "Code" }
+    },
+    {
+      "name": "HTML",
+      "types": ["public.utf8-plain-text"],
+      "text": "<p>hi</p>",
+      "expect": { "kind": "text", "content": "code", "detail": "HTML" }
+    },
+    {
+      "name": "not JSON",
+      "types": ["public.utf8-plain-text"],
+      "text": "{not json}",
+      "expect": { "kind": "text", "content": "plain" }
+    },
+    {
+      "name": "home path",
+      "types": ["public.utf8-plain-text"],
+      "text": "~/Documents/q3 report.pdf",
+      "expect": {
+        "kind": "text",
+        "content": "path",
+        "detail": "file:///Users/me/Documents/q3%20report.pdf",
+        "title": "q3 report.pdf",
+        "subtitle": "Clipboard · just now · Documents"
+      }
+    },
+    {
+      "name": "two-line path is text",
+      "types": ["public.utf8-plain-text"],
+      "text": "/tmp/a\n/tmp/b",
+      "expect": { "kind": "text", "content": "plain", "title": "/tmp/a /tmp/b" }
+    },
+    {
+      "name": "file",
+      "types": ["public.file-url", "public.utf8-plain-text"],
+      "files": ["/Users/me/Pictures/sunset.png"],
+      "text": "sunset.png",
+      "expect": {
+        "kind": "file",
+        "title": "sunset.png",
+        "subtitle": "Clipboard · just now · Pictures"
+      }
+    },
+    {
+      "name": "image",
+      "types": ["public.png"],
+      "image": { "bytes": 52000, "width": 1440, "height": 900, "hash": "abc" },
+      "expect": {
+        "kind": "image",
+        "title": "Image",
+        "subtitle": "Clipboard · just now · 1440×900"
+      }
+    },
+    {
+      "name": "the same image again",
+      "types": ["public.png"],
+      "image": { "bytes": 52000, "width": 1440, "height": 900, "hash": "abc" },
+      "expect": "skipped"
+    },
+    {
+      "name": "an image over 15 MiB",
+      "types": ["public.tiff"],
+      "image": {
+        "bytes": 15728641,
+        "width": 8000,
+        "height": 8000,
+        "hash": "big"
+      },
+      "expect": "skipped"
+    },
+    {
+      "name": "concealed (a password manager)",
+      "types": ["org.nspasteboard.ConcealedType", "public.utf8-plain-text"],
+      "text": "hunter2",
+      "expect": "skipped"
+    },
+    {
+      "name": "transient",
+      "types": ["org.nspasteboard.TransientType", "public.utf8-plain-text"],
+      "text": "temp",
+      "expect": "skipped"
+    },
+    {
+      "name": "Floodlight's own write",
+      "types": ["public.utf8-plain-text", "com.floodlight.own-write"],
+      "text": "pasted from history",
+      "expect": "skipped"
+    },
+    {
+      "name": "whitespace only",
+      "types": ["public.utf8-plain-text"],
+      "text": "  \n ",
+      "expect": "skipped"
+    },
+    {
+      "name": "text over 32,000 bytes",
+      "types": ["public.utf8-plain-text"],
+      "text_repeat": { "text": "é", "times": 16001 },
+      "expect": "skipped"
+    }
+  ],
+  "ages": [
+    { "seconds": 30, "age": "just now" },
+    { "seconds": 300, "age": "5m" },
+    { "seconds": 10800, "age": "3h" },
+    { "seconds": 172800, "age": "2d" },
+    { "seconds": 10368000, "age": "4mo" },
+    { "seconds": 40000000, "age": "1y" }
+  ],
+  "prune": {
+    "about": "Entries older than 30 days are pruned at launch; pinned ones stay.",
+    "entries": [
+      { "id": "old", "age_days": 31 },
+      { "id": "old-pinned", "age_days": 45, "pinned": true },
+      { "id": "recent", "age_days": 29 }
+    ],
+    "kept": ["old-pinned", "recent"]
+  }
+}

@@ -339,3 +339,58 @@ void fls_sleep_ms(int32_t ms) {
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
     }
 }
+
+/* Runs a program detached, like fls_open: `args` is the argv joined by US
+ * (0x1f), program first, looked up on PATH. For `qlmanage -p` and the
+ * System Settings URL, which must outlive a TUI that exits right after. */
+int32_t fls_spawn(const uint8_t *args, size_t len) {
+    char buf[8192];
+    char *argv[16];
+    if (span_to_cstr(args, len, buf, sizeof buf) != 0) return -ENAMETOOLONG;
+    int argc = 0;
+    char *p = buf;
+    argv[argc++] = p;
+    for (; *p != 0; p++) {
+        if (*p != 0x1f) continue;
+        *p = 0;
+        if (argc == 15) return -E2BIG;
+        argv[argc++] = p + 1;
+    }
+    argv[argc] = NULL;
+
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attr;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+    signal(SIGCHLD, SIG_IGN);
+    pid_t pid = 0;
+    int rc = posix_spawnp(&pid, argv[0], &actions, &attr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+    return rc == 0 ? (int32_t)pid : -rc;
+}
+
+/* Writes the file's size and modification time (f64 seconds, little-endian
+ * as on every target) into `out`: 1 for a file, 2 for a folder, 0 when it
+ * is gone. The subtitle's "12 KB · Today". */
+int32_t fls_stat(const uint8_t *path, size_t len, uint8_t *out, size_t cap) {
+    char p[4096];
+    struct stat st;
+    if (cap < 16 || span_to_cstr(path, len, p, sizeof p) != 0 || stat(p, &st) != 0) return 0;
+    double size = (double)st.st_size;
+    double mtime = (double)st.st_mtime;
+    memcpy(out, &size, 8);
+    memcpy(out + 8, &mtime, 8);
+    return S_ISDIR(st.st_mode) ? 2 : 1;
+}
+
+/* Seconds since 1970, for entry timestamps (the store's `created_at`). */
+double fls_wall_s(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}

@@ -48,23 +48,35 @@ The hard question was the run loop. AppKit wants `-[NSApplication run]` on the m
 
 ```
 frontends/scriptc/
-  src/session.ts   SearchSession: query → ranked rows (apps, then files) + selection
+  src/session.ts   SearchSession: query → one ranked publication, mode, filter, selection
   src/match.ts     fuzzy matcher for names (prefix, word starts/acronyms, runs)
   src/apps.ts      .app bundles in the standard folders, read once at start
   src/files.ts     FileSource over floodlight-core via the shim
   src/screen.ts    double-buffered cell grid; per-row diff; DEC 2026 sync
-  src/view.ts      layout: prompt, results, footer
+  src/view.ts      layout: prompt, filter chips, badged rows, notice, footer
   src/keys.ts      raw bytes → keys (CSI/SS3, split UTF-8, lone-ESC timing)
   src/main.ts      the TUI loop, plus --bench / --exit-after-paint / --idle-report
   src/panel.ts     the panel loop (macOS), plus --smoke
   src/index-file.ts  index location, open, background rebuild
+  src/core-match.ts  port of the core matcher, for app and setting scores
+  src/engines.ts   keyword engines, web mode rows, typed web addresses
+  src/calculator.ts  arithmetic and unit conversions
+  src/settings.ts  System Settings panes
+  src/filters.ts   result filters and counts
+  src/clip-*.ts    clipboard entry, capture policy, store seam, SQLite store, board
+  src/board-view.ts  the board split view
+  src/fda.ts       the Full Disk Access grant flow
+  src/agent.ts     floodlight-clipd, the capture agent
   native/flshim.c  the C shim: termios, poll/read/write, posix_spawn, core
   native/flpanel.m the Cocoa shim: NSPanel, rows view, Carbon hotkey
+  native/flclip.c  Clipboard History on SQLite, the Swift schema
+  native/flplatform.c  the TUI's platform calls: TCC probe, host terminal
+  native/flmac.m   the AppKit half: pasteboard, paste, app names (stub elsewhere)
   launch/floodlight-popup  floating-terminal launcher for a global hotkey
 ```
 
 - **One thread, latest wins without cancellation.** The loop blocks in `poll`. Once input arrives it drains every pending byte, applies all keys to the query text, and runs one search for the final text. A burst of typing or a paste costs one query, not one per key. Nothing is ever in flight to cancel. Arrow keys flush the pending query first, so they always move over current results.
-- **Index lifecycle.** The index (`~/Library/Caches/Floodlight/tui-files.flix`) is `mmap`ed at start. If it is missing or older than 15 minutes, the shim rebuilds it on a pthread. The rebuild writes a temp file and renames it (ADR 0010), and the script thread swaps handles when `fls_index_poll` reports the rebuild done. TypeScript never runs off the main thread, which scriptc forbids anyway.
+- **Index lifecycle.** The index (`~/Library/Application Support/com.floodlight.tui/files.flix`) is `mmap`ed at start. If it is missing or older than 15 minutes, the shim rebuilds it on a pthread. The rebuild writes a temp file and renames it (ADR 0010), and the script thread swaps handles when `fls_index_poll` reports the rebuild done. TypeScript never runs off the main thread, which scriptc forbids anyway.
 - **Opening.** Enter runs `/usr/bin/open`; ⌥Enter runs `open -R`. Both go through `posix_spawn` with `POSIX_SPAWN_SETSID`, so the opener survives the popup terminal closing the instant the TUI exits.
 - **Rendering.** Each frame is drawn into a back buffer. Per row, only the span from the first to the last changed cell is written, inside a synchronized-update bracket, so there is no flicker. Wide (CJK, emoji) and zero-width characters are handled, and no run ever splits a wide character.
 - **Global hotkey.** A terminal program cannot own one. `launch/floodlight-popup` opens a borderless Ghostty, kitty, Alacritty or WezTerm window (or a Terminal.app window) running the TUI. Bind it with Shortcuts.app (a "Run Shell Script" action with a keyboard shortcut), skhd or Hammerspoon. Window creation dominates summon latency on that path, not the TUI.
@@ -84,19 +96,86 @@ On the Linux CI-class container (x86-64), indexing `/usr` (91k entries), from `m
 
 The xcode-27 Mac runner numbers, including exec → first paint from the kernel's process start time, are in the PR and in the `scriptc frontend` job summary on every run.
 
+## The full port (#115)
+
+The TUI now does what the Swift app does in search, the Full Disk Access
+grant and Clipboard History, adapted to a terminal where a feature needs a
+window. The domain is plain TypeScript with no native calls, shared with the
+Cocoa panel:
+
+- **Search Session** (`session.ts`). One immutable publication per query
+  (ADR 0002): at most 80 rows, the Google row always last, filter counts from
+  the same list. Local rows rank in the core's score space: a file scores
+  what the Zig core gave it, an app what `core-match.ts` (a port of
+  `core/src/match.zig`) gives its name, plus 60. File hits inside `.app`
+  bundles and folder hits that duplicate an app are dropped. Typed addresses
+  (`engines.ts`, the Swift `DirectLink`), keyword engines (ADR 0006),
+  arithmetic and unit conversions (`calculator.ts`) rank above that space,
+  as in the Swift app. System Settings panes (`settings.ts`) score like an
+  app, with a bonus of 30. Tab, Shift-Tab, Esc and Backspace-on-empty move
+  between local, web and clipboard modes as `SearchMode` does.
+- **Clipboard** (`clip-entry.ts`, `clip-capture.ts`, `clip-board.ts`).
+  ADR 0009's classification with the Swift board's titles and subtitles; the
+  capture gates (concealed, transient, own write, repeat, 32,000-byte text,
+  15 MiB image); the board's list order, filters, actions menu and keys. Keys
+  reach the board as logical names (`return`, `cmd+d`), so one fixture
+  drives every frontend.
+- **Store** (`native/flclip.c`). SQLite in WAL mode on the Swift app's
+  `clipboard_entries` schema, migrations and trigram FTS table (ADR 0008):
+  every pinned entry plus the 1000 newest, or up to 200 matches. If the file
+  will not open, history lives in memory for the run.
+- **Platform layer**, in two halves. `native/flplatform.c` is plain C: the
+  Full Disk Access probe and the host terminal's bundle. `native/flmac.m`
+  (a stub elsewhere) holds every AppKit, CoreGraphics and ImageIO call: the
+  pasteboard, ⌘V to the paste target, app names. Only `floodlight-clipd`
+  and the panel link the AppKit half. Linking it into the TUI cost 12 ms of
+  cold start on the CI Mac (exec → first paint 8.3 → 20.3 ms), so the TUI
+  hands copy and paste to `floodlight-clipd --copy ID [--paste-pid PID]`
+  and reads the app names the agent caches in `app-names.tsv`. The Full
+  Disk Access probe also runs after the first paint: without the grant,
+  opening `TCC.db` waits on tccd. The domain modules never call the OS, so
+  the parity fixtures run headless.
+
+| Shared contract | In the TUI |
+|---|---|
+| Carbon hotkey, non-activating panel | `floodlight-popup` (⌥Space) and `floodlight-popup --board` (⌥⇧C), bound in Shortcuts.app, skhd or Hammerspoon |
+| Paste target | The launcher records the frontmost app (`lsappinfo`) and passes `--paste-pid`; after the TUI exits, `floodlight-clipd` writes the entry and posts ⌘V |
+| Liquid Glass, resize without stale frames | Not applicable: the TUI fills its terminal and redraws on resize |
+| Icons and thumbnails | A kind badge per row; images show dimensions and size |
+| Quick Look | Ctrl-Y (Space on an empty board query) runs `qlmanage -p` |
+| Full Disk Access guidance panel | A notice row; Ctrl-G opens Settings at the list and reveals the terminal app for dragging; a 1 s poll sees the grant and rebuilds the index |
+| Board at 840 × 560 pt | A split view at 3/7 list, 4/7 inspector of the terminal's width |
+| Clipboard capture | `floodlight-clipd`, a second scriptc binary run by launchd, polls every 0.5 s |
+| ⌘ keys | ⌥ stands in for ⌘, with Ctrl chords as a second spelling |
+
+### Parity fixtures
+
+`fixtures/parity/` at the repository root holds the shared seam: a file
+tree, an app list and queries with their ranked rows, Top Hit and counts
+(`search.json`); captures with the stored entry or "skipped"
+(`clipboard.json`); and board key sequences with the action they request
+(`board.json`). The self-test indexes the tree with the real Zig core and
+runs every case through the same entry points the TUI uses.
+
 ## Known gaps
 
-- **No clipboard, inspector, settings, Quick Look, System Settings search, calculator or web fallback.** Out of scope for this change.
-- **No live file updates** beyond the start-up staleness rebuild, the same gap ADR 0010 has.
-- **No shared domain with the Swift app.** `SearchSession` here mirrors ADR 0001/0002 in spirit, not in code.
+- **Assistant engines** (`claude`, `codex`) are left out of keyword search:
+  they need a process runner and a result view the terminal does not have.
+- **Bitmap image previews** in the terminal are out of scope; Quick Look
+  shows them.
+- **No live file updates** beyond the start-up staleness rebuild and the
+  rebuild after a Full Disk Access grant, the same gap ADR 0010 has.
+- **The platform layer is checked on macOS only.** On Linux it is a stub, so
+  paste, copy and capture do nothing there; the domain and the store are
+  tested on both.
 - **scriptc is experimental.** The ABI between the compiler and its runtime pack is versioned (`scr_runtime_abi_v22`), and the pin moves only on purpose.
 
 ## Gate
 
 `make test-scriptc` (CI job **scriptc frontend**, xcode-27) runs:
 
-1. the self-test, compiled by scriptc: matcher, key parser, session, and every frame replayed through a VT emulator and compared cell by cell;
-2. the coverage gate: no Node islands, no dynamic tier;
-3. a smoke run of the stripped binary against a real index on a pipe, including app search for Terminal.app on macOS.
+1. the self-test, compiled by scriptc: matcher, key parser, session, every frame replayed through a VT emulator and compared cell by cell, and the parity fixtures;
+2. the coverage gate for the TUI and the capture agent: no Node islands, no dynamic tier;
+3. a smoke run of the stripped binaries against a real index and store on a pipe: search, calculator, web mode, capture gates, board pin and delete, the Full Disk Access notice, and app search for Terminal.app on macOS.
 
 `make measure-scriptc` writes the size, cold start, idle memory and latency table to the job summary.

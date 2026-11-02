@@ -8,15 +8,17 @@ import {
   fls_index_open,
   fls_index_poll,
 } from "./native";
-import { parentPath } from "./paths";
+import { dataDir, parentPath } from "./paths";
 
 /** Older than this, the index is rebuilt in the background at start-up. */
 const STALE_SECONDS = 15 * 60;
 
 export function defaultIndexPath(home: string): string {
-  if (process.platform === "darwin") return home + "/Library/Caches/Floodlight/tui-files.flix";
-  const xdg = process.env.XDG_CACHE_HOME ?? "";
-  return (xdg.length > 0 ? xdg : home + "/.cache") + "/floodlight/tui-files.flix";
+  return dataDir(home) + "/files.flix";
+}
+
+export function ensureDir(dir: string): void {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 /**
@@ -30,8 +32,12 @@ export function prepareIndex(index: string, root: string, files: CoreFiles): boo
     files.entries = count >= 0 ? count : -1;
   }
   if (age >= 0 && age < STALE_SECONDS && files.entries >= 0) return false;
-  const dir = parentPath(index);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return rebuildIndex(index, root);
+}
+
+/** Starts a background rebuild now, e.g. after a Full Disk Access grant. */
+export function rebuildIndex(index: string, root: string): boolean {
+  ensureDir(parentPath(index));
   return fls_index_build_async(root, index) > 0;
 }
 

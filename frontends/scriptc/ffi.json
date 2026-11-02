@@ -1,31 +1,224 @@
 {
-  "ffi_format": 6,
+  "ffi_format": 7,
   "functions": [
-    { "name": "fls_now_ms", "symbol": "fls_now_ms", "params": [], "returns": "f64" },
-    { "name": "fls_process_age_ms", "symbol": "fls_process_age_ms", "params": [], "returns": "f64" },
-    { "name": "fls_resident_bytes", "symbol": "fls_resident_bytes", "params": [], "returns": "f64" },
-    { "name": "fls_footprint_bytes", "symbol": "fls_footprint_bytes", "params": [], "returns": "f64" },
-    { "name": "fls_sleep_ms", "symbol": "fls_sleep_ms", "params": ["i32"], "returns": "void" },
-    { "name": "fls_tty_enter", "symbol": "fls_tty_enter", "params": [], "returns": "i32" },
-    { "name": "fls_tty_leave", "symbol": "fls_tty_leave", "params": [], "returns": "void" },
-    { "name": "fls_tty_size", "symbol": "fls_tty_size", "params": [], "returns": "i32" },
-    { "name": "fls_read", "symbol": "fls_read", "params": ["mutable-bytes", "i32"], "returns": "i32" },
-    { "name": "fls_write", "symbol": "fls_write", "params": ["string"], "returns": "i32" },
-    { "name": "fls_open", "symbol": "fls_open", "params": ["string", "i32"], "returns": "i32" },
-    { "name": "fls_index_open", "symbol": "fls_index_open", "params": ["string"], "returns": "i32" },
+    {
+      "name": "fls_now_ms",
+      "symbol": "fls_now_ms",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "fls_process_age_ms",
+      "symbol": "fls_process_age_ms",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "fls_resident_bytes",
+      "symbol": "fls_resident_bytes",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "fls_footprint_bytes",
+      "symbol": "fls_footprint_bytes",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "fls_sleep_ms",
+      "symbol": "fls_sleep_ms",
+      "params": ["i32"],
+      "returns": "void"
+    },
+    {
+      "name": "fls_tty_enter",
+      "symbol": "fls_tty_enter",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_tty_leave",
+      "symbol": "fls_tty_leave",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "name": "fls_tty_size",
+      "symbol": "fls_tty_size",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_read",
+      "symbol": "fls_read",
+      "params": ["mutable-bytes", "i32"],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_write",
+      "symbol": "fls_write",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_open",
+      "symbol": "fls_open",
+      "params": ["string", "i32"],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_index_open",
+      "symbol": "fls_index_open",
+      "params": ["string"],
+      "returns": "i32"
+    },
     {
       "name": "fls_index_build_async",
       "symbol": "fls_index_build_async",
       "params": ["string", "string"],
       "returns": "i32"
     },
-    { "name": "fls_index_poll", "symbol": "fls_index_poll", "params": [], "returns": "i32" },
-    { "name": "fls_index_build_result", "symbol": "fls_index_build_result", "params": [], "returns": "i32" },
-    { "name": "fls_search", "symbol": "fls_search", "params": ["string", "mutable-bytes"], "returns": "u32" },
-    { "name": "fls_path", "symbol": "fls_path", "params": ["u32", "mutable-bytes"], "returns": "u32" },
-    { "name": "fls_is_dir", "symbol": "fls_is_dir", "params": ["u32"], "returns": "bool" },
-    { "name": "fls_file_age_s", "symbol": "fls_file_age_s", "params": ["string"], "returns": "f64" }
+    {
+      "name": "fls_index_poll",
+      "symbol": "fls_index_poll",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_index_build_result",
+      "symbol": "fls_index_build_result",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_search",
+      "symbol": "fls_search",
+      "params": ["string", "mutable-bytes"],
+      "returns": "u32"
+    },
+    {
+      "name": "fls_path",
+      "symbol": "fls_path",
+      "params": ["u32", "mutable-bytes"],
+      "returns": "u32"
+    },
+    {
+      "name": "fls_is_dir",
+      "symbol": "fls_is_dir",
+      "params": ["u32"],
+      "returns": "bool"
+    },
+    {
+      "name": "fls_file_age_s",
+      "symbol": "fls_file_age_s",
+      "params": ["string"],
+      "returns": "f64"
+    },
+    {
+      "name": "fls_spawn",
+      "symbol": "fls_spawn",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_stat",
+      "symbol": "fls_stat",
+      "params": ["string", "mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "fls_wall_s",
+      "symbol": "fls_wall_s",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "flc_open",
+      "symbol": "flc_open",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_list",
+      "symbol": "flc_list",
+      "params": ["string", "i32", "mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_newest",
+      "symbol": "flc_newest",
+      "params": ["mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_entry",
+      "symbol": "flc_entry",
+      "params": ["string", "mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_record",
+      "symbol": "flc_record",
+      "params": [
+        "string",
+        "string",
+        "string",
+        "f64",
+        "string",
+        "string",
+        "string"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_set_pinned",
+      "symbol": "flc_set_pinned",
+      "params": ["string", "i32", "f64"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_delete",
+      "symbol": "flc_delete",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_prune",
+      "symbol": "flc_prune",
+      "params": ["f64"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_text",
+      "symbol": "flc_text",
+      "params": ["string", "mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_export_image",
+      "symbol": "flc_export_image",
+      "params": ["string", "string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_full_disk_access",
+      "symbol": "flm_full_disk_access",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_host_app",
+      "symbol": "flm_host_app",
+      "params": ["mutable-bytes"],
+      "returns": "i32"
+    }
   ],
-  "libraries": ["./build/libflshim.a", "../../.build/core-scriptc/lib/libfloodlight_core.a"],
-  "system_libraries": []
+  "libraries": [
+    "./build/libflshim.a",
+    "./build/libflclip.a",
+    "./build/libflplatform.a",
+    "../../.build/core-scriptc/lib/libfloodlight_core.a"
+  ],
+  "system_libraries": ["sqlite3"]
 }

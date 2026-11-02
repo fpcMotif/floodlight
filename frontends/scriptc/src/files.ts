@@ -1,8 +1,9 @@
 /** File search through floodlight-core, the Zig index (ADR 0010). */
-import { fls_is_dir, fls_path, fls_search } from "./native";
+import { fls_is_dir, fls_path, fls_search, fls_stat } from "./native";
 import { fuzzyMatch } from "./match";
 import { baseName, displayPath, joinPath, parentPath } from "./paths";
-import { FileSource, KIND_FILE, KIND_FOLDER, Row } from "./session";
+import { ACTION_OPEN, extensionOf, KIND_FILE, KIND_FOLDER, Row, RowDescriber } from "./row";
+import { FileSource } from "./session";
 
 /** fl_hit is a u32 id and an i32 score. */
 const HIT_BYTES = 8;
@@ -52,9 +53,36 @@ export class CoreFiles extends FileSource {
       const title = baseName(relative);
       const match = fuzzyMatch(title, term);
       const marks = match === null ? [] : match.positions;
-      const kind = fls_is_dir(id) ? KIND_FOLDER : KIND_FILE;
-      rows.push(new Row(kind, title, displayPath(parentPath(path), this.home), path, marks, score));
+      const dir = fls_is_dir(id);
+      rows.push(
+        new Row(
+          dir ? KIND_FOLDER : KIND_FILE,
+          "file:" + path,
+          title,
+          displayPath(parentPath(path), this.home),
+          path,
+          ACTION_OPEN,
+          marks,
+          score,
+          dir ? "" : extensionOf(title),
+        ),
+      );
     }
     return rows;
+  }
+}
+
+/** Size and date for a drawn file row; a vanished file keeps its row. */
+export class FileDescriber extends RowDescriber {
+  private readonly statBuf = new Uint8Array(16);
+  private readonly statView = new DataView(this.statBuf.buffer);
+
+  describe(row: Row): void {
+    row.described = true;
+    if (row.kind !== KIND_FILE && row.kind !== KIND_FOLDER) return;
+    const kind = fls_stat(row.target, this.statBuf);
+    if (kind === 0) return;
+    if (kind === 1) row.size = this.statView.getFloat64(0, true);
+    row.modified = this.statView.getFloat64(8, true);
   }
 }

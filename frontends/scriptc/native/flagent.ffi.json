@@ -1,0 +1,60 @@
+{
+  "ffi_format": 7,
+  "functions": [
+    {
+      "name": "flc_record_image",
+      "symbol": "flc_record_image",
+      "params": ["string", "f64", "string", "string", "i32", "i32", "i32"],
+      "returns": "i32"
+    },
+    {
+      "name": "flc_copy_image",
+      "symbol": "flc_copy_image",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_change_count",
+      "symbol": "flm_change_count",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_read_capture",
+      "symbol": "flm_read_capture",
+      "params": ["mutable-bytes"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_write_text",
+      "symbol": "flm_write_text",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_write_file",
+      "symbol": "flm_write_file",
+      "params": ["string"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_paste_to",
+      "symbol": "flm_paste_to",
+      "params": ["i32"],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_frontmost_pid",
+      "symbol": "flm_frontmost_pid",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "flm_app_name",
+      "symbol": "flm_app_name",
+      "params": ["string", "mutable-bytes"],
+      "returns": "i32"
+    }
+  ],
+  "libraries": ["./build/libflclip-agent.a", "./build/libflmac.a"]
+}

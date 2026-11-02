@@ -31,5 +31,8 @@ uint32_t fls_search(const uint8_t *query, size_t len, uint8_t *out, size_t cap);
 uint32_t fls_path(uint32_t id, uint8_t *out, size_t cap);
 uint8_t fls_is_dir(uint32_t id);
 double fls_file_age_s(const uint8_t *path, size_t len);
+int32_t fls_spawn(const uint8_t *args, size_t len);
+int32_t fls_stat(const uint8_t *path, size_t len, uint8_t *out, size_t cap);
+double fls_wall_s(void);
 
 #endif
