@@ -11,8 +11,16 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
     private let startError: (any Error)?
     private var changeScopeError: (any Error)?
     private let changeScopeDelay: Duration
+    /// Held shut, the scope change parks until the test opens it — for a
+    /// test that must act while the mutation is still in flight.
+    private let changeScopeGate: PassGate?
     private var recordedTracks: [(String, URL)] = []
     private var recordedLifecycle: [String] = []
+
+    /// Opens the moment `changeScope(to:)` is entered, so a test that needs a
+    /// query to arrive mid-mutation waits on the call itself rather than
+    /// polling for it against a deadline.
+    package let scopeChangeStarted = PassGate()
 
     package init(
         indexed: [SearchItem] = [],
@@ -22,7 +30,8 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
         startDelay: Duration = .zero,
         startError: (any Error)? = nil,
         changeScopeError: (any Error)? = nil,
-        changeScopeDelay: Duration = .zero
+        changeScopeDelay: Duration = .zero,
+        changeScopeGate: PassGate? = nil
     ) {
         self.indexed = indexed
         self.content = content
@@ -32,6 +41,7 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
         self.startError = startError
         self.changeScopeError = changeScopeError
         self.changeScopeDelay = changeScopeDelay
+        self.changeScopeGate = changeScopeGate
     }
 
     package var tracked: [(query: String, url: URL)] {
@@ -60,7 +70,9 @@ package final class ScriptedFileSource: FileSource, @unchecked Sendable {
 
     package func changeScope(to url: URL) async throws {
         lock.withLock { recordedLifecycle.append("scope") }
+        scopeChangeStarted.open()
         if changeScopeDelay > .zero { try await Task.sleep(for: changeScopeDelay) }
+        try await changeScopeGate?.wait()
         if let error = lock.withLock({ changeScopeError }) { throw error }
     }
 

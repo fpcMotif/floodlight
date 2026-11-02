@@ -323,7 +323,12 @@ struct SourceSearchEngineTests {
         let applications = ScriptedCatalog()
         applications.setBehavior(.init(immediate: [first]), forQuery: "first")
         applications.setBehavior(.init(immediate: [second]), forQuery: "second")
-        let files = ScriptedFileSource(changeScopeDelay: TestBudget.duration(.milliseconds(100)))
+        // Held shut until both queries are parked behind it. A 100ms delay
+        // here once ran out on a loaded runner before the queries arrived.
+        let scopeChangeFinishes = PassGate()
+        let files = ScriptedFileSource(changeScopeGate: scopeChangeFinishes)
+        // A wait that throws below must not leave the mutation parked.
+        defer { scopeChangeFinishes.open() }
         let engine = SourceSearchEngine(
             files: files,
             applications: applications,
@@ -333,13 +338,12 @@ struct SourceSearchEngineTests {
             try await engine.changeScope(to: URL(fileURLWithPath: "/new-scope"))
         }
         try await scopeChangeIsInFlight(files)
-        let firstQuery = Task { await engine.search("first", immediate: true) }
-        try await Task.sleep(for: TestBudget.duration(.milliseconds(10)))
-        let secondQuery = Task { await engine.search("second", immediate: true) }
+        let queries = await queueSearches(["first", "second"], on: engine)
+        scopeChangeFinishes.open()
 
         try await scopeChange.value
-        var firstIterator = await firstQuery.value.makeAsyncIterator()
-        var secondIterator = await secondQuery.value.makeAsyncIterator()
+        var firstIterator = await queries[0].value.makeAsyncIterator()
+        var secondIterator = await queries[1].value.makeAsyncIterator()
         let firstEnd = await firstIterator.next()
         let settled = try await nextSettled(&secondIterator)
 
@@ -446,19 +450,32 @@ struct SourceSearchEngineTests {
     /// The tests above depend on a query arriving *while* the mutation is in
     /// flight — arrive before it and the query simply becomes the current
     /// execution, ending the stream the test is still reading. Sleeping for a
-    /// fixed 10ms only guesses that the mutation's task got scheduled, and on
-    /// a loaded runner it has not; the file source records the call itself, so
-    /// that is the precondition to wait on.
-    private func scopeChangeIsInFlight(
-        _ files: ScriptedFileSource,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws {
-        let deadline = Date().addingTimeInterval(TestBudget.seconds(5))
-        while Date() < deadline {
-            if files.lifecycle.contains("scope") { return }
-            try await Task.sleep(for: .milliseconds(1))
+    /// fixed 10ms only guesses that the mutation's task got scheduled, and a
+    /// deadline-bound poll only guesses how long a loaded runner takes to
+    /// schedule it. The file source opens a gate when the call arrives, and
+    /// the engine records the mutation before its task can reach the source,
+    /// so that gate is the precondition to wait on.
+    private func scopeChangeIsInFlight(_ files: ScriptedFileSource) async throws {
+        try await files.scopeChangeStarted.wait()
+    }
+
+    /// Issues `queries` in order, each one registered with the engine before
+    /// the next is issued.
+    ///
+    /// Separate `Task`s reach the actor in whatever order the scheduler picks,
+    /// and a sleep between them only guesses. Isolated to the engine, each
+    /// immediate task runs `search` up to its first suspension — the wait on
+    /// the in-flight mutation — before this loop moves on, so the order is the
+    /// one written.
+    private func queueSearches(
+        _ queries: [String],
+        on engine: isolated SourceSearchEngine
+    ) -> [Task<AsyncStream<SearchSnapshot>, Never>] {
+        var tasks: [Task<AsyncStream<SearchSnapshot>, Never>] = []
+        for query in queries {
+            tasks.append(Task.immediate { await engine.search(query, immediate: true) })
         }
-        Issue.record("the scope change never started", sourceLocation: sourceLocation)
+        return tasks
     }
 
     @concurrent
