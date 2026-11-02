@@ -86,30 +86,3 @@ final class FFFFileSource: FileSource {
         }
     }
 }
-
-package extension SourceSearchEngine {
-    init(
-        rootURL: URL,
-        storageURL: URL,
-        applications: any Catalog,
-        settings: any Catalog,
-        logFilePath: String? = nil,
-        logLevel: String = "info"
-    ) {
-        self.init(
-            files: FFFFileSource(
-                index: FFFIndex(
-                    rootURL: rootURL,
-                    storageURL: storageURL,
-                    enableHomeDirectoryScanning: true,
-                    contentCacheBudget: .launcher,
-                    logFilePath: logFilePath,
-                    logLevel: logLevel
-                ),
-                rootURL: rootURL
-            ),
-            applications: applications,
-            settings: settings
-        )
-    }
-}

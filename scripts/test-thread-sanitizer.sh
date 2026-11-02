@@ -12,4 +12,4 @@ cd "$PROJECT_DIR"
 swift test \
     --sanitize=thread \
     --scratch-path .build/thread-sanitizer \
-    --skip 'SearchPerformanceTests|SearchItemRankingPerformanceTests|ClipboardHistoryPerformanceTests'
+    --skip 'SearchPerformanceTests|SearchItemRankingPerformanceTests|ClipboardHistoryPerformanceTests|FileSourceComparisonPerformanceTests'

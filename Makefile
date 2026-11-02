@@ -1,9 +1,9 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core
+	install-zig test-core core
 
-debug:
+debug: core
 	swift build
 
 # The gate. One command, every mechanical check, same verdict as CI.
@@ -26,10 +26,10 @@ check-rules:
 check-architecture:
 	./scripts/check-architecture.sh
 
-check-build:
+check-build: core
 	./scripts/check-build.sh
 
-check-dead-code:
+check-dead-code: core
 	./scripts/check-dead-code.sh
 
 # Fixes everything `check-format` would complain about. Formatting feedback is
@@ -42,26 +42,26 @@ format:
 install-tools:
 	./scripts/install-tools.sh
 
-build:
+build: core
 	swift build -c release
 
 run: debug
 	./scripts/run.sh
 
-test:
+test: core
 	swift test
 
-test-address-sanitizer:
+test-address-sanitizer: core
 	./scripts/test-address-sanitizer.sh
 
-test-thread-sanitizer:
+test-thread-sanitizer: core
 	./scripts/test-thread-sanitizer.sh
 
 test-sanitizers: test-address-sanitizer test-thread-sanitizer
 
 # The latency budgets, in release configuration — debug numbers are meaningless
 # for a search path. This is what CI runs as its own step.
-test-performance:
+test-performance: core
 	./scripts/test-performance.sh
 
 bundle: build
@@ -84,11 +84,19 @@ install: bundle
 # means by "clean". Remove it by hand to force a re-fetch.
 clean:
 	swift package clean
+	rm -rf core/zig-out core/.zig-cache
 
-# The Zig file index in core/. Separate from `make check` and `make test` so a
-# Swift-only change never waits on a second toolchain; CI runs it as its own job.
+# The Zig file index in core/: its unit tests, a cross-build for the other OS,
+# and the CLI bench. Separate from `make test` because only a change to core/
+# can move its verdict; CI runs it as its own job.
 install-zig:
 	./scripts/install-zig.sh
 
 test-core:
 	./scripts/test-core.sh
+
+# The static archive FloodlightEngine links. Every target that builds Swift
+# depends on it, because SwiftPM has no way to run Zig itself. Fetches the
+# pinned Zig on first use; Zig's own cache makes a repeat run a no-op.
+core:
+	./scripts/build-core.sh

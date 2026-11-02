@@ -12,4 +12,4 @@ cd "$PROJECT_DIR"
 swift test \
     --sanitize=address \
     --scratch-path .build/address-sanitizer \
-    --skip 'SearchPerformanceTests|SearchItemRankingPerformanceTests|ClipboardHistoryPerformanceTests'
+    --skip 'SearchPerformanceTests|SearchItemRankingPerformanceTests|ClipboardHistoryPerformanceTests|FileSourceComparisonPerformanceTests'
