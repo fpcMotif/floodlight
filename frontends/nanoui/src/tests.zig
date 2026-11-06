@@ -542,6 +542,40 @@ test "a long history builds the rows in view only, and still reaches its end" {
     try t.expect(tester.hasText("entry number 778"));
 }
 
+test "a reopened panel stays unseen until a frame of its own is presented, then shows once" {
+    var e: mac.Entrance = .{};
+    try t.expect(!e.reveal(true));
+    e.orderedIn();
+    // A frame built without a drawable is not on screen: the old one still is.
+    try t.expect(!e.reveal(false));
+    try t.expect(e.reveal(true));
+    try t.expect(!e.reveal(true));
+}
+
+test "a board frame that waits for a later one keeps the display link at the display's pace" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:");
+    defer store.close();
+    var buf: [32]u8 = undefined;
+    for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    tester.scroll(150, 300, -120);
+    tester.frame();
+    const one_refresh: f32 = 1.0 / 60.0;
+    // The scroll bar's fade wakes the board later: nanoui would slow the link to it.
+    try t.expect(tester.ctx.frame_in.? > one_refresh);
+    mac.keepLinkAtDisplayRate(&tester.ctx);
+    if (tester.ctx.frame_in) |fi| try t.expect(fi <= one_refresh);
+}
+
 test "an empty history says so" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();

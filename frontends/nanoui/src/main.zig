@@ -14,6 +14,7 @@ const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
+const entrance_timeout_ms = 250;
 
 /// Icons drawn per session at most; all go when the panel hides.
 const max_icons = 64;
@@ -36,6 +37,7 @@ const Shell = struct {
     change_count: objc.NSInteger = 0,
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
+    entrance: mac.Entrance = .{},
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -52,7 +54,7 @@ const Shell = struct {
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
                 s.panel.board.now = clipboard.wallClock();
                 s.positionOnPointerScreen();
-                s.panel_window.show();
+                s.orderIn();
                 s.panel_window.redraw();
             },
         }
@@ -80,7 +82,33 @@ const Shell = struct {
     fn showPanel(s: *Shell) void {
         if (!s.panel_window.isVisible()) s.notePasteTarget();
         s.positionOnPointerScreen();
+        s.orderIn();
+    }
+
+    fn orderIn(s: *Shell) void {
+        if (!s.panel_window.isVisible()) {
+            mac.setAlpha(s.panel_window, 0);
+            s.entrance.orderedIn();
+            nanoui.App.after(entrance_timeout_ms, s, revealAnyway);
+        }
         s.panel_window.show();
+    }
+
+    /// In the frame's own transaction: alpha and pixels land together.
+    fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        mac.keepLinkAtDisplayRate(&surface.ctx);
+        if (!s.entrance.reveal(surface.renderer.given_drawable != null)) return false;
+        mac.setAlpha(s.panel_window, 1);
+        return true;
+    }
+
+    /// A panel left see-through would be worse than one old frame.
+    fn revealAnyway(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (!s.entrance.waiting) return;
+        s.entrance.waiting = false;
+        mac.setAlpha(s.panel_window, 1);
     }
 
     fn positionOnPointerScreen(s: *Shell) void {
@@ -412,6 +440,10 @@ pub fn main(init: std.process.Init) !void {
         .content = .{ .view = .init(&shell.panel, panel_mod.Panel.view) },
     });
     _ = mac.installSlab(shell.panel_window, metrics.corner_radius, .status, .clear);
+    if (shell.panel_window.surface) |surface| {
+        surface.after_frame = Shell.afterFrame;
+        surface.after_frame_ctx = &shell;
+    }
 
     shell.guidance = .{ .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
