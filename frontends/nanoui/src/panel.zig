@@ -6,6 +6,7 @@ const ui = nanoui.ui;
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const mac = @import("mac.zig");
 
 /// The Swift shell's `FloodlightMetrics`, so both panels measure the same.
 pub const metrics = struct {
@@ -186,8 +187,15 @@ pub const Panel = struct {
     /// Searches again when the text changed since the last answer.
     pub fn refresh(p: *Panel) void {
         const text = p.field.text();
-        if (p.mode == .clipboard) return p.board.refresh(text);
+        if (p.mode == .clipboard) {
+            if (!p.board.stale and std.mem.eql(u8, text, p.board.answered.items)) return;
+            mac.signpostBegin(.keystroke);
+            defer mac.signpostEnd(.keystroke);
+            return p.board.refresh(text);
+        }
         if (std.mem.eql(u8, text, p.answered.items)) return;
+        mac.signpostBegin(.keystroke);
+        defer mac.signpostEnd(.keystroke);
         _ = p.arena.reset(.retain_capacity);
         p.rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
         p.answered.clearRetainingCapacity();

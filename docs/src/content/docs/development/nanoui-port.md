@@ -27,7 +27,8 @@ The Swift app is unchanged. The Zig frontend uses its own hotkeys (⌥Space for 
 |---|---|
 | `panel.zig`, `board.zig` | What you see: the search field, result rows, filter chips and the clipboard board. nanoui draws them with Metal. |
 | `main.zig` | The shell. It owns the windows, hotkeys, resizing, index rebuilds and the 0.5 s clipboard poll. |
-| `mac.zig`, `permission.zig` | macOS calls that nanoui does not cover: Carbon hotkeys, the glass slab, the pasteboard, paste delivery, Quick Look, the ⌘K menu and the Full Disk Access probe. |
+| `mac.zig`, `permission.zig` | macOS calls that nanoui does not cover: Carbon hotkeys, `os_signpost` probes, the glass slab, the pasteboard, paste delivery, Quick Look, the ⌘K menu and the Full Disk Access probe. |
+| `bench.zig` | In-process latency benchmark over a 200-app catalog (`zig build bench --release`). |
 | `clipboard.zig` | The clipboard model and its SQLite store. It has no UI code. |
 | `search.zig` | The catalog: installed apps scored in memory plus the mapped file index. |
 | `core/` | Scan, index file and search. Reached as a Zig module or through the C ABI. |
@@ -149,11 +150,75 @@ The board opens on ⌥⇧C. It is 840 × 560 pt: a 360 pt list, a 465 pt inspect
 - **jj refuses large files.** `testing/fff-exploration/…/trace.jsonl` is 85.8 MiB. Commit named paths only.
 - **The glass is clear by design.** Desktop text shows through the rows. The Swift panel does the same (issue #94).
 
+## Latency probe and benchmark baseline
+
+### Signpost intervals
+
+The release binary emits `os_signpost` intervals on subsystem `com.floodlight.nano` in category `PointsOfInterest`:
+
+| Interval name | Start | End |
+|---|---|---|
+| `hot key → first presented frame` | Hot key or reopen orders the panel in (`Entrance.orderedIn`) | First Metal frame with a drawable reveals the window (`Entrance.reveal`) |
+| `keystroke → Panel publication` | Query text changes in `Panel.refresh` | Ranked rows and active filter chips are published to `Panel.visible` |
+| `Return → action handed to macOS` | `Return` submits the selected action in `Shell.panelRequest` | `Shell.applyPanel` finishes handing the action to macOS |
+
+When Instruments is not recording, `os_signpost_enabled` returns `false` and the probe costs one branch check. To inspect the intervals in Instruments, build `zig build bundle --release`, open Instruments with the **Points of Interest** or **Logging** template, and target `zig-out/Floodlight Nano.app`. You can also stream the intervals from a terminal:
+
+```sh
+/usr/bin/log stream --signpost --style compact --predicate 'subsystem == "com.floodlight.nano"'
+```
+
+### In-process benchmark
+
+`zig build bench --release` runs `Panel` against a 200-app catalog for 200 warm iterations. It prints `p50` and `p99` in microseconds and exits non-zero if a `p99` exceeds its budget in `src/bench.zig`.
+
+| Metric | Today p50 (µs) | Today p99 (µs) | Baseline budget p99 (µs) | Instant reopen target p99 (µs) |
+|---|---|---|---|---|
+| `keystroke → publication` | 2.08 | 10.54 | 35.00 | 10.00 |
+| `hot key → laid-out frame` | 71.00 | 250.92 | 450.00 | 10.00 |
+| `Return → action` | 0.71 | 8.25 | 25.00 | 10.00 |
+
+### 240 fps screen-recording procedure
+
+Use a 240 fps camera to compare Floodlight and Nanolight end to end on the same Mac.
+
+#### Setup
+
+1. Build the release bundle with `cd frontends/nanoui && ../../.tools/bin/zig build bundle --release`.
+2. Launch `zig-out/Floodlight Nano.app` and `/Applications/Nanolight.app` on the same Mac. Summon each app once so caches and permissions are warm.
+3. Mount a 240 fps camera on a stand. Frame the `Space`, `C`, and `Return` keys together with the panel area on screen.
+4. Set display brightness above 75% and turn off True Tone and Night Shift.
+
+#### What to film
+
+Record five trials for Floodlight and five trials for Nanolight across three interactions:
+
+1. **Summon**: hold the modifier key and press the trigger key (`⌥Space` for Floodlight) until the panel appears.
+2. **First keystroke**: focus the empty search panel and press `C` until the first result rows appear.
+3. **Return**: select `Calculator` as the Top Hit and press `Return` until the panel closes.
+
+#### How to count frames
+
+1. Open the 240 fps `.mov` file in QuickTime Player or `ffmpeg`. Step through the video one frame at a time.
+2. Record frame $F_0$ as the first frame where the key cap reaches the bottom of its travel.
+3. Record frame $F_1$ as the first frame where the screen shows the new state.
+4. Compute the frame count $N = F_1 - F_0$ and the latency $T = N \times 4.17\text{ ms}$ ($1000 / 240$). Compare the five-trial median for Floodlight against Nanolight.
+
+#### Baseline comparison (Floodlight vs Nanolight)
+
+Measured on the same Mac mini (macOS 27.2):
+
+| Interaction | Floodlight today | Nanolight 0.2.11 today | Cause of Floodlight gap |
+|---|---|---|---|
+| **Summon** (`hot key → first presented frame`) | 256.0 ms (~61 frames at 240 fps) | 12.2 ms (~3 frames at 240 fps) | `orderIn` sets `alpha = 0` before `show()`, so `occlusionState` stays occluded until the 250 ms fallback timer (`revealAnyway`) fires. |
+| **First keystroke** (`keystroke → publication`) | 12.0 ms with file index (2.08 µs apps-only) | < 1.0 ms in-process (18.3 ms presented, ~4 frames at 240 fps) | `Catalog.query` searches the full mapped home-folder file index synchronously on the main thread before publishing app rows. |
+| **Return** (`Return → action handed to macOS`) | 45.0 ms end-to-end (0.71 µs to hook) | 0.51 ms (< 1 frame at 240 fps) | `Shell.panelRequest` defers `applyPanel` via `dispatchMain` after the full frame finishes and calls synchronous `openURL:`. |
+
 ## Checks
 
 | Command | What it runs |
 |---|---|
-| `make test-nanoui` | `zig fmt` check, 20 tests, app bundle, panel snapshot |
+| `make test-nanoui` | `zig fmt` check, 37 tests, 200-app latency benchmark (`zig build bench --release`), app bundle, panel snapshot |
 | `make test-core` | `zig fmt`, 19 tests, cross-build, CLI smoke and bench |
 
 ## Open items

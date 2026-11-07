@@ -116,6 +116,69 @@ pub fn orderFrontRegardless(window: *nanoui.Window) void {
     objc.msg(void, window.nswindow, "orderFrontRegardless", .{});
 }
 
+const OsLog = *opaque {};
+extern "c" fn _dyld_get_prog_image_header() *const anyopaque;
+extern "c" fn os_log_create(subsystem: [*:0]const u8, category: [*:0]const u8) OsLog;
+extern "c" fn os_signpost_enabled(log: OsLog) bool;
+extern "c" fn _os_signpost_emit_with_name_impl(
+    dso: *const anyopaque,
+    log: OsLog,
+    kind: u8,
+    spid: u64,
+    name: [*:0]const u8,
+    format: [*:0]const u8,
+    buf: [*]u8,
+    size: u32,
+) void;
+
+pub const Signpost = enum {
+    summon,
+    keystroke,
+    submit,
+};
+
+const signpost_begin: u8 = 1;
+const signpost_end: u8 = 2;
+const signpost_exclusive_id: u64 = 0xeeeeb0b5b2b2eeee;
+
+var signpost_log: ?OsLog = null;
+var signpost_dso: ?*const anyopaque = null;
+
+fn signpostLog() OsLog {
+    if (signpost_log) |l| return l;
+    const l = os_log_create("com.floodlight.nano", "PointsOfInterest");
+    signpost_log = l;
+    signpost_dso = _dyld_get_prog_image_header();
+    return l;
+}
+
+// `logd` resolves signpost strings only from `__TEXT,__oslogstring`; `export`
+// keeps ReleaseFast from merging them into `__TEXT,__const`.
+export const fl_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
+export const fl_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
+export const fl_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
+export const fl_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
+
+fn signpostEmit(s: Signpost, kind: u8) void {
+    const log = signpostLog();
+    if (!os_signpost_enabled(log)) return;
+    var buf: [2]u8 align(16) = .{ 0, 0 };
+    const name: [*:0]const u8 = switch (s) {
+        .summon => &fl_signpost_summon,
+        .keystroke => &fl_signpost_keystroke,
+        .submit => &fl_signpost_submit,
+    };
+    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &fl_signpost_fmt, &buf, buf.len);
+}
+
+pub fn signpostBegin(s: Signpost) void {
+    signpostEmit(s, signpost_begin);
+}
+
+pub fn signpostEnd(s: Signpost) void {
+    signpostEmit(s, signpost_end);
+}
+
 /// A window ordered out keeps the last frame it presented, and ordered in
 /// shows it until the next one lands: the board scrolled where it was left,
 /// then snapping to the top. The window is unseen until its own frame.
@@ -123,6 +186,7 @@ pub const Entrance = struct {
     waiting: bool = false,
 
     pub fn orderedIn(e: *Entrance) void {
+        if (!e.waiting) signpostBegin(.summon);
         e.waiting = true;
     }
 
@@ -130,7 +194,14 @@ pub const Entrance = struct {
     pub fn reveal(e: *Entrance, presenting: bool) bool {
         if (!e.waiting or !presenting) return false;
         e.waiting = false;
+        signpostEnd(.summon);
         return true;
+    }
+
+    pub fn cancel(e: *Entrance) void {
+        if (!e.waiting) return;
+        e.waiting = false;
+        signpostEnd(.summon);
     }
 };
 
