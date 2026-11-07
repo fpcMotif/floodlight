@@ -4,8 +4,16 @@ const std = @import("std");
 
 pub const Kind = enum { text, file, image };
 
-/// What a text entry holds, decided from its characters alone.
-pub const Content = enum { plain, link, color, code, path };
+/// What a text entry holds, decided from its characters alone, with the
+/// one fact its kind carries: a link's domain, a colour, a code language,
+/// a path without `file://`. Files and images are `.plain`.
+pub const Content = union(enum) {
+    plain,
+    link: []const u8,
+    color: Rgba,
+    code: []const u8,
+    path: []const u8,
+};
 
 pub const Entry = struct {
     id: i64,
@@ -20,16 +28,16 @@ pub const Entry = struct {
     height: u32 = 0,
     byte_count: u64 = 0,
     thumbnail: []const u8 = "",
-
-    pub fn content(e: Entry) Content {
-        return if (e.kind == .text) classify(e.text) else .plain;
-    }
+    /// Decided when the entry was recorded; never parsed again.
+    content: Content = .plain,
 
     /// A file, or text that names one.
     pub fn filePath(e: Entry) ?[]const u8 {
         if (e.kind == .file) return e.text;
-        if (e.kind == .text and e.content() == .path) return pathOf(e.text);
-        return null;
+        return switch (e.content) {
+            .path => |p| p,
+            else => null,
+        };
     }
 
     pub fn title(e: Entry, arena: std.mem.Allocator) []const u8 {
@@ -52,14 +60,38 @@ pub const Entry = struct {
     }
 };
 
+/// The content of copied text. Its slices point into `text`.
 pub fn classify(text: []const u8) Content {
     const t = std.mem.trim(u8, text, " \t\r\n");
     if (std.mem.indexOfAny(u8, text, "\r\n") == null and
-        (std.mem.startsWith(u8, text, "file://") or std.mem.startsWith(u8, text, "~/") or std.mem.startsWith(u8, text, "/"))) return .path;
-    if (domain(t) != null) return .link;
-    if (parseColor(t) != null) return .color;
-    if (codeLanguage(t) != null) return .code;
+        (std.mem.startsWith(u8, text, "file://") or std.mem.startsWith(u8, text, "~/") or std.mem.startsWith(u8, text, "/"))) return .{ .path = pathOf(text) };
+    if (domain(t)) |d| return .{ .link = d };
+    if (parseColor(t)) |c| return .{ .color = c };
+    if (codeLanguage(t)) |lang| return .{ .code = lang };
     return .plain;
+}
+
+/// The column form of a content's fact; a colour as `#RRGGBB[AA]`.
+fn storedDetail(buf: *[9]u8, c: Content) []const u8 {
+    return switch (c) {
+        .plain => "",
+        .link, .code, .path => |s| s,
+        .color => |rgba| if (rgba.a) |a|
+            std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{ rgba.r, rgba.g, rgba.b, a }) catch ""
+        else
+            std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgba.r, rgba.g, rgba.b }) catch "",
+    };
+}
+
+fn storedContent(kind: []const u8, detail: []const u8) Content {
+    const tag = std.meta.stringToEnum(std.meta.Tag(Content), kind) orelse return .plain;
+    return switch (tag) {
+        .plain => .plain,
+        .link => .{ .link = detail },
+        .code => .{ .code = detail },
+        .path => .{ .path = detail },
+        .color => if (parseColor(detail)) |c| .{ .color = c } else .plain,
+    };
 }
 
 fn pathOf(text: []const u8) []const u8 {
@@ -73,7 +105,7 @@ fn parentName(path: []const u8) ?[]const u8 {
 }
 
 /// A link's host without `www.`; null when the text is not an http(s) link.
-pub fn domain(text: []const u8) ?[]const u8 {
+fn domain(text: []const u8) ?[]const u8 {
     const rest = if (std.mem.startsWith(u8, text, "https://")) text["https://".len..] else if (std.mem.startsWith(u8, text, "http://")) text["http://".len..] else return null;
     if (std.mem.indexOfAny(u8, text, " \t\r\n") != null) return null;
     var host = rest[0 .. std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len];
@@ -86,7 +118,7 @@ pub fn domain(text: []const u8) ?[]const u8 {
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: ?u8 = null };
 
 /// `#RGB`, `#RRGGBB` or `#RRGGBBAA`.
-pub fn parseColor(text: []const u8) ?Rgba {
+fn parseColor(text: []const u8) ?Rgba {
     if (text.len < 4 or text[0] != '#') return null;
     const hex = text[1..];
     for (hex) |ch| if (!std.ascii.isHex(ch)) return null;
@@ -113,7 +145,7 @@ pub fn rgbDescription(arena: std.mem.Allocator, c: Rgba) []const u8 {
 
 const code_markers = [_][]const u8{ "func ", "struct ", "import ", "class ", "const ", "function ", "export " };
 
-pub fn codeLanguage(text: []const u8) ?[]const u8 {
+fn codeLanguage(text: []const u8) ?[]const u8 {
     const wrapped = text.len >= 2 and ((text[0] == '{' and text[text.len - 1] == '}') or (text[0] == '[' and text[text.len - 1] == ']'));
     if (wrapped and (std.json.validate(std.heap.page_allocator, text) catch false)) return "JSON";
     for (code_markers) |m| if (std.mem.indexOf(u8, text, m) != null) return "Code";
@@ -260,6 +292,115 @@ pub const Capture = union(enum) {
     };
 };
 
+/// The marker Floodlight puts on its own writes, so capture skips them.
+pub const own_write_type = "com.floodlight.own-write";
+/// A copy carrying any of these is not recorded.
+const skipped_types = [_][]const u8{ own_write_type, "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType", "com.apple.is-sensitive" };
+
+/// A picture on the pasteboard, decoded, as PNG whatever it came as.
+pub const PastedImage = struct {
+    png: []const u8,
+    thumbnail: []const u8,
+    width: u32,
+    height: u32,
+    format: enum { png, tiff },
+};
+
+/// The pasteboard as capture reads it, one representation at a time, so a
+/// picture is never decoded when files win. Results live in the arena given.
+pub const Pasteboard = struct {
+    ctx: ?*anyopaque,
+    has_type: *const fn (?*anyopaque, []const u8) bool,
+    /// File URLs' paths, in pasteboard order.
+    file_paths: *const fn (?*anyopaque, std.mem.Allocator) []const []const u8,
+    /// The picture's bytes as stored on the pasteboard; null with none.
+    image_byte_count: *const fn (?*anyopaque) ?usize,
+    /// Null when the picture does not decode.
+    image: *const fn (?*anyopaque, std.mem.Allocator) ?PastedImage,
+    text: *const fn (?*anyopaque, std.mem.Allocator) []const u8,
+};
+
+/// The app a copy came from.
+pub const App = struct { bundle_id: []const u8, name: []const u8 };
+
+/// What a copy becomes: its files, else its picture, else its text; nothing
+/// when it is marked private or Floodlight's own, or past a size cap.
+fn captures(arena: std.mem.Allocator, board: Pasteboard, source: []const u8) []const Capture {
+    for (skipped_types) |ty| if (board.has_type(board.ctx, ty)) return &.{};
+    var out: std.ArrayList(Capture) = .empty;
+    for (board.file_paths(board.ctx, arena)) |path| {
+        const seen = for (out.items) |cap| {
+            if (std.mem.eql(u8, cap.file, path)) break true;
+        } else false;
+        if (path.len > 0 and !seen) out.append(arena, .{ .file = path }) catch {};
+    }
+    if (out.items.len > 0) return out.items;
+    if (board.image_byte_count(board.ctx)) |n| if (n <= max_image_bytes) if (board.image(board.ctx, arena)) |img| {
+        const screenshot = std.mem.eql(u8, source, "com.apple.screencapture") or std.mem.eql(u8, source, "com.apple.screencaptureui");
+        const name = if (screenshot) "Screenshot" else switch (img.format) {
+            .png => "PNG Image",
+            .tiff => "TIFF Image",
+        };
+        return arena.dupe(Capture, &.{.{ .image = .{ .name = name, .png = img.png, .thumbnail = img.thumbnail, .width = img.width, .height = img.height } }}) catch &.{};
+    };
+    const text = board.text(board.ctx, arena);
+    if (text.len == 0 or text.len > max_text_bytes) return &.{};
+    return arena.dupe(Capture, &.{.{ .text = text }}) catch &.{};
+}
+
+/// What the inspector knows of an entry without reading its payload.
+pub const Facts = struct {
+    /// A file that exists, or an image with bytes to show.
+    previewable: bool = false,
+    is_dir: bool = false,
+    /// A non-empty file's size.
+    size: ?u64 = null,
+};
+
+/// One `stat` for a path; nothing for text or an image.
+pub fn facts(e: Entry) Facts {
+    if (e.kind == .image) return .{ .previewable = e.thumbnail.len > 0 or e.byte_count > 0 };
+    const path = e.filePath() orelse return .{};
+    const st = stat(path) orelse return .{};
+    return .{ .previewable = true, .is_dir = st.dir, .size = if (!st.dir and st.size > 0) st.size else null };
+}
+
+/// What the inspector previews: a full picture, or a readable file's head.
+pub const Payload = union(enum) {
+    none,
+    picture: []const u8,
+    text: []const u8,
+};
+
+pub const text_preview_bytes = 16 * 1024;
+
+const Stat = struct { dir: bool, size: u64 };
+
+fn stat(path: []const u8) ?Stat {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (path.len >= buf.len) return null;
+    @memcpy(buf[0..path.len], path);
+    buf[path.len] = 0;
+    var st: std.c.Stat = undefined;
+    if (std.c.stat(buf[0..path.len :0], &st) != 0) return null;
+    return .{ .dir = (st.mode & std.c.S.IFMT) == std.c.S.IFDIR, .size = @intCast(st.size) };
+}
+
+fn readFile(a: std.mem.Allocator, path: []const u8, len: usize) ?[]const u8 {
+    const z = a.dupeSentinel(u8, path, 0) catch return null;
+    const fd = std.c.open(z, .{});
+    if (fd < 0) return null;
+    defer _ = std.c.close(fd);
+    const buf = a.alloc(u8, len) catch return null;
+    var got: usize = 0;
+    while (got < len) {
+        const n = std.c.read(fd, buf[got..].ptr, len - got);
+        if (n <= 0) break;
+        got += @intCast(n);
+    }
+    return buf[0..got];
+}
+
 /// Text past this is dropped whole, as the Swift store does.
 pub const max_text_bytes = 32_000;
 /// Image representations past this are not read.
@@ -320,60 +461,82 @@ const schema =
     \\  png BLOB,
     \\  image_format TEXT NOT NULL DEFAULT '',
     \\  stored_bytes INTEGER NOT NULL DEFAULT 0,
-    \\  compacted INTEGER NOT NULL DEFAULT 0);
+    \\  compacted INTEGER NOT NULL DEFAULT 0,
+    \\  content_kind TEXT,
+    \\  content_detail TEXT);
     \\CREATE INDEX IF NOT EXISTS entries_created ON entries(created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_pinned ON entries(pinned_at);
     \\CREATE INDEX IF NOT EXISTS entries_hash ON entries(hash);
     \\CREATE TEMP TABLE IF NOT EXISTS released(hash BLOB);
 ;
 
-const columns_added_since_inline_images = [_][:0]const u8{
+const columns_added_since_first_schema = [_][:0]const u8{
     "ALTER TABLE entries ADD COLUMN image_format TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE entries ADD COLUMN stored_bytes INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE entries ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE entries ADD COLUMN content_kind TEXT",
+    "ALTER TABLE entries ADD COLUMN content_detail TEXT",
 };
 
 const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail";
+const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
     db: *lite.Db,
-    images: ?[]const u8,
+    /// The folder that holds full pictures, one file per picture.
+    images: []const u8,
     budget: Budget = .{},
 
-    pub fn open(path: [:0]const u8, images: ?[]const u8) !Store {
+    /// `path` may be `:memory:`; pictures still go to `images`.
+    pub fn open(path: [:0]const u8, images: []const u8) !Store {
         var db: ?*lite.Db = null;
         if (lite.sqlite3_open_v2(path, &db, lite.open_flags, null) != lite.ok) {
             if (db) |d| _ = lite.sqlite3_close_v2(d);
             return error.ClipboardStore;
         }
         const s: Store = .{ .db = db.?, .images = images };
+        errdefer s.close();
         _ = lite.sqlite3_busy_timeout(s.db, 2000);
-        if (lite.sqlite3_exec(s.db, schema, null, null, null) != lite.ok) {
-            s.close();
-            return error.ClipboardStore;
-        }
-        for (columns_added_since_inline_images) |sql| _ = lite.sqlite3_exec(s.db, sql, null, null, null);
-        if (images) |dir| {
-            var buf: [std.posix.PATH_MAX]u8 = undefined;
-            const dir_z = std.fmt.bufPrintSentinel(&buf, "{s}", .{dir}, 0) catch {
-                s.close();
-                return error.ClipboardStore;
-            };
-            _ = std.c.mkdir(dir_z, 0o700);
-            const moved = s.moveInlineImagesOut() catch {
-                s.close();
-                return error.ClipboardStore;
-            };
-            s.clearStrayFiles(dir_z);
-            if (moved or s.int("PRAGMA auto_vacuum", .{}) != 2)
-                _ = lite.sqlite3_exec(s.db, "PRAGMA auto_vacuum=INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);", null, null, null);
-        }
+        if (lite.sqlite3_exec(s.db, schema, null, null, null) != lite.ok) return error.ClipboardStore;
+        for (columns_added_since_first_schema) |sql| _ = lite.sqlite3_exec(s.db, sql, null, null, null);
+        try s.classifyUnclassified();
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        const dir_z = std.fmt.bufPrintSentinel(&buf, "{s}", .{images}, 0) catch return error.ClipboardStore;
+        _ = std.c.mkdir(dir_z, 0o700);
+        const moved = try s.moveInlineImagesOut();
+        s.clearStrayFiles(dir_z);
+        if (moved or s.int("PRAGMA auto_vacuum", .{}) != 2)
+            _ = lite.sqlite3_exec(s.db, "PRAGMA auto_vacuum=INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);", null, null, null);
         return s;
+    }
+
+    /// Rows recorded before entries carried their classification, done in
+    /// one transaction so a crash leaves all of them for the next open.
+    fn classifyUnclassified(s: Store) !void {
+        var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const Row = struct { id: i64, text: []const u8 };
+        var rows: std.ArrayList(Row) = .empty;
+        {
+            const stmt = try s.prepare("SELECT id, text FROM entries WHERE content_kind IS NULL AND kind = 'text'");
+            defer _ = lite.sqlite3_finalize(stmt);
+            while (lite.sqlite3_step(stmt) == lite.row)
+                try rows.append(a, .{ .id = lite.sqlite3_column_int64(stmt, 0), .text = try a.dupe(u8, columnText(stmt, 1)) });
+        }
+        try s.run("BEGIN", .{});
+        errdefer s.run("ROLLBACK", .{}) catch {};
+        for (rows.items) |r| {
+            var buf: [9]u8 = undefined;
+            const c = classify(r.text);
+            try s.run("UPDATE entries SET content_kind = ?, content_detail = ? WHERE id = ?", .{ @tagName(c), storedDetail(&buf, c), r.id });
+        }
+        try s.run("UPDATE entries SET content_kind = 'plain', content_detail = '' WHERE content_kind IS NULL", .{});
+        try s.run("COMMIT", .{});
     }
 
     fn int(s: Store, sql: []const u8, args: anytype) ?i64 {
@@ -385,9 +548,8 @@ pub const Store = struct {
     }
 
     fn imagePath(s: Store, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
-        const dir = s.images orelse return null;
         if (hash.len != 32) return null;
-        return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ dir, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
+        return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ s.images, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
     }
 
     fn writeImage(s: Store, hash: []const u8, format: []const u8, bytes: []const u8) !void {
@@ -494,7 +656,6 @@ pub const Store = struct {
     }
 
     pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
-        if (s.images == null) return false;
         var hash: [32]u8 = undefined;
         var size: usize = 0;
         {
@@ -546,15 +707,38 @@ pub const Store = struct {
         };
         if (s.repeatsNewest(kind, text, if (cap == .image) &hash else null)) return false;
         const img: Capture.Image = if (cap == .image) cap.image else .{ .name = "", .png = "", .thumbnail = "", .width = 0, .height = 0 };
-        const in_file = cap == .image and s.images != null;
-        if (in_file) try s.writeImage(&hash, "png", img.png);
-        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, png, image_format, stored_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
-            @tagName(kind),                                  text,                       now,                                                 source,                                              source_name,
-            @as(i64, img.width),                             @as(i64, img.height),       @as(i64, @intCast(img.png.len)),                     Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
-            Blob{ .bytes = if (in_file) null else img.png }, if (in_file) "png" else "", @as(i64, if (in_file) @intCast(img.png.len) else 0),
+        if (cap == .image) try s.writeImage(&hash, "png", img.png);
+        const content: Content = if (cap == .text) classify(text) else .plain;
+        var detail_buf: [9]u8 = undefined;
+        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, image_format, stored_bytes, content_kind, content_detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
+            @tagName(kind),                   text,                            now,                             source,                                              source_name,
+            @as(i64, img.width),              @as(i64, img.height),            @as(i64, @intCast(img.png.len)), Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
+            if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               storedDetail(&detail_buf, content),
         });
         try s.keepWithinBudget();
         return true;
+    }
+
+    /// Records what `board` holds, as copied from `app`. True when any of it
+    /// was stored; a repeat of the newest entry is not.
+    pub fn capture(s: Store, arena: std.mem.Allocator, board: Pasteboard, app: App, now: f64) !bool {
+        var stored = false;
+        for (captures(arena, board, app.bundle_id)) |cap| stored = (try s.add(cap, app.bundle_id, app.name, now)) or stored;
+        return stored;
+    }
+
+    /// The selection's preview, read once its facts say there is one.
+    pub fn load(s: Store, arena: std.mem.Allocator, e: Entry, f: Facts) Payload {
+        if (e.kind == .image) return if (s.image(arena, e.id)) |bytes| .{ .picture = bytes } else .none;
+        const path = e.filePath() orelse return .none;
+        const size = f.size orelse return .none;
+        const ext = extension(path);
+        if (inSet(ext, &image_extensions) and size <= max_image_bytes) {
+            if (readFile(arena, path, @intCast(size))) |bytes| return .{ .picture = bytes };
+        } else if (inSet(ext, &text_extensions)) {
+            if (readFile(arena, path, @intCast(@min(size, text_preview_bytes)))) |bytes| return .{ .text = bytes };
+        }
+        return .none;
     }
 
     fn repeatsNewest(s: Store, kind: Kind, text: []const u8, hash: ?*const [32]u8) bool {
@@ -590,6 +774,7 @@ pub const Store = struct {
                 .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
                 .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
                 .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
+                .content = storedContent(columnText(stmt, 11), try arena.dupe(u8, columnText(stmt, 12))),
             });
         }
         return out.items;
@@ -597,14 +782,11 @@ pub const Store = struct {
 
     /// The full image an entry holds, in `arena`'s memory.
     pub fn image(s: Store, arena: std.mem.Allocator, id: i64) ?[]const u8 {
-        const stmt = s.prepare("SELECT png, hash, image_format, stored_bytes FROM entries WHERE id = ?") catch return null;
+        const stmt = s.prepare("SELECT hash, image_format, stored_bytes FROM entries WHERE id = ? AND image_format != ''") catch return null;
         defer _ = lite.sqlite3_finalize(stmt);
         bindAll(stmt, .{id});
         if (lite.sqlite3_step(stmt) != lite.row) return null;
-        const format = columnText(stmt, 2);
-        if (format.len > 0) return s.readImage(arena, columnBlob(stmt, 1), format, @intCast(lite.sqlite3_column_int64(stmt, 3)));
-        const bytes = columnBlob(stmt, 0);
-        return if (bytes.len == 0) null else arena.dupe(u8, bytes) catch null;
+        return s.readImage(arena, columnBlob(stmt, 0), columnText(stmt, 1), @intCast(lite.sqlite3_column_int64(stmt, 2)));
     }
 
     pub fn togglePin(s: Store, id: i64, now: f64) !void {

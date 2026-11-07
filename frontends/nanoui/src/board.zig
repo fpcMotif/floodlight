@@ -72,13 +72,6 @@ pub const Action = union(enum) {
     actions: Entry,
 };
 
-/// A file's bytes, read once per selection for its preview.
-const FilePreview = union(enum) {
-    none,
-    image: []const u8,
-    text: []const u8,
-};
-
 pub const Board = struct {
     store: ?*const clipboard.Store,
     list: History,
@@ -92,10 +85,10 @@ pub const Board = struct {
     detail_at: f64 = 0,
     detail_passing: bool = false,
     detail_loaded: bool = false,
-    full_image: ?[]const u8 = null,
-    file_preview: FilePreview = .none,
-    file_size: ?u64 = null,
-    file_is_dir: bool = false,
+    payload: clipboard.Payload = .none,
+    /// What the inspector found for the entry `facts_id` names.
+    facts: clipboard.Facts = .{},
+    facts_id: ?i64 = null,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store) Board {
         var b: Board = .{ .store = store, .list = .init(gpa), .detail_arena = .init(gpa) };
@@ -112,6 +105,7 @@ pub const Board = struct {
         b.list.reset();
         b.list.markStale();
         b.detail_id = null;
+        b.facts_id = null;
         _ = b.detail_arena.reset(.free_all);
     }
 
@@ -128,11 +122,8 @@ pub const Board = struct {
     }
 
     /// A file that exists, or an image with bytes to show.
-    pub fn previewable(b: *const Board, e: Entry) bool {
-        if (e.kind == .image) return e.thumbnail.len > 0 or e.byte_count > 0;
-        const path = e.filePath() orelse return false;
-        _ = b;
-        return exists(path);
+    pub fn previewable(b: *Board, e: Entry) bool {
+        return b.factsOf(e).previewable;
     }
 
     pub fn togglePin(b: *Board) void {
@@ -160,33 +151,22 @@ pub const Board = struct {
             b.detail_at = c.time;
             b.detail_loaded = false;
             _ = b.detail_arena.reset(.{ .retain_with_limit = detail_kept_bytes });
-            b.full_image = null;
-            b.file_preview = .none;
-            b.file_size = null;
-            b.file_is_dir = false;
-            if (e.filePath()) |path| if (stat(path)) |st| {
-                b.file_is_dir = st.dir;
-                if (!st.dir and st.size > 0) b.file_size = st.size;
-            };
+            b.payload = .none;
         }
         if (b.detail_loaded) return;
         const wait = held_key_gap_seconds - (c.time - b.detail_at);
         if (b.detail_passing and wait > 0) return c.frameIn(@floatCast(wait));
         b.detail_loaded = true;
-        const a = b.detail_arena.allocator();
-        if (e.kind == .image) {
-            if (b.store) |s| b.full_image = s.image(a, e.id);
-            return;
+        if (b.store) |s| b.payload = s.load(b.detail_arena.allocator(), e, b.factsOf(e));
+    }
+
+    /// One `stat` per entry the selection lands on, never one per frame.
+    fn factsOf(b: *Board, e: Entry) clipboard.Facts {
+        if (b.facts_id != e.id) {
+            b.facts = clipboard.facts(e);
+            b.facts_id = e.id;
         }
-        const path = e.filePath() orelse return;
-        const st = stat(path) orelse return;
-        if (st.dir) return;
-        const ext = clipboard.extension(path);
-        if (clipboard.inSet(ext, &clipboard.image_extensions) and st.size <= clipboard.max_image_bytes) {
-            if (readFile(a, path, @intCast(st.size))) |bytes| b.file_preview = .{ .image = bytes };
-        } else if (clipboard.inSet(ext, &clipboard.text_extensions)) {
-            if (readFile(a, path, @min(st.size, text_preview_bytes))) |bytes| b.file_preview = .{ .text = bytes };
-        }
+        return b.facts;
     }
 
     pub fn keys(b: *Board, c: *ui.Context, field_empty: bool) ?Action {
@@ -316,7 +296,7 @@ pub const Board = struct {
         }.draw;
         switch (e.kind) {
             .image => return tile(c, "photo", gray),
-            .text => switch (e.content()) {
+            .text => switch (e.content) {
                 .link => return tile(c, "link", blue),
                 .color => return tile(c, "paintpalette.fill", purple),
                 .code => return tile(c, "curlybraces", cyan),
@@ -357,43 +337,43 @@ pub const Board = struct {
         const col = ui.div(c).column().wFull().gap(8);
         defer col.end();
         if (e.kind == .image) {
-            const bytes = b.full_image orelse e.thumbnail;
+            const bytes = switch (b.payload) {
+                .picture => |full| full,
+                else => e.thumbnail,
+            };
             mediaBox(c, c.print("clip.full.{d}", .{e.id}), bytes, width);
             return ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .semibold, .wrap = true, .max_lines = 2 });
         }
         if (e.filePath()) |path| {
-            switch (b.file_preview) {
-                .image => |bytes| mediaBox(c, path, bytes, width),
+            switch (b.payload) {
+                .picture => |bytes| mediaBox(c, path, bytes, width),
                 .text => |bytes| codeLines(c, bytes),
                 .none => {},
             }
             return ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .semibold, .wrap = true, .max_lines = 2 });
         }
-        switch (e.content()) {
-            .link => {
+        switch (e.content) {
+            .link => |domain| {
                 {
                     const head = ui.div(c).row().gap(6).itemsCenter();
                     defer head.end();
                     ui.icon(c, "link", .{ .size = 12, .weight = .semibold, .color = blue });
-                    if (clipboard.domain(std.mem.trim(u8, e.text, " \t\r\n"))) |d| ui.text(c, d, .{ .size = 12, .weight = .semibold });
+                    ui.text(c, domain, .{ .size = 12, .weight = .semibold });
                 }
                 const box = ui.div(c).wFull().p(8).rounded(6).bg(th.muted.alpha(0.08));
                 defer box.end();
                 ui.text(c, shownHead(e.text, max_link_lines), .{ .size = 12, .mono = true, .color = th.muted, .wrap = true, .max_lines = max_link_lines });
             },
-            .color => {
-                const t = std.mem.trim(u8, e.text, " \t\r\n");
-                if (clipboard.parseColor(t)) |rgba| {
-                    const swatch: ui.Color = .{ .r = @as(f32, @floatFromInt(rgba.r)) / 255, .g = @as(f32, @floatFromInt(rgba.g)) / 255, .b = @as(f32, @floatFromInt(rgba.b)) / 255, .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1 };
-                    ui.div(c).wFull().h(72).rounded(metrics.row_radius).bg(swatch).border(ui.Color.hex(0xffffff).alpha(0.15)).borderW(1).end();
-                    const line = ui.div(c).row().gap(10).itemsCenter();
-                    defer line.end();
-                    ui.text(c, t, .{ .size = 13, .weight = .medium, .mono = true });
-                    ui.text(c, clipboard.rgbDescription(c.arena.allocator(), rgba), .{ .size = 12, .mono = true, .color = th.muted });
-                } else ui.text(c, t, .{ .size = 13, .weight = .medium, .mono = true });
+            .color => |rgba| {
+                const swatch: ui.Color = .{ .r = @as(f32, @floatFromInt(rgba.r)) / 255, .g = @as(f32, @floatFromInt(rgba.g)) / 255, .b = @as(f32, @floatFromInt(rgba.b)) / 255, .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1 };
+                ui.div(c).wFull().h(72).rounded(metrics.row_radius).bg(swatch).border(ui.Color.hex(0xffffff).alpha(0.15)).borderW(1).end();
+                const line = ui.div(c).row().gap(10).itemsCenter();
+                defer line.end();
+                ui.text(c, std.mem.trim(u8, e.text, " \t\r\n"), .{ .size = 13, .weight = .medium, .mono = true });
+                ui.text(c, clipboard.rgbDescription(c.arena.allocator(), rgba), .{ .size = 12, .mono = true, .color = th.muted });
             },
-            .code => {
-                if (clipboard.codeLanguage(std.mem.trim(u8, e.text, " \t\r\n"))) |lang| {
+            .code => |lang| {
+                {
                     const tag = ui.div(c).px(6).py(2).roundedFull().bg(th.muted.alpha(0.12));
                     defer tag.end();
                     ui.text(c, lang, .{ .size = 10, .weight = .bold, .color = th.muted });
@@ -421,18 +401,21 @@ pub const Board = struct {
             infoRow(c, "Size", chrome.formatSize(c, e.byte_count));
             infoRow(c, "Format", "PNG Image");
         } else if (e.filePath()) |path| {
-            infoRow(c, "Type", clipboard.fileType(a, path, b.file_is_dir));
-            if (b.file_size) |size| infoRow(c, "Size", chrome.formatSize(c, size));
+            const f = b.factsOf(e);
+            infoRow(c, "Type", clipboard.fileType(a, path, f.is_dir));
+            if (f.size) |size| infoRow(c, "Size", chrome.formatSize(c, size));
         } else {
-            const content = e.content();
-            infoRow(c, "Type", switch (content) {
+            infoRow(c, "Type", switch (e.content) {
                 .link => "Link",
                 .code => "Code",
                 .color => "Color",
                 .plain, .path => "Text",
             });
-            if (content == .link) if (clipboard.domain(std.mem.trim(u8, e.text, " \t\r\n"))) |d| infoRow(c, "Domain", d);
-            if (content == .color) if (clipboard.parseColor(std.mem.trim(u8, e.text, " \t\r\n"))) |rgba| infoRow(c, "RGB", clipboard.rgbDescription(a, rgba));
+            switch (e.content) {
+                .link => |d| infoRow(c, "Domain", d),
+                .color => |rgba| infoRow(c, "RGB", clipboard.rgbDescription(a, rgba)),
+                else => {},
+            }
             const n = clipboard.counts(e.text);
             infoRow(c, "Characters", c.print("{d}", .{n.characters}));
             infoRow(c, "Words", c.print("{d}", .{n.words}));
@@ -465,7 +448,6 @@ const purple: ui.Color = .hex(0xbf5af2);
 const cyan: ui.Color = .hex(0x32ade6);
 const gray: ui.Color = .hex(0x8e8e93);
 
-const text_preview_bytes = 16 * 1024;
 const max_code_lines = 40;
 
 const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
@@ -528,35 +510,4 @@ fn footerChip(c: *ui.Context, title: []const u8, key: []const u8, enabled: bool)
         ui.text(c, key, .{ .size = 9, .weight = .semibold, .rounded = true });
     }
     return enabled and chip.clicked();
-}
-
-const Stat = struct { dir: bool, size: u64 };
-
-fn stat(path: []const u8) ?Stat {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    if (path.len >= buf.len) return null;
-    @memcpy(buf[0..path.len], path);
-    buf[path.len] = 0;
-    var st: std.c.Stat = undefined;
-    if (std.c.stat(buf[0..path.len :0], &st) != 0) return null;
-    return .{ .dir = (st.mode & std.c.S.IFMT) == std.c.S.IFDIR, .size = @intCast(st.size) };
-}
-
-fn exists(path: []const u8) bool {
-    return stat(path) != null;
-}
-
-fn readFile(a: std.mem.Allocator, path: []const u8, len: usize) ?[]const u8 {
-    const z = a.dupeSentinel(u8, path, 0) catch return null;
-    const fd = std.c.open(z, .{});
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    const buf = a.alloc(u8, len) catch return null;
-    var got: usize = 0;
-    while (got < len) {
-        const n = std.c.read(fd, buf[got..].ptr, len - got);
-        if (n <= 0) break;
-        got += @intCast(n);
-    }
-    return buf[0..got];
 }

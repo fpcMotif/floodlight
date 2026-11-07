@@ -254,10 +254,10 @@ const Shell = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const front = mac.frontmostApp(arena.allocator());
-        var stored = false;
-        for (mac.readPasteboard(arena.allocator(), front.bundle_id)) |cap| {
-            stored = (s.store.add(cap, front.bundle_id, front.name, clipboard.wallClock()) catch false) or stored;
-        }
+        var reader = mac.PasteboardReader.begin();
+        defer reader.end();
+        const app: clipboard.App = .{ .bundle_id = front.bundle_id, .name = front.name };
+        const stored = s.store.capture(arena.allocator(), reader.pasteboard(), app, clipboard.wallClock()) catch false;
         if (!stored or s.panel.mode != .clipboard) return;
         s.panel.board.list.markStale();
         s.panel.board.now = clipboard.wallClock();
@@ -404,10 +404,13 @@ pub fn main(init: std.process.Init) !void {
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
     const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
     const touches_history = !(app.flags.hidden or app.flags.snapshot != null);
+    const tmp = std.mem.trimEnd(u8, std.mem.span(std.c.getenv("TMPDIR") orelse "/tmp"), "/");
+    const scratch_images = try std.fmt.allocPrint(gpa, "{s}/floodlight-nano-{d}-images", .{ tmp, std.c.getpid() });
+    defer std.Io.Dir.cwd().deleteTree(init.io, scratch_images) catch {};
     shell.store = if (touches_history)
-        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", null)
+        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", scratch_images)
     else
-        try clipboard.Store.open(":memory:", null);
+        try clipboard.Store.open(":memory:", scratch_images);
     defer shell.store.close();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
 

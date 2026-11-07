@@ -480,21 +480,78 @@ test "the access probe names a file that exists" {
 // (ClipboardTextContentTests, ClipboardHistoryStoreTests, SearchResultProjection).
 
 test "copied text is classified as the Swift store classifies it" {
-    try t.expectEqual(clipboard.Content.link, clipboard.classify("https://www.example.com/a?b"));
-    try t.expectEqualStrings("example.com", clipboard.domain("https://www.example.com/a?b").?);
-    try t.expectEqual(clipboard.Content.color, clipboard.classify(" #fff "));
+    try t.expectEqualStrings("example.com", clipboard.classify("https://www.example.com/a?b").link);
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
-    try t.expectEqualStrings("rgb(255, 255, 255)", clipboard.rgbDescription(arena.allocator(), clipboard.parseColor("#fff").?));
-    try t.expectEqualStrings("rgba(17, 34, 51, 0.50)", clipboard.rgbDescription(arena.allocator(), clipboard.parseColor("#11223380").?));
-    try t.expectEqual(clipboard.Content.code, clipboard.classify("{\"a\": 1}"));
-    try t.expectEqualStrings("JSON", clipboard.codeLanguage("{\"a\": 1}").?);
-    try t.expectEqualStrings("Code", clipboard.codeLanguage("const x = 1;").?);
-    try t.expectEqualStrings("HTML", clipboard.codeLanguage("<p>hi</p>").?);
-    try t.expectEqual(clipboard.Content.path, clipboard.classify("/Users/me/a.txt"));
-    try t.expectEqual(clipboard.Content.plain, clipboard.classify("a\n/b"));
-    try t.expectEqual(clipboard.Content.plain, clipboard.classify("{not json}"));
-    try t.expectEqual(clipboard.Content.plain, clipboard.classify("#12345"));
+    try t.expectEqualStrings("rgb(255, 255, 255)", clipboard.rgbDescription(arena.allocator(), clipboard.classify(" #fff ").color));
+    try t.expectEqualStrings("rgba(17, 34, 51, 0.50)", clipboard.rgbDescription(arena.allocator(), clipboard.classify("#11223380").color));
+    try t.expectEqualStrings("JSON", clipboard.classify("{\"a\": 1}").code);
+    try t.expectEqualStrings("Code", clipboard.classify("const x = 1;").code);
+    try t.expectEqualStrings("HTML", clipboard.classify("<p>hi</p>").code);
+    try t.expectEqualStrings("/Users/me/a.txt", clipboard.classify("file:///Users/me/a.txt").path);
+    try t.expectEqualStrings("/Users/me/a.txt", clipboard.classify("/Users/me/a.txt").path);
+    try t.expect(clipboard.classify("a\n/b") == .plain);
+    try t.expect(clipboard.classify("{not json}") == .plain);
+    try t.expect(clipboard.classify("#12345") == .plain);
+}
+
+test "an entry is classified once, when it is recorded, with the fact its kind carries" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    _ = try store.add(.{ .text = "hello" }, "", "Notes", 1);
+    _ = try store.add(.{ .text = "/Users/me/a.txt" }, "", "Notes", 2);
+    _ = try store.add(.{ .text = "{\"a\": 1}" }, "", "Notes", 3);
+    _ = try store.add(.{ .text = " #11223380 " }, "", "Notes", 4);
+    _ = try store.add(.{ .text = "https://www.example.com/a?b" }, "", "Notes", 5);
+    _ = try store.add(.{ .file = "/tmp/x.pdf" }, "", "Finder", 6);
+    const rows = try store.list(arena.allocator(), "");
+    try t.expect(rows[0].content == .plain);
+    try t.expectEqualStrings("example.com", rows[1].content.link);
+    try t.expectEqual(clipboard.Rgba{ .r = 0x11, .g = 0x22, .b = 0x33, .a = 0x80 }, rows[2].content.color);
+    try t.expectEqualStrings("JSON", rows[3].content.code);
+    try t.expectEqualStrings("/Users/me/a.txt", rows[4].content.path);
+    try t.expect(rows[5].content == .plain);
+}
+
+// The store's tables as they were before entries carried their classification.
+const unclassified_schema =
+    \\CREATE TABLE entries(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL,
+    \\  source TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT 'Clipboard', pinned_at REAL,
+    \\  width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0, byte_count INTEGER NOT NULL DEFAULT 0,
+    \\  hash BLOB, thumbnail BLOB, png BLOB);
+;
+
+const raw_sqlite = struct {
+    extern "c" fn sqlite3_open(path: [*:0]const u8, db: *?*anyopaque) c_int;
+    extern "c" fn sqlite3_close(db: *anyopaque) c_int;
+    extern "c" fn sqlite3_exec(db: *anyopaque, sql: [*:0]const u8, cb: ?*anyopaque, arg: ?*anyopaque, err: ?*anyopaque) c_int;
+
+    fn run(path: [:0]const u8, sql: [:0]const u8) !void {
+        var db: ?*anyopaque = null;
+        if (sqlite3_open(path, &db) != 0) return error.Sqlite;
+        defer _ = sqlite3_close(db.?);
+        if (sqlite3_exec(db.?, sql, null, null, null) != 0) return error.Sqlite;
+    }
+};
+
+test "rows recorded before classification are classified when the store opens" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    try ts.init();
+    defer ts.deinit();
+    try raw_sqlite.run(ts.db, unclassified_schema ++
+        "INSERT INTO entries(kind, text, created_at) VALUES('text', 'https://example.org/x', 100), ('file', '/tmp/a.pdf', 200), ('text', '#abc', 300);");
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try store.list(arena.allocator(), "");
+    try t.expectEqual(clipboard.Rgba{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, rows[0].content.color);
+    try t.expect(rows[1].content == .plain);
+    try t.expectEqualStrings("example.org", rows[2].content.link);
 }
 
 test "rows name an entry's age, source and place" {
@@ -544,7 +601,9 @@ test "the inspector lays out only the head of a long text, cut between character
 }
 
 test "the store skips a repeat of the newest entry only, pins, finds and prunes" {
-    const store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    const store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -616,6 +675,12 @@ const TmpStore = struct {
     }
 };
 
+/// History in memory, its pictures in a folder `ts` owns, as on disk.
+fn openMemory(ts: *TmpStore) !clipboard.Store {
+    try ts.init();
+    return clipboard.Store.open(":memory:", ts.images);
+}
+
 test "full images live beside the database, one file per picture, gone with their last entry" {
     var ts: TmpStore = .{ .tmp = undefined };
     try ts.init();
@@ -673,7 +738,9 @@ test "history keeps within its byte budget, dropping the oldest unpinned picture
 }
 
 test "history keeps at most its entry count, pinned ones aside" {
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     store.budget = .{ .entries = 3 };
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
@@ -697,9 +764,11 @@ test "an older store's pictures move out to files and the database gives the spa
     defer t.allocator.free(big);
     for (big, 0..) |*b, i| b.* = @truncate(i *% 2654435761 >> 13);
     {
-        var old = try clipboard.Store.open(ts.db, null);
-        defer old.close();
-        _ = try old.add(picture(big), "", "Preview", 100);
+        var arena: std.heap.ArenaAllocator = .init(t.allocator);
+        defer arena.deinit();
+        const sql = try std.fmt.allocPrintSentinel(arena.allocator(), unclassified_schema ++
+            "INSERT INTO entries(kind, text, created_at, width, height, byte_count, thumbnail, png) VALUES('image', 'PNG Image', 100, 10, 10, {d}, X'00', X'{x}');", .{ big.len, big }, 0);
+        try raw_sqlite.run(ts.db, sql);
     }
     const before = ts.size("clipboard.sqlite3") + ts.size("clipboard.sqlite3-wal");
     try t.expect(before > big.len);
@@ -774,10 +843,148 @@ test "files a crash left behind are cleared when the store opens" {
     try t.expect(hasFile(&ts.tmp, imageFileName(&name2, png, "png")));
 }
 
-test "copies an app marks as auto-generated stay out of history" {
-    var found = false;
-    for (mac.skipped_types) |ty| found = found or std.mem.eql(u8, ty, "org.nspasteboard.AutoGeneratedType");
-    try t.expect(found);
+/// A pasteboard holding what a test puts on it, counting the picture reads.
+const FakePasteboard = struct {
+    types: []const []const u8 = &.{},
+    files: []const []const u8 = &.{},
+    picture: ?clipboard.PastedImage = null,
+    picture_bytes: usize = 0,
+    string: []const u8 = "",
+    picture_reads: usize = 0,
+
+    fn pasteboard(f: *FakePasteboard) clipboard.Pasteboard {
+        return .{ .ctx = f, .has_type = hasType, .file_paths = filePaths, .image_byte_count = imageByteCount, .image = image, .text = text };
+    }
+
+    fn of(ctx: ?*anyopaque) *FakePasteboard {
+        return @ptrCast(@alignCast(ctx));
+    }
+
+    fn hasType(ctx: ?*anyopaque, ty: []const u8) bool {
+        for (of(ctx).types) |x| if (std.mem.eql(u8, x, ty)) return true;
+        return false;
+    }
+
+    fn filePaths(ctx: ?*anyopaque, _: std.mem.Allocator) []const []const u8 {
+        return of(ctx).files;
+    }
+
+    fn imageByteCount(ctx: ?*anyopaque) ?usize {
+        const f = of(ctx);
+        return if (f.picture != null) f.picture_bytes else null;
+    }
+
+    fn image(ctx: ?*anyopaque, _: std.mem.Allocator) ?clipboard.PastedImage {
+        const f = of(ctx);
+        f.picture_reads += 1;
+        return f.picture;
+    }
+
+    fn text(ctx: ?*anyopaque, _: std.mem.Allocator) []const u8 {
+        return of(ctx).string;
+    }
+};
+
+const pasted_png: clipboard.PastedImage = .{ .png = "\x89PNG pasted", .thumbnail = "thumb", .width = 4, .height = 3, .format = .png };
+const notes_app: clipboard.App = .{ .bundle_id = "com.apple.Notes", .name = "Notes" };
+
+test "a copy marked private, transient, auto-generated or Floodlight's own is not recorded" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const marked = [_][]const u8{ "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType", "com.apple.is-sensitive", clipboard.own_write_type };
+    for (marked) |ty| {
+        var fake: FakePasteboard = .{ .types = &.{ty}, .string = "secret" };
+        try t.expect(!try store.capture(a, fake.pasteboard(), notes_app, 1));
+    }
+    try t.expectEqual(@as(usize, 0), (try store.list(a, "")).len);
+    var plain: FakePasteboard = .{ .types = &.{"public.utf8-plain-text"}, .string = "kept" };
+    try t.expect(try store.capture(a, plain.pasteboard(), notes_app, 2));
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings("kept", rows[0].text);
+    try t.expectEqualStrings("Notes", rows[0].source_name);
+}
+
+test "copied files win over a picture and text, each file once, and the picture is never read" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fake: FakePasteboard = .{ .files = &.{ "/a/x.pdf", "/a/y.pdf", "/a/x.pdf" }, .picture = pasted_png, .picture_bytes = 10, .string = "x.pdf" };
+    try t.expect(try store.capture(a, fake.pasteboard(), .{ .bundle_id = "com.apple.finder", .name = "Finder" }, 1));
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 2), rows.len);
+    for (rows) |e| try t.expectEqual(clipboard.Kind.file, e.kind);
+    try t.expectEqual(@as(usize, 0), fake.picture_reads);
+}
+
+test "a picture past the size cap falls back to the copy's text" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fake: FakePasteboard = .{ .picture = pasted_png, .picture_bytes = clipboard.max_image_bytes + 1, .string = "caption" };
+    try t.expect(try store.capture(a, fake.pasteboard(), notes_app, 1));
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 1), rows.len);
+    try t.expectEqualStrings("caption", rows[0].text);
+    try t.expectEqual(@as(usize, 0), fake.picture_reads);
+}
+
+test "a screenshot is named for its source, other pictures for their format" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var shot: FakePasteboard = .{ .picture = pasted_png, .picture_bytes = 10 };
+    _ = try store.capture(a, shot.pasteboard(), .{ .bundle_id = "com.apple.screencaptureui", .name = "Screenshot" }, 1);
+    var tiff_png = pasted_png;
+    tiff_png.png = "\x89PNG from tiff";
+    tiff_png.format = .tiff;
+    var tiff: FakePasteboard = .{ .picture = tiff_png, .picture_bytes = 10 };
+    _ = try store.capture(a, tiff.pasteboard(), notes_app, 2);
+    var other_png = pasted_png;
+    other_png.png = "\x89PNG another";
+    var png: FakePasteboard = .{ .picture = other_png, .picture_bytes = 10 };
+    _ = try store.capture(a, png.pasteboard(), notes_app, 3);
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings("PNG Image", rows[0].text);
+    try t.expectEqualStrings("TIFF Image", rows[1].text);
+    try t.expectEqualStrings("Screenshot", rows[2].text);
+    try t.expectEqual(@as(u32, 4), rows[2].width);
+    try t.expectEqualStrings("\x89PNG pasted", store.image(a, rows[2].id).?);
+}
+
+test "empty text and text past the cap are not recorded" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const at_cap = try a.alloc(u8, clipboard.max_text_bytes + 1);
+    @memset(at_cap, 'x');
+    var empty: FakePasteboard = .{};
+    try t.expect(!try store.capture(a, empty.pasteboard(), notes_app, 1));
+    var long: FakePasteboard = .{ .string = at_cap };
+    try t.expect(!try store.capture(a, long.pasteboard(), notes_app, 2));
+    var fits: FakePasteboard = .{ .string = at_cap[0..clipboard.max_text_bytes] };
+    try t.expect(try store.capture(a, fits.pasteboard(), notes_app, 3));
+    try t.expectEqual(@as(usize, 1), (try store.list(a, "")).len);
 }
 
 fn crc(kind: []const u8, data: []const u8) u32 {
@@ -840,7 +1047,9 @@ test "an opaque picture compacts to a far smaller AVIF that pastes back as PNG; 
 test "the board lists history, inspects the selection, and filters" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     _ = try store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
     _ = try store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
@@ -906,6 +1115,40 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expectEqualStrings("zzz", p.field.text());
 }
 
+test "a copied path keeps what the inspector found until the selection moves" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
+    defer store.close();
+    try ts.tmp.dir.writeFile(t.io, .{ .sub_path = "note.txt", .data = "line one\nline two" });
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const path = try std.fmt.bufPrint(&buf, "{s}/note.txt", .{std.fs.path.dirname(ts.images).?});
+    _ = try store.add(.{ .text = "older" }, "", "Notes", 1);
+    _ = try store.add(.{ .text = path }, "", "Terminal", 2);
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(1);
+    try t.expect(tester.hasText("line two"));
+    try t.expect(p.board.previewable(p.board.list.selection().?));
+
+    try ts.tmp.dir.deleteFile(t.io, "note.txt");
+    tester.frame();
+    try t.expect(p.board.previewable(p.board.list.selection().?));
+
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.up });
+    tester.settle(1);
+    try t.expect(!p.board.previewable(p.board.list.selection().?));
+}
+
 fn holdPastEnd(tester: *ui.Tester, x: f32, y: f32, dy: f32, events: usize) void {
     tester.moveTo(x, y);
     const c = &tester.ctx;
@@ -928,7 +1171,9 @@ fn release(tester: *ui.Tester) void {
 test "a push past the board's ends stretches half a row at most, then rests" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var buf: [32]u8 = undefined;
     for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
@@ -969,7 +1214,9 @@ test "a push past the board's ends stretches half a row at most, then rests" {
 test "a long history builds the rows in view only, and still reaches its end" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var buf: [32]u8 = undefined;
     for (0..1000) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
@@ -1155,7 +1402,9 @@ test "a board paste hides the panel before it sends ⌘V, so the target app has 
 test "a board frame that waits for a later one keeps the display link at the display's pace" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var buf: [32]u8 = undefined;
     for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
@@ -1183,7 +1432,9 @@ fn addPicture(store: *clipboard.Store, png: []const u8, at: f64) !void {
 test "a held arrow passes over full pictures, and the one it rests on is loaded" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var png: [6][4]u8 = undefined;
     for (&png, 0..) |*b, i| {
@@ -1198,26 +1449,28 @@ test "a held arrow passes over full pictures, and the one it rests on is loaded"
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
     defer tester.deinit();
     tester.settle(1);
-    try t.expectEqualSlices(u8, &png[0], p.board.full_image.?);
+    try t.expectEqualSlices(u8, &png[0], p.board.payload.picture);
 
     tester.advance(1);
     for (1..5) |_| {
         _ = tester.shortcut(.{ .key = ui.Shortcut.down });
         tester.advance(0.05);
     }
-    try t.expect(p.board.full_image == null);
+    try t.expect(p.board.payload == .none);
     tester.advance(0.5);
-    try t.expectEqualSlices(u8, &png[4], p.board.full_image.?);
+    try t.expectEqualSlices(u8, &png[4], p.board.payload.picture);
 
     _ = tester.shortcut(.{ .key = ui.Shortcut.down });
     tester.frame();
-    try t.expectEqualSlices(u8, &png[5], p.board.full_image.?);
+    try t.expectEqualSlices(u8, &png[5], p.board.payload.picture);
 }
 
 test "a large picture's memory goes once the inspector moves on" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     _ = try store.add(.{ .text = "after the picture" }, "com.apple.Notes", "Notes", 50);
     const big = try t.allocator.alloc(u8, 4 << 20);
@@ -1232,7 +1485,7 @@ test "a large picture's memory goes once the inspector moves on" {
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
     defer tester.deinit();
     tester.settle(1);
-    try t.expectEqual(big.len, p.board.full_image.?.len);
+    try t.expectEqual(big.len, p.board.payload.picture.len);
 
     tester.advance(1);
     _ = tester.shortcut(.{ .key = ui.Shortcut.down });
@@ -1244,7 +1497,9 @@ test "a large picture's memory goes once the inspector moves on" {
 test "an empty history says so" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var store = try clipboard.Store.open(":memory:", null);
+    var ts: TmpStore = .{ .tmp = undefined };
+    var store = try openMemory(&ts);
+    defer ts.deinit();
     defer store.close();
     var hooks: NoHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
