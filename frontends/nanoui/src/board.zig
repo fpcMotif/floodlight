@@ -5,11 +5,29 @@ const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const clipboard = @import("clipboard.zig");
-const panel = @import("panel.zig");
+const chrome = @import("chrome.zig");
+const list = @import("list.zig");
 
 const Entry = clipboard.Entry;
 const Filter = clipboard.Filter;
-const metrics = panel.metrics;
+const metrics = chrome.metrics;
+
+fn entryKey(e: Entry) i64 {
+    return e.id;
+}
+
+pub const History = list.List(Entry, Filter, i64, entryKey);
+
+/// What the board needs from the panel around it.
+pub const Context = struct {
+    ctx: ?*anyopaque,
+    /// An app's icon as PNG; null draws a symbol.
+    app_icon: *const fn (?*anyopaque, []const u8) ?[]const u8,
+    /// "Today at 3:03 PM": the inspector's Copied and Pinned.
+    detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
+    /// The text in the search field, filtering history.
+    query: []const u8,
+};
 
 /// The Swift shell's `FloodlightMetrics` clipboard values.
 pub const board_metrics = struct {
@@ -61,16 +79,9 @@ const FilePreview = union(enum) {
 
 pub const Board = struct {
     store: ?*const clipboard.Store,
-    arena: std.heap.ArenaAllocator,
+    list: History,
     /// The selection's payload: a full image, a file's head.
     detail_arena: std.heap.ArenaAllocator,
-    rows: []Entry = &.{},
-    visible: []Entry = &.{},
-    answered: std.ArrayList(u8) = .empty,
-    stale: bool = true,
-    filter: Filter = .all,
-    selected: usize = 0,
-    reveal_selection: bool = false,
     /// Seconds since 1970 that ages are measured from.
     now: f64 = 0,
     /// The app Return pastes into; empty when Return only copies.
@@ -85,77 +96,29 @@ pub const Board = struct {
     file_is_dir: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store) Board {
-        return .{ .store = store, .arena = .init(gpa), .detail_arena = .init(gpa) };
+        var b: Board = .{ .store = store, .list = .init(gpa), .detail_arena = .init(gpa) };
+        b.list.markStale();
+        return b;
     }
 
     pub fn deinit(b: *Board) void {
-        b.answered.deinit(b.arena.child_allocator);
-        b.arena.deinit();
+        b.list.deinit();
         b.detail_arena.deinit();
     }
 
     pub fn reset(b: *Board) void {
-        b.rows = &.{};
-        b.visible = &.{};
-        b.answered.clearRetainingCapacity();
-        b.stale = true;
-        b.filter = .all;
-        b.selected = 0;
+        b.list.reset();
+        b.list.markStale();
         b.detail_id = null;
-        _ = b.arena.reset(.free_all);
         _ = b.detail_arena.reset(.free_all);
     }
 
     /// Asks the store again when the query changed or history did.
     pub fn refresh(b: *Board, query: []const u8) void {
-        if (!b.stale and std.mem.eql(u8, query, b.answered.items)) return;
-        const keep = if (b.selection()) |e| e.id else null;
-        const was_stale = b.stale;
-        b.stale = false;
-        _ = b.arena.reset(.retain_capacity);
-        const store = b.store orelse return;
-        b.rows = store.list(b.arena.allocator(), query) catch &.{};
-        const query_changed = !std.mem.eql(u8, query, b.answered.items);
-        b.answered.clearRetainingCapacity();
-        b.answered.appendSlice(b.arena.child_allocator, query) catch {};
-        b.applyFilter();
-        // History changing under the board keeps the selection where it can.
-        if (was_stale and !query_changed) if (keep) |id| for (b.visible, 0..) |e, i| if (e.id == id) {
-            b.selected = i;
-        };
-    }
-
-    pub fn count(b: *const Board, f: Filter) usize {
-        var n: usize = 0;
-        for (b.rows) |e| n += @intFromBool(f.includes(e));
-        return n;
-    }
-
-    pub fn selectFilter(b: *Board, f: Filter) void {
-        b.filter = f;
-        b.applyFilter();
-    }
-
-    fn applyFilter(b: *Board) void {
-        const out = b.arena.allocator().alloc(Entry, b.rows.len) catch return;
-        var n: usize = 0;
-        for (b.rows) |e| if (b.filter.includes(e)) {
-            out[n] = e;
-            n += 1;
-        };
-        b.visible = out[0..n];
-        b.selected = 0;
-        b.reveal_selection = true;
-    }
-
-    pub fn selection(b: *const Board) ?Entry {
-        return if (b.selected < b.visible.len) b.visible[b.selected] else null;
-    }
-
-    pub fn move(b: *Board, down: bool) void {
-        if (b.visible.len == 0) return;
-        b.selected = if (down) @min(b.selected + 1, b.visible.len - 1) else b.selected -| 1;
-        b.reveal_selection = true;
+        if (!b.list.needsQuery(query)) return;
+        const a = b.list.beginQuery(query);
+        const rows = if (b.store) |s| s.list(a, query) catch &.{} else &.{};
+        b.list.setRows(query, rows);
     }
 
     pub fn pasteLabel(b: *const Board, c: *ui.Context) []const u8 {
@@ -171,21 +134,20 @@ pub const Board = struct {
     }
 
     pub fn togglePin(b: *Board) void {
-        const e = b.selection() orelse return;
+        const e = b.list.selection() orelse return;
         const store = b.store orelse return;
         store.togglePin(e.id, b.now) catch return;
-        b.stale = true;
+        b.list.markStale();
     }
 
     pub fn delete(b: *Board) void {
-        const e = b.selection() orelse return;
+        const e = b.list.selection() orelse return;
         const store = b.store orelse return;
         store.delete(e.id) catch return;
-        const at = b.selected;
-        b.stale = true;
-        b.refresh(b.answered.items);
-        if (b.visible.len > 0) b.selected = @min(at, b.visible.len - 1);
-        b.reveal_selection = true;
+        const at = b.list.selected;
+        b.list.markStale();
+        b.refresh(b.list.answered());
+        b.list.clampSelection(at);
     }
 
     /// Loads what the inspector shows for the selection, once per entry.
@@ -227,13 +189,8 @@ pub const Board = struct {
 
     pub fn keys(b: *Board, c: *ui.Context, field_empty: bool) ?Action {
         const S = ui.Shortcut;
-        for (Filter.options, 0..) |f, i| {
-            if (c.shortcut(.{ .key = '1' + @as(u21, @intCast(i)), .cmd = true })) b.selectFilter(f);
-        }
-        if (b.visible.len == 0) return null;
-        if (c.shortcut(.{ .key = S.down })) b.move(true);
-        if (c.shortcut(.{ .key = S.up })) b.move(false);
-        const e = b.visible[b.selected];
+        _ = chrome.listKeys(c, &b.list, &Filter.options);
+        const e = b.list.selection() orelse return null;
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (e.filePath()) |p| return .{ .reveal = p };
         }
@@ -247,7 +204,7 @@ pub const Board = struct {
     }
 
     /// The well below the search row; returns what a click asked for.
-    pub fn view(b: *Board, c: *ui.Context, p: *panel.Panel) ?Action {
+    pub fn view(b: *Board, c: *ui.Context, host: Context) ?Action {
         const th = c.theme;
         const m = board_metrics;
         const outer = ui.div(c).column().wFull().px(m.well_inset).pb(m.well_inset);
@@ -256,19 +213,19 @@ pub const Board = struct {
             .bg(th.background).rounded(m.well_radius).border(th.text.alpha(m.well_stroke_opacity)).borderW(1).clip();
         defer well.end();
         b.filterBar(c);
-        if (b.visible.len == 0) {
+        if (b.list.visible.len == 0) {
             const empty = ui.div(c).column().wFull().h(m.content_height).center().px(40);
             defer empty.end();
-            ui.text(c, b.emptyMessage(c, p.field.text()), .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6), .wrap = true });
+            ui.text(c, b.emptyMessage(c, host.query), .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6), .wrap = true });
             return null;
         }
         var asked: ?Action = null;
         {
             const columns = ui.div(c).row().wFull().h(m.list_height);
             defer columns.end();
-            if (b.list(c, p)) |a| asked = a;
+            if (b.historyList(c, host)) |a| asked = a;
             ui.div(c).w(1).hFull().bg(th.border.alpha(0.45)).end();
-            b.inspector(c, p);
+            b.inspector(c, host);
         }
         ui.div(c).wFull().h(1).bg(th.border.alpha(0.45)).end();
         if (b.footer(c)) |a| asked = a;
@@ -276,53 +233,37 @@ pub const Board = struct {
     }
 
     fn emptyMessage(b: *const Board, c: *ui.Context, query: []const u8) []const u8 {
-        const name = std.ascii.allocLowerString(c.arena.allocator(), b.filter.title()) catch b.filter.title();
+        const f = b.list.filter;
+        const name = std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
         if (query.len == 0) {
-            if (b.filter == .all) return "Clipboard history is empty. Copied text, files, and images will appear here.";
+            if (f == .all) return "Clipboard history is empty. Copied text, files, and images will appear here.";
             return c.print("No {s} clipboard entries", .{name});
         }
         return c.print("No matching clipboard {s} for \u{201C}{s}\u{201D}", .{ name, query });
     }
 
     fn filterBar(b: *Board, c: *ui.Context) void {
-        const th = c.theme;
         const bar = ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
         defer bar.end();
         for (Filter.options) |f| {
-            ui.key(c, f.title());
-            const selected = b.filter == f;
-            const chip = ui.div(c).row().h(26).pl(10).pr(7).gap(5).itemsCenter().roundedFull()
-                .bg(th.text.alpha(if (selected) 0.14 else 0.055)).control();
-            defer chip.end();
-            if (chip.clicked()) b.selectFilter(f);
-            ui.icon(c, f.symbol(), .{ .size = 11, .weight = .semibold, .color = if (selected) th.text else th.muted });
-            ui.text(c, f.title(), .{ .size = 11.5, .weight = .semibold });
-            const slot = ui.div(c).w(27).h(13).center();
-            defer slot.end();
-            ui.text(c, panel.compactCount(c, b.count(f)), .{ .size = 10, .weight = .semibold, .color = th.muted });
+            if (chrome.filterChip(c, f.title(), f.symbol(), b.list.filter == f, .{ .count = b.list.count(f) })) b.list.selectFilter(f);
         }
     }
 
-    fn list(b: *Board, c: *ui.Context, p: *panel.Panel) ?Action {
+    fn historyList(b: *Board, c: *ui.Context, host: Context) ?Action {
         const m = board_metrics;
         const col = ui.div(c).column().w(m.list_width).h(m.list_height).scrollY().p(metrics.row_padding);
         defer col.end();
-        panel.boundOverscroll(c, col.id());
-        if (b.reveal_selection) {
-            b.reveal_selection = false;
-            const id = col.id();
-            const top = @as(f32, @floatFromInt(b.selected)) * metrics.row_height;
-            const view_h = m.list_height - 2 * metrics.row_padding;
-            const now = c.scroll.get(id) orelse 0;
-            if (top < now) c.setScroll(id, .y, top) else if (top + metrics.row_height > now + view_h) c.setScroll(id, .y, top + metrics.row_height - view_h);
-        }
-        const shown = rowsInView(c.scroll.get(col.id()) orelse 0, b.visible.len);
+        chrome.boundOverscroll(c, col.id());
+        chrome.revealSelection(c, &b.list, col.id(), m.list_height - 2 * metrics.row_padding);
+        const visible = b.list.visible;
+        const shown = list.rowsInView(c.scroll.get(col.id()) orelse 0, visible.len, metrics.row_height, m.list_height, margin_rows);
         spacer(c, "above", shown.first);
         var asked: ?Action = null;
-        for (b.visible[shown.first..shown.end], shown.first..) |e, i| if (b.rowView(c, p, e, i)) |a| {
+        for (visible[shown.first..shown.end], shown.first..) |e, i| if (b.rowView(c, host, e, i)) |a| {
             asked = a;
         };
-        spacer(c, "below", b.visible.len - shown.end);
+        spacer(c, "below", visible.len - shown.end);
         return asked;
     }
 
@@ -332,16 +273,16 @@ pub const Board = struct {
         ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
     }
 
-    fn rowView(b: *Board, c: *ui.Context, p: *panel.Panel, e: Entry, i: usize) ?Action {
+    fn rowView(b: *Board, c: *ui.Context, host: Context, e: Entry, i: usize) ?Action {
         const th = c.theme;
         ui.keyInt(c, @intCast(e.id));
-        const selected = i == b.selected;
+        const selected = i == b.list.selected;
         var box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
         const it = c.interact(box.index, .{});
-        box = box.bg(panel.rowFill(th, selected, it.hovered, false));
+        box = box.bg(chrome.rowFill(th, selected, it.hovered, false));
         defer box.end();
-        if (it.clicked) b.selected = i;
-        b.iconView(c, p, e);
+        if (it.clicked) b.list.selected = i;
+        iconView(c, host, e);
         {
             const text = ui.div(c).column().grow().gap(3);
             defer text.end();
@@ -353,12 +294,11 @@ pub const Board = struct {
                 ui.text(c, e.subtitle(c.arena.allocator(), b.now), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
             }
         }
-        if (selected) panel.keyChip(c, .{ .symbol = "return" });
+        if (selected) chrome.keyChip(c, .{ .symbol = "return" });
         return if (it.double_clicked) .{ .paste = e } else null;
     }
 
-    fn iconView(b: *Board, c: *ui.Context, p: *panel.Panel, e: Entry) void {
-        _ = b;
+    fn iconView(c: *ui.Context, host: Context, e: Entry) void {
         const size = metrics.icon_size;
         if (e.kind == .image and e.thumbnail.len > 0) {
             if (ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = e.thumbnail, .max_width = size, .max_height = size, .radius = 6 })) return;
@@ -385,26 +325,26 @@ pub const Board = struct {
         const ext = clipboard.extension(path);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.image_extensions)) return tile(c, "photo", cyan);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", purple);
-        if (p.hooks.app_icon(p.hooks.ctx, path)) |png| {
+        if (host.app_icon(host.ctx, path)) |png| {
             _ = ui.image(c, .{ .key = path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
             return;
         }
         tile(c, "doc", gray);
     }
 
-    fn inspector(b: *Board, c: *ui.Context, p: *panel.Panel) void {
+    fn inspector(b: *Board, c: *ui.Context, host: Context) void {
         const th = c.theme;
         const pane = ui.div(c).column().grow().hFull().bg(th.text.alpha(0.03)).scrollY().p(14).gap(14);
         defer pane.end();
-        panel.boundOverscroll(c, pane.id());
-        const e = b.selection() orelse {
+        chrome.boundOverscroll(c, pane.id());
+        const e = b.list.selection() orelse {
             ui.text(c, "Select an entry", .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6) });
             return;
         };
         b.loadDetail(c, e);
         b.preview(c, e);
         ui.div(c).wFull().h(1).bg(th.border.alpha(0.4)).end();
-        b.information(c, p, e);
+        b.information(c, host, e);
     }
 
     fn preview(b: *Board, c: *ui.Context, e: Entry) void {
@@ -460,7 +400,7 @@ pub const Board = struct {
         }
     }
 
-    fn information(b: *Board, c: *ui.Context, p: *panel.Panel, e: Entry) void {
+    fn information(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
         const th = c.theme;
         const a = c.arena.allocator();
         const col = ui.div(c).column().wFull().gap(7);
@@ -474,11 +414,11 @@ pub const Board = struct {
         if (e.kind == .image) {
             infoRow(c, "Type", "Image");
             infoRow(c, "Dimensions", c.print("{d} \u{00D7} {d}", .{ e.width, e.height }));
-            infoRow(c, "Size", panel.formatSize(c, e.byte_count));
+            infoRow(c, "Size", chrome.formatSize(c, e.byte_count));
             infoRow(c, "Format", "PNG Image");
         } else if (e.filePath()) |path| {
             infoRow(c, "Type", clipboard.fileType(a, path, b.file_is_dir));
-            if (b.file_size) |size| infoRow(c, "Size", panel.formatSize(c, size));
+            if (b.file_size) |size| infoRow(c, "Size", chrome.formatSize(c, size));
         } else {
             const content = e.content();
             infoRow(c, "Type", switch (content) {
@@ -494,9 +434,8 @@ pub const Board = struct {
             infoRow(c, "Words", c.print("{d}", .{n.words}));
             if (n.lines > 1) infoRow(c, "Lines", c.print("{d}", .{n.lines}));
         }
-        const date = p.hooks.detailed_date;
-        infoRow(c, "Copied", date(p.hooks.ctx, e.created_at, a));
-        if (e.pinned_at) |at| infoRow(c, "Pinned", date(p.hooks.ctx, at, a));
+        infoRow(c, "Copied", host.detailed_date(host.ctx, e.created_at, a));
+        if (e.pinned_at) |at| infoRow(c, "Pinned", host.detailed_date(host.ctx, at, a));
         if (e.filePath()) |path| infoRow(c, "Path", path);
     }
 
@@ -504,10 +443,10 @@ pub const Board = struct {
         const th = c.theme;
         const bar = ui.div(c).row().wFull().h(board_metrics.footer_height).px(14).gap(12).itemsCenter().bg(th.muted.alpha(0.04));
         defer bar.end();
-        const n = b.visible.len;
+        const n = b.list.visible.len;
         ui.text(c, c.print("{d} {s}", .{ n, if (n == 1) "entry" else "entries" }), .{ .size = 11, .weight = .medium, .color = th.muted.alpha(0.6) });
         ui.div(c).grow().end();
-        const e = b.selection();
+        const e = b.list.selection();
         var asked: ?Action = null;
         if (footerChip(c, b.pasteLabel(c), "↵", e != null)) asked = .{ .paste = e.? };
         const can_preview = if (e) |x| b.previewable(x) else false;
@@ -525,16 +464,7 @@ const gray: ui.Color = .hex(0x8e8e93);
 const text_preview_bytes = 16 * 1024;
 const max_code_lines = 40;
 
-const RowRange = struct { first: usize, end: usize };
-
-fn rowsInView(offset: f32, len: usize) RowRange {
-    const m = board_metrics;
-    const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
-    const top_row: usize = @intFromFloat(@max(0, @floor(offset / metrics.row_height)));
-    const first = @min(len, top_row -| margin_rows);
-    const in_view: usize = @intFromFloat(@ceil(m.list_height / metrics.row_height));
-    return .{ .first = first, .end = @min(len, top_row + in_view + margin_rows) };
-}
+const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
 
 fn infoRow(c: *ui.Context, label: []const u8, value: []const u8) void {
     const row = ui.div(c).row().wFull().gap(12).itemsStart();

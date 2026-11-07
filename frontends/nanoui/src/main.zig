@@ -9,12 +9,13 @@ const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const chrome = @import("chrome.zig");
 const file_index = @import("floodlight_core").file_index;
 const FileIndex = file_index.FileIndex;
 const presence = @import("presence.zig");
 const Presence = presence.Presence;
 
-const metrics = panel_mod.metrics;
+const metrics = chrome.metrics;
 const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
@@ -258,7 +259,7 @@ const Shell = struct {
             stored = (s.store.add(cap, front.bundle_id, front.name, clipboard.wallClock()) catch false) or stored;
         }
         if (!stored or s.panel.mode != .clipboard) return;
-        s.panel.board.stale = true;
+        s.panel.board.list.markStale();
         s.panel.board.now = clipboard.wallClock();
         s.panel.refresh();
         s.panel_window.redraw();
@@ -376,7 +377,7 @@ const Shell = struct {
         s.panel.indexing = s.files.busy();
         if (s.files.adopt()) {
             // The rows answer the old index: ask again.
-            s.panel.answered.clearRetainingCapacity();
+            s.panel.list.markStale();
             s.panel.refresh();
         }
         s.panel_window.redraw();

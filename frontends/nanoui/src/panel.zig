@@ -6,26 +6,10 @@ const ui = nanoui.ui;
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const chrome = @import("chrome.zig");
+const list = @import("list.zig");
 
-/// The Swift shell's `FloodlightMetrics`, so both panels measure the same.
-pub const metrics = struct {
-    pub const width: f32 = 680;
-    pub const search_height: f32 = 60;
-    pub const filter_bar_height: f32 = 40;
-    pub const corner_radius: f32 = search_height / 2;
-    pub const row_height: f32 = 58;
-    pub const row_padding: f32 = 7;
-    pub const row_radius: f32 = 12;
-    pub const max_visible_rows = 7;
-    pub const icon_size: f32 = 38;
-    pub const top_hit_icon_size: f32 = 46;
-    pub const search_icon_size: f32 = 22;
-    pub const clear_button_size: f32 = 18;
-    pub const icon_tile_radius: f32 = row_radius - 3;
-    pub const max_overscroll: f32 = row_height / 2;
-    pub const expanded_height: f32 = search_height + 1 + filter_bar_height + row_padding * 2 + max_visible_rows * row_height;
-    pub const list_height: f32 = expanded_height - search_height - 1 - filter_bar_height;
-};
+const metrics = chrome.metrics;
 
 pub const summon_label = "⌥ Space";
 
@@ -87,6 +71,12 @@ fn inSet(ext: []const u8, set: []const []const u8) bool {
     return false;
 }
 
+fn rowKey(r: search.Row) u64 {
+    return std.hash.Wyhash.hash(0, r.path);
+}
+
+pub const Results = list.List(search.Row, Filter, u64, rowKey);
+
 pub const Action = union(enum) {
     open: []const u8,
     reveal: []const u8,
@@ -115,43 +105,30 @@ pub const Panel = struct {
     mode: Mode = .search,
     board: board_mod.Board,
     field: ui.TextBuffer = .{},
-    arena: std.heap.ArenaAllocator,
-    rows: []search.Row = &.{},
-    visible: []search.Row = &.{},
-    /// The query `rows` answers, to search again only when it changes.
-    answered: std.ArrayList(u8) = .empty,
-    filter: Filter = .all,
-    selected: usize = 0,
-    reveal_selection: bool = false,
+    list: Results,
     indexing: bool = false,
     pending: ?Action = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .hooks = hooks, .arena = .init(gpa), .board = .init(gpa, store) };
+        return .{ .catalog = catalog, .hooks = hooks, .list = .init(gpa), .board = .init(gpa, store) };
     }
 
     pub fn deinit(p: *Panel) void {
         p.board.deinit();
         p.field.deinit();
-        p.answered.deinit(p.arena.child_allocator);
-        p.arena.deinit();
+        p.list.deinit();
     }
 
     /// Hidden panels keep nothing per session: the query, the rows, and
     /// the arena behind them all go (PR #130's rule for the Swift panel).
     pub fn reset(p: *Panel) void {
         p.field.clear();
-        p.rows = &.{};
-        p.visible = &.{};
-        p.answered.clearRetainingCapacity();
-        p.filter = .all;
-        p.selected = 0;
+        p.list.reset();
         p.pending = null;
         p.mode = .search;
         p.board.reset();
-        _ = p.arena.reset(.free_all);
         p.height = p.panelHeight();
         p.width = p.panelWidth();
     }
@@ -160,7 +137,7 @@ pub const Panel = struct {
     pub fn showClipboard(p: *Panel) void {
         p.mode = .clipboard;
         p.field.clear();
-        p.board.stale = true;
+        p.board.list.markStale();
         p.board.refresh("");
         p.height = p.panelHeight();
         p.width = p.panelWidth();
@@ -179,19 +156,11 @@ pub const Panel = struct {
     pub fn refresh(p: *Panel) void {
         const text = p.field.text();
         if (p.mode == .clipboard) return p.board.refresh(text);
-        if (std.mem.eql(u8, text, p.answered.items)) return;
-        _ = p.arena.reset(.retain_capacity);
-        p.rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
-        p.answered.clearRetainingCapacity();
-        p.answered.appendSlice(p.arena.child_allocator, text) catch {};
-        if (p.filter != .all and p.count(p.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, p.filter) != null) p.filter = .all;
-        p.applyFilter();
-    }
-
-    pub fn count(p: *const Panel, f: Filter) usize {
-        var n: usize = 0;
-        for (p.rows) |r| n += @intFromBool(f.includes(r));
-        return n;
+        if (!p.list.needsQuery(text)) return;
+        const rows = p.catalog.query(p.list.beginQuery(text), text) catch &.{};
+        p.list.setRows(text, rows);
+        const l = &p.list;
+        if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
     }
 
     pub fn filterOptions(p: *const Panel, buf: *[Filter.primary.len + Filter.dynamic.len]Filter) []const Filter {
@@ -200,7 +169,7 @@ pub const Panel = struct {
             buf[n] = f;
             n += 1;
         }
-        for (Filter.dynamic) |f| if (p.filter == f or p.count(f) > 0) {
+        for (Filter.dynamic) |f| if (p.list.filter == f or p.list.count(f) > 0) {
             buf[n] = f;
             n += 1;
         };
@@ -208,36 +177,17 @@ pub const Panel = struct {
     }
 
     pub fn selectFilter(p: *Panel, f: Filter) void {
-        p.filter = f;
-        p.applyFilter();
+        p.list.selectFilter(f);
         p.field.focus();
     }
 
-    fn applyFilter(p: *Panel) void {
-        const out = p.arena.allocator().alloc(search.Row, p.rows.len) catch return;
-        var n: usize = 0;
-        for (p.rows) |r| if (p.filter.includes(r)) {
-            out[n] = r;
-            n += 1;
-        };
-        p.visible = out[0..n];
-        p.selected = 0;
-        p.reveal_selection = true;
-    }
-
     pub fn isTopHit(p: *const Panel, i: usize) bool {
-        return i == 0 and p.visible.len > 0 and p.filter == .all;
+        return i == 0 and p.list.visible.len > 0 and p.list.filter == .all;
     }
 
     fn ask(p: *Panel, a: Action) void {
         p.pending = a;
         p.hooks.request(p.hooks.ctx);
-    }
-
-    fn move(p: *Panel, down: bool) void {
-        if (p.visible.len == 0) return;
-        p.selected = if (down) @min(p.selected + 1, p.visible.len - 1) else p.selected -| 1;
-        p.reveal_selection = true;
     }
 
     fn keys(p: *Panel, c: *ui.Context) void {
@@ -249,14 +199,8 @@ pub const Panel = struct {
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
-        for (options, 0..) |f, i| {
-            if (i >= 5) break;
-            if (c.shortcut(.{ .key = '1' + @as(u21, @intCast(i)), .cmd = true })) p.selectFilter(f);
-        }
-        if (p.visible.len == 0) return;
-        if (c.shortcut(.{ .key = S.down })) p.move(true);
-        if (c.shortcut(.{ .key = S.up })) p.move(false);
-        const row = p.visible[p.selected];
+        if (chrome.listKeys(c, &p.list, options[0..@min(options.len, 5)])) p.field.focus();
+        const row = p.list.selection() orelse return;
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (row.kind != .web) p.ask(.{ .reveal = row.path });
         }
@@ -269,7 +213,8 @@ pub const Panel = struct {
         defer root.end();
         p.searchBar(c);
         if (p.mode == .clipboard) {
-            if (p.board.view(c, p)) |a| p.ask(.{ .clipboard = a });
+            const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
+            if (p.board.view(c, cx)) |a| p.ask(.{ .clipboard = a });
         } else if (p.field.text().len > 0) {
             ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
             p.filterBar(c);
@@ -288,13 +233,13 @@ pub const Panel = struct {
     /// previews, as the Swift board's.
     fn boardField(p: *Panel, r: anytype) void {
         if (r.changed) {
-            if (std.mem.eql(u8, p.field.text(), " ")) if (p.board.selection()) |e| if (p.board.previewable(e)) {
+            if (std.mem.eql(u8, p.field.text(), " ")) if (p.board.list.selection()) |e| if (p.board.previewable(e)) {
                 p.field.clear();
                 return p.ask(.{ .clipboard = .{ .preview = e } });
             };
             p.refresh();
         }
-        if (r.submitted) if (p.board.selection()) |e| p.ask(.{ .clipboard = .{ .paste = e } });
+        if (r.submitted) if (p.board.list.selection()) |e| p.ask(.{ .clipboard = .{ .paste = e } });
     }
 
     fn searchBar(p: *Panel, c: *ui.Context) void {
@@ -309,7 +254,7 @@ pub const Panel = struct {
             p.boardField(r);
         } else {
             if (r.changed) p.refresh();
-            if (r.submitted and p.visible.len > 0) p.ask(.{ .open = p.visible[p.selected].path });
+            if (r.submitted) if (p.list.selection()) |row| p.ask(.{ .open = row.path });
         }
         if (p.field.text().len > 0) {
             const clear = ui.div(c).w(24).h(24).center().control();
@@ -320,67 +265,43 @@ pub const Panel = struct {
                 p.field.clear();
                 p.refresh();
             }
-        } else keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
+        } else chrome.keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
     }
 
     fn filterBar(p: *Panel, c: *ui.Context) void {
         const bar = ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
         defer bar.end();
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
-        for (p.filterOptions(&buf)) |f| p.filterChip(c, f);
-    }
-
-    fn filterChip(p: *Panel, c: *ui.Context, f: Filter) void {
-        const th = c.theme;
-        ui.key(c, f.title());
-        const selected = p.filter == f;
-        const chip = ui.div(c).row().h(26).pl(10).pr(7).gap(5).itemsCenter().roundedFull()
-            .bg(th.text.alpha(if (selected) 0.14 else 0.055)).control();
-        defer chip.end();
-        if (chip.clicked()) p.selectFilter(f);
-        ui.icon(c, f.symbol(), .{ .size = 11, .weight = .semibold, .color = if (selected) th.text else th.muted });
-        ui.text(c, f.title(), .{ .size = 11.5, .weight = .semibold });
-        const slot = ui.div(c).w(27).h(13).center();
-        defer slot.end();
-        const loading = p.indexing and f != .apps;
-        if (loading) {
-            ui.icon(c, "ellipsis", .{ .size = 10, .weight = .semibold, .color = th.muted });
-        } else {
-            ui.text(c, compactCount(c, p.count(f)), .{ .size = 10, .weight = .semibold, .color = th.muted });
+        for (p.filterOptions(&buf)) |f| {
+            const slot: chrome.ChipSlot = if (p.indexing and f != .apps) .loading else .{ .count = p.list.count(f) };
+            if (chrome.filterChip(c, f.title(), f.symbol(), p.list.filter == f, slot)) p.selectFilter(f);
         }
     }
 
     fn resultList(p: *Panel, c: *ui.Context) void {
-        if (p.visible.len == 0) {
+        if (p.list.visible.len == 0) {
             const empty = ui.div(c).column().wFull().h(metrics.list_height).center().px(40);
             defer empty.end();
-            ui.text(c, c.print("No {s} results for \u{201C}{s}\u{201D}", .{ lowerTitle(c, p.filter), p.field.text() }), .{ .size = 13.5, .weight = .medium, .color = c.theme.muted.alpha(0.6) });
+            ui.text(c, c.print("No {s} results for \u{201C}{s}\u{201D}", .{ lowerTitle(c, p.list.filter), p.field.text() }), .{ .size = 13.5, .weight = .medium, .color = c.theme.muted.alpha(0.6) });
             return;
         }
-        const list = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
-        defer list.end();
-        boundOverscroll(c, list.id());
-        if (p.reveal_selection) {
-            p.reveal_selection = false;
-            const id = list.id();
-            const top = @as(f32, @floatFromInt(p.selected)) * metrics.row_height;
-            const view_h = metrics.list_height - 2 * metrics.row_padding;
-            const now = c.scroll.get(id) orelse 0;
-            if (top < now) c.setScroll(id, .y, top) else if (top + metrics.row_height > now + view_h) c.setScroll(id, .y, top + metrics.row_height - view_h);
-        }
-        for (p.visible, 0..) |row, i| p.rowView(c, row, i);
+        const box = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
+        defer box.end();
+        chrome.boundOverscroll(c, box.id());
+        chrome.revealSelection(c, &p.list, box.id(), metrics.list_height - 2 * metrics.row_padding);
+        for (p.list.visible, 0..) |row, i| p.rowView(c, row, i);
     }
 
     fn rowView(p: *Panel, c: *ui.Context, row: search.Row, i: usize) void {
         const th = c.theme;
         ui.keyInt(c, i);
-        const selected = i == p.selected;
+        const selected = i == p.list.selected;
         const top_hit = p.isTopHit(i);
         var box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
         const it = c.interact(box.index, .{});
-        box = box.bg(rowFill(th, selected, it.hovered, top_hit));
+        box = box.bg(chrome.rowFill(th, selected, it.hovered, top_hit));
         defer box.end();
-        if (it.clicked) p.selected = i;
+        if (it.clicked) p.list.selected = i;
         if (it.double_clicked) p.ask(.{ .open = row.path });
         p.iconView(c, row, if (top_hit) metrics.top_hit_icon_size else metrics.icon_size);
         {
@@ -400,7 +321,7 @@ pub const Panel = struct {
             }
             p.subtitleLine(c, row, top_hit);
         }
-        if (selected) keyChip(c, .{ .symbol = "return" });
+        if (selected) chrome.keyChip(c, .{ .symbol = "return" });
     }
 
     fn subtitleLine(p: *Panel, c: *ui.Context, row: search.Row, top_hit: bool) void {
@@ -410,7 +331,7 @@ pub const Panel = struct {
         ui.text(c, row.subtitle, .{ .size = style.size, .weight = style.weight, .color = style.color, .truncate = .ellipsis });
         if (row.size) |size| if (size > 0) {
             ui.text(c, "·", style);
-            ui.text(c, formatSize(c, size), style);
+            ui.text(c, chrome.formatSize(c, size), style);
         };
         if (row.modified) |secs| {
             ui.text(c, "·", style);
@@ -433,50 +354,6 @@ pub const Panel = struct {
     }
 };
 
-pub fn boundOverscroll(c: *ui.Context, scroll_box: u64) void {
-    const over = c.overscroll.getPtr(scroll_box) orelse return;
-    over.* = std.math.clamp(over.*, -metrics.max_overscroll, metrics.max_overscroll);
-}
-
-pub fn rowFill(th: ui.Theme, selected: bool, hovered: bool, top_hit: bool) ui.Color {
-    const ink: ui.Color = if (th.dark) .hex(0xffffff) else .hex(0x000000);
-    if (selected) return ink.alpha(if (th.dark) (if (hovered) 0.16 else 0.12) else (if (hovered) 0.11 else 0.08));
-    if (hovered) return ink.alpha(if (th.dark) 0.075 else 0.055);
-    if (top_hit) return th.text.alpha(0.045);
-    return ink.alpha(0);
-}
-
-const ChipContent = union(enum) { label: []const u8, symbol: []const u8 };
-
-pub fn keyChip(c: *ui.Context, content: ChipContent) void {
-    const th = c.theme;
-    const chip = ui.div(c).row().minW(24).h(24).px(7).center().rounded(7).bg(th.muted.alpha(0.1));
-    defer chip.end();
-    const color = th.text.alpha(0.82);
-    switch (content) {
-        .label => |s| ui.text(c, s, .{ .size = 11, .weight = .semibold, .color = color }),
-        .symbol => |s| ui.icon(c, s, .{ .size = 11, .weight = .semibold, .color = color }),
-    }
-}
-
 fn lowerTitle(c: *ui.Context, f: Filter) []const u8 {
     return std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
-}
-
-pub fn compactCount(c: *ui.Context, n: usize) []const u8 {
-    if (n < 1000) return c.print("{d}", .{n});
-    const tenths = (n + 50) / 100;
-    if (tenths % 10 == 0) return c.print("{d}K", .{tenths / 10});
-    return c.print("{d}.{d}K", .{ tenths / 10, tenths % 10 });
-}
-
-pub fn formatSize(c: *ui.Context, bytes: u64) []const u8 {
-    if (bytes < 1000) return c.print("{d} bytes", .{bytes});
-    if (bytes < 1_000_000) return c.print("{d} KB", .{(bytes + 500) / 1000});
-    const units = [_][]const u8{ "MB", "GB", "TB" };
-    var scaled: f64 = @as(f64, @floatFromInt(bytes)) / 1_000_000;
-    var u: usize = 0;
-    while (scaled >= 1000 and u + 1 < units.len) : (u += 1) scaled /= 1000;
-    if (u == 0) return c.print("{d:.1} {s}", .{ scaled, units[u] });
-    return c.print("{d:.2} {s}", .{ scaled, units[u] });
 }
