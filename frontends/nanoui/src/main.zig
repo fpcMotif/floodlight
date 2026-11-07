@@ -9,6 +9,8 @@ const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const file_index = @import("floodlight_core").file_index;
+const FileIndex = file_index.FileIndex;
 
 const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
@@ -25,7 +27,7 @@ const Shell = struct {
     app: *nanoui.App,
     io: std.Io,
     home: []const u8,
-    index_path: [:0]const u8,
+    files: FileIndex,
     catalog: search.Catalog,
     panel: panel_mod.Panel = undefined,
     panel_window: *nanoui.Window = undefined,
@@ -372,37 +374,23 @@ const Shell = struct {
 
     fn rebuildIndex(s: *Shell) void {
         s.panel.indexing = true;
-        const t = std.Thread.spawn(.{}, buildIndex, .{s}) catch return;
+        const t = std.Thread.spawn(.{}, FileIndex.rebuild, .{ &s.files, file_index.Notify{ .ctx = s, .ready = indexReady } }) catch return;
         t.detach();
     }
 
-    fn buildIndex(s: *Shell) void {
-        const mapped = search.buildFileIndex(gpa, s.home, s.index_path) catch |e| {
-            std.log.err("file index: {s}", .{@errorName(e)});
-            return objc.dispatchMain(s, indexFailed);
-        };
-        const box = gpa.create(Built) catch return;
-        box.* = .{ .shell = s, .mapped = mapped };
-        objc.dispatchMain(box, indexBuilt);
+    fn indexReady(ctx: ?*anyopaque, outcome: file_index.Outcome) void {
+        if (outcome == .failed) std.log.err("file index: {s}", .{@errorName(outcome.failed)});
+        objc.dispatchMain(ctx, indexLanded);
     }
 
-    const Built = struct { shell: *Shell, mapped: @import("floodlight_core").index.Mapped };
-
-    fn indexBuilt(ctx: ?*anyopaque) callconv(.c) void {
-        const b: *Built = @ptrCast(@alignCast(ctx));
-        defer gpa.destroy(b);
-        const s = b.shell;
-        s.catalog.setFiles(b.mapped);
-        s.panel.indexing = false;
-        // The rows answer the old index: ask again.
-        s.panel.answered.clearRetainingCapacity();
-        s.panel.refresh();
-        s.panel_window.redraw();
-    }
-
-    fn indexFailed(ctx: ?*anyopaque) callconv(.c) void {
+    fn indexLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel.indexing = false;
+        s.panel.indexing = s.files.busy();
+        if (s.files.adopt()) {
+            // The rows answer the old index: ask again.
+            s.panel.answered.clearRetainingCapacity();
+            s.panel.refresh();
+        }
         s.panel_window.redraw();
     }
 };
@@ -417,11 +405,12 @@ pub fn main(init: std.process.Init) !void {
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
 
-    var shell: Shell = .{ .app = app, .io = init.io, .home = home, .index_path = index_path, .catalog = .{ .gpa = gpa, .home = home } };
+    var shell: Shell = .{ .app = app, .io = init.io, .home = home, .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa, .home = home } };
+    defer shell.files.close();
+    shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
     try search.scanApps(&shell.catalog, init.io, try std.fs.path.join(gpa, &.{ home, "Applications" }));
-    if (@import("floodlight_core").index.Mapped.open(@import("floodlight_core").sys.cwd, index_path)) |m| shell.catalog.setFiles(m) else |_| {}
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
     const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });

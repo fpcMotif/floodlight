@@ -60,13 +60,12 @@ pub const max_rows = 80;
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
     apps: std.ArrayList(App) = .empty,
-    files: ?core.index.Mapped = null,
+    files: ?*const core.file_index.FileIndex = null,
     home: []const u8 = "",
 
     pub fn deinit(cat: *Catalog) void {
         for (cat.apps.items) |a| cat.gpa.free(a.path);
         cat.apps.deinit(cat.gpa);
-        if (cat.files) |*m| m.close();
         cat.* = undefined;
     }
 
@@ -74,12 +73,6 @@ pub const Catalog = struct {
     pub fn addApp(cat: *Catalog, path: []u8) !void {
         const base = std.fs.path.basename(path);
         try cat.apps.append(cat.gpa, .{ .name = base[0 .. base.len - ".app".len], .path = path });
-    }
-
-    /// Replaces the mapped index; the old mapping is unmapped.
-    pub fn setFiles(cat: *Catalog, mapped: core.index.Mapped) void {
-        if (cat.files) |*m| m.close();
-        cat.files = mapped;
     }
 
     /// The best rows for `query`, best first, in `arena`'s memory.
@@ -95,18 +88,18 @@ pub const Catalog = struct {
             try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 
-        if (cat.files) |m| {
+        if (if (cat.files) |fi| fi.view() else null) |v| {
             var hits: [max_rows]core.search.Hit = undefined;
-            const n = core.search.search(m.view, trimmed, &hits);
-            const root = m.view.root;
+            const n = core.search.search(v, trimmed, &hits);
+            const root = v.root;
             for (hits[0..n]) |h| {
                 var buf: [4096]u8 = undefined;
-                const rel = m.view.relativePath(h.id, &buf) orelse continue;
+                const rel = v.relativePath(h.id, &buf) orelse continue;
                 const path = try std.fs.path.join(arena, &.{ root, rel });
                 // Bundles are apps, listed above from the catalog; their insides are no one's.
                 if (std.mem.endsWith(u8, rel, ".app") or std.mem.indexOf(u8, rel, ".app/") != null) continue;
                 try rows.append(arena, .{
-                    .kind = if (m.view.flags[h.id].dir) .folder else .file,
+                    .kind = if (v.flags[h.id].dir) .folder else .file,
                     .title = std.fs.path.basename(path),
                     .subtitle = try arena.dupe(u8, rel),
                     .path = path,
@@ -173,14 +166,4 @@ pub fn scanApps(cat: *Catalog, io: std.Io, folder: []const u8) !void {
         if (entry.kind != .directory or !std.mem.endsWith(u8, entry.name, ".app")) continue;
         try cat.addApp(try std.fs.path.join(cat.gpa, &.{ folder, entry.name }));
     }
-}
-
-/// Scans `root` into an index file at `out_path` and maps it.
-/// Runs off the main thread: a home folder takes seconds.
-pub fn buildFileIndex(gpa: std.mem.Allocator, root: []const u8, out_path: []const u8) !core.index.Mapped {
-    var b = core.index.Builder.init(gpa);
-    defer b.deinit();
-    try core.scan.scan(&b, root, .{});
-    try b.writeFile(core.sys.cwd, out_path);
-    return core.index.Mapped.open(core.sys.cwd, out_path);
 }

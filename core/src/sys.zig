@@ -130,6 +130,10 @@ pub fn munmap(bytes: []align(std.heap.page_size_min) const u8) void {
     posix.munmap(bytes);
 }
 
+pub fn pid() i32 {
+    return @intCast(system.getpid());
+}
+
 pub fn monotonicNs() u64 {
     var ts: posix.timespec = undefined;
     _ = system.clock_gettime(.MONOTONIC, &ts);

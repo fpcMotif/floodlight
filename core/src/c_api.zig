@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const index = @import("index.zig");
-const scan = @import("scan.zig");
+const file_index = @import("file_index.zig");
 const search = @import("search.zig");
 const sys = @import("sys.zig");
 
@@ -30,11 +30,8 @@ fn errnoOf(err: anyerror) c_int {
 }
 
 export fn fl_index_build(root: [*:0]const u8, out_path: [*:0]const u8) c_int {
-    var b = index.Builder.init(gpa);
-    defer b.deinit();
-    scan.scan(&b, std.mem.span(root), .{}) catch |e| return errnoOf(e);
-    b.writeFile(sys.cwd, std.mem.span(out_path)) catch |e| return errnoOf(e);
-    return @intCast(@min(b.count(), std.math.maxInt(c_int)));
+    const n = file_index.writeIndex(gpa, .{}, std.mem.span(root), std.mem.span(out_path)) catch |e| return errnoOf(e);
+    return @intCast(@min(n, std.math.maxInt(c_int)));
 }
 
 export fn fl_index_open(path: [*:0]const u8, out: *?*Handle) c_int {

@@ -171,7 +171,7 @@ pub const Builder = struct {
     /// mapping the old index never sees a half-written one.
     pub fn writeFile(b: *const Builder, dir: sys.fd_t, path: []const u8) !void {
         var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
-        const tmp = try std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{path});
+        const tmp = try tempPath(&tmp_buf, path);
         const fd = try sys.openat(dir, tmp, .create);
         errdefer sys.unlinkat(dir, tmp);
         {
@@ -217,6 +217,13 @@ pub const Builder = struct {
         try sys.pwriteAll(fd, b.root.items, h.off_root);
     }
 };
+
+var temp_seq: std.atomic.Value(u32) = .init(0);
+
+fn tempPath(buf: []u8, path: []const u8) ![]const u8 {
+    const seq = temp_seq.fetchAdd(1, .monotonic);
+    return std.fmt.bufPrint(buf, "{s}.{d}.{d}.tmp", .{ path, sys.pid(), seq });
+}
 
 fn take(off: *u64, len: u64) u64 {
     const at = off.*;
@@ -302,6 +309,18 @@ test "round trip through a mapped file" {
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("a/hello.txt", m.view.relativePath(1, &buf).?);
     try t.expect(m.view.flags[0].dir);
+}
+
+test "every write gets its own temp file beside the index" {
+    var a_buf: [64]u8 = undefined;
+    var b_buf: [64]u8 = undefined;
+    const a = try tempPath(&a_buf, "dir/idx");
+    const b = try tempPath(&b_buf, "dir/idx");
+    try t.expect(!std.mem.eql(u8, a, b));
+    for ([_][]const u8{ a, b }) |p| {
+        try t.expectStringStartsWith(p, "dir/idx.");
+        try t.expectStringEndsWith(p, ".tmp");
+    }
 }
 
 test "rejects a truncated file" {

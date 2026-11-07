@@ -140,7 +140,7 @@ test "the guidance view offers the app card, then shows the grant" {
 
 const tmp_home_files = [_][]const u8{ "Documents/tax/2025-return.pdf", "Documents/notes.txt", "Music/kind-of-blue.flac" };
 
-fn tmpCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8) !search.Catalog {
+fn tmpCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *core.file_index.FileIndex) !search.Catalog {
     for (tmp_home_files) |p| {
         try tmp.dir.createDirPath(t.io, std.fs.path.dirname(p).?);
         try tmp.dir.writeFile(t.io, .{ .sub_path = p, .data = "" });
@@ -154,15 +154,23 @@ fn tmpCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8) !search.Ca
     try search.scanApps(&cat, t.io, apps);
     const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
     defer t.allocator.free(idx);
-    cat.setFiles(try search.buildFileIndex(t.allocator, root, idx));
+    files.* = try .open(t.allocator, idx, root, .{});
+    errdefer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    cat.files = files;
     return cat;
 }
+
+fn ignoreOutcome(_: ?*anyopaque, _: core.file_index.Outcome) void {}
 
 test "a query finds apps and files, apps first" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var cat = try tmpCatalog(&tmp, &buf);
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
     defer cat.deinit();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -220,7 +228,9 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var cat = try tmpCatalog(&tmp, &buf);
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
     defer cat.deinit();
     var hooks: NoHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -272,7 +282,9 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var cat = try tmpCatalog(&tmp, &buf);
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
     defer cat.deinit();
     var hooks: NoHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
