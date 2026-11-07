@@ -2596,7 +2596,7 @@ test "the first frame after a keystroke does not wait for suggestions, and arriv
     tester.typeText("cal");
     try t.expectEqual(@as(usize, 1), spy.queries.items.len);
     try t.expectEqualStrings("cal", spy.queries.items[0]);
-    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqual(@as(usize, 6), p.list.visible.len);
     try t.expectEqualStrings("Calendar", p.list.visible[0].title);
     try t.expectEqualStrings("Calculator", p.list.visible[1].title);
     try t.expectEqualStrings("Google", p.list.visible[2].title);
@@ -2614,7 +2614,7 @@ test "the first frame after a keystroke does not wait for suggestions, and arriv
     tester.frame();
 
     try t.expectEqual(@as(usize, 1), p.list.selected);
-    try t.expectEqual(@as(usize, 7), p.list.visible.len);
+    try t.expectEqual(@as(usize, 10), p.list.visible.len);
     try t.expectEqualStrings("Google", p.list.visible[2].title);
     try t.expectEqualStrings("calculator online", p.list.visible[3].title);
     try t.expectEqualStrings("calendar 2026", p.list.visible[4].title);
@@ -2642,6 +2642,100 @@ test "the first frame after a keystroke does not wait for suggestions, and arriv
     try t.expectEqualStrings("https://www.google.com/search?q=calculator%20online", (p.pending orelse return error.NoAction).open);
 }
 
+test "YouTube, X and Grok rows follow Google and its suggestions and open that engine's search, but never for links, paths or the board" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("lofi & chill");
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
+    try t.expectEqualStrings("Google", p.list.visible[0].title);
+    try t.expectEqualStrings("YouTube", p.list.visible[1].title);
+    try t.expectEqualStrings("youtube.com", p.list.visible[1].subtitle);
+    try t.expectEqualStrings("X", p.list.visible[2].title);
+    try t.expectEqualStrings("Grok", p.list.visible[3].title);
+
+    p.receiveSuggestions("lofi & chill", &.{"lofi & chill beats"});
+    tester.frame();
+    try t.expectEqual(@as(usize, 5), p.list.visible.len);
+    try t.expectEqualStrings("lofi & chill beats", p.list.visible[1].title);
+    try t.expectEqualStrings("YouTube", p.list.visible[2].title);
+
+    const expected = [_][]const u8{
+        "https://www.youtube.com/results?search_query=lofi%20%26%20chill",
+        "https://x.com/search?f=live&q=lofi%20%26%20chill",
+        "https://grok.com/?q=lofi%20%26%20chill",
+    };
+    for (expected, 2..) |url, row| {
+        try t.expectEqualStrings(url, p.list.visible[row].path);
+    }
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    tester.key(.enter);
+    try t.expectEqualStrings(expected[0], (p.pending orelse return error.NoAction).open);
+
+    const none = [_][]const u8{ "github.com", "/Applications", "~/Documents", "./build.zig" };
+    for (none) |q| {
+        p.reset();
+        tester.frame();
+        tester.typeText(q);
+        for (p.list.visible) |r| try t.expect(!r.engine);
+    }
+
+    p.reset();
+    tester.frame();
+    tester.typeText("\t");
+    for (p.list.visible) |r| try t.expect(!r.engine);
+
+    p.reset();
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("lofi");
+    for (p.list.visible) |r| try t.expect(!r.engine);
+}
+
+test "Return on X and Grok opens their searches, and an engine row stays selected when suggestions arrive late" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("lofi");
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqualStrings("X", p.list.visible[p.list.selected].title);
+
+    p.receiveSuggestions("lofi", &.{ "lofi girl", "lofi hip hop" });
+    tester.frame();
+    try t.expectEqualStrings("X", p.list.visible[p.list.selected].title);
+    tester.key(.enter);
+    try t.expectEqualStrings("https://x.com/search?f=live&q=lofi", (p.pending orelse return error.NoAction).open);
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqualStrings("Grok", p.list.visible[p.list.selected].title);
+    tester.key(.enter);
+    try t.expectEqualStrings("https://grok.com/?q=lofi", (p.pending orelse return error.NoAction).open);
+}
+
 test "a late reply for an old query or superseded request is ignored, and an empty failure leaves no rows" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
@@ -2664,7 +2758,7 @@ test "a late reply for an old query or superseded request is ignored, and an emp
     try t.expect(second_seq > first_seq);
 
     try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"weather radar"}));
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
     try t.expectEqualStrings("Google", p.list.visible[0].title);
 
     for (0..4) |_| tester.key(.backspace);
@@ -2673,10 +2767,10 @@ test "a late reply for an old query or superseded request is ignored, and an emp
     try t.expect(third_seq > second_seq);
 
     try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"stale weather"}));
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
 
     try t.expect(p.receiveSuggestionsFor(third_seq, "wea", &.{}));
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
     try t.expectEqualStrings("Google", p.list.visible[0].title);
 }
 
@@ -2701,16 +2795,16 @@ test "with the setting off, or for a Link Row, a path-like query, or Clipboard m
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 0), spy.queries.items.len);
     p.receiveSuggestions("weather", &.{"weather today"});
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
 
     p.setWebSuggestionsEnabled(true);
     try t.expectEqual(@as(usize, 1), spy.queries.items.len);
     try t.expectEqualStrings("weather", spy.queries.items[0]);
     p.receiveSuggestions("weather", &.{"weather today"});
-    try t.expectEqual(@as(usize, 2), p.list.visible.len);
+    try t.expectEqual(@as(usize, 5), p.list.visible.len);
 
     p.setWebSuggestionsEnabled(false);
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
     p.setWebSuggestionsEnabled(true);
 
     const suppressed = [_][]const u8{
@@ -2752,14 +2846,14 @@ test "a cached query reuses suggestions within five minutes without sending a se
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 1), spy.queries.items.len);
     p.receiveSuggestions("weather", &.{ "weather forecast", "weather radar" });
-    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqual(@as(usize, 6), p.list.visible.len);
 
     spy.hooks_base.clock.advance(299);
     p.reset();
     tester.frame();
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 1), spy.queries.items.len);
-    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqual(@as(usize, 6), p.list.visible.len);
     try t.expectEqualStrings("weather forecast", p.list.visible[1].title);
     try t.expectEqualStrings("weather radar", p.list.visible[2].title);
 
@@ -2769,7 +2863,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 2), spy.queries.items.len);
     try t.expectEqualStrings("weather", spy.queries.items[1]);
-    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqual(@as(usize, 4), p.list.visible.len);
 }
 
 test "the first web suggestion becomes the completion only when neither query history nor top hit matches" {

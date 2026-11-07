@@ -691,11 +691,17 @@ pub const Panel = struct {
         return out[0..n];
     }
 
-    /// The catalog's rows, then a Google row per suggestion.
+    /// The catalog's rows, a Google row per suggestion, then one row per
+    /// other web engine. Links and paths are not web queries, so they get no
+    /// engine rows.
     fn composeRows(p: *Panel) []const search.Row {
-        if (p.suggestions.len == 0 or p.base_rows.len == 0) return p.base_rows;
+        if (p.base_rows.len == 0) return p.base_rows;
+        const query = std.mem.trim(u8, p.field.text(), " \t\r\n");
+        const engines = p.mode == .search and query.len > 0 and !isPathLike(query) and !hasLinkRow(p.base_rows);
+        const engine_count = if (engines) search.web_engines.len else 0;
+        if (p.suggestions.len == 0 and engine_count == 0) return p.base_rows;
         const a = p.list.allocator();
-        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len) catch return p.base_rows;
+        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len + engine_count) catch return p.base_rows;
         @memcpy(out[0..p.base_rows.len], p.base_rows);
         for (p.suggestions, p.base_rows.len..) |s, i| out[i] = .{
             .kind = .web,
@@ -704,6 +710,16 @@ pub const Panel = struct {
             .path = search.webSearchUrl(a, s) catch "",
             .score = 0,
             .suggestion = true,
+        };
+        if (engines) for (search.web_engines, p.base_rows.len + p.suggestions.len..) |e, i| {
+            out[i] = .{
+                .kind = .web,
+                .title = e.title,
+                .subtitle = e.host,
+                .path = search.engineUrl(a, e, query) catch "",
+                .score = 0,
+                .engine = true,
+            };
         };
         return out;
     }
@@ -1108,7 +1124,7 @@ fn isPathLike(s: []const u8) bool {
 
 fn hasLinkRow(rows: []const search.Row) bool {
     for (rows) |r| {
-        if (r.kind == .web and !r.suggestion and !std.mem.eql(u8, r.title, "Google")) return true;
+        if (r.kind == .web and !r.suggestion and !r.engine and !std.mem.eql(u8, r.title, "Google")) return true;
     }
     return false;
 }

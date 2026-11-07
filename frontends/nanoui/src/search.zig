@@ -40,6 +40,8 @@ pub const Row = struct {
     size: ?u64 = null,
     modified: ?i64 = null,
     suggestion: bool = false,
+    /// One of `web_engines`, listed under Google; never a Link Row.
+    engine: bool = false,
 
     pub fn extension(r: Row) []const u8 {
         if (r.kind != .file) return "";
@@ -50,6 +52,20 @@ pub const Row = struct {
 
 pub const web_search_url = "https://www.google.com/search?q=";
 pub const web_suggest_url = "https://suggestqueries.google.com/complete/search?client=firefox&q=";
+
+pub const WebEngine = struct {
+    title: []const u8,
+    host: []const u8,
+    url_prefix: []const u8,
+};
+
+/// Listed under Google and its suggestions, in this order. Gemini is absent
+/// until a query-prefill URL is confirmed against the live site.
+pub const web_engines = [_]WebEngine{
+    .{ .title = "YouTube", .host = "youtube.com", .url_prefix = "https://www.youtube.com/results?search_query=" },
+    .{ .title = "X", .host = "x.com", .url_prefix = "https://x.com/search?f=live&q=" },
+    .{ .title = "Grok", .host = "grok.com", .url_prefix = "https://grok.com/?q=" },
+};
 
 pub const App = struct {
     /// The bundle's name without `.app`.
@@ -173,6 +189,10 @@ fn stamp(arena: std.mem.Allocator, r: *Row) void {
 
 pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
     return buildQueryUrl(arena, web_search_url, query);
+}
+
+pub fn engineUrl(arena: std.mem.Allocator, engine: WebEngine, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, engine.url_prefix, query);
 }
 
 pub fn webSuggestUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
