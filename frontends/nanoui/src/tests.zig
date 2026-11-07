@@ -409,6 +409,159 @@ test "Escape asks to hide" {
     try t.expect(p.pending != null and p.pending.? == .hide);
 }
 
+const CompletionFixture = struct {
+    tmp: std.testing.TmpDir,
+    buf: [std.posix.PATH_MAX]u8 = undefined,
+    cat: search.Catalog = undefined,
+    hooks: NoHooks = .{},
+    p: panel_mod.Panel = undefined,
+    tester: ui.Tester = undefined,
+
+    fn init(f: *CompletionFixture, extra_apps: []const []const u8) !void {
+        f.tmp = t.tmpDir(.{});
+        errdefer f.tmp.cleanup();
+        for (extra_apps) |app| try f.tmp.dir.createDirPath(t.io, app);
+        f.cat = try tmpCatalog(&f.tmp, &f.buf);
+        errdefer f.cat.deinit();
+        f.hooks = .{};
+        f.p = panel_mod.Panel.init(t.allocator, &f.cat, null, f.hooks.hooks());
+        errdefer f.p.deinit();
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+        f.tester.settle(0.1);
+    }
+
+    fn deinit(f: *CompletionFixture) void {
+        f.tester.deinit();
+        f.p.deinit();
+        f.cat.deinit();
+        f.tmp.cleanup();
+    }
+};
+
+test "top hit offers a case-preserving inline completion suffix without changing the rows" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Grant.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    const comp = fx.p.completion orelse return error.NoCompletion;
+    try t.expectEqualStrings("igravity", comp.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, comp.source);
+    try t.expect(fx.tester.hasText("igravity"));
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expect(fx.tester.hasText("Grant"));
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ANT");
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("ANT", fx.p.field.text());
+}
+
+test "Right arrow and Tab accept the full completion on the same frame while Return opens the selected row" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Grant.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    try t.expect(fx.tester.hasText("Grant"));
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.down }));
+    fx.tester.key(.enter);
+    try t.expectEqualStrings(fx.p.visible[1].path, fx.p.pending.?.open);
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    fx.p.pending = null;
+
+    fx.tester.key(.right);
+    try t.expectEqualStrings("antigravity", fx.p.field.text());
+    try t.expectEqualStrings("antigravity", fx.p.answered.items);
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("Grant"));
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ANT");
+    try t.expect(fx.tester.hasText("Grant"));
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.tab }));
+    try t.expectEqualStrings("ANTigravity", fx.p.field.text());
+    try t.expectEqualStrings("ANTigravity", fx.p.answered.items);
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("Grant"));
+}
+
+test "Option-Right accepts a multi-word completion one word at a time" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{"Apps/Visual Studio Code.app/Contents"});
+    defer fx.deinit();
+
+    fx.tester.typeText("vi");
+    try t.expectEqualStrings("sual Studio Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual", fx.p.field.text());
+    try t.expectEqualStrings("visual", fx.p.answered.items);
+    try t.expectEqualStrings(" Studio Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual Studio", fx.p.field.text());
+    try t.expectEqualStrings("visual Studio", fx.p.answered.items);
+    try t.expectEqualStrings(" Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual Studio Code", fx.p.field.text());
+    try t.expectEqualStrings("visual Studio Code", fx.p.answered.items);
+    try t.expect(fx.p.completion == null);
+}
+
+test "completion hides on Backspace, mid-text caret, IME composition, Link Row query, and exact match" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/github.com Desktop.app/Contents", "Apps/localhost Helper.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    try t.expect(fx.p.completion != null);
+
+    fx.tester.key(.backspace);
+    try t.expectEqualStrings("an", fx.p.field.text());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("tigravity"));
+
+    fx.tester.typeText("t");
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.tester.key(.left);
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("igravity"));
+
+    fx.tester.key(.right);
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.textOps(&.{.{ .set_marked = .{ .text = "ant", .sel_start = 3, .sel_len = 0 } }});
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("igravity"));
+
+    fx.tester.textOps(&.{.unmark});
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("github.com");
+    try t.expect(fx.p.completion == null);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("localhost:3000");
+    try t.expect(fx.p.completion == null);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("antigravity");
+    try t.expect(fx.p.completion == null);
+}
+
 test "the access probe names a file that exists" {
     const failed = std.c.access(mac.full_disk_access_probe, 0) != 0;
     const missing = failed and @as(std.c.E, @fromBackingInt(@intCast(std.c._errno().*))) == .NOENT;
