@@ -97,6 +97,13 @@ pub const Action = union(enum) {
 
 pub const Mode = enum { search, clipboard };
 
+pub const CompletionSource = enum { history, top_hit, web_suggestion };
+
+pub const Completion = struct {
+    suffix: []const u8,
+    source: CompletionSource,
+};
+
 /// What the panel asks of the window, handled after the frame.
 pub const Hooks = struct {
     ctx: ?*anyopaque = null,
@@ -124,6 +131,10 @@ pub const Panel = struct {
     selected: usize = 0,
     reveal_selection: bool = false,
     indexing: bool = false,
+    suppressed_by_backspace: bool = false,
+    caret_at_end: bool = true,
+    composing: bool = false,
+    completion: ?Completion = null,
     pending: ?Action = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
@@ -148,6 +159,7 @@ pub const Panel = struct {
         p.answered.clearRetainingCapacity();
         p.filter = .all;
         p.selected = 0;
+        p.resetCompletion();
         p.pending = null;
         p.mode = .search;
         p.board.reset();
@@ -159,6 +171,7 @@ pub const Panel = struct {
     /// The board, with history listed before anything is typed.
     pub fn showClipboard(p: *Panel) void {
         p.mode = .clipboard;
+        p.resetCompletion();
         p.field.clear();
         p.board.stale = true;
         p.board.refresh("");
@@ -180,6 +193,7 @@ pub const Panel = struct {
         const text = p.field.text();
         if (p.mode == .clipboard) return p.board.refresh(text);
         if (std.mem.eql(u8, text, p.answered.items)) return;
+        if (text.len == 0 or text.len > p.answered.items.len) p.suppressed_by_backspace = false;
         _ = p.arena.reset(.retain_capacity);
         p.rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
         p.answered.clearRetainingCapacity();
@@ -223,6 +237,32 @@ pub const Panel = struct {
         p.visible = out[0..n];
         p.selected = 0;
         p.reveal_selection = true;
+        p.completion = p.topHitCompletion();
+    }
+
+    fn topHitCompletion(p: *const Panel) ?Completion {
+        if (p.mode != .search or p.suppressed_by_backspace or !p.caret_at_end or p.composing or !p.isTopHit(0)) return null;
+        const query = p.field.text();
+        if (query.len == 0 or isLinkQuery(query) or hasLinkRow(p.rows)) return null;
+        const top = p.visible[0];
+        if (top.kind == .web) return null;
+        if (top.title.len <= query.len or !std.ascii.startsWithIgnoreCase(top.title, query)) return null;
+        return .{ .suffix = top.title[query.len..], .source = .top_hit };
+    }
+
+    fn resetCompletion(p: *Panel) void {
+        p.suppressed_by_backspace = false;
+        p.caret_at_end = true;
+        p.composing = false;
+        p.completion = null;
+    }
+
+    fn acceptSlice(p: *Panel, part: []const u8) void {
+        if (part.len == 0) return;
+        p.resetCompletion();
+        _ = p.field.insert(p.field.text().len, part);
+        p.field.want_caret = p.field.text().len;
+        p.refresh();
     }
 
     pub fn isTopHit(p: *const Panel, i: usize) bool {
@@ -246,6 +286,16 @@ pub const Panel = struct {
         if (p.mode == .clipboard) {
             if (p.board.keys(c, p.field.text().len == 0)) |a| p.ask(.{ .clipboard = a });
             return;
+        }
+        if (p.completion) |comp| {
+            if (c.shortcut(.{ .key = S.right }) or c.shortcut(.{ .key = S.tab }) or takeFieldKey(c, .right, false, .move_right) or takeFieldKey(c, .tab, false, .insert_tab)) {
+                p.acceptSlice(comp.suffix);
+                return;
+            }
+            if (c.shortcut(.{ .key = S.right, .alt = true }) or takeFieldKey(c, .right, true, .move_word_right)) {
+                p.acceptSlice(comp.suffix[0..nextWordEnd(comp.suffix)]);
+                return;
+            }
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
@@ -304,11 +354,15 @@ pub const Panel = struct {
         ui.icon(c, "magnifyingglass", .{ .size = metrics.search_icon_size, .weight = .medium, .color = th.muted, .frame = metrics.search_icon_size });
         if (p.field.text().len == 0) p.field.focus();
         const board = p.mode == .clipboard;
-        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Floodlight", .size = 24, .width = .fill, .bare = true });
+        if (!board) p.observeInput(c);
+        const suggestion = if (!board and p.completion != null) p.completion.?.suffix else "";
+        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Floodlight", .size = 24, .width = .fill, .bare = true, .suggestion = suggestion });
         if (board) {
             p.boardField(r);
         } else {
+            if (r.accepted) p.suppressed_by_backspace = false;
             if (r.changed) p.refresh();
+            p.syncFieldState(c, r.caret);
             if (r.submitted and p.visible.len > 0) p.ask(.{ .open = p.visible[p.selected].path });
         }
         if (p.field.text().len > 0) {
@@ -318,9 +372,37 @@ pub const Panel = struct {
             ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = if (hovered) th.text else th.muted });
             if (clear.clicked()) {
                 p.field.clear();
+                p.resetCompletion();
                 p.refresh();
             }
         } else keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
+    }
+
+    fn observeInput(p: *Panel, c: *const ui.Context) void {
+        if (hasBackspace(c)) {
+            p.suppressed_by_backspace = true;
+            p.completion = null;
+        } else if (hasInsertion(c)) {
+            p.suppressed_by_backspace = false;
+        }
+        if (hasMarkedText(c)) {
+            p.composing = true;
+            p.completion = null;
+        }
+    }
+
+    fn syncFieldState(p: *Panel, c: *ui.Context, caret: usize) void {
+        const len = p.field.text().len;
+        const edit = c.edits.get(p.field.last_id);
+        const at_end = if (edit) |e| (e.caret == len and e.anchor == len) else (caret == len);
+        const marked = if (edit) |e| (e.marked != null) else false;
+        p.caret_at_end = at_end;
+        p.composing = marked;
+        const next = p.topHitCompletion();
+        if (!sameCompletion(p.completion, next)) {
+            p.completion = next;
+            c.changed = true;
+        }
     }
 
     fn filterBar(p: *Panel, c: *ui.Context) void {
@@ -436,6 +518,127 @@ pub const Panel = struct {
 pub fn boundOverscroll(c: *ui.Context, scroll_box: u64) void {
     const over = c.overscroll.getPtr(scroll_box) orelse return;
     over.* = std.math.clamp(over.*, -metrics.max_overscroll, metrics.max_overscroll);
+}
+
+fn takeFieldKey(c: *ui.Context, key: anytype, alt: bool, cmd: anytype) bool {
+    if (c.input.shift or c.input.cmd or c.input.ctrl) return false;
+    if (c.input.alt == alt and c.input.key == key) {
+        c.input.key = null;
+        c.changed = true;
+        return true;
+    }
+    if (c.input.ops.len == 1 and c.input.ops[0] == .command and c.input.ops[0].command == cmd) {
+        c.input.ops = &.{};
+        c.changed = true;
+        return true;
+    }
+    return false;
+}
+
+fn isWordByte(b: u8) bool {
+    return std.ascii.isAlphanumeric(b) or b == '_' or b >= 0x80;
+}
+
+fn nextWordEnd(s: []const u8) usize {
+    var i: usize = 0;
+    while (i < s.len and !isWordByte(s[i])) i += 1;
+    while (i < s.len and isWordByte(s[i])) i += 1;
+    return i;
+}
+
+fn sameCompletion(a: ?Completion, b: ?Completion) bool {
+    if (a == null and b == null) return true;
+    const x = a orelse return false;
+    const y = b orelse return false;
+    return x.source == y.source and std.mem.eql(u8, x.suffix, y.suffix);
+}
+
+fn hasBackspace(c: *const ui.Context) bool {
+    if (c.input.key == .backspace) return true;
+    for (c.input.ops) |op| {
+        if (op == .command and (op.command == .delete_backward or op.command == .delete_word_backward or op.command == .delete_to_line_start)) return true;
+    }
+    return false;
+}
+
+fn hasInsertion(c: *const ui.Context) bool {
+    if (c.input.chars.len > 0) return true;
+    for (c.input.ops) |op| {
+        if (op == .insert and op.insert.len > 0) return true;
+    }
+    return false;
+}
+
+fn hasMarkedText(c: *const ui.Context) bool {
+    for (c.input.ops) |op| {
+        if (op == .set_marked and op.set_marked.text.len > 0) return true;
+    }
+    return false;
+}
+
+fn hasLinkRow(rows: []const search.Row) bool {
+    for (rows) |r| {
+        if (r.kind == .web and !std.mem.eql(u8, r.title, "Google")) return true;
+    }
+    return false;
+}
+
+const web_tlds = [_][]const u8{
+    "com",     "org",    "net",    "edu",   "gov",    "mil",  "int",  "io",      "co",    "ai",    "dev",  "me",      "gg",
+    "xyz",     "tv",     "fm",     "am",    "to",     "ly",   "uk",   "de",      "fr",    "jp",    "cn",   "au",      "ca",
+    "ch",      "nl",     "se",     "no",    "dk",     "fi",   "es",   "pt",      "it",    "is",    "at",   "be",      "us",
+    "eu",      "kr",     "tw",     "hk",    "sg",     "nz",   "ie",   "ru",      "ua",    "cz",    "sk",   "hu",      "ro",
+    "bg",      "gr",     "tr",     "il",    "za",     "mx",   "ar",   "cl",      "pe",    "tech",  "site", "online",  "blog",
+    "biz",     "design", "studio", "cloud", "page",   "live", "work", "world",   "space", "fun",   "club", "team",    "zone",
+    "chat",    "social", "media",  "games", "lol",    "wtf",  "fyi",  "run",     "build", "tools", "wiki", "systems", "security",
+    "finance", "money",  "bank",   "law",   "health", "care", "bio",  "science", "math",  "art",   "book", "books",
+};
+
+fn isLinkQuery(text: []const u8) bool {
+    const s = std.mem.trimEnd(u8, std.mem.trim(u8, text, " \t\r\n"), ".,;)");
+    if (s.len == 0 or std.mem.indexOfAny(u8, s, " \t\r\n") != null) return false;
+    for ([_][]const u8{ "https://", "http://" }) |scheme| {
+        if (std.ascii.startsWithIgnoreCase(s, scheme)) return clipboard.domain(s) != null;
+    }
+    if (std.mem.indexOf(u8, s, "://") != null) return false;
+    const slash = std.mem.indexOfAny(u8, s, "/?#");
+    const host_port = if (slash) |idx| s[0..idx] else s;
+    const colon = std.mem.indexOfScalar(u8, host_port, ':');
+    const host = if (colon) |idx| host_port[0..idx] else host_port;
+    if (colon) |idx| if (!isValidPort(host_port[idx + 1 ..])) return false;
+    if (std.ascii.eqlIgnoreCase(host, "localhost") or isIpv4(host)) return true;
+    const tld = lastHostLabel(host) orelse return false;
+    const www = std.ascii.startsWithIgnoreCase(host, "www.") and std.mem.indexOfScalar(u8, host["www.".len..], '.') != null;
+    return www or colon != null or slash != null or inSet(tld, &web_tlds);
+}
+
+fn isValidPort(port: []const u8) bool {
+    if (port.len == 0 or port.len > 5) return false;
+    return (std.fmt.parseInt(u16, port, 10) catch 0) > 0;
+}
+
+fn isIpv4(host: []const u8) bool {
+    var it = std.mem.splitScalar(u8, host, '.');
+    var parts: usize = 0;
+    while (it.next()) |part| : (parts += 1) {
+        if (parts == 4 or part.len == 0 or part.len > 3) return false;
+        _ = std.fmt.parseInt(u8, part, 10) catch return false;
+    }
+    return parts == 4;
+}
+
+fn lastHostLabel(host: []const u8) ?[]const u8 {
+    if (std.mem.indexOfScalar(u8, host, '.') == null) return null;
+    var it = std.mem.splitScalar(u8, host, '.');
+    var last: []const u8 = "";
+    while (it.next()) |label| {
+        if (label.len == 0 or label.len > 63 or label[0] == '-' or label[label.len - 1] == '-') return null;
+        for (label) |c| if (!std.ascii.isAlphanumeric(c) and c != '-') return null;
+        last = label;
+    }
+    if (last.len < 2) return null;
+    for (last) |c| if (!std.ascii.isAlphabetic(c)) return null;
+    return last;
 }
 
 pub fn rowFill(th: ui.Theme, selected: bool, hovered: bool, top_hit: bool) ui.Color {
