@@ -283,6 +283,85 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     try t.expectEqual(panel_mod.metrics.search_height, p.panelHeight());
 }
 
+test "typed links normalize to URLs while prose and source files stay searches" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = [_]struct { []const u8, ?[]const u8 }{
+        .{ "github.com", "https://github.com" },
+        .{ "github.com/fpcMotif/floodlight", "https://github.com/fpcMotif/floodlight" },
+        .{ "https://x.y/z", "https://x.y/z" },
+        .{ "localhost:3000", "http://localhost:3000" },
+        .{ "127.0.0.1:8080/a", "http://127.0.0.1:8080/a" },
+        .{ "www.example.org", "https://www.example.org" },
+        .{ "see github.com.", null },
+        .{ "github.com.", "https://github.com" },
+        .{ "README.md", null },
+        .{ "main.zig", null },
+        .{ "google stock", null },
+        .{ "build.rs", null },
+        .{ "claude.ai", "https://claude.ai" },
+        .{ "Claude.app", null },
+        .{ "https://:8080", null },
+        .{ "https://www./path", null },
+    };
+    for (cases) |c| {
+        const got = try search.detectLink(a, c[0]);
+        if (c[1]) |want| {
+            try t.expectEqualStrings(want, got orelse return error.ExpectedLink);
+        } else {
+            try t.expect(got == null);
+        }
+    }
+}
+
+test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and an exact title match stays first" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("github.com");
+    tester.settle(0.2);
+    try t.expect(p.visible.len >= 2);
+    try t.expectEqual(@as(usize, 0), p.selected);
+    try t.expectEqualStrings("Open github.com", p.visible[0].title);
+    try t.expectEqualStrings("https://github.com", p.visible[0].subtitle);
+    try t.expectEqualStrings("Google", p.visible[p.visible.len - 1].title);
+
+    tester.key(.enter);
+    tester.settle(0.1);
+    try t.expectEqualStrings("https://github.com", (p.pending orelse return error.NoAction).open);
+    p.pending = null;
+
+    try t.expect(tester.shortcut(.{ .key = 'c', .cmd = true }));
+    try t.expectEqualStrings("https://github.com", (p.pending orelse return error.NoAction).copy.path);
+    p.pending = null;
+
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Documents/github.com", .data = "" });
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    cat.setFiles(try search.buildFileIndex(t.allocator, root, idx));
+    p.answered.clearRetainingCapacity();
+    p.refresh();
+    try t.expect(p.visible.len >= 3);
+    try t.expectEqual(search.Kind.file, p.visible[0].kind);
+    try t.expectEqualStrings("github.com", p.visible[0].title);
+    try t.expectEqualStrings("Open github.com", p.visible[1].title);
+    try t.expectEqualStrings("https://github.com", p.visible[1].subtitle);
+    try t.expectEqualStrings("Google", p.visible[p.visible.len - 1].title);
+}
+
 test "filter chips count, narrow the rows, and drop Top Hit" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -748,6 +827,17 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expect(p.pending != null);
     try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.paste.text);
     p.pending = null;
+
+    try t.expect(tester.shortcut(.{ .key = 'o', .cmd = true }));
+    try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.open);
+    try t.expect(p.pending.?.clipboard.hides());
+    p.pending = null;
+
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    try t.expect(!tester.shortcut(.{ .key = 'o', .cmd = true }) or p.pending == null);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.up });
+    tester.settle(1);
 
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);

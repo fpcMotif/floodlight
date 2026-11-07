@@ -25,6 +25,10 @@ pub const Entry = struct {
         return if (e.kind == .text) classify(e.text) else .plain;
     }
 
+    pub fn linkUrl(e: Entry) ?[]const u8 {
+        return if (e.content() == .link) std.mem.trim(u8, e.text, " \t\r\n") else null;
+    }
+
     /// A file, or text that names one.
     pub fn filePath(e: Entry) ?[]const u8 {
         if (e.kind == .file) return e.text;
@@ -79,8 +83,9 @@ pub fn domain(text: []const u8) ?[]const u8 {
     var host = rest[0 .. std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len];
     if (std.mem.lastIndexOfScalar(u8, host, '@')) |at| host = host[at + 1 ..];
     if (std.mem.indexOfScalar(u8, host, ':')) |colon| host = host[0..colon];
+    if (std.ascii.startsWithIgnoreCase(host, "www.")) host = host[4..];
     if (host.len == 0) return null;
-    return if (std.mem.startsWith(u8, host, "www.")) host[4..] else host;
+    return host;
 }
 
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: ?u8 = null };

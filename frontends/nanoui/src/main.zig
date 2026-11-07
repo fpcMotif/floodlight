@@ -188,14 +188,12 @@ const Shell = struct {
                 return false;
             },
             .copy => |e| s.writeEntry(e),
-            .reveal => |path| {
-                mac.reveal(path);
-                return true;
-            },
+            .open => |url| mac.open(url),
+            .reveal => |path| mac.reveal(path),
             .preview => |e| s.preview(e),
             .actions => |e| s.actionsMenu(e),
         }
-        return false;
+        return a.hides();
     }
 
     fn writeEntry(s: *Shell, e: clipboard.Entry) void {

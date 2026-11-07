@@ -47,9 +47,17 @@ pub fn shownHead(text: []const u8, lines: usize) []const u8 {
 pub const Action = union(enum) {
     paste: Entry,
     copy: Entry,
+    open: []const u8,
     reveal: []const u8,
     preview: Entry,
     actions: Entry,
+
+    pub fn hides(a: Action) bool {
+        return switch (a) {
+            .paste, .open, .reveal => true,
+            .copy, .preview, .actions => false,
+        };
+    }
 };
 
 /// A file's bytes, read once per selection for its preview.
@@ -233,6 +241,9 @@ pub const Board = struct {
         if (c.shortcut(.{ .key = S.down })) b.move(true);
         if (c.shortcut(.{ .key = S.up })) b.move(false);
         const e = b.visible[b.selected];
+        if (c.shortcut(.{ .key = 'o', .cmd = true })) {
+            if (e.linkUrl()) |u| return .{ .open = u };
+        }
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (e.filePath()) |p| return .{ .reveal = p };
         }
