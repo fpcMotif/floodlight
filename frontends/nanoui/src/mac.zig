@@ -116,24 +116,6 @@ pub fn orderFrontRegardless(window: *nanoui.Window) void {
     objc.msg(void, window.nswindow, "orderFrontRegardless", .{});
 }
 
-/// A window ordered out keeps the last frame it presented, and ordered in
-/// shows it until the next one lands: the board scrolled where it was left,
-/// then snapping to the top. The window is unseen until its own frame.
-pub const Entrance = struct {
-    waiting: bool = false,
-
-    pub fn orderedIn(e: *Entrance) void {
-        e.waiting = true;
-    }
-
-    /// True for the frame the window is seen with: one being presented.
-    pub fn reveal(e: *Entrance, presenting: bool) bool {
-        if (!e.waiting or !presenting) return false;
-        e.waiting = false;
-        return true;
-    }
-};
-
 /// For a surface's `after_frame`. nanoui 0.9.2 slows its display link to a
 /// frame the view asks for later (a caret blink, a scroll bar's fade): the
 /// slow link's drawables are for up to half a second ahead, and one drawn

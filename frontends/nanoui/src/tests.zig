@@ -11,6 +11,7 @@ const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const presence = @import("presence.zig");
 const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
@@ -844,14 +845,161 @@ test "a long history builds the rows in view only, and still reaches its end" {
     try t.expect(tester.hasText("entry number 778"));
 }
 
+const PresenceSpy = struct {
+    log: [16]presence.Effect = undefined,
+    len: usize = 0,
+
+    fn record(ctx: ?*anyopaque, e: presence.Effect) void {
+        const s: *PresenceSpy = @ptrCast(@alignCast(ctx));
+        s.log[s.len] = e;
+        s.len += 1;
+    }
+    fn presence_(s: *PresenceSpy) presence.Presence {
+        return .{ .effects = .{ .ctx = s, .run = record } };
+    }
+    /// The effects since the last call, in order.
+    fn take(s: *PresenceSpy) []const presence.Effect {
+        defer s.len = 0;
+        return s.log[0..s.len];
+    }
+};
+
+const showing = [_]presence.Effect{ .note_paste_target, .place, .order_in_unseen, .start_entrance_timer };
+const hiding = [_]presence.Effect{ .hide_window, .end_session };
+
+fn shownPresence(spy: *PresenceSpy) presence.Presence {
+    var p = spy.presence_();
+    p.search(false);
+    _ = p.framePresented(true);
+    _ = spy.take();
+    return p;
+}
+
 test "a reopened panel stays unseen until a frame of its own is presented, then shows once" {
-    var e: mac.Entrance = .{};
-    try t.expect(!e.reveal(true));
-    e.orderedIn();
+    var spy: PresenceSpy = .{};
+    var p = spy.presence_();
+    try t.expect(!p.framePresented(true));
+    p.search(false);
+    try t.expectEqualSlices(presence.Effect, &showing, spy.take());
+    try t.expectEqual(presence.Phase.entering, p.phase);
     // A frame built without a drawable is not on screen: the old one still is.
-    try t.expect(!e.reveal(false));
-    try t.expect(e.reveal(true));
-    try t.expect(!e.reveal(true));
+    try t.expect(!p.framePresented(false));
+    try t.expect(p.framePresented(true));
+    try t.expectEqualSlices(presence.Effect, &.{.reveal}, spy.take());
+    try t.expect(!p.framePresented(true));
+    try t.expectEqual(presence.Phase.shown, p.phase);
+}
+
+test "⌥Space while focused hides and forgets the session, during the entrance too" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.search(true);
+    try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+    try t.expect(p.isHidden());
+
+    p.search(false);
+    _ = spy.take();
+    p.search(true);
+    try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+    try t.expect(!p.framePresented(true));
+}
+
+test "an entrance's fallback timer reveals only its own entrance" {
+    var spy: PresenceSpy = .{};
+    var p = spy.presence_();
+    p.search(false);
+    p.search(true);
+    p.search(false);
+    _ = spy.take();
+    // The first show's timer fires during the second entrance.
+    p.entranceTimedOut();
+    try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+    try t.expectEqual(presence.Phase.entering, p.phase);
+    p.entranceTimedOut();
+    try t.expectEqualSlices(presence.Effect, &.{.reveal}, spy.take());
+    try t.expectEqual(presence.Phase.shown, p.phase);
+}
+
+test "a timer after a frame revealed the panel does nothing" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.entranceTimedOut();
+    try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+}
+
+test "⌥Space on a panel that is up but not focused brings it front with no entrance" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.search(false);
+    try t.expectEqualSlices(presence.Effect, &.{ .place, .order_front }, spy.take());
+    try t.expectEqual(presence.Phase.shown, p.phase);
+}
+
+test "⌥⇧C opens the board, notes the target only from hidden, and hides only the board" {
+    var spy: PresenceSpy = .{};
+    var p = spy.presence_();
+    p.board(false, false);
+    try t.expectEqualSlices(presence.Effect, &.{ .note_paste_target, .open_board, .place, .order_in_unseen, .start_entrance_timer }, spy.take());
+    _ = p.framePresented(true);
+    _ = spy.take();
+    // Over the search panel it switches to the board in place.
+    p.board(true, false);
+    try t.expectEqualSlices(presence.Effect, &.{ .open_board, .place, .order_front }, spy.take());
+    p.board(true, true);
+    try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+}
+
+test "launch shows the panel unless the grant guide is up; a reopen always does" {
+    var spy: PresenceSpy = .{};
+    var p = spy.presence_();
+    p.launched(true);
+    try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+    p.launched(false);
+    try t.expectEqualSlices(presence.Effect, &showing, spy.take());
+
+    var spy2: PresenceSpy = .{};
+    var q = spy2.presence_();
+    q.reopened();
+    try t.expectEqualSlices(presence.Effect, &showing, spy2.take());
+}
+
+test "losing focus hides the panel, unless Quick Look took it" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.focusLost(true);
+    try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+    p.focusLost(false);
+    try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+    p.focusLost(false);
+    try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+}
+
+test "after an action the panel hides, or stays for the board's copy, preview and menu" {
+    const e: clipboard.Entry = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 };
+    const row: search.Row = .{ .kind = .file, .title = "a", .subtitle = "~", .path = "/a", .score = 0 };
+    const hides = [_]panel_mod.Action{ .hide, .{ .open = "/a" }, .{ .reveal = "/a" }, .{ .copy = row }, .{ .clipboard = .{ .reveal = "/a" } } };
+    for (hides) |a| {
+        var spy: PresenceSpy = .{};
+        var p = shownPresence(&spy);
+        p.settle(a);
+        try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+        try t.expect(p.isHidden());
+    }
+    const stays = [_]panel_mod.Action{ .{ .clipboard = .{ .copy = e } }, .{ .clipboard = .{ .preview = e } }, .{ .clipboard = .{ .actions = e } } };
+    for (stays) |a| {
+        var spy: PresenceSpy = .{};
+        var p = shownPresence(&spy);
+        p.settle(a);
+        try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+        try t.expect(!p.isHidden());
+    }
+}
+
+test "a board paste hides the panel before it sends ⌘V, so the target app has focus" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.settle(.{ .clipboard = .{ .paste = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 } } });
+    try t.expectEqualSlices(presence.Effect, &.{ .hide_window, .end_session, .deliver_paste }, spy.take());
 }
 
 test "a board frame that waits for a later one keeps the display link at the display's pace" {

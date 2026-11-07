@@ -11,6 +11,8 @@ const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
 const file_index = @import("floodlight_core").file_index;
 const FileIndex = file_index.FileIndex;
+const presence = @import("presence.zig");
+const Presence = presence.Presence;
 
 const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
@@ -41,27 +43,49 @@ const Shell = struct {
     change_count: objc.NSInteger = 0,
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
-    entrance: mac.Entrance = .{},
+    presence: Presence = undefined,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        const shown = s.panel_window.isVisible() and s.panel_window.isFocused();
+        const focused = s.panel_window.isFocused();
         switch (which) {
-            .search => {
-                if (shown) return s.hidePanel();
-                s.showPanel();
-            },
+            .search => s.presence.search(focused),
             .clipboard => {
-                if (shown and s.panel.mode == .clipboard) return s.hidePanel();
-                if (!s.panel_window.isVisible()) s.notePasteTarget();
-                s.panel.showClipboard();
-                s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-                s.panel.board.now = clipboard.wallClock();
-                s.positionOnPointerScreen();
-                s.orderIn();
-                s.panel_window.redraw();
+                s.presence.board(focused, s.panel.mode == .clipboard);
+                if (!s.presence.isHidden()) s.panel_window.redraw();
             },
         }
+    }
+
+    fn runPresence(ctx: ?*anyopaque, e: presence.Effect) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        switch (e) {
+            .note_paste_target => s.notePasteTarget(),
+            .place => s.positionOnPointerScreen(),
+            .open_board => s.openBoard(),
+            .order_in_unseen => {
+                mac.setAlpha(s.panel_window, 0);
+                s.panel_window.show();
+            },
+            .order_front => s.panel_window.show(),
+            .start_entrance_timer => nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut),
+            .reveal => mac.setAlpha(s.panel_window, 1),
+            .hide_window => s.panel_window.hide(),
+            .end_session => s.endSession(),
+            .deliver_paste => deliverPaste(s.paste_target.pid),
+        }
+    }
+
+    fn openBoard(s: *Shell) void {
+        s.panel.showClipboard();
+        s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
+        s.panel.board.now = clipboard.wallClock();
+    }
+
+    fn deliverPaste(pid: i32) void {
+        if (pid == 0) return;
+        if (!mac.canDeliverPaste()) return mac.promptAccessibility();
+        _ = mac.deliverPaste(pid);
     }
 
     fn notePasteTarget(s: *Shell) void {
@@ -74,45 +98,25 @@ const Shell = struct {
 
     fn reopened(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.showPanel();
+        s.presence.reopened();
     }
 
     fn launched(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         mac.handleReopen(s, reopened);
-        if (s.flow.phase != .guiding) s.showPanel();
-    }
-
-    fn showPanel(s: *Shell) void {
-        if (!s.panel_window.isVisible()) s.notePasteTarget();
-        s.positionOnPointerScreen();
-        s.orderIn();
-    }
-
-    fn orderIn(s: *Shell) void {
-        if (!s.panel_window.isVisible()) {
-            mac.setAlpha(s.panel_window, 0);
-            s.entrance.orderedIn();
-            nanoui.App.after(entrance_timeout_ms, s, revealAnyway);
-        }
-        s.panel_window.show();
+        s.presence.launched(s.flow.phase == .guiding);
     }
 
     /// In the frame's own transaction: alpha and pixels land together.
     fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
-        if (!s.entrance.reveal(surface.renderer.given_drawable != null)) return false;
-        mac.setAlpha(s.panel_window, 1);
-        return true;
+        return s.presence.framePresented(surface.renderer.given_drawable != null);
     }
 
-    /// A panel left see-through would be worse than one old frame.
-    fn revealAnyway(ctx: ?*anyopaque) callconv(.c) void {
+    fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.entrance.waiting) return;
-        s.entrance.waiting = false;
-        mac.setAlpha(s.panel_window, 1);
+        s.presence.entranceTimedOut();
     }
 
     fn positionOnPointerScreen(s: *Shell) void {
@@ -138,8 +142,7 @@ const Shell = struct {
         s.panel_window.redraw();
     }
 
-    fn hidePanel(s: *Shell) void {
-        s.panel_window.hide();
+    fn endSession(s: *Shell) void {
         s.panel.reset();
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
@@ -149,9 +152,7 @@ const Shell = struct {
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        // A click anywhere else dismisses it, as Spotlight; Quick Look over
-        // the board does not.
-        if (!w.isFocused() and w.isVisible() and !mac.previewVisible()) s.hidePanel();
+        if (!w.isFocused()) s.presence.focusLost(mac.previewVisible());
     }
 
     fn panelRequest(ctx: ?*anyopaque) void {
@@ -167,38 +168,28 @@ const Shell = struct {
                 .reveal => |path| mac.reveal(path),
                 .copy => |row| mac.copy(row.path),
                 .hide => {},
-                .clipboard => |b| if (!s.applyBoard(b)) return s.panel_window.redraw(),
+                .clipboard => |b| s.applyBoard(b),
             }
-            s.hidePanel();
+            s.presence.settle(a);
+            if (!s.presence.isHidden()) s.panel_window.redraw();
             return;
         }
         s.resizeKeepingTop(s.panel.width, s.panel.height);
     }
 
-    /// Carries out a board action; true when the panel should hide.
-    fn applyBoard(s: *Shell, a: board_mod.Action) bool {
+    /// Carries out a board action; `Presence.settle` decides whether the panel hides.
+    fn applyBoard(s: *Shell, a: board_mod.Action) void {
         switch (a) {
-            .paste => |e| {
-                s.writeEntry(e);
-                const pid = s.paste_target.pid;
-                s.hidePanel();
-                if (pid == 0) return false;
-                if (!mac.canDeliverPaste()) {
-                    mac.promptAccessibility();
-                    return false;
-                }
-                _ = mac.deliverPaste(pid);
-                return false;
-            },
-            .copy => |e| s.writeEntry(e),
-            .reveal => |path| {
-                mac.reveal(path);
-                return true;
-            },
+            .paste, .copy => |e| s.writeEntry(e),
+            .reveal => |path| mac.reveal(path),
             .preview => |e| s.preview(e),
             .actions => |e| s.actionsMenu(e),
         }
-        return false;
+    }
+
+    fn applyAndSettle(s: *Shell, a: board_mod.Action) void {
+        s.applyBoard(a);
+        s.presence.settle(.{ .clipboard = a });
     }
 
     fn writeEntry(s: *Shell, e: clipboard.Entry) void {
@@ -237,13 +228,10 @@ const Shell = struct {
         const at = [2]f64{ f.w - board_mod.board_metrics.well_inset - 110, f.h - board_mod.board_metrics.well_inset - board_mod.board_metrics.footer_height };
         const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
         switch (choice) {
-            0 => if (s.applyBoard(.{ .paste = e })) s.hidePanel(),
+            0 => s.applyAndSettle(.{ .paste = e }),
             1 => s.writeEntry(e),
             2 => s.preview(e),
-            3 => if (e.filePath()) |p| {
-                mac.reveal(p);
-                s.hidePanel();
-            },
+            3 => if (e.filePath()) |p| s.applyAndSettle(.{ .reveal = p }),
             4 => {
                 s.panel.board.togglePin();
                 s.panel.refresh();
@@ -278,7 +266,7 @@ const Shell = struct {
 
     fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.panel_window.isVisible()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        if (!s.presence.isHidden()) return nanoui.App.after(compact_next_ms, s, compactTick);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
@@ -476,6 +464,7 @@ pub fn main(init: std.process.Init) !void {
         .close = Shell.close,
         .on_granted = Shell.granted,
     } };
+    shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence } };
 
     // Snapshots and hidden runs draw the panel and touch nothing else: no
     // hotkey, no System Settings, no scan of the home folder.
