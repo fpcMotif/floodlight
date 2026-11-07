@@ -39,6 +39,8 @@ pub fn build(b: *std.Build) void {
     // names the binary, not the bundle, and binds no Info.plist.
     const identity = b.option([]const u8, "sign-identity", "codesign identity for the bundle (ad hoc by default)") orelse "-";
     const sign = b.addSystemCommand(&.{ "codesign", "--force", "--sign", identity, "--identifier", "com.floodlight.nano" });
+    const ad_hoc_requirement_naming_bundle_not_cdhash: []const []const u8 = &.{ "--requirements", "=designated => identifier \"com.floodlight.nano\"" };
+    if (std.mem.eql(u8, identity, "-")) sign.addArgs(ad_hoc_requirement_naming_bundle_not_cdhash);
     sign.addDirectoryArg(b.graph.path(.install_prefix, "Floodlight Nano.app"));
     sign.step.dependOn(&install_bundle.step);
     sign.has_side_effects = true;

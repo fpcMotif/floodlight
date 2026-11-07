@@ -14,6 +14,9 @@ const metrics = panel_mod.metrics;
 const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
+const entrance_timeout_ms = 250;
+const compact_next_ms = 2000;
+const compact_idle_ms = 60 * 60 * 1000;
 
 /// Icons drawn per session at most; all go when the panel hides.
 const max_icons = 64;
@@ -36,7 +39,7 @@ const Shell = struct {
     change_count: objc.NSInteger = 0,
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
-    accessibility_prompted: bool = false,
+    entrance: mac.Entrance = .{},
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -51,9 +54,8 @@ const Shell = struct {
                 if (!s.panel_window.isVisible()) s.notePasteTarget();
                 s.panel.showClipboard();
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-                s.panel.board.now = clipboard.wallClock();
                 s.positionOnPointerScreen();
-                s.panel_window.show();
+                s.orderIn();
                 s.panel_window.redraw();
             },
         }
@@ -81,7 +83,33 @@ const Shell = struct {
     fn showPanel(s: *Shell) void {
         if (!s.panel_window.isVisible()) s.notePasteTarget();
         s.positionOnPointerScreen();
+        s.orderIn();
+    }
+
+    fn orderIn(s: *Shell) void {
+        if (!s.panel_window.isVisible()) {
+            mac.setAlpha(s.panel_window, 0);
+            s.entrance.orderedIn();
+            nanoui.App.after(entrance_timeout_ms, s, revealAnyway);
+        }
         s.panel_window.show();
+    }
+
+    /// In the frame's own transaction: alpha and pixels land together.
+    fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        mac.keepLinkAtDisplayRate(&surface.ctx);
+        if (!s.entrance.reveal(surface.renderer.given_drawable != null)) return false;
+        mac.setAlpha(s.panel_window, 1);
+        return true;
+    }
+
+    /// A panel left see-through would be worse than one old frame.
+    fn revealAnyway(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (!s.entrance.waiting) return;
+        s.entrance.waiting = false;
+        mac.setAlpha(s.panel_window, 1);
     }
 
     fn positionOnPointerScreen(s: *Shell) void {
@@ -109,7 +137,7 @@ const Shell = struct {
 
     fn hidePanel(s: *Shell) void {
         s.panel_window.hide();
-        s.panel.reset();
+        s.panel.forget();
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -153,8 +181,7 @@ const Shell = struct {
                 s.hidePanel();
                 if (pid == 0) return false;
                 if (!mac.canDeliverPaste()) {
-                    if (!s.accessibility_prompted) mac.promptAccessibility();
-                    s.accessibility_prompted = true;
+                    mac.promptAccessibility();
                     return false;
                 }
                 _ = mac.deliverPaste(pid);
@@ -184,7 +211,8 @@ const Shell = struct {
         if (e.filePath()) |path| return mac.togglePreview(path);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const png = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
+        const stored = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
+        const png = mac.pngBytes(arena.allocator(), stored) orelse e.thumbnail;
         const path = mac.previewFile(gpa, e.id, png) orelse return;
         defer gpa.free(path);
         mac.togglePreview(path);
@@ -240,9 +268,17 @@ const Shell = struct {
         }
         if (!stored or s.panel.mode != .clipboard) return;
         s.panel.board.stale = true;
-        s.panel.board.now = clipboard.wallClock();
         s.panel.refresh();
         s.panel_window.redraw();
+    }
+
+    fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.panel_window.isVisible()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
+        nanoui.App.after(if (more) compact_next_ms else compact_idle_ms, s, compactTick);
     }
 
     fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
@@ -386,12 +422,18 @@ pub fn main(init: std.process.Init) !void {
     if (@import("floodlight_core").index.Mapped.open(@import("floodlight_core").sys.cwd, index_path)) |m| shell.catalog.setFiles(m) else |_| {}
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
-    shell.store = clipboard.Store.open(store_path) catch try clipboard.Store.open(":memory:");
+    const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
+    const touches_history = !(app.flags.hidden or app.flags.snapshot != null);
+    shell.store = if (touches_history)
+        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", null)
+    else
+        try clipboard.Store.open(":memory:", null);
     defer shell.store.close();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
+        .clock = .wall_clock,
         .request = Shell.panelRequest,
         .app_icon = Shell.appIcon,
         .describe_date = Shell.describeDate,
@@ -414,6 +456,10 @@ pub fn main(init: std.process.Init) !void {
         .content = .{ .view = .init(&shell.panel, panel_mod.Panel.view) },
     });
     _ = mac.installSlab(shell.panel_window, metrics.corner_radius, .status, .clear);
+    if (shell.panel_window.surface) |surface| {
+        surface.after_frame = Shell.afterFrame;
+        surface.after_frame_ctx = &shell;
+    }
 
     shell.guidance = .{ .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
@@ -448,6 +494,7 @@ pub fn main(init: std.process.Init) !void {
         try mac.registerHotKeys(&shell, Shell.hotKey);
         shell.change_count = mac.pasteboardChangeCount();
         nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
+        nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
         nanoui.App.after(0, &shell, Shell.launched);
