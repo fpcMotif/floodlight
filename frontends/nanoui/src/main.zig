@@ -15,6 +15,8 @@ const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;
+const compact_next_ms = 2000;
+const compact_idle_ms = 60 * 60 * 1000;
 
 /// Icons drawn per session at most; all go when the panel hides.
 const max_icons = 64;
@@ -210,7 +212,8 @@ const Shell = struct {
         if (e.filePath()) |path| return mac.togglePreview(path);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const png = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
+        const stored = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
+        const png = mac.pngBytes(arena.allocator(), stored) orelse e.thumbnail;
         const path = mac.previewFile(gpa, e.id, png) orelse return;
         defer gpa.free(path);
         mac.togglePreview(path);
@@ -269,6 +272,15 @@ const Shell = struct {
         s.panel.board.now = clipboard.wallClock();
         s.panel.refresh();
         s.panel_window.redraw();
+    }
+
+    fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.panel_window.isVisible()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
+        nanoui.App.after(if (more) compact_next_ms else compact_idle_ms, s, compactTick);
     }
 
     fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
@@ -412,7 +424,12 @@ pub fn main(init: std.process.Init) !void {
     if (@import("floodlight_core").index.Mapped.open(@import("floodlight_core").sys.cwd, index_path)) |m| shell.catalog.setFiles(m) else |_| {}
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
-    shell.store = clipboard.Store.open(store_path) catch try clipboard.Store.open(":memory:");
+    const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
+    const touches_history = !(app.flags.hidden or app.flags.snapshot != null);
+    shell.store = if (touches_history)
+        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", null)
+    else
+        try clipboard.Store.open(":memory:", null);
     defer shell.store.close();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
 
@@ -478,6 +495,7 @@ pub fn main(init: std.process.Init) !void {
         try mac.registerHotKeys(&shell, Shell.hotKey);
         shell.change_count = mac.pasteboardChangeCount();
         nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
+        nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
         nanoui.App.after(0, &shell, Shell.launched);

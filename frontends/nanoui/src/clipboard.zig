@@ -122,13 +122,16 @@ pub fn codeLanguage(text: []const u8) ?[]const u8 {
     return null;
 }
 
+const max_title_bytes = 512;
+
 /// Newline runs as one space, the ends trimmed.
 fn oneLine(arena: std.mem.Allocator, text: []const u8) []const u8 {
     var out: std.ArrayList(u8) = .empty;
     var in_break = false;
     var view = std.unicode.Utf8View.init(text) catch return text;
     var it = view.iterator();
-    while (it.nextCodepointSlice()) |cp| {
+    while (out.items.len < max_title_bytes) {
+        const cp = it.nextCodepointSlice() orelse break;
         const breaks = std.mem.eql(u8, cp, "\n") or std.mem.eql(u8, cp, "\r") or std.mem.eql(u8, cp, "\u{0085}") or std.mem.eql(u8, cp, "\u{2028}") or std.mem.eql(u8, cp, "\u{2029}");
         if (breaks) {
             if (!in_break) out.append(arena, ' ') catch return text;
@@ -262,6 +265,9 @@ pub const max_text_bytes = 32_000;
 /// Image representations past this are not read.
 pub const max_image_bytes = 15 * 1024 * 1024;
 pub const retention_days = 30;
+pub const compact_after_days = 7;
+pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000 };
+pub const Compactor = *const fn (arena: std.mem.Allocator, png: []const u8) ?[]const u8;
 const window = 1000;
 const search_limit = 200;
 
@@ -295,6 +301,7 @@ const lite = struct {
 };
 
 const schema =
+    \\PRAGMA auto_vacuum=INCREMENTAL;
     \\PRAGMA journal_mode=WAL;
     \\PRAGMA synchronous=NORMAL;
     \\CREATE TABLE IF NOT EXISTS entries(
@@ -310,30 +317,203 @@ const schema =
     \\  byte_count INTEGER NOT NULL DEFAULT 0,
     \\  hash BLOB,
     \\  thumbnail BLOB,
-    \\  png BLOB);
+    \\  png BLOB,
+    \\  image_format TEXT NOT NULL DEFAULT '',
+    \\  stored_bytes INTEGER NOT NULL DEFAULT 0,
+    \\  compacted INTEGER NOT NULL DEFAULT 0);
     \\CREATE INDEX IF NOT EXISTS entries_created ON entries(created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_pinned ON entries(pinned_at);
+    \\CREATE INDEX IF NOT EXISTS entries_hash ON entries(hash);
+    \\CREATE TEMP TABLE IF NOT EXISTS released(hash BLOB);
 ;
+
+const columns_added_since_inline_images = [_][:0]const u8{
+    "ALTER TABLE entries ADD COLUMN image_format TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE entries ADD COLUMN stored_bytes INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE entries ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0",
+};
+
+const stored_bytes_sql =
+    "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
+    " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
 const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
     db: *lite.Db,
+    images: ?[]const u8,
+    budget: Budget = .{},
 
-    pub fn open(path: [:0]const u8) !Store {
+    pub fn open(path: [:0]const u8, images: ?[]const u8) !Store {
         var db: ?*lite.Db = null;
         if (lite.sqlite3_open_v2(path, &db, lite.open_flags, null) != lite.ok) {
             if (db) |d| _ = lite.sqlite3_close_v2(d);
             return error.ClipboardStore;
         }
-        const s: Store = .{ .db = db.? };
+        const s: Store = .{ .db = db.?, .images = images };
         _ = lite.sqlite3_busy_timeout(s.db, 2000);
         if (lite.sqlite3_exec(s.db, schema, null, null, null) != lite.ok) {
             s.close();
             return error.ClipboardStore;
         }
+        for (columns_added_since_inline_images) |sql| _ = lite.sqlite3_exec(s.db, sql, null, null, null);
+        if (images) |dir| {
+            var buf: [std.posix.PATH_MAX]u8 = undefined;
+            const dir_z = std.fmt.bufPrintSentinel(&buf, "{s}", .{dir}, 0) catch {
+                s.close();
+                return error.ClipboardStore;
+            };
+            _ = std.c.mkdir(dir_z, 0o700);
+            const moved = s.moveInlineImagesOut() catch {
+                s.close();
+                return error.ClipboardStore;
+            };
+            s.clearStrayFiles(dir_z);
+            if (moved or s.int("PRAGMA auto_vacuum", .{}) != 2)
+                _ = lite.sqlite3_exec(s.db, "PRAGMA auto_vacuum=INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);", null, null, null);
+        }
         return s;
+    }
+
+    fn int(s: Store, sql: []const u8, args: anytype) ?i64 {
+        const stmt = s.prepare(sql) catch return null;
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, args);
+        if (lite.sqlite3_step(stmt) != lite.row or lite.sqlite3_column_type(stmt, 0) == lite.null_type) return null;
+        return lite.sqlite3_column_int64(stmt, 0);
+    }
+
+    fn imagePath(s: Store, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
+        const dir = s.images orelse return null;
+        if (hash.len != 32) return null;
+        return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ dir, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
+    }
+
+    fn writeImage(s: Store, hash: []const u8, format: []const u8, bytes: []const u8) !void {
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        const path = s.imagePath(&buf, hash, format) orelse return error.ClipboardStore;
+        if (std.c.access(path, 0) == 0) return;
+        var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
+        const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}.tmp", .{path}, 0) catch return error.ClipboardStore;
+        const fd = std.c.open(tmp, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
+        if (fd < 0) return error.ClipboardStore;
+        var written: usize = 0;
+        while (written < bytes.len) {
+            const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
+            if (n <= 0) break;
+            written += @intCast(n);
+        }
+        const synced = std.c.fsync(fd) == 0;
+        _ = std.c.close(fd);
+        if (written < bytes.len or !synced or std.c.rename(tmp, path) != 0) {
+            _ = std.c.unlink(tmp);
+            return error.ClipboardStore;
+        }
+    }
+
+    fn readImage(s: Store, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        const path = s.imagePath(&buf, hash, format) orelse return null;
+        const fd = std.c.open(path, .{});
+        if (fd < 0) return null;
+        defer _ = std.c.close(fd);
+        const out = arena.alloc(u8, size) catch return null;
+        var got: usize = 0;
+        while (got < size) {
+            const n = std.c.read(fd, out[got..].ptr, size - got);
+            if (n <= 0) return null;
+            got += @intCast(n);
+        }
+        return out;
+    }
+
+    fn unlinkImage(s: Store, hash: []const u8, format: []const u8) void {
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        if (s.imagePath(&buf, hash, format)) |path| _ = std.c.unlink(path);
+    }
+
+    fn moveInlineImagesOut(s: Store) !bool {
+        var moved = false;
+        while (true) {
+            const stmt = try s.prepare("SELECT id, png FROM entries WHERE png IS NOT NULL AND length(png) > 0 LIMIT 1");
+            defer _ = lite.sqlite3_finalize(stmt);
+            if (lite.sqlite3_step(stmt) != lite.row) return moved;
+            const id = lite.sqlite3_column_int64(stmt, 0);
+            const png = columnBlob(stmt, 1);
+            var hash: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(png, &hash, .{});
+            try s.writeImage(&hash, "png", png);
+            try s.run("UPDATE entries SET png = NULL, hash = ?, image_format = 'png', stored_bytes = ? WHERE id = ?", .{ Blob{ .bytes = &hash }, @as(i64, @intCast(png.len)), id });
+            moved = true;
+        }
+    }
+
+    fn clearStrayFiles(s: Store, dir_z: [:0]const u8) void {
+        const dir = std.c.opendir(dir_z) orelse return;
+        defer _ = std.c.closedir(dir);
+        while (std.c.readdir(dir)) |ent| {
+            const name = std.mem.sliceTo(&ent.name, 0);
+            const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse continue;
+            const format = name[dot + 1 ..];
+            const known = std.mem.eql(u8, format, "png") or std.mem.eql(u8, format, "avif");
+            if (!known and !std.mem.eql(u8, format, "tmp")) continue;
+            var hash: [32]u8 = undefined;
+            const referenced = known and dot == 64 and
+                (std.fmt.hexToBytes(&hash, name[0..64]) catch null) != null and
+                s.int("SELECT 1 FROM entries WHERE hash = ? AND image_format = ? LIMIT 1", .{ Blob{ .bytes = &hash }, format }) != null;
+            if (referenced) continue;
+            var buf: [std.posix.PATH_MAX]u8 = undefined;
+            const path = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ dir_z, name }, 0) catch continue;
+            _ = std.c.unlink(path);
+        }
+    }
+
+    fn removeWhere(s: Store, comptime condition: []const u8, args: anytype) !void {
+        try s.run("INSERT INTO released SELECT DISTINCT hash FROM entries WHERE (" ++ condition ++ ") AND hash IS NOT NULL AND image_format != ''", args);
+        try s.run("DELETE FROM entries WHERE " ++ condition, args);
+        {
+            const stmt = try s.prepare("SELECT DISTINCT hash FROM released WHERE hash NOT IN (SELECT hash FROM entries WHERE hash IS NOT NULL AND image_format != '')");
+            defer _ = lite.sqlite3_finalize(stmt);
+            while (lite.sqlite3_step(stmt) == lite.row) {
+                const hash = columnBlob(stmt, 0);
+                s.unlinkImage(hash, "png");
+                s.unlinkImage(hash, "avif");
+            }
+        }
+        try s.run("DELETE FROM released", .{});
+        _ = lite.sqlite3_exec(s.db, "PRAGMA incremental_vacuum", null, null, null);
+    }
+
+    fn keepWithinBudget(s: Store) !void {
+        try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)});
+        while ((s.int(stored_bytes_sql, .{}) orelse 0) > s.budget.bytes) {
+            const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
+            try s.removeWhere("id = ?", .{id});
+        }
+    }
+
+    pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
+        if (s.images == null) return false;
+        var hash: [32]u8 = undefined;
+        var size: usize = 0;
+        {
+            const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return false;
+            defer _ = lite.sqlite3_finalize(stmt);
+            bindAll(stmt, .{now - compact_after_days * 86400});
+            if (lite.sqlite3_step(stmt) != lite.row) return false;
+            @memcpy(&hash, columnBlob(stmt, 0));
+            size = @intCast(lite.sqlite3_column_int64(stmt, 1));
+        }
+        const smaller = if (s.readImage(arena, &hash, "png", size)) |png| compact(arena, png) else null;
+        const done = if (smaller) |bytes| blk: {
+            s.writeImage(&hash, "avif", bytes) catch break :blk false;
+            s.run("UPDATE entries SET image_format = 'avif', stored_bytes = ?, compacted = 1 WHERE hash = ? AND image_format = 'png'", .{ @as(i64, @intCast(bytes.len)), Blob{ .bytes = &hash } }) catch break :blk false;
+            s.unlinkImage(&hash, "png");
+            break :blk true;
+        } else false;
+        if (!done) s.run("UPDATE entries SET compacted = 1 WHERE hash = ? AND image_format = 'png'", .{Blob{ .bytes = &hash }}) catch {};
+        return true;
     }
 
     pub fn close(s: Store) void {
@@ -366,11 +546,14 @@ pub const Store = struct {
         };
         if (s.repeatsNewest(kind, text, if (cap == .image) &hash else null)) return false;
         const img: Capture.Image = if (cap == .image) cap.image else .{ .name = "", .png = "", .thumbnail = "", .width = 0, .height = 0 };
-        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, png) VALUES(?,?,?,?,?,?,?,?,?,?,?)", .{
-            @tagName(kind),           text,                 now,                             source,                                              source_name,
-            @as(i64, img.width),      @as(i64, img.height), @as(i64, @intCast(img.png.len)), Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
-            Blob{ .bytes = img.png },
+        const in_file = cap == .image and s.images != null;
+        if (in_file) try s.writeImage(&hash, "png", img.png);
+        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, png, image_format, stored_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
+            @tagName(kind),                                  text,                       now,                                                 source,                                              source_name,
+            @as(i64, img.width),                             @as(i64, img.height),       @as(i64, @intCast(img.png.len)),                     Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
+            Blob{ .bytes = if (in_file) null else img.png }, if (in_file) "png" else "", @as(i64, if (in_file) @intCast(img.png.len) else 0),
         });
+        try s.keepWithinBudget();
         return true;
     }
 
@@ -414,10 +597,12 @@ pub const Store = struct {
 
     /// The full image an entry holds, in `arena`'s memory.
     pub fn image(s: Store, arena: std.mem.Allocator, id: i64) ?[]const u8 {
-        const stmt = s.prepare("SELECT png FROM entries WHERE id = ?") catch return null;
+        const stmt = s.prepare("SELECT png, hash, image_format, stored_bytes FROM entries WHERE id = ?") catch return null;
         defer _ = lite.sqlite3_finalize(stmt);
         bindAll(stmt, .{id});
         if (lite.sqlite3_step(stmt) != lite.row) return null;
+        const format = columnText(stmt, 2);
+        if (format.len > 0) return s.readImage(arena, columnBlob(stmt, 1), format, @intCast(lite.sqlite3_column_int64(stmt, 3)));
         const bytes = columnBlob(stmt, 0);
         return if (bytes.len == 0) null else arena.dupe(u8, bytes) catch null;
     }
@@ -427,12 +612,13 @@ pub const Store = struct {
     }
 
     pub fn delete(s: Store, id: i64) !void {
-        try s.run("DELETE FROM entries WHERE id = ?", .{id});
+        try s.removeWhere("id = ?", .{id});
     }
 
     /// Drops unpinned entries older than `days`; pinned ones stay.
     pub fn prune(s: Store, now: f64, days: u32) !void {
-        try s.run("DELETE FROM entries WHERE pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
+        try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
+        try s.keepWithinBudget();
     }
 };
 

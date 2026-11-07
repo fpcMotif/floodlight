@@ -30,6 +30,19 @@ pub const board_metrics = struct {
 
 pub const summon_label = "⌥⇧ C";
 
+const held_key_gap_seconds = 0.15;
+const detail_kept_bytes = 1 << 20;
+const max_line_bytes = 200;
+const max_plain_lines = 40;
+const max_link_lines = 6;
+
+pub fn shownHead(text: []const u8, lines: usize) []const u8 {
+    var end = lines * max_line_bytes;
+    if (text.len <= end) return text;
+    while (end > 0 and text[end] & 0xC0 == 0x80) end -= 1;
+    return text[0..end];
+}
+
 /// What the board asks of the shell. Pin and delete it does itself.
 pub const Action = union(enum) {
     paste: Entry,
@@ -63,6 +76,9 @@ pub const Board = struct {
     /// The app Return pastes into; empty when Return only copies.
     paste_target: []const u8 = "",
     detail_id: ?i64 = null,
+    detail_at: f64 = 0,
+    detail_passing: bool = false,
+    detail_loaded: bool = false,
     full_image: ?[]const u8 = null,
     file_preview: FilePreview = .none,
     file_size: ?u64 = null,
@@ -173,24 +189,34 @@ pub const Board = struct {
     }
 
     /// Loads what the inspector shows for the selection, once per entry.
-    fn loadDetail(b: *Board, e: Entry) void {
-        if (b.detail_id == e.id) return;
-        b.detail_id = e.id;
-        _ = b.detail_arena.reset(.retain_capacity);
+    fn loadDetail(b: *Board, c: *ui.Context, e: Entry) void {
+        if (b.detail_id != e.id) {
+            b.detail_passing = b.detail_id != null and c.time - b.detail_at < held_key_gap_seconds;
+            b.detail_id = e.id;
+            b.detail_at = c.time;
+            b.detail_loaded = false;
+            _ = b.detail_arena.reset(.{ .retain_with_limit = detail_kept_bytes });
+            b.full_image = null;
+            b.file_preview = .none;
+            b.file_size = null;
+            b.file_is_dir = false;
+            if (e.filePath()) |path| if (stat(path)) |st| {
+                b.file_is_dir = st.dir;
+                if (!st.dir and st.size > 0) b.file_size = st.size;
+            };
+        }
+        if (b.detail_loaded) return;
+        const wait = held_key_gap_seconds - (c.time - b.detail_at);
+        if (b.detail_passing and wait > 0) return c.frameIn(@floatCast(wait));
+        b.detail_loaded = true;
         const a = b.detail_arena.allocator();
-        b.full_image = null;
-        b.file_preview = .none;
-        b.file_size = null;
-        b.file_is_dir = false;
         if (e.kind == .image) {
             if (b.store) |s| b.full_image = s.image(a, e.id);
             return;
         }
         const path = e.filePath() orelse return;
         const st = stat(path) orelse return;
-        b.file_is_dir = st.dir;
         if (st.dir) return;
-        if (st.size > 0) b.file_size = st.size;
         const ext = clipboard.extension(path);
         if (clipboard.inSet(ext, &clipboard.image_extensions) and st.size <= clipboard.max_image_bytes) {
             if (readFile(a, path, @intCast(st.size))) |bytes| b.file_preview = .{ .image = bytes };
@@ -375,7 +401,7 @@ pub const Board = struct {
             ui.text(c, "Select an entry", .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6) });
             return;
         };
-        b.loadDetail(e);
+        b.loadDetail(c, e);
         b.preview(c, e);
         ui.div(c).wFull().h(1).bg(th.border.alpha(0.4)).end();
         b.information(c, p, e);
@@ -409,7 +435,7 @@ pub const Board = struct {
                 }
                 const box = ui.div(c).wFull().p(8).rounded(6).bg(th.muted.alpha(0.08));
                 defer box.end();
-                ui.text(c, e.text, .{ .size = 12, .mono = true, .color = th.muted, .wrap = true, .max_lines = 6 });
+                ui.text(c, shownHead(e.text, max_link_lines), .{ .size = 12, .mono = true, .color = th.muted, .wrap = true, .max_lines = max_link_lines });
             },
             .color => {
                 const t = std.mem.trim(u8, e.text, " \t\r\n");
@@ -430,7 +456,7 @@ pub const Board = struct {
                 }
                 codeLines(c, e.text);
             },
-            .plain, .path => ui.text(c, e.text, .{ .size = 12.5, .wrap = true, .line_height = 12.5 * 1.2 + 3, .max_lines = 40 }),
+            .plain, .path => ui.text(c, shownHead(e.text, max_plain_lines), .{ .size = 12.5, .wrap = true, .line_height = 12.5 * 1.2 + 3, .max_lines = max_plain_lines }),
         }
     }
 
@@ -550,7 +576,7 @@ fn codeLines(c: *ui.Context, text: []const u8) void {
             defer g.end();
             ui.text(c, c.print("{d}", .{i + 1}), .{ .size = 10.5, .mono = true, .color = th.muted.alpha(0.6) });
         }
-        ui.text(c, if (line.len == 0) " " else std.mem.trimEnd(u8, line, "\r"), .{ .size = 11.5, .mono = true, .truncate = .ellipsis });
+        ui.text(c, if (line.len == 0) " " else std.mem.trimEnd(u8, shownHead(line, 1), "\r"), .{ .size = 11.5, .mono = true, .truncate = .ellipsis });
     }
     if (total > shown) ui.text(c, "Preview truncated", .{ .size = 10.5, .weight = .medium, .color = th.muted.alpha(0.6) });
 }
