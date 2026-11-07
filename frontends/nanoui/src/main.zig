@@ -18,7 +18,7 @@ const entrance_timeout_ms = 250;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
 
-/// Icons drawn per session at most; all go when the panel hides.
+/// Icons drawn per session at most; all go when the session is forgotten.
 const max_icons = 64;
 
 const Shell = struct {
@@ -47,7 +47,7 @@ const Shell = struct {
         const shown = s.panel_window.isVisible() and s.panel_window.isFocused();
         switch (which) {
             .search => {
-                if (shown) return s.hidePanel();
+                if (shown and s.panel.mode == .search) return s.hidePanel();
                 s.showPanel();
             },
             .clipboard => {
@@ -56,6 +56,7 @@ const Shell = struct {
                     s.entrance.orderedIn();
                     s.notePasteTarget();
                 }
+                s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
                 s.panel.showClipboard();
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
                 s.positionOnPointerScreen();
@@ -89,8 +90,11 @@ const Shell = struct {
             s.entrance.orderedIn();
             s.notePasteTarget();
         }
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        s.panel.showSearch();
         s.positionOnPointerScreen();
         s.orderIn();
+        s.panel_window.redraw();
     }
 
     fn orderIn(s: *Shell) void {
@@ -145,7 +149,26 @@ const Shell = struct {
         s.entrance.cancel();
         if (s.panel.pending != null) s.endSubmit();
         s.panel_window.hide();
-        s.panel.forget();
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        s.panel.hide();
+        if (s.panel.nextExpiryMs()) |ms| {
+            nanoui.App.after(ms, s, expireRetention);
+        } else {
+            s.releaseIdleMemory();
+        }
+    }
+
+    fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        if (s.panel.expire()) {
+            if (!s.panel_window.isVisible()) s.releaseIdleMemory();
+        } else if (s.panel.nextExpiryMs()) |ms| {
+            nanoui.App.after(ms, s, expireRetention);
+        }
+    }
+
+    fn releaseIdleMemory(s: *Shell) void {
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -292,7 +315,7 @@ const Shell = struct {
         for (mac.readPasteboard(arena.allocator(), front.bundle_id)) |cap| {
             stored = (s.store.add(cap, front.bundle_id, front.name, clipboard.wallClock()) catch false) or stored;
         }
-        if (!stored or s.panel.mode != .clipboard) return;
+        if (!stored or !s.panel_window.isVisible() or s.panel.mode != .clipboard) return;
         s.panel.board.stale = true;
         s.panel.refresh();
         s.panel_window.redraw();
@@ -420,8 +443,10 @@ const Shell = struct {
         s.panel.indexing = false;
         // The rows answer the old index: ask again.
         s.panel.answered.clearRetainingCapacity();
-        s.panel.refresh();
-        s.panel_window.redraw();
+        if (s.panel_window.isVisible()) {
+            s.panel.refresh();
+            s.panel_window.redraw();
+        }
     }
 
     fn indexFailed(ctx: ?*anyopaque) callconv(.c) void {
