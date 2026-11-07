@@ -652,3 +652,18 @@ pub fn wallClock() f64 {
     _ = std.posix.system.clock_gettime(.REALTIME, &ts);
     return @as(f64, @floatFromInt(ts.sec)) + @as(f64, @floatFromInt(ts.nsec)) / std.time.ns_per_s;
 }
+
+pub const Clock = struct {
+    ctx: ?*anyopaque = null,
+    read: *const fn (?*anyopaque) f64 = wall,
+
+    pub const wall_clock: Clock = .{};
+
+    pub fn now(c: Clock) f64 {
+        return c.read(c.ctx);
+    }
+
+    fn wall(_: ?*anyopaque) f64 {
+        return wallClock();
+    }
+};

@@ -97,9 +97,12 @@ pub const Action = union(enum) {
 
 pub const Mode = enum { search, clipboard };
 
+pub const Clock = clipboard.Clock;
+
 /// What the panel asks of the window, handled after the frame.
 pub const Hooks = struct {
     ctx: ?*anyopaque = null,
+    clock: Clock = .wall_clock,
     /// An action, or a new height to fit the rows.
     request: *const fn (?*anyopaque) void,
     /// An app's icon as PNG, cached by the shell; null draws a symbol.
@@ -112,6 +115,7 @@ pub const Hooks = struct {
 pub const Panel = struct {
     catalog: *search.Catalog,
     hooks: Hooks,
+    clock: Clock = .wall_clock,
     mode: Mode = .search,
     board: board_mod.Board,
     field: ui.TextBuffer = .{},
@@ -129,7 +133,7 @@ pub const Panel = struct {
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .hooks = hooks, .arena = .init(gpa), .board = .init(gpa, store) };
+        return .{ .catalog = catalog, .hooks = hooks, .clock = hooks.clock, .arena = .init(gpa), .board = .init(gpa, store, hooks.clock) };
     }
 
     pub fn deinit(p: *Panel) void {
@@ -141,7 +145,7 @@ pub const Panel = struct {
 
     /// Hidden panels keep nothing per session: the query, the rows, and
     /// the arena behind them all go (PR #130's rule for the Swift panel).
-    pub fn reset(p: *Panel) void {
+    pub fn forget(p: *Panel) void {
         p.field.clear();
         p.rows = &.{};
         p.visible = &.{};
@@ -150,10 +154,14 @@ pub const Panel = struct {
         p.selected = 0;
         p.pending = null;
         p.mode = .search;
-        p.board.reset();
+        p.board.forget();
         _ = p.arena.reset(.free_all);
         p.height = p.panelHeight();
         p.width = p.panelWidth();
+    }
+
+    pub fn reset(p: *Panel) void {
+        p.forget();
     }
 
     /// The board, with history listed before anything is typed.

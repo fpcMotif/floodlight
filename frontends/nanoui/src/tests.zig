@@ -196,8 +196,23 @@ test "a query finds apps and files, apps first" {
     try t.expectEqual(@as(usize, 0), (try cat.query(arena.allocator(), "  ")).len);
 }
 
+const FakeClock = struct {
+    now: f64 = 0,
+    fn read(ctx: ?*anyopaque) f64 {
+        const c: *const FakeClock = @ptrCast(@alignCast(ctx));
+        return c.now;
+    }
+    fn advance(c: *FakeClock, seconds: f64) void {
+        c.now += seconds;
+    }
+    fn binding(c: *FakeClock) panel_mod.Clock {
+        return .{ .ctx = c, .read = read };
+    }
+};
+
 const NoHooks = struct {
     requests: u32 = 0,
+    clock: FakeClock = .{},
     fn request(ctx: ?*anyopaque) void {
         const h: *NoHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
@@ -212,7 +227,7 @@ const NoHooks = struct {
         return "Today at 9:41 AM";
     }
     fn hooks(h: *NoHooks) panel_mod.Hooks {
-        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = date, .detailed_date = detailed };
+        return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date, .detailed_date = detailed };
     }
 };
 
@@ -693,7 +708,7 @@ test "the board lists history, inspects the selection, and filters" {
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
     defer p.deinit();
     p.showClipboard();
-    p.board.now = 2060;
+    hooks.clock.advance(2060);
     try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
     try t.expectEqual(@as(f32, 840), p.panelWidth());
     try t.expectEqual(@as(f32, 560), p.panelHeight());
@@ -945,6 +960,69 @@ test "an empty history says so" {
     defer tester.deinit();
     tester.settle(1);
     try t.expect(tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
+}
+
+test "the injected clock advances board ages and pins, and forget clears both surfaces" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    _ = try store.add(.{ .text = "first snippet" }, "com.apple.Notes", "Notes", 1000);
+    _ = try store.add(.{ .text = "second snippet" }, "com.apple.Safari", "Safari", 1000);
+    var hooks: NoHooks = .{};
+    hooks.clock.advance(1120);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    tester.typeText("cal");
+    tester.settle(0.2);
+    p.selectFilter(.apps);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    try t.expectEqual(panel_mod.Filter.apps, p.filter);
+    try t.expectEqual(@as(usize, 1), p.selected);
+
+    p.showClipboard();
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Safari \u{00B7} 2m"));
+    hooks.clock.advance(180);
+    try t.expectEqual(@as(f64, 1300), p.clock.now());
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Safari \u{00B7} 5m"));
+
+    _ = tester.shortcut(.{ .key = '.', .cmd = true });
+    p.refresh();
+    try t.expectEqual(@as(?f64, 1300), p.board.rows[0].pinned_at);
+
+    p.board.selectFilter(.text);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.typeText("first");
+    tester.settle(0.2);
+    try t.expectEqual(clipboard.Filter.text, p.board.filter);
+    try t.expectEqualStrings("first", p.field.text());
+
+    p.forget();
+    try t.expectEqual(panel_mod.Mode.search, p.mode);
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.rows.len);
+    try t.expectEqual(@as(usize, 0), p.visible.len);
+    try t.expectEqual(panel_mod.Filter.all, p.filter);
+    try t.expectEqual(@as(usize, 0), p.selected);
+    try t.expectEqual(panel_mod.metrics.search_height, p.panelHeight());
+    try t.expectEqual(panel_mod.metrics.width, p.panelWidth());
+    try t.expectEqual(@as(usize, 0), p.board.rows.len);
+    try t.expectEqual(@as(usize, 0), p.board.visible.len);
+    try t.expectEqual(clipboard.Filter.all, p.board.filter);
+    try t.expectEqual(@as(usize, 0), p.board.selected);
+    try t.expect(p.board.stale);
+    try t.expect(p.board.detail_id == null);
 }
 
 test {

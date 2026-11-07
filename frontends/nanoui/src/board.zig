@@ -71,8 +71,7 @@ pub const Board = struct {
     filter: Filter = .all,
     selected: usize = 0,
     reveal_selection: bool = false,
-    /// Seconds since 1970 that ages are measured from.
-    now: f64 = 0,
+    clock: clipboard.Clock = .wall_clock,
     /// The app Return pastes into; empty when Return only copies.
     paste_target: []const u8 = "",
     detail_id: ?i64 = null,
@@ -84,8 +83,8 @@ pub const Board = struct {
     file_size: ?u64 = null,
     file_is_dir: bool = false,
 
-    pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store) Board {
-        return .{ .store = store, .arena = .init(gpa), .detail_arena = .init(gpa) };
+    pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
+        return .{ .store = store, .clock = clock, .arena = .init(gpa), .detail_arena = .init(gpa) };
     }
 
     pub fn deinit(b: *Board) void {
@@ -94,7 +93,7 @@ pub const Board = struct {
         b.detail_arena.deinit();
     }
 
-    pub fn reset(b: *Board) void {
+    pub fn forget(b: *Board) void {
         b.rows = &.{};
         b.visible = &.{};
         b.answered.clearRetainingCapacity();
@@ -173,7 +172,7 @@ pub const Board = struct {
     pub fn togglePin(b: *Board) void {
         const e = b.selection() orelse return;
         const store = b.store orelse return;
-        store.togglePin(e.id, b.now) catch return;
+        store.togglePin(e.id, b.clock.now()) catch return;
         b.stale = true;
     }
 
@@ -350,7 +349,7 @@ pub const Board = struct {
                 const line = ui.div(c).row().gap(5).itemsCenter();
                 defer line.end();
                 if (e.pinned_at != null) ui.icon(c, "pin.fill", .{ .size = 9, .weight = .semibold, .color = th.muted });
-                ui.text(c, e.subtitle(c.arena.allocator(), b.now), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
+                ui.text(c, e.subtitle(c.arena.allocator(), b.clock.now()), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
             }
         }
         if (selected) panel.keyChip(c, .{ .symbol = "return" });

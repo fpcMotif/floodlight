@@ -54,7 +54,6 @@ const Shell = struct {
                 if (!s.panel_window.isVisible()) s.notePasteTarget();
                 s.panel.showClipboard();
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-                s.panel.board.now = clipboard.wallClock();
                 s.positionOnPointerScreen();
                 s.orderIn();
                 s.panel_window.redraw();
@@ -138,7 +137,7 @@ const Shell = struct {
 
     fn hidePanel(s: *Shell) void {
         s.panel_window.hide();
-        s.panel.reset();
+        s.panel.forget();
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -269,7 +268,6 @@ const Shell = struct {
         }
         if (!stored or s.panel.mode != .clipboard) return;
         s.panel.board.stale = true;
-        s.panel.board.now = clipboard.wallClock();
         s.panel.refresh();
         s.panel_window.redraw();
     }
@@ -435,6 +433,7 @@ pub fn main(init: std.process.Init) !void {
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
+        .clock = .wall_clock,
         .request = Shell.panelRequest,
         .app_icon = Shell.appIcon,
         .describe_date = Shell.describeDate,
