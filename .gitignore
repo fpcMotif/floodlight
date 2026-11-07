@@ -25,3 +25,6 @@ Vendor/
 # Zig build output for core/.
 core/.zig-cache/
 core/zig-out/
+frontends/nanoui/.zig-cache/
+frontends/nanoui/zig-out/
+frontends/nanoui/zig-pkg/

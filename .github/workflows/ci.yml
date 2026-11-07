@@ -124,6 +124,9 @@ jobs:
       - name: Test, cross-build, and bench the core
         run: make test-core
 
+      - name: Test, bundle, and snapshot the nanoui panel
+        run: make test-nanoui
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27
