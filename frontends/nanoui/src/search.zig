@@ -81,10 +81,10 @@ pub const Catalog = struct {
         const trimmed = std.mem.trim(u8, text, " ");
         if (trimmed.len == 0) return rows.items;
 
-        var needle_buf: [core.search.max_term_len]u8 = undefined;
-        const needle = std.ascii.lowerString(&needle_buf, trimmed[0..@min(trimmed.len, needle_buf.len)]);
-        for (cat.apps.items) |a| {
-            const s = core.match.score(a.name, needle, 0) orelse continue;
+        const terms = core.search.Query.parse(trimmed);
+        apps: for (cat.apps.items) |a| {
+            var s: i32 = 0;
+            for (0..terms.n) |i| s += core.match.score(a.name, terms.term(i), 0) orelse continue :apps;
             try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 

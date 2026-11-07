@@ -207,6 +207,29 @@ test "a query finds apps and files, apps first" {
     try t.expectEqual(@as(usize, 0), (try cat.query(arena.allocator(), "  ")).len);
 }
 
+fn appTitles(arena: std.mem.Allocator, cat: *const search.Catalog, text: []const u8) ![]const []const u8 {
+    var titles: std.ArrayList([]const u8) = .empty;
+    for (try cat.query(arena, text)) |r| if (r.kind == .app) try titles.append(arena, r.title);
+    return titles.items;
+}
+
+test "apps match by the same terms as files" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Visual Studio Code.app"));
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calculator.app"));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const reordered = try appTitles(a, &cat, "code visual");
+    try t.expectEqual(@as(usize, 1), reordered.len);
+    try t.expectEqualStrings("Visual Studio Code", reordered[0]);
+    try t.expectEqual(@as(usize, 1), (try appTitles(a, &cat, "  vis   code ")).len);
+    try t.expectEqual(@as(usize, 0), (try appTitles(a, &cat, "code zzz")).len);
+    try t.expectEqualStrings("Calculator", (try appTitles(a, &cat, "calc"))[0]);
+}
+
 const NoHooks = struct {
     requests: u32 = 0,
     fn request(ctx: ?*anyopaque) void {
