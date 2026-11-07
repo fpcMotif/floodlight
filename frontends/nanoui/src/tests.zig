@@ -893,10 +893,17 @@ test "the board lists history, inspects the selection, and filters" {
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("2 entries"));
+    try t.expect(tester.shortcut(.{ .key = 0x7f }));
+    tester.settle(1);
+    try t.expect(tester.hasText("1 entry"));
 
     tester.typeText("zzz");
     tester.settle(1);
     try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
+    // ⌫ on the board deletes entries only, never the filter's text.
+    try t.expect(tester.shortcut(.{ .key = 0x7f }));
+    tester.settle(1);
+    try t.expectEqualStrings("zzz", p.field.text());
 }
 
 fn holdPastEnd(tester: *ui.Tester, x: f32, y: f32, dy: f32, events: usize) void {

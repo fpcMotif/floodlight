@@ -48,6 +48,8 @@ pub const board_metrics = struct {
 
 pub const summon_label = "⌥⇧ C";
 
+/// ⌫ as a shortcut key; `ui.Shortcut` names no constant for it.
+const backspace: u21 = 0x7f;
 const held_key_gap_seconds = 0.15;
 const detail_kept_bytes = 1 << 20;
 const max_line_bytes = 200;
@@ -190,6 +192,8 @@ pub const Board = struct {
     pub fn keys(b: *Board, c: *ui.Context, field_empty: bool) ?Action {
         const S = ui.Shortcut;
         _ = chrome.listKeys(c, &b.list, &Filter.options);
+        // Taken even with nothing selected, so ⌫ never edits the filter.
+        if (c.shortcut(.{ .key = backspace })) b.delete();
         const e = b.list.selection() orelse return null;
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (e.filePath()) |p| return .{ .reveal = p };
