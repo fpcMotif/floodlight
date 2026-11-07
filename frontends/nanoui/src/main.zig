@@ -40,6 +40,7 @@ const Shell = struct {
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
     entrance: mac.Entrance = .{},
+    submitting: bool = false,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -51,7 +52,10 @@ const Shell = struct {
             },
             .clipboard => {
                 if (shown and s.panel.mode == .clipboard) return s.hidePanel();
-                if (!s.panel_window.isVisible()) s.notePasteTarget();
+                if (!s.panel_window.isVisible()) {
+                    s.entrance.orderedIn();
+                    s.notePasteTarget();
+                }
                 s.panel.showClipboard();
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
                 s.panel.board.now = clipboard.wallClock();
@@ -82,7 +86,10 @@ const Shell = struct {
     }
 
     fn showPanel(s: *Shell) void {
-        if (!s.panel_window.isVisible()) s.notePasteTarget();
+        if (!s.panel_window.isVisible()) {
+            s.entrance.orderedIn();
+            s.notePasteTarget();
+        }
         s.positionOnPointerScreen();
         s.orderIn();
     }
@@ -90,7 +97,6 @@ const Shell = struct {
     fn orderIn(s: *Shell) void {
         if (!s.panel_window.isVisible()) {
             mac.setAlpha(s.panel_window, 0);
-            s.entrance.orderedIn();
             nanoui.App.after(entrance_timeout_ms, s, revealAnyway);
         }
         s.panel_window.show();
@@ -109,7 +115,7 @@ const Shell = struct {
     fn revealAnyway(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (!s.entrance.waiting) return;
-        s.entrance.waiting = false;
+        s.entrance.cancel();
         mac.setAlpha(s.panel_window, 1);
     }
 
@@ -137,12 +143,20 @@ const Shell = struct {
     }
 
     fn hidePanel(s: *Shell) void {
+        s.entrance.cancel();
+        if (s.panel.pending != null) s.endSubmit();
         s.panel_window.hide();
         s.panel.reset();
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
         mac.releaseFreedMemory();
+    }
+
+    fn endSubmit(s: *Shell) void {
+        if (!s.submitting) return;
+        s.submitting = false;
+        mac.signpostEnd(.submit);
     }
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
@@ -153,6 +167,15 @@ const Shell = struct {
     }
 
     fn panelRequest(ctx: ?*anyopaque) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.panel.pending) |a| {
+            if (a != .hide and !s.submitting) {
+                s.submitting = true;
+                mac.signpostBegin(.submit);
+            } else if (a == .hide) {
+                s.endSubmit();
+            }
+        }
         objc.dispatchMain(ctx, applyPanel);
     }
 
@@ -165,8 +188,13 @@ const Shell = struct {
                 .reveal => |path| mac.reveal(path),
                 .copy => |row| mac.copy(row.path),
                 .hide => {},
-                .clipboard => |b| if (!s.applyBoard(b)) return s.panel_window.redraw(),
+                .clipboard => |b| {
+                    const should_hide = s.applyBoard(b);
+                    s.endSubmit();
+                    if (!should_hide) return s.panel_window.redraw();
+                },
             }
+            s.endSubmit();
             s.hidePanel();
             return;
         }

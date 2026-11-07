@@ -10,6 +10,7 @@ cd "$PROJECT_DIR/frontends/nanoui"
 
 "$zig" fmt --check build.zig build.zig.zon src
 "$zig" build test --summary all
+"$zig" build bench --release
 "$zig" build bundle --release
 
 bin="zig-out/Floodlight Nano.app/Contents/MacOS/floodlight-nanoui"

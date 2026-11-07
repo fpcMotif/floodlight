@@ -11,6 +11,7 @@ const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const bench = @import("bench.zig");
 const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
@@ -840,6 +841,39 @@ test "a reopened panel stays unseen until a frame of its own is presented, then 
     try t.expect(!e.reveal(false));
     try t.expect(e.reveal(true));
     try t.expect(!e.reveal(true));
+    e.orderedIn();
+    e.cancel();
+    try t.expect(!e.reveal(true));
+}
+
+test "the 200-app latency benchmark measures keystroke publication, summon layout, and Return action" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try bench.populateCatalog(&cat, bench.catalog_app_count);
+    try t.expectEqual(@as(usize, 200), cat.apps.items.len);
+
+    const keystroke = try bench.measureKeystrokeToPublication(t.allocator, 16);
+    try t.expect(keystroke.p50_ns > 0);
+    try t.expect(keystroke.p99_ns >= keystroke.p50_ns);
+
+    const summon = try bench.measureHotKeyToLaidOutFrame(t.allocator, 16);
+    try t.expect(summon.p50_ns > 0);
+    try t.expect(summon.p99_ns >= summon.p50_ns);
+
+    const submit = try bench.measureReturnToAction(t.allocator, 16);
+    try t.expect(submit.p50_ns > 0);
+    try t.expect(submit.p99_ns >= submit.p50_ns);
+
+    try t.expect(bench.withinBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+    ));
+    try t.expect(!bench.withinBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 500_000, .runs = 16 },
+        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+    ));
 }
 
 test "a board frame that waits for a later one keeps the display link at the display's pace" {
