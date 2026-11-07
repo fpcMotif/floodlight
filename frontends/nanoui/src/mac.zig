@@ -218,8 +218,13 @@ fn fileURL(path: []const u8) objc.Object {
     return objc.msg(objc.Object, objc.class("NSURL"), "fileURLWithPath:", .{objc.nsString(path)});
 }
 
+fn isWebUrl(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "https://") or std.mem.startsWith(u8, path, "http://");
+}
+
 fn urlFor(path: []const u8) ?objc.Object {
-    if (std.mem.startsWith(u8, path, "https://")) return objc.msg(?objc.Object, objc.class("NSURL"), "URLWithString:", .{objc.nsString(path)});
+    if (isWebUrl(path))
+        return objc.msg(?objc.Object, objc.class("NSURL"), "URLWithString:", .{objc.nsString(path)});
     return fileURL(path);
 }
 
@@ -237,6 +242,8 @@ pub fn copy(path: []const u8) void {
     const board = beginWrite();
     const items = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{url});
     _ = objc.msg(objc.BOOL, board, "writeObjects:", .{items});
+    if (isWebUrl(path))
+        _ = objc.msg(objc.BOOL, board, "setString:forType:", .{ objc.nsString(path), objc.nsString("public.utf8-plain-text") });
     markOwnWrite(board);
 }
 

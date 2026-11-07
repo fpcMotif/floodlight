@@ -260,7 +260,7 @@ pub const Panel = struct {
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (row.kind != .web) p.ask(.{ .reveal = row.path });
         }
-        if (c.shortcut(.{ .key = S.enter, .alt = true })) p.ask(.{ .copy = row });
+        if (c.shortcut(.{ .key = S.enter, .alt = true }) or c.shortcut(.{ .key = 'c', .cmd = true })) p.ask(.{ .copy = row });
     }
 
     pub fn view(p: *Panel, c: *ui.Context) void {
