@@ -41,16 +41,15 @@ pub const Flow = struct {
         f.effects.present(f.effects.ctx);
     }
 
-    /// Returns true while the flow still wants polling.
-    pub fn poll(f: *Flow) bool {
-        if (f.phase != .guiding) return false;
+    /// While guiding: the grant, or the panel presented again. Else nothing.
+    pub fn poll(f: *Flow) void {
+        if (f.phase != .guiding) return;
         if (f.effects.is_granted(f.effects.ctx)) {
             f.phase = .granted;
             f.effects.on_granted(f.effects.ctx);
-            return false;
+            return;
         }
         f.effects.present(f.effects.ctx);
-        return true;
     }
 
     pub fn dismiss(f: *Flow) void {
@@ -104,7 +103,8 @@ pub fn shouldMove(from: Rect, to: Rect) bool {
 /// The guidance panel's content. `card` is where the app card was laid
 /// out last frame: the window puts its native drag source there.
 pub const Guidance = struct {
-    phase: Phase = .guiding,
+    /// The flow's phase, which this view only reads.
+    phase: *const Phase,
     app_name: []const u8 = "Floodlight",
     /// The app's icon as PNG, when the shell has one.
     icon_png: ?[]const u8 = null,
@@ -119,11 +119,11 @@ pub const Guidance = struct {
         const before = g.card;
         const was_dismissed = g.dismissed;
         defer if (g.request) |r| if (!std.meta.eql(before, g.card) or g.dismissed != was_dismissed) r(g.ctx);
-        if (g.phase != .guiding) g.card = null;
+        if (g.phase.* != .guiding) g.card = null;
         // The window's glass slab is the material; this only draws its rim.
         const root = ui.div(c).column().sizeFull().px(14).py(12).gap(8).rounded(16).border(th.text.alpha(0.1));
         defer root.end();
-        switch (g.phase) {
+        switch (g.phase.*) {
             .guiding => g.guidingView(c),
             .granted => grantedView(c),
             .idle, .dismissed => {},

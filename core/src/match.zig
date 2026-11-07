@@ -19,10 +19,6 @@ pub const penalty_gap_extend: i32 = 1;
 pub const bonus_exact_name: i32 = 120;
 pub const bonus_name_prefix: i32 = 40;
 
-inline fn lower(c: u8) u8 {
-    return std.ascii.toLower(c);
-}
-
 inline fn isSeparator(c: u8) bool {
     return switch (c) {
         '/', '-', '_', '.', ' ' => true,
@@ -41,7 +37,7 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
     var j: usize = 0;
     var end: usize = 0;
     for (hay, 0..) |c, i| {
-        if (lower(c) == needle[j]) {
+        if (std.ascii.toLower(c) == needle[j]) {
             j += 1;
             if (j == needle.len) {
                 end = i;
@@ -57,7 +53,7 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
     var i = end + 1;
     while (i > 0) {
         i -= 1;
-        if (lower(hay[i]) == needle[j - 1]) {
+        if (std.ascii.toLower(hay[i]) == needle[j - 1]) {
             j -= 1;
             if (j == 0) {
                 start = i;
@@ -72,7 +68,7 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
     var k = start;
     while (k <= end) : (k += 1) {
         const c = hay[k];
-        if (lower(c) != needle[j]) continue;
+        if (std.ascii.toLower(c) != needle[j]) continue;
 
         var bonus: i32 = 0;
         if (k == name_start) {
@@ -139,7 +135,7 @@ pub fn upperBoundAnywhere(needle_len: usize) i32 {
 
 pub fn startsWithFold(hay: []const u8, needle: []const u8) bool {
     for (needle, 0..) |n, idx| {
-        if (lower(hay[idx]) != n) return false;
+        if (std.ascii.toLower(hay[idx]) != n) return false;
     }
     return true;
 }
@@ -190,7 +186,7 @@ test "upper bounds hold" {
         .{ "abc-abc", "abc" },      .{ "x.y.z", "xyz" },
     };
     for (cases) |c| {
-        const s = score(c[0], c[1], 0) orelse continue;
+        const s = score(c[0], c[1], 0).?;
         try t.expect(s <= upperBound(c[0], c[1]));
         try t.expect(s <= upperBoundAnywhere(c[1].len));
     }

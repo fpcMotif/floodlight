@@ -20,6 +20,7 @@ pub const Error = error{
     PathAlreadyExists,
     NoSpaceLeft,
     NameTooLong,
+    OutOfMemory,
     Unexpected,
 };
 
@@ -48,12 +49,22 @@ pub const OpenMode = enum { read, dir, create };
 pub fn openat(dir: fd_t, path: []const u8, mode: OpenMode) Error!fd_t {
     const flags: posix.O = switch (mode) {
         .read => .{ .CLOEXEC = true },
-        // NOFOLLOW so a symlinked folder is indexed as a link, never walked:
+        // NOFOLLOW so a symlinked folder is indexed as a plain entry, never walked:
         // a link loop would otherwise recurse until max_depth.
         .dir => .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true },
         .create => .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
     };
-    return posix.openat(dir, path, flags, 0o644) catch |e| switch (e) {
+    return posix.openat(dir, path, flags, 0o644) catch |e| mapOpenError(e);
+}
+
+/// Opens the root of a scan, which unlike its children may be a symlink
+/// (`/tmp` on macOS is one).
+pub fn openRoot(path: []const u8) Error!fd_t {
+    return posix.openat(cwd, path, .{ .DIRECTORY = true, .CLOEXEC = true }, 0) catch |e| mapOpenError(e);
+}
+
+fn mapOpenError(e: posix.OpenError) Error {
+    return switch (e) {
         error.FileNotFound => error.FileNotFound,
         error.AccessDenied, error.PermissionDenied => error.AccessDenied,
         error.NotDir => error.NotDir,
@@ -61,17 +72,6 @@ pub fn openat(dir: fd_t, path: []const u8, mode: OpenMode) Error!fd_t {
         error.PathAlreadyExists => error.PathAlreadyExists,
         error.NameTooLong => error.NameTooLong,
         error.NoSpaceLeft => error.NoSpaceLeft,
-        else => error.Unexpected,
-    };
-}
-
-/// Opens the root of a scan, which unlike its children may be a symlink
-/// (`/tmp` on macOS is one).
-pub fn openRoot(path: []const u8) Error!fd_t {
-    return posix.openat(cwd, path, .{ .DIRECTORY = true, .CLOEXEC = true }, 0) catch |e| switch (e) {
-        error.FileNotFound => error.FileNotFound,
-        error.AccessDenied, error.PermissionDenied => error.AccessDenied,
-        error.NotDir => error.NotDir,
         else => error.Unexpected,
     };
 }
@@ -123,7 +123,11 @@ pub fn unlinkat(dir: fd_t, path: []const u8) void {
 }
 
 pub fn mmapRead(fd: fd_t, len: usize) Error![]align(std.heap.page_size_min) const u8 {
-    return posix.mmap(null, len, .{ .READ = true }, .{ .TYPE = .PRIVATE }, fd, 0) catch error.Unexpected;
+    return posix.mmap(null, len, .{ .READ = true }, .{ .TYPE = .PRIVATE }, fd, 0) catch |e| switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.AccessDenied, error.PermissionDenied => error.AccessDenied,
+        else => error.Unexpected,
+    };
 }
 
 pub fn munmap(bytes: []align(std.heap.page_size_min) const u8) void {
@@ -138,4 +142,14 @@ pub fn monotonicNs() u64 {
     var ts: posix.timespec = undefined;
     _ = system.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+}
+
+test "a mapping larger than the address space reports OutOfMemory" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "f", .data = "x" });
+    const fd = try openat(tmp.dir.handle, "f", .read);
+    defer close(fd);
+    try t.expectError(error.OutOfMemory, mmapRead(fd, std.math.maxInt(usize) / 2));
 }

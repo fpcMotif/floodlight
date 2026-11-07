@@ -23,10 +23,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = imports,
     });
-    app.linkFramework("Carbon", .{});
-    app.linkFramework("ImageIO", .{});
-    app.linkFramework("Quartz", .{});
-    app.linkSystemLibrary("sqlite3", .{});
+    linkSystem(app);
     const exe = b.addExecutable(.{ .name = "floodlight-nanoui", .root_module = app });
     b.installArtifact(exe);
 
@@ -57,10 +54,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = imports,
     });
-    test_module.linkFramework("Carbon", .{});
-    test_module.linkFramework("ImageIO", .{});
-    test_module.linkFramework("Quartz", .{});
-    test_module.linkSystemLibrary("sqlite3", .{});
+    linkSystem(test_module);
     const tests = b.addTest(.{ .root_module = test_module });
     b.step("test", "Run the tests").dependOn(&b.addRunArtifact(tests).step);
+}
+
+/// What the app and its tests both link from macOS.
+fn linkSystem(m: *std.Build.Module) void {
+    for ([_][]const u8{ "Carbon", "ImageIO", "Quartz" }) |framework| m.linkFramework(framework, .{});
+    m.linkSystemLibrary("sqlite3", .{});
 }

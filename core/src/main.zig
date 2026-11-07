@@ -22,8 +22,11 @@ pub fn main(init: std.process.Init) !void {
     var out_buf: [16 * 1024]u8 = undefined;
     var fw: std.Io.File.Writer = .init(.stdout(), init.io, &out_buf);
     const out = &fw.interface;
-    defer out.flush() catch {};
+    try run(gpa, out, args);
+    try out.flush();
+}
 
+fn run(gpa: std.mem.Allocator, out: *std.Io.Writer, args: []const [:0]const u8) !void {
     if (args.len < 3) return usage(out);
     const cmd = args[1];
     if (std.mem.eql(u8, cmd, "index") and args.len == 4) return cmdIndex(gpa, out, args[2], args[3]);
@@ -117,9 +120,15 @@ fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given
         });
     }
     const rss_after = residentBytes();
-    try out.print("rss_before_open_kb={d} rss_after_bench_kb={d} index_mapped_kb={d}\n", .{
-        rss_before / 1024, rss_after / 1024, m.bytes.len / 1024,
-    });
+    try out.writeAll("rss_before_open_kb=");
+    try writeKb(out, rss_before);
+    try out.writeAll(" rss_after_bench_kb=");
+    try writeKb(out, rss_after);
+    try out.print(" index_mapped_kb={d}\n", .{m.bytes.len / 1024});
+}
+
+fn writeKb(out: *std.Io.Writer, bytes: ?usize) !void {
+    if (bytes) |b| try out.print("{d}", .{b / 1024}) else try out.writeAll("unavailable");
 }
 
 /// A deterministic tree shaped like a home folder: a few wide directories,
@@ -202,22 +211,27 @@ fn fileSize(path: []const u8) !u64 {
 }
 
 /// Current resident set, not the peak: the peak would include whatever the
-/// argument parsing and the first search touched and forgot.
-fn residentBytes() usize {
+/// argument parsing and the first search touched and forgot. Null when the
+/// system would not report it, so bench never prints a made-up zero.
+fn residentBytes() ?usize {
     switch (builtin.os.tag) {
         .linux => {
             var buf: [256]u8 = undefined;
-            const fd = sys.openat(sys.cwd, "/proc/self/statm", .read) catch return 0;
+            const fd = sys.openat(sys.cwd, "/proc/self/statm", .read) catch return null;
             defer sys.close(fd);
-            const n = std.posix.read(fd, &buf) catch return 0;
+            const n = std.posix.read(fd, &buf) catch return null;
             var it = std.mem.tokenizeScalar(u8, buf[0..n], ' ');
             _ = it.next();
-            const pages = std.fmt.parseInt(usize, it.next() orelse return 0, 10) catch return 0;
+            const pages = std.fmt.parseInt(usize, it.next() orelse return null, 10) catch return null;
             return pages * std.heap.pageSize();
         },
-        else => {
-            const ru = std.posix.getrusage(std.posix.rusage.SELF);
-            return @intCast(ru.maxrss);
+        .macos => {
+            var info: std.c.mach_task_basic_info = undefined;
+            var count = std.c.MACH.TASK.BASIC.INFO_COUNT;
+            const rc = std.c.task_info(std.c.mach_task_self(), std.c.MACH.TASK.BASIC.INFO, @ptrCast(&info), &count);
+            if (rc != 0) return null;
+            return @intCast(info.resident_size);
         },
+        else => return null,
     }
 }

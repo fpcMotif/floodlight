@@ -21,7 +21,6 @@ pub const Entry = struct {
     /// The text; a file's path; an image's name.
     text: []const u8,
     created_at: f64,
-    source: []const u8 = "",
     source_name: []const u8 = "Clipboard",
     pinned_at: ?f64 = null,
     width: u32 = 0,
@@ -124,10 +123,10 @@ fn parseColor(text: []const u8) ?Rgba {
     for (hex) |ch| if (!std.ascii.isHex(ch)) return null;
     const byte = struct {
         fn at(h: []const u8, i: usize) u8 {
-            return std.fmt.parseInt(u8, h[i .. i + 2], 16) catch 0;
+            return std.fmt.parseInt(u8, h[i .. i + 2], 16) catch unreachable;
         }
         fn nibble(h: []const u8, i: usize) u8 {
-            return (std.fmt.charToDigit(h[i], 16) catch 0) * 17;
+            return (std.fmt.charToDigit(h[i], 16) catch unreachable) * 17;
         }
     };
     return switch (hex.len) {
@@ -228,20 +227,25 @@ pub const Filter = enum {
 pub fn fileType(arena: std.mem.Allocator, path: []const u8, is_dir: bool) []const u8 {
     if (is_dir) return "Folder";
     const ext = extension(path);
+    // Source Code before Video: `.ts` is TypeScript here, as in the Swift inspector.
     const table = [_]struct { []const u8, []const []const u8 }{
-        .{ "Video", &.{ "mp4", "mov", "m4v", "webm", "mkv", "avi" } },
-        .{ "Image", &.{ "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "svg" } },
+        .{ "Source Code", &.{ "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh" } },
+        .{ "Video", &video_extensions },
+        .{ "Image", &board_image_extensions },
         .{ "JSON", &.{"json"} },
         .{ "Markdown", &.{ "md", "markdown", "mdown", "mkdn" } },
         .{ "Plain Text", &.{ "txt", "text" } },
-        .{ "Source Code", &.{ "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh" } },
         .{ "Archive", &.{ "zip", "tar", "gz", "dmg" } },
     };
     for (table) |t| if (inSet(ext, t[1])) return t[0];
     return if (ext.len == 0) "File" else std.ascii.allocUpperString(arena, ext) catch ext;
 }
 
-pub const image_extensions = [_][]const u8{ "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff", "tif", "bmp", "avif", "ico", "icns", "svg" };
+/// A picture's: what the search panel's Images filter keeps.
+pub const image_extensions = [_][]const u8{ "png", "jpg", "jpeg", "heic", "heif", "webp", "gif", "tiff", "tif", "bmp", "avif", "svg" };
+/// What the board shows and previews as a picture: icons too, which search
+/// does not count as images.
+pub const board_image_extensions = image_extensions ++ [_][]const u8{ "ico", "icns" };
 pub const video_extensions = [_][]const u8{ "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "ts", "mpg", "mpeg" };
 pub const text_extensions = [_][]const u8{
     "json", "py",       "swift", "js",   "mjs", "cjs",  "ts",  "mts",  "cts", "jsx", "tsx", "rs",  "go",   "c",    "cpp",        "cc",   "cxx",
@@ -260,9 +264,9 @@ pub fn inSet(ext: []const u8, set: []const []const u8) bool {
     return false;
 }
 
-pub const Word = struct { characters: usize, words: usize, lines: usize };
+pub const TextCounts = struct { characters: usize, words: usize, lines: usize };
 
-pub fn counts(text: []const u8) Word {
+pub fn counts(text: []const u8) TextCounts {
     var words: usize = 0;
     var in_word = false;
     for (text) |b| {
@@ -386,19 +390,20 @@ fn stat(path: []const u8) ?Stat {
     return .{ .dir = (st.mode & std.c.S.IFMT) == std.c.S.IFDIR, .size = @intCast(st.size) };
 }
 
-fn readFile(a: std.mem.Allocator, path: []const u8, len: usize) ?[]const u8 {
-    const z = a.dupeSentinel(u8, path, 0) catch return null;
-    const fd = std.c.open(z, .{});
+/// The first `len` bytes of `path`, in `a`'s memory. Null when it does not
+/// open or is shorter: a file cut since its `stat`, or a damaged picture.
+fn readFile(a: std.mem.Allocator, path: [:0]const u8, len: usize) ?[]const u8 {
+    const fd = std.c.open(path, .{});
     if (fd < 0) return null;
     defer _ = std.c.close(fd);
     const buf = a.alloc(u8, len) catch return null;
     var got: usize = 0;
     while (got < len) {
         const n = std.c.read(fd, buf[got..].ptr, len - got);
-        if (n <= 0) break;
+        if (n <= 0) return null;
         got += @intCast(n);
     }
-    return buf[0..got];
+    return buf;
 }
 
 /// Text past this is dropped whole, as the Swift store does.
@@ -482,7 +487,7 @@ const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail";
+const columns = "id, kind, text, created_at, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
@@ -576,18 +581,7 @@ pub const Store = struct {
 
     fn readImage(s: Store, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
         var buf: [std.posix.PATH_MAX]u8 = undefined;
-        const path = s.imagePath(&buf, hash, format) orelse return null;
-        const fd = std.c.open(path, .{});
-        if (fd < 0) return null;
-        defer _ = std.c.close(fd);
-        const out = arena.alloc(u8, size) catch return null;
-        var got: usize = 0;
-        while (got < size) {
-            const n = std.c.read(fd, out[got..].ptr, size - got);
-            if (n <= 0) return null;
-            got += @intCast(n);
-        }
-        return out;
+        return readFile(arena, s.imagePath(&buf, hash, format) orelse return null, size);
     }
 
     fn unlinkImage(s: Store, hash: []const u8, format: []const u8) void {
@@ -733,10 +727,11 @@ pub const Store = struct {
         const path = e.filePath() orelse return .none;
         const size = f.size orelse return .none;
         const ext = extension(path);
-        if (inSet(ext, &image_extensions) and size <= max_image_bytes) {
-            if (readFile(arena, path, @intCast(size))) |bytes| return .{ .picture = bytes };
+        const z = arena.dupeSentinel(u8, path, 0) catch return .none;
+        if (inSet(ext, &board_image_extensions) and size <= max_image_bytes) {
+            if (readFile(arena, z, @intCast(size))) |bytes| return .{ .picture = bytes };
         } else if (inSet(ext, &text_extensions)) {
-            if (readFile(arena, path, @intCast(@min(size, text_preview_bytes)))) |bytes| return .{ .text = bytes };
+            if (readFile(arena, z, @intCast(@min(size, text_preview_bytes)))) |bytes| return .{ .text = bytes };
         }
         return .none;
     }
@@ -767,14 +762,13 @@ pub const Store = struct {
                 .kind = std.meta.stringToEnum(Kind, columnText(stmt, 1)) orelse .text,
                 .text = try arena.dupe(u8, columnText(stmt, 2)),
                 .created_at = lite.sqlite3_column_double(stmt, 3),
-                .source = try arena.dupe(u8, columnText(stmt, 4)),
-                .source_name = try arena.dupe(u8, columnText(stmt, 5)),
-                .pinned_at = if (lite.sqlite3_column_type(stmt, 6) == lite.null_type) null else lite.sqlite3_column_double(stmt, 6),
-                .width = @intCast(lite.sqlite3_column_int64(stmt, 7)),
-                .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
-                .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
-                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
-                .content = storedContent(columnText(stmt, 11), try arena.dupe(u8, columnText(stmt, 12))),
+                .source_name = try arena.dupe(u8, columnText(stmt, 4)),
+                .pinned_at = if (lite.sqlite3_column_type(stmt, 5) == lite.null_type) null else lite.sqlite3_column_double(stmt, 5),
+                .width = @intCast(lite.sqlite3_column_int64(stmt, 6)),
+                .height = @intCast(lite.sqlite3_column_int64(stmt, 7)),
+                .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 8)),
+                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 9)),
+                .content = storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
             });
         }
         return out.items;

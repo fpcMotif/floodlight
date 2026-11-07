@@ -19,6 +19,8 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
         reveal: bool = false,
         /// The rows' source changed under an unchanged query.
         stale: bool = false,
+        /// The last fetch failed: no rows, whatever the query matches.
+        failed: bool = false,
         /// The query `rows` answers, kept outside the arena.
         query: std.ArrayList(u8) = .empty,
         /// The selection to find again after a stale refresh.
@@ -42,6 +44,7 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
             l.selected = 0;
             l.reveal = false;
             l.stale = false;
+            l.failed = false;
             l.kept = null;
             _ = l.arena.reset(.free_all);
         }
@@ -59,7 +62,7 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
         }
 
         /// Frees the previous rows; fetch the new ones with the allocator
-        /// returned, then hand them to `setRows`.
+        /// returned, then hand them to `setRows`, or call `fail`.
         pub fn beginQuery(l: *Self, query: []const u8) std.mem.Allocator {
             const same = l.stale and std.mem.eql(u8, query, l.query.items);
             l.kept = if (same) if (l.selection()) |x| keyOf(x) else null else null;
@@ -69,13 +72,16 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
             return l.arena.allocator();
         }
 
-        pub fn setRows(l: *Self, query: []const u8, rows: []const Item) void {
+        /// On error nothing is answered: the next refresh asks again.
+        pub fn setRows(l: *Self, query: []const u8, rows: []const Item) !void {
+            if (!std.mem.eql(u8, query, l.query.items)) {
+                try l.query.ensureTotalCapacity(l.arena.child_allocator, query.len);
+                l.query.clearRetainingCapacity();
+                l.query.appendSliceAssumeCapacity(query);
+            }
             l.rows = rows;
             l.stale = false;
-            if (!std.mem.eql(u8, query, l.query.items)) {
-                l.query.clearRetainingCapacity();
-                l.query.appendSlice(l.arena.child_allocator, query) catch {};
-            }
+            l.failed = false;
             l.applyFilter();
             const key = l.kept orelse return;
             l.kept = null;
@@ -83,6 +89,15 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
                 l.selected = i;
                 return;
             };
+        }
+
+        /// After a failed fetch: no rows, and the next refresh asks again.
+        pub fn fail(l: *Self) void {
+            l.rows = &.{};
+            l.visible = &.{};
+            l.selected = 0;
+            l.kept = null;
+            l.failed = true;
         }
 
         pub fn count(l: *const Self, f: Filter) usize {

@@ -31,7 +31,8 @@ pub const Kind = enum {
 pub const Row = struct {
     kind: Kind,
     title: []const u8,
-    /// Where it lives, with the home folder shown as `~`.
+    /// Where it lives: a file's path from the index's root, an app's
+    /// absolute folder, a web search's site.
     subtitle: []const u8,
     path: []const u8,
     score: i32,
@@ -61,7 +62,6 @@ pub const Catalog = struct {
     gpa: std.mem.Allocator,
     apps: std.ArrayList(App) = .empty,
     files: ?*const core.file_index.FileIndex = null,
-    home: []const u8 = "",
 
     pub fn deinit(cat: *Catalog) void {
         for (cat.apps.items) |a| cat.gpa.free(a.path);
@@ -149,7 +149,7 @@ fn better(_: void, a: Row, b: Row) bool {
     return a.title.len < b.title.len;
 }
 
-/// Where apps are installed. The user's own folder comes from `home`.
+/// Where apps are installed, besides the user's own `~/Applications`.
 pub const app_folders = [_][]const u8{
     "/Applications",
     "/Applications/Utilities",

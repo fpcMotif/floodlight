@@ -27,14 +27,11 @@ const compact_idle_ms = 60 * 60 * 1000;
 const max_icons = 64;
 
 const Shell = struct {
-    app: *nanoui.App,
-    io: std.Io,
-    home: []const u8,
     files: FileIndex,
     catalog: search.Catalog,
     panel: panel_mod.Panel = undefined,
     panel_window: *nanoui.Window = undefined,
-    guidance: permission.Guidance = .{},
+    guidance: permission.Guidance = undefined,
     guide_window: *nanoui.Window = undefined,
     flow: permission.Flow = undefined,
     drag: ?*mac.FileDragSource = null,
@@ -86,7 +83,7 @@ const Shell = struct {
     fn deliverPaste(pid: i32) void {
         if (pid == 0) return;
         if (!mac.canDeliverPaste()) return mac.promptAccessibility();
-        _ = mac.deliverPaste(pid);
+        if (!mac.deliverPaste(pid)) std.log.err("paste: ⌘V not delivered to pid {d}", .{pid});
     }
 
     fn notePasteTarget(s: *Shell) void {
@@ -214,11 +211,11 @@ const Shell = struct {
     }
 
     fn actionsMenu(s: *Shell, e: clipboard.Entry) void {
-        var label_buf: [128]u8 = undefined;
-        const paste_label = if (s.panel.board.paste_target.len > 0) std.fmt.bufPrint(&label_buf, "Paste to {s}", .{s.panel.board.paste_target}) catch "Paste" else "Copy";
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
         const cmd = mac.command_modifier;
         const items = [_]mac.MenuItem{
-            .{ .title = paste_label, .key = "\r", .modifiers = 0 },
+            .{ .title = s.panel.board.pasteLabel(arena.allocator()), .key = "\r", .modifiers = 0 },
             .{ .title = "Copy", .key = "c", .modifiers = cmd },
             .{ .title = "Quick Look", .key = " ", .modifiers = 0, .enabled = s.panel.board.previewable(e), .separator_before = true },
             .{ .title = "Show in Finder", .key = "r", .modifiers = cmd, .enabled = e.filePath() != null },
@@ -233,10 +230,7 @@ const Shell = struct {
             1 => s.writeEntry(e),
             2 => s.preview(e),
             3 => if (e.filePath()) |p| s.applyAndSettle(.{ .reveal = p }),
-            4 => {
-                s.panel.board.togglePin();
-                s.panel.refresh();
-            },
+            4 => s.panel.board.togglePin(),
             5 => s.panel.board.delete(),
             else => {},
         }
@@ -257,7 +251,10 @@ const Shell = struct {
         var reader = mac.PasteboardReader.begin();
         defer reader.end();
         const app: clipboard.App = .{ .bundle_id = front.bundle_id, .name = front.name };
-        const stored = s.store.capture(arena.allocator(), reader.pasteboard(), app, clipboard.wallClock()) catch false;
+        const stored = s.store.capture(arena.allocator(), reader.pasteboard(), app, clipboard.wallClock()) catch |err| blk: {
+            std.log.err("clipboard capture: {s}", .{@errorName(err)});
+            break :blk false;
+        };
         if (!stored or s.panel.mode != .clipboard) return;
         s.panel.board.list.markStale();
         s.panel.board.now = clipboard.wallClock();
@@ -304,7 +301,6 @@ const Shell = struct {
 
     fn present(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.guidance.phase = .guiding;
         s.guidance.dismissed = false;
         const parent: ?permission.Rect = if (s.panel_window.isVisible()) mac.frameOf(s.panel_window) else null;
         const want = permission.anchorFrame(mac.systemSettingsWindow(), parent, mac.mainScreenVisibleFrame());
@@ -326,7 +322,6 @@ const Shell = struct {
     fn granted(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (!s.guide_window.isVisible()) return s.rebuildIndex();
-        s.guidance.phase = .granted;
         s.guide_window.redraw();
         nanoui.App.after(permission.granted_linger_ms, s, lingerDone);
         // Folders that were closed to the scan are open now.
@@ -341,7 +336,7 @@ const Shell = struct {
     fn pollTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.polling = false;
-        if (s.flow.phase == .guiding) _ = s.flow.poll();
+        s.flow.poll();
     }
 
     fn guidanceRequest(ctx: ?*anyopaque) void {
@@ -362,8 +357,9 @@ const Shell = struct {
     // The file index: the last run's opens at once, a fresh one replaces it.
 
     fn rebuildIndex(s: *Shell) void {
+        const t = std.Thread.spawn(.{}, FileIndex.rebuild, .{ &s.files, file_index.Notify{ .ctx = s, .ready = indexReady } }) catch |err|
+            return std.log.err("file index: no rebuild thread: {s}", .{@errorName(err)});
         s.panel.indexing = true;
-        const t = std.Thread.spawn(.{}, FileIndex.rebuild, .{ &s.files, file_index.Notify{ .ctx = s, .ready = indexReady } }) catch return;
         t.detach();
     }
 
@@ -393,8 +389,11 @@ pub fn main(init: std.process.Init) !void {
     const app = try nanoui.App.create(init, .{ .name = "Floodlight", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
+    // Snapshots and hidden runs draw the panel and touch nothing else: no
+    // hotkey, no System Settings, no scan of the home folder, no history on disk.
+    const headless = app.flags.hidden or app.flags.snapshot != null;
 
-    var shell: Shell = .{ .app = app, .io = init.io, .home = home, .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa, .home = home } };
+    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa } };
     defer shell.files.close();
     shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
@@ -403,16 +402,18 @@ pub fn main(init: std.process.Init) !void {
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
     const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
-    const touches_history = !(app.flags.hidden or app.flags.snapshot != null);
     const tmp = std.mem.trimEnd(u8, std.mem.span(std.c.getenv("TMPDIR") orelse "/tmp"), "/");
     const scratch_images = try std.fmt.allocPrint(gpa, "{s}/floodlight-nano-{d}-images", .{ tmp, std.c.getpid() });
     defer std.Io.Dir.cwd().deleteTree(init.io, scratch_images) catch {};
-    shell.store = if (touches_history)
-        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", scratch_images)
+    shell.store = if (headless)
+        try clipboard.Store.open(":memory:", scratch_images)
     else
-        try clipboard.Store.open(":memory:", scratch_images);
+        clipboard.Store.open(store_path, images_path) catch |err| fallback: {
+            std.log.err("clipboard history: {s} at {s}; keeping this session's in memory", .{ @errorName(err), store_path });
+            break :fallback try clipboard.Store.open(":memory:", scratch_images);
+        };
     defer shell.store.close();
-    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
+    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
@@ -443,7 +444,15 @@ pub fn main(init: std.process.Init) !void {
         surface.after_frame_ctx = &shell;
     }
 
-    shell.guidance = .{ .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
+    shell.flow = .{ .effects = .{
+        .ctx = &shell,
+        .is_granted = Shell.isGranted,
+        .open_settings = Shell.openSettings,
+        .present = Shell.present,
+        .close = Shell.close,
+        .on_granted = Shell.granted,
+    } };
+    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
     shell.guide_window = try app.newWindow(.{
         .title = "Full Disk Access",
@@ -460,19 +469,8 @@ pub fn main(init: std.process.Init) !void {
     });
     if (mac.installSlab(shell.guide_window, 16, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
 
-    shell.flow = .{ .effects = .{
-        .ctx = &shell,
-        .is_granted = Shell.isGranted,
-        .open_settings = Shell.openSettings,
-        .present = Shell.present,
-        .close = Shell.close,
-        .on_granted = Shell.granted,
-    } };
     shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence } };
 
-    // Snapshots and hidden runs draw the panel and touch nothing else: no
-    // hotkey, no System Settings, no scan of the home folder.
-    const headless = app.flags.hidden or app.flags.snapshot != null;
     if (!headless) {
         try mac.registerHotKeys(&shell, Shell.hotKey);
         shell.change_count = mac.pasteboardChangeCount();

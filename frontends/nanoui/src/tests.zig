@@ -1,6 +1,9 @@
-//! The panel and the grant flow without a window: views render offscreen
-//! through ui.Tester. Expected frames are the Swift suite's
-//! (GuidancePanelAnchorPolicyTests, FullDiskAccessGrantTests).
+//! Floodlight on nanoui without a window: the grant flow, the search panel
+//! and the list behind it, the clipboard store and board, AVIF compaction,
+//! and when the panel shows and hides. Views render offscreen through
+//! ui.Tester. Expected values are the Swift suites', named where each part
+//! begins; the grant flow's are GuidancePanelAnchorPolicyTests and
+//! FullDiskAccessGrantTests.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -104,15 +107,17 @@ test "polling keeps guiding until the grant, then stops" {
     var spy: Spy = .{};
     var f = spy.flow();
     f.begin();
-    try t.expect(f.poll());
+    f.poll();
     try t.expectEqual(permission.Phase.guiding, f.phase);
+    try t.expectEqual(@as(u32, 2), spy.presented);
     try t.expectEqual(@as(u32, 0), spy.on_granted);
     spy.granted = true;
-    try t.expect(!f.poll());
+    f.poll();
     try t.expectEqual(permission.Phase.granted, f.phase);
     try t.expectEqual(@as(u32, 1), spy.on_granted);
-    try t.expect(!f.poll());
+    f.poll();
     try t.expectEqual(@as(u32, 1), spy.on_granted);
+    try t.expectEqual(@as(u32, 2), spy.presented);
 }
 
 test "dismissing closes the panel and stops polling" {
@@ -122,11 +127,13 @@ test "dismissing closes the panel and stops polling" {
     f.dismiss();
     try t.expectEqual(permission.Phase.dismissed, f.phase);
     try t.expectEqual(@as(u32, 1), spy.closed);
-    try t.expect(!f.poll());
+    f.poll();
+    try t.expectEqual(@as(u32, 1), spy.presented);
 }
 
 test "the guidance view offers the app card, then shows the grant" {
-    var g: permission.Guidance = .{ .app_name = "Floodlight Nano" };
+    var phase: permission.Phase = .guiding;
+    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Floodlight Nano" };
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&g, permission.Guidance.view), .{ .width = 380, .height = 110 });
     defer tester.deinit();
@@ -135,7 +142,7 @@ test "the guidance view offers the app card, then shows the grant" {
     try t.expect(tester.hasText("Floodlight Nano"));
     const card = g.card orelse return error.NoCard;
     try t.expect(card.w > 300 and card.h >= 30);
-    g.phase = .granted;
+    phase = .granted;
     tester.settle(0.2);
     try t.expect(tester.hasText("Full Disk Access Granted"));
     try t.expect(g.card == null);
@@ -151,7 +158,7 @@ fn tmpCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *co
     try tmp.dir.createDirPath(t.io, "Apps/Calculator.app/Contents");
     try tmp.dir.createDirPath(t.io, "Apps/Calendar.app/Contents");
     const root = buf[0..try tmp.dir.realPath(t.io, buf)];
-    var cat: search.Catalog = .{ .gpa = t.allocator, .home = root };
+    var cat: search.Catalog = .{ .gpa = t.allocator };
     const apps = try std.fs.path.join(t.allocator, &.{ root, "Apps" });
     defer t.allocator.free(apps);
     try search.scanApps(&cat, t.io, apps);
@@ -230,23 +237,25 @@ test "apps match by the same terms as files" {
     try t.expectEqualStrings("Calculator", (try appTitles(a, &cat, "calc"))[0]);
 }
 
-const NoHooks = struct {
+const StubHooks = struct {
     requests: u32 = 0,
     fn request(ctx: ?*anyopaque) void {
-        const h: *NoHooks = @ptrCast(@alignCast(ctx));
+        const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
     }
     fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
         return null;
     }
-    fn date(_: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
-        return "Today at 9:41 AM";
+    /// Every date, whatever its seconds' type, as the same one.
+    fn date(comptime Seconds: type) fn (?*anyopaque, Seconds, std.mem.Allocator) []const u8 {
+        return struct {
+            fn at(_: ?*anyopaque, _: Seconds, _: std.mem.Allocator) []const u8 {
+                return "Today at 9:41 AM";
+            }
+        }.at;
     }
-    fn detailed(_: ?*anyopaque, _: f64, _: std.mem.Allocator) []const u8 {
-        return "Today at 9:41 AM";
-    }
-    fn hooks(h: *NoHooks) panel_mod.Hooks {
-        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = date, .detailed_date = detailed };
+    fn hooks(h: *StubHooks) panel_mod.Hooks {
+        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64) };
     }
 };
 
@@ -258,7 +267,7 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     var cat = try tmpCatalog(&tmp, &buf, &files);
     defer files.close();
     defer cat.deinit();
-    var hooks: NoHooks = .{};
+    var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
 
@@ -312,7 +321,7 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     var cat = try tmpCatalog(&tmp, &buf, &files);
     defer files.close();
     defer cat.deinit();
-    var hooks: NoHooks = .{};
+    var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
@@ -341,7 +350,7 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
 test "Escape asks to hide" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
-    var hooks: NoHooks = .{};
+    var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
@@ -378,7 +387,7 @@ fn answer(l: *ToyList, query: []const u8, first: i64, n: usize) !void {
         const id = first + @as(i64, @intCast(i));
         r.* = .{ .id = id, .odd = @mod(id, 2) == 1 };
     }
-    l.setRows(query, rows);
+    try l.setRows(query, rows);
 }
 
 test "a list narrows to its filter, selecting its first row and asking to show it" {
@@ -500,7 +509,7 @@ test "the access probe names a file that exists" {
 }
 
 // The clipboard board. Expected values are the Swift suite's
-// (ClipboardTextContentTests, ClipboardHistoryStoreTests, SearchResultProjection).
+// (ClipboardTextContentTests, ClipboardHistoryStoreTests, SearchResultProjectionClipboardTests).
 
 test "copied text is classified as the Swift store classifies it" {
     try t.expectEqualStrings("example.com", clipboard.classify("https://www.example.com/a?b").link);
@@ -518,14 +527,13 @@ test "copied text is classified as the Swift store classifies it" {
     try t.expect(clipboard.classify("#12345") == .plain);
 }
 
-test "an entry is classified once, when it is recorded, with the fact its kind carries" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+test "a stored entry comes back with its content and the fact it carries; a copied file's is plain" {
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
-    _ = try store.add(.{ .text = "hello" }, "", "Notes", 1);
     _ = try store.add(.{ .text = "/Users/me/a.txt" }, "", "Notes", 2);
     _ = try store.add(.{ .text = "{\"a\": 1}" }, "", "Notes", 3);
     _ = try store.add(.{ .text = " #11223380 " }, "", "Notes", 4);
@@ -537,7 +545,6 @@ test "an entry is classified once, when it is recorded, with the fact its kind c
     try t.expectEqual(clipboard.Rgba{ .r = 0x11, .g = 0x22, .b = 0x33, .a = 0x80 }, rows[2].content.color);
     try t.expectEqualStrings("JSON", rows[3].content.code);
     try t.expectEqualStrings("/Users/me/a.txt", rows[4].content.path);
-    try t.expect(rows[5].content == .plain);
 }
 
 // The store's tables as they were before entries carried their classification.
@@ -562,8 +569,7 @@ const raw_sqlite = struct {
 };
 
 test "rows recorded before classification are classified when the store opens" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     try raw_sqlite.run(ts.db, unclassified_schema ++
         "INSERT INTO entries(kind, text, created_at) VALUES('text', 'https://example.org/x', 100), ('file', '/tmp/a.pdf', 200), ('text', '#abc', 300);");
@@ -577,11 +583,13 @@ test "rows recorded before classification are classified when the store opens" {
     try t.expectEqualStrings("example.org", rows[2].content.link);
 }
 
+const day = 86400;
+
 test "rows name an entry's age, source and place" {
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const ages = [_]struct { f64, []const u8 }{ .{ 30, "just now" }, .{ 120, "2m" }, .{ 7200, "2h" }, .{ 3 * 86400, "3d" }, .{ 65 * 86400, "2mo" }, .{ 400 * 86400, "1y" } };
+    const ages = [_]struct { f64, []const u8 }{ .{ 30, "just now" }, .{ 120, "2m" }, .{ 7200, "2h" }, .{ 3 * day, "3d" }, .{ 65 * day, "2mo" }, .{ 400 * day, "1y" } };
     for (ages) |x| try t.expectEqualStrings(x[1], clipboard.age(a, x[0]));
 
     const file: clipboard.Entry = .{ .id = 1, .kind = .file, .text = "/Users/me/Docs/a.txt", .created_at = 1000, .source_name = "Finder" };
@@ -615,7 +623,7 @@ test "a long text's row title stops at what one row can show" {
 test "the inspector lays out only the head of a long text, cut between characters" {
     const head = board_mod.shownHead(long_text, 40);
     try t.expect(std.mem.startsWith(u8, long_text, head));
-    try t.expect(head.len >= 40 * 80 and head.len < long_text.len / 4);
+    try t.expectEqual(@as(usize, 40 * board_mod.max_line_bytes), head.len);
     const wide = "\u{4E2D}";
     var cjk: [3 * 4000]u8 = undefined;
     for (0..4000) |i| @memcpy(cjk[i * 3 ..][0..3], wide);
@@ -624,9 +632,9 @@ test "the inspector lays out only the head of a long text, cut between character
 }
 
 test "the store skips a repeat of the newest entry only, pins, finds and prunes" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    const store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    const store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -650,14 +658,19 @@ test "the store skips a repeat of the newest entry only, pins, finds and prunes"
     rows = try store.list(a, "ALP");
     try t.expectEqual(@as(usize, 2), rows.len);
 
-    try store.prune(250 + 30 * 86400, 30);
+    // Past 30 days only the unpinned "beta" is old enough to go.
+    try store.prune(250 + 30 * day, 30);
     rows = try store.list(a, "");
-    try t.expectEqual(@as(usize, 3), rows.len);
+    try t.expectEqualSlices(f64, &.{ 100, 400, 300 }, try createdAt(a, rows));
     try store.delete(rows[1].id);
-    try t.expectEqual(@as(usize, 2), (try store.list(a, "")).len);
+    try t.expectEqualSlices(f64, &.{ 100, 300 }, try createdAt(a, try store.list(a, "")));
 }
 
-const day = 86400;
+fn createdAt(arena: std.mem.Allocator, rows: []const clipboard.Entry) ![]const f64 {
+    const out = try arena.alloc(f64, rows.len);
+    for (rows, out) |e, *at| at.* = e.created_at;
+    return out;
+}
 
 fn imageFileName(buf: []u8, png: []const u8, ext: []const u8) []const u8 {
     var hash: [32]u8 = undefined;
@@ -676,15 +689,18 @@ fn picture(png: []const u8) clipboard.Capture {
 
 const TmpStore = struct {
     tmp: std.testing.TmpDir,
-    buf: [std.posix.PATH_MAX]u8 = undefined,
-    images: []const u8 = "",
-    db: [:0]const u8 = "",
+    images: []const u8,
+    db: [:0]const u8,
 
-    fn init(s: *TmpStore) !void {
-        s.tmp = std.testing.tmpDir(.{});
-        const root = s.buf[0..try s.tmp.dir.realPath(t.io, &s.buf)];
-        s.images = try std.fs.path.join(t.allocator, &.{ root, "images" });
-        s.db = try std.fs.path.joinZ(t.allocator, &.{ root, "clipboard.sqlite3" });
+    fn init() !TmpStore {
+        var tmp = std.testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+        const images = try std.fs.path.join(t.allocator, &.{ root, "images" });
+        errdefer t.allocator.free(images);
+        const db = try std.fs.path.joinZ(t.allocator, &.{ root, "clipboard.sqlite3" });
+        return .{ .tmp = tmp, .images = images, .db = db };
     }
 
     fn deinit(s: *TmpStore) void {
@@ -699,14 +715,12 @@ const TmpStore = struct {
 };
 
 /// History in memory, its pictures in a folder `ts` owns, as on disk.
-fn openMemory(ts: *TmpStore) !clipboard.Store {
-    try ts.init();
+fn openMemory(ts: *const TmpStore) !clipboard.Store {
     return clipboard.Store.open(":memory:", ts.images);
 }
 
 test "full images live beside the database, one file per picture, gone with their last entry" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     var store = try clipboard.Store.open(ts.db, ts.images);
     defer store.close();
@@ -732,8 +746,7 @@ test "full images live beside the database, one file per picture, gone with thei
 }
 
 test "history keeps within its byte budget, dropping the oldest unpinned pictures first" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     var store = try clipboard.Store.open(ts.db, ts.images);
     defer store.close();
@@ -761,9 +774,9 @@ test "history keeps within its byte budget, dropping the oldest unpinned picture
 }
 
 test "history keeps at most its entry count, pinned ones aside" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     store.budget = .{ .entries = 3 };
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
@@ -780,8 +793,7 @@ test "history keeps at most its entry count, pinned ones aside" {
 }
 
 test "an older store's pictures move out to files and the database gives the space back" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     const big = try t.allocator.alloc(u8, 2 << 20);
     defer t.allocator.free(big);
@@ -816,8 +828,7 @@ fn keepAll(_: std.mem.Allocator, _: []const u8) ?[]const u8 {
 }
 
 test "a week-old picture is stored once as its smaller copy, and the original goes" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     var store = try clipboard.Store.open(ts.db, ts.images);
     defer store.close();
@@ -844,8 +855,7 @@ test "a week-old picture is stored once as its smaller copy, and the original go
 }
 
 test "files a crash left behind are cleared when the store opens" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    try ts.init();
+    var ts = try TmpStore.init();
     defer ts.deinit();
     var name: [128]u8 = undefined;
     const png = "\x89PNG kept";
@@ -912,9 +922,9 @@ const pasted_png: clipboard.PastedImage = .{ .png = "\x89PNG pasted", .thumbnail
 const notes_app: clipboard.App = .{ .bundle_id = "com.apple.Notes", .name = "Notes" };
 
 test "a copy marked private, transient, auto-generated or Floodlight's own is not recorded" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -933,9 +943,9 @@ test "a copy marked private, transient, auto-generated or Floodlight's own is no
 }
 
 test "copied files win over a picture and text, each file once, and the picture is never read" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -945,13 +955,22 @@ test "copied files win over a picture and text, each file once, and the picture 
     const rows = try store.list(a, "");
     try t.expectEqual(@as(usize, 2), rows.len);
     for (rows) |e| try t.expectEqual(clipboard.Kind.file, e.kind);
+    // Both are recorded at the same time, so the list may give either first.
+    var paths = [_][]const u8{ rows[0].text, rows[1].text };
+    std.mem.sort([]const u8, &paths, {}, lessThan);
+    try t.expectEqualStrings("/a/x.pdf", paths[0]);
+    try t.expectEqualStrings("/a/y.pdf", paths[1]);
     try t.expectEqual(@as(usize, 0), fake.picture_reads);
 }
 
+fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
 test "a picture past the size cap falls back to the copy's text" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -965,9 +984,9 @@ test "a picture past the size cap falls back to the copy's text" {
 }
 
 test "a screenshot is named for its source, other pictures for their format" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -992,20 +1011,20 @@ test "a screenshot is named for its source, other pictures for their format" {
 }
 
 test "empty text and text past the cap are not recorded" {
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
+    var ts = try TmpStore.init();
     defer ts.deinit();
+    var store = try openMemory(&ts);
     defer store.close();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const at_cap = try a.alloc(u8, clipboard.max_text_bytes + 1);
-    @memset(at_cap, 'x');
+    const past_cap = try a.alloc(u8, clipboard.max_text_bytes + 1);
+    @memset(past_cap, 'x');
     var empty: FakePasteboard = .{};
     try t.expect(!try store.capture(a, empty.pasteboard(), notes_app, 1));
-    var long: FakePasteboard = .{ .string = at_cap };
+    var long: FakePasteboard = .{ .string = past_cap };
     try t.expect(!try store.capture(a, long.pasteboard(), notes_app, 2));
-    var fits: FakePasteboard = .{ .string = at_cap[0..clipboard.max_text_bytes] };
+    var fits: FakePasteboard = .{ .string = past_cap[0..clipboard.max_text_bytes] };
     try t.expect(try store.capture(a, fits.pasteboard(), notes_app, 3));
     try t.expectEqual(@as(usize, 1), (try store.list(a, "")).len);
 }
@@ -1067,29 +1086,74 @@ test "an opaque picture compacts to a far smaller AVIF that pastes back as PNG; 
     try t.expect(mac.compactImage(a, try uncompressedGradientPng(a, 256, true)) == null);
 }
 
-test "the board lists history, inspects the selection, and filters" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    _ = try store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
-    _ = try store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
-    _ = try store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    p.board.now = 2060;
-    try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
-    try t.expectEqual(@as(f32, 840), p.panelWidth());
-    try t.expectEqual(@as(f32, 560), p.panelHeight());
+/// The board over a history in memory and no apps or files. Fill `store`
+/// between `init` and `show`; the fixture must not move after `init`.
+const BoardFixture = struct {
+    ts: TmpStore,
+    store: clipboard.Store,
+    cat: search.Catalog,
+    hooks: StubHooks,
+    p: panel_mod.Panel,
+    tester: ui.Tester,
+    shown: bool,
 
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    fn init(f: *BoardFixture) !void {
+        f.ts = try TmpStore.init();
+        errdefer f.ts.deinit();
+        f.store = try openMemory(&f.ts);
+        f.cat = .{ .gpa = t.allocator };
+        f.hooks = .{};
+        f.p = .init(t.allocator, &f.cat, &f.store, f.hooks.hooks());
+        f.shown = false;
+    }
+
+    /// Opens the board and draws it at its own size until it rests.
+    fn show(f: *BoardFixture) !void {
+        f.p.showClipboard();
+        const m = board_mod.board_metrics;
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = m.width, .height = m.height });
+        f.shown = true;
+        f.tester.settle(1);
+    }
+
+    /// `n` texts, "entry number 0" the oldest.
+    fn seed(f: *BoardFixture, n: usize) !void {
+        var buf: [32]u8 = undefined;
+        for (0..n) |i| _ = try f.store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
+    }
+
+    fn deinit(f: *BoardFixture) void {
+        if (f.shown) f.tester.deinit();
+        f.p.deinit();
+        f.cat.deinit();
+        f.store.close();
+        f.ts.deinit();
+    }
+};
+
+/// The text drawn right of `label` on its line: an inspector row's value.
+fn besideText(tester: *ui.Tester, label: []const u8) ?[]const u8 {
+    const at = tester.findText(label) orelse return null;
+    for (tester.ctx.nodes.items) |n| switch (n.content) {
+        .text => |tx| if (n.rect.x > at.x + at.w and @abs(n.rect.y - at.y) < 0.5) return tx.str,
+        else => {},
+    };
+    return null;
+}
+
+test "the board lists history, inspects the selection, and filters" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
+    _ = try f.store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
+    _ = try f.store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
+    f.p.board.now = 2060;
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
+    try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
+    try t.expectEqual(@as(f32, 560), p.panelHeight());
     try t.expect(tester.hasText("Filter clipboard"));
     try t.expect(tester.hasText("Information"));
     try t.expect(tester.hasText("Link"));
@@ -1105,8 +1169,8 @@ test "the board lists history, inspects the selection, and filters" {
 
     _ = tester.shortcut(.{ .key = ui.Shortcut.down });
     tester.settle(1);
-    try t.expect(tester.hasText("Words"));
-    try t.expect(tester.hasText("3"));
+    try t.expectEqualStrings("17", besideText(tester, "Characters").?);
+    try t.expectEqualStrings("3", besideText(tester, "Words").?);
 
     _ = tester.shortcut(.{ .key = '2', .cmd = true });
     tester.settle(1);
@@ -1125,7 +1189,7 @@ test "the board lists history, inspects the selection, and filters" {
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("2 entries"));
-    try t.expect(tester.shortcut(.{ .key = 0x7f }));
+    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
     tester.settle(1);
     try t.expect(tester.hasText("1 entry"));
 
@@ -1133,35 +1197,27 @@ test "the board lists history, inspects the selection, and filters" {
     tester.settle(1);
     try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
     // ⌫ on the board deletes entries only, never the filter's text.
-    try t.expect(tester.shortcut(.{ .key = 0x7f }));
+    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
     tester.settle(1);
     try t.expectEqualStrings("zzz", p.field.text());
 }
 
 test "a copied path keeps what the inspector found until the selection moves" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    try ts.tmp.dir.writeFile(t.io, .{ .sub_path = "note.txt", .data = "line one\nline two" });
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.ts.tmp.dir.writeFile(t.io, .{ .sub_path = "note.txt", .data = "line one\nline two" });
     var buf: [std.posix.PATH_MAX]u8 = undefined;
-    const path = try std.fmt.bufPrint(&buf, "{s}/note.txt", .{std.fs.path.dirname(ts.images).?});
-    _ = try store.add(.{ .text = "older" }, "", "Notes", 1);
-    _ = try store.add(.{ .text = path }, "", "Terminal", 2);
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    const path = try std.fmt.bufPrint(&buf, "{s}/note.txt", .{std.fs.path.dirname(f.ts.images).?});
+    _ = try f.store.add(.{ .text = "older" }, "", "Notes", 1);
+    _ = try f.store.add(.{ .text = path }, "", "Terminal", 2);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
     try t.expect(tester.hasText("line two"));
     try t.expect(p.board.previewable(p.board.list.selection().?));
 
-    try ts.tmp.dir.deleteFile(t.io, "note.txt");
+    try f.ts.tmp.dir.deleteFile(t.io, "note.txt");
     tester.frame();
     try t.expect(p.board.previewable(p.board.list.selection().?));
 
@@ -1192,65 +1248,45 @@ fn release(tester: *ui.Tester) void {
 }
 
 test "a push past the board's ends stretches half a row at most, then rests" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    var buf: [32]u8 = undefined;
-    for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(30);
+    try f.show();
+    const tester = &f.tester;
     const bound = chrome.metrics.max_overscroll + 0.5;
 
     // The list's top: the newest entry may not leave its resting place by more.
     const top_rest = tester.findText("entry number 29").?.y;
-    holdPastEnd(&tester, 150, 300, 40, 80);
+    holdPastEnd(tester, 150, 300, 40, 80);
     try t.expect(tester.findText("entry number 29").?.y - top_rest <= bound);
-    release(&tester);
+    release(tester);
     try t.expectApproxEqAbs(top_rest, tester.findText("entry number 29").?.y, 0.5);
 
     // The list's bottom, reached and pushed on.
-    holdPastEnd(&tester, 150, 300, -40, 40);
-    release(&tester);
+    holdPastEnd(tester, 150, 300, -40, 40);
+    release(tester);
     const bottom_rest = tester.findText("entry number 0").?.y;
-    holdPastEnd(&tester, 150, 300, -40, 80);
+    holdPastEnd(tester, 150, 300, -40, 80);
     try t.expect(bottom_rest - tester.findText("entry number 0").?.y <= bound);
-    release(&tester);
+    release(tester);
     try t.expectApproxEqAbs(bottom_rest, tester.findText("entry number 0").?.y, 0.5);
 
     // The inspector, which fits and so has nothing to scroll.
     const info_rest = tester.findText("Information").?.y;
-    holdPastEnd(&tester, 600, 300, -40, 80);
+    holdPastEnd(tester, 600, 300, -40, 80);
     try t.expect(info_rest - tester.findText("Information").?.y <= bound);
-    release(&tester);
+    release(tester);
     try t.expectApproxEqAbs(info_rest, tester.findText("Information").?.y, 0.5);
 }
 
 test "a long history builds the rows in view only, and still reaches its end" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    var buf: [32]u8 = undefined;
-    for (0..1000) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(1000);
+    try f.show();
+    const tester = &f.tester;
     try t.expect(tester.hasText("entry number 999"));
     try t.expect(!tester.hasText("entry number 900"));
     try t.expect(tester.ctx.nodes.items.len < 400);
@@ -1423,22 +1459,12 @@ test "a board paste hides the panel before it sends ⌘V, so the target app has 
 }
 
 test "a board frame that waits for a later one keeps the display link at the display's pace" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    var buf: [32]u8 = undefined;
-    for (0..30) |i| _ = try store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(30);
+    try f.show();
+    const tester = &f.tester;
     tester.scroll(150, 300, -120);
     tester.frame();
     const one_refresh: f32 = 1.0 / 60.0;
@@ -1453,25 +1479,17 @@ fn addPicture(store: *clipboard.Store, png: []const u8, at: f64) !void {
 }
 
 test "a held arrow passes over full pictures, and the one it rests on is loaded" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
     var png: [6][4]u8 = undefined;
     for (&png, 0..) |*b, i| {
         b.* = .{ 'p', 'n', 'g', @intCast(i) };
-        try addPicture(&store, b, @floatFromInt(100 - i));
+        try addPicture(&f.store, b, @floatFromInt(100 - i));
     }
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
     try t.expectEqualSlices(u8, &png[0], p.board.payload.picture);
 
     tester.advance(1);
@@ -1489,25 +1507,17 @@ test "a held arrow passes over full pictures, and the one it rests on is loaded"
 }
 
 test "a large picture's memory goes once the inspector moves on" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    _ = try store.add(.{ .text = "after the picture" }, "com.apple.Notes", "Notes", 50);
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "after the picture" }, "com.apple.Notes", "Notes", 50);
     const big = try t.allocator.alloc(u8, 4 << 20);
     defer t.allocator.free(big);
     @memset(big, 7);
-    try addPicture(&store, big, 100);
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
+    try addPicture(&f.store, big, 100);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
     try t.expectEqual(big.len, p.board.payload.picture.len);
 
     tester.advance(1);
@@ -1518,23 +1528,40 @@ test "a large picture's memory goes once the inspector moves on" {
 }
 
 test "an empty history says so" {
-    var cat: search.Catalog = .{ .gpa = t.allocator };
-    defer cat.deinit();
-    var ts: TmpStore = .{ .tmp = undefined };
-    var store = try openMemory(&ts);
-    defer ts.deinit();
-    defer store.close();
-    var hooks: NoHooks = .{};
-    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
-    defer p.deinit();
-    p.showClipboard();
-    var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
-    defer tester.deinit();
-    tester.settle(1);
-    try t.expect(tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.show();
+    try t.expect(f.tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
 }
 
-test {
-    _ = core;
+test "⌘. pins the selected entry, and the board shows it pinned at once" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(3);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    try t.expect(!tester.hasText("Pinned"));
+
+    try t.expect(tester.shortcut(.{ .key = '.', .cmd = true }));
+    tester.settle(1);
+    // Pinned entries list first, and the selection follows the entry there.
+    try t.expectEqualStrings("entry number 1", p.board.list.visible[0].text);
+    try t.expectEqualStrings("entry number 1", p.board.list.selection().?.text);
+    try t.expect(tester.hasText("Pinned"));
+}
+
+test "the inspector types a file by the extensions the board's tiles use" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("Image", clipboard.fileType(a, "/x.bmp", false));
+    try t.expectEqualStrings("Video", clipboard.fileType(a, "/x.wmv", false));
+    // `.ts` is TypeScript to the Swift inspector, not a video stream.
+    try t.expectEqualStrings("Source Code", clipboard.fileType(a, "/x.ts", false));
+    try t.expectEqualStrings("ZZZ", clipboard.fileType(a, "/x.zzz", false));
 }

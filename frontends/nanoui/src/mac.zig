@@ -130,8 +130,7 @@ pub fn setAlpha(window: *nanoui.Window, alpha: f64) void {
 }
 
 fn reduceTransparency() bool {
-    const ws = objc.msg(objc.Object, objc.class("NSWorkspace"), "sharedWorkspace", .{});
-    return objc.msg(objc.BOOL, ws, "accessibilityDisplayShouldReduceTransparency", .{});
+    return objc.msg(objc.BOOL, workspace(), "accessibilityDisplayShouldReduceTransparency", .{});
 }
 
 /// Puts the panel's content on a clear Liquid Glass slab (NSGlassEffectView,
@@ -322,7 +321,7 @@ pub const PasteboardReader = struct {
         const w = objc.msg(objc.NSInteger, rep, "pixelsWide", .{});
         const h = objc.msg(objc.NSInteger, rep, "pixelsHigh", .{});
         if (w <= 0 or h <= 0) return null;
-        const png_data = if (r.picture_is_png) data else objc.msg(?objc.Object, rep, "representationUsingType:properties:", .{ @as(objc.NSUInteger, 4), objc.msg(objc.Object, objc.class("NSDictionary"), "dictionary", .{}) }) orelse return null;
+        const png_data = if (r.picture_is_png) data else pngRepresentation(rep) orelse return null;
         return .{
             .png = arena.dupe(u8, dataBytes(png_data)) catch return null,
             .thumbnail = thumbnailPng(arena, png_data) orelse "",
@@ -337,6 +336,12 @@ pub const PasteboardReader = struct {
         return arena.dupe(u8, s) catch "";
     }
 };
+
+/// A bitmap image rep encoded as PNG data.
+fn pngRepresentation(rep: objc.Object) ?objc.Object {
+    const png_file_type: objc.NSUInteger = 4;
+    return objc.msg(?objc.Object, rep, "representationUsingType:properties:", .{ png_file_type, objc.msg(objc.Object, objc.class("NSDictionary"), "dictionary", .{}) });
+}
 
 fn dataBytes(data: objc.Object) []const u8 {
     const len = objc.msg(objc.NSUInteger, data, "length", .{});
@@ -363,7 +368,7 @@ fn thumbnailPng(arena: std.mem.Allocator, data: objc.Object) ?[]const u8 {
     defer CFRelease(cg);
     const rep = objc.msg(objc.Object, objc.alloc("NSBitmapImageRep"), "initWithCGImage:", .{cg});
     defer objc.release(rep);
-    const out = objc.msg(?objc.Object, rep, "representationUsingType:properties:", .{ @as(objc.NSUInteger, 4), objc.msg(objc.Object, objc.class("NSDictionary"), "dictionary", .{}) }) orelse return null;
+    const out = pngRepresentation(rep) orelse return null;
     return arena.dupe(u8, dataBytes(out)) catch null;
 }
 
@@ -378,7 +383,7 @@ fn isPng(bytes: []const u8) bool {
 fn pngData(data: objc.Object) ?objc.Object {
     if (isPng(dataBytes(data))) return data;
     const rep = objc.msg(?objc.Object, objc.class("NSBitmapImageRep"), "imageRepWithData:", .{data}) orelse return null;
-    return objc.msg(?objc.Object, rep, "representationUsingType:properties:", .{ @as(objc.NSUInteger, 4), objc.msg(objc.Object, objc.class("NSDictionary"), "dictionary", .{}) });
+    return pngRepresentation(rep);
 }
 
 pub fn pngBytes(arena: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
@@ -517,11 +522,10 @@ pub fn deliverPaste(pid: i32) bool {
     if (IsSecureEventInputEnabled()) return false;
     sleepMs(80);
     const v_key: u16 = 9;
-    const command: u64 = 1 << 20;
     for ([_]bool{ true, false }) |down| {
         const e = CGEventCreateKeyboardEvent(null, v_key, down) orelse return false;
         defer CFRelease(e);
-        CGEventSetFlags(e, command);
+        CGEventSetFlags(e, command_modifier);
         CGEventPost(0, e);
     }
     return true;
@@ -639,7 +643,7 @@ pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?u
     return menu_choice;
 }
 
-pub fn relativeDate(secs: i64, gpa: std.mem.Allocator) []const u8 {
+pub fn relativeDate(secs: i64, arena: std.mem.Allocator) []const u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
     const date = objc.msg(objc.Object, objc.class("NSDate"), "dateWithTimeIntervalSince1970:", .{@as(f64, @floatFromInt(secs))});
@@ -660,19 +664,19 @@ pub fn relativeDate(secs: i64, gpa: std.mem.Allocator) []const u8 {
             return objc.fromNSString(objc.msg(?objc.Object, f, "stringFromDate:", .{d}));
         }
     }.of;
-    if (days == 0) return std.fmt.allocPrint(gpa, "Today at {s}", .{time(fmt, date)}) catch "";
+    if (days == 0) return std.fmt.allocPrint(arena, "Today at {s}", .{time(fmt, date)}) catch "";
     if (days >= 2 and days <= 6) {
         objc.msg(void, fmt, "setLocalizedDateFormatFromTemplate:", .{objc.nsString("EEEE")});
-        const weekday = gpa.dupe(u8, objc.fromNSString(objc.msg(?objc.Object, fmt, "stringFromDate:", .{date}))) catch return "";
-        return std.fmt.allocPrint(gpa, "{s} at {s}", .{ weekday, time(fmt, date) }) catch "";
+        const weekday = arena.dupe(u8, objc.fromNSString(objc.msg(?objc.Object, fmt, "stringFromDate:", .{date}))) catch return "";
+        return std.fmt.allocPrint(arena, "{s} at {s}", .{ weekday, time(fmt, date) }) catch "";
     }
     objc.msg(void, fmt, "setDateStyle:", .{@as(objc.NSUInteger, 2)});
     objc.msg(void, fmt, "setTimeStyle:", .{@as(objc.NSUInteger, 0)});
-    return gpa.dupe(u8, objc.fromNSString(objc.msg(?objc.Object, fmt, "stringFromDate:", .{date}))) catch "";
+    return arena.dupe(u8, objc.fromNSString(objc.msg(?objc.Object, fmt, "stringFromDate:", .{date}))) catch "";
 }
 
 /// "Today at 3:03 PM", "Yesterday at 3:03 PM", else the date and time.
-pub fn detailedDate(secs: f64, gpa: std.mem.Allocator) []const u8 {
+pub fn detailedDate(secs: f64, arena: std.mem.Allocator) []const u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
     const date = objc.msg(objc.Object, objc.class("NSDate"), "dateWithTimeIntervalSince1970:", .{secs});
@@ -684,9 +688,9 @@ pub fn detailedDate(secs: f64, gpa: std.mem.Allocator) []const u8 {
     objc.msg(void, fmt, "setDateStyle:", .{@as(objc.NSUInteger, if (today or yesterday) 0 else 2)});
     objc.msg(void, fmt, "setTimeStyle:", .{@as(objc.NSUInteger, 1)});
     const s = objc.fromNSString(objc.msg(?objc.Object, fmt, "stringFromDate:", .{date}));
-    if (today) return std.fmt.allocPrint(gpa, "Today at {s}", .{s}) catch "";
-    if (yesterday) return std.fmt.allocPrint(gpa, "Yesterday at {s}", .{s}) catch "";
-    return gpa.dupe(u8, s) catch "";
+    if (today) return std.fmt.allocPrint(arena, "Today at {s}", .{s}) catch "";
+    if (yesterday) return std.fmt.allocPrint(arena, "Yesterday at {s}", .{s}) catch "";
+    return arena.dupe(u8, s) catch "";
 }
 
 pub fn reveal(path: []const u8) void {
@@ -795,11 +799,8 @@ pub fn iconPng(gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
     const cg = objc.msg(?*anyopaque, img, "CGImageForProposedRect:context:hints:", .{ &rect, @as(?objc.Object, null), @as(?objc.Object, null) }) orelse return null;
     const rep = objc.msg(objc.Object, objc.alloc("NSBitmapImageRep"), "initWithCGImage:", .{cg});
     defer objc.release(rep);
-    const props = objc.msg(objc.Object, objc.class("NSDictionary"), "dictionary", .{});
-    const data = objc.msg(?objc.Object, rep, "representationUsingType:properties:", .{ @as(objc.NSUInteger, 4), props }) orelse return null;
-    const len = objc.msg(objc.NSUInteger, data, "length", .{});
-    const bytes = objc.msg([*]const u8, data, "bytes", .{});
-    return gpa.dupe(u8, bytes[0..len]) catch null;
+    const data = pngRepresentation(rep) orelse return null;
+    return gpa.dupe(u8, dataBytes(data)) catch null;
 }
 
 extern "c" fn malloc_zone_pressure_relief(zone: ?*anyopaque, goal: usize) usize;

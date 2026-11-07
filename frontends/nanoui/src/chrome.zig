@@ -1,5 +1,5 @@
 //! What the search panel and the clipboard board draw alike: the shared
-//! metrics, rows, chips and list keys.
+//! metrics, rows, filter bar, chips, empty state and list keys.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -44,6 +44,32 @@ pub fn listKeys(c: *ui.Context, l: anytype, options: anytype) bool {
 /// Scrolls a list box `view_h` tall so its selection shows, when asked to.
 pub fn revealSelection(c: *ui.Context, l: anytype, scroll_box: u64, view_h: f32) void {
     if (l.takeScroll(c.scroll.get(scroll_box) orelse 0, view_h, metrics.row_height)) |y| c.setScroll(scroll_box, .y, y);
+}
+
+/// The row the filter chips sit in; the caller ends it.
+pub fn filterBar(c: *ui.Context) ui.Div {
+    return ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
+}
+
+/// A filter's title in lower case, for an empty state's sentence.
+pub fn lowerTitle(c: *ui.Context, f: anytype) []const u8 {
+    return std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
+}
+
+/// `message` centred in a box `height` tall, where rows would be.
+pub fn emptyState(c: *ui.Context, height: f32, message: []const u8, wrap: bool) void {
+    const empty = ui.div(c).column().wFull().h(height).center().px(40);
+    defer empty.end();
+    ui.text(c, message, .{ .size = 13.5, .weight = .medium, .color = c.theme.muted.alpha(0.6), .wrap = wrap });
+}
+
+pub const RowBox = struct { box: ui.Div, it: ui.Interaction };
+
+/// A list row's box, filled for its selection and hover; the caller ends it.
+pub fn rowBox(c: *ui.Context, selected: bool, top_hit: bool) RowBox {
+    const box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
+    const it = c.interact(box.index, .{});
+    return .{ .box = box.bg(rowFill(c.theme, selected, it.hovered, top_hit)), .it = it };
 }
 
 pub const ChipSlot = union(enum) { count: usize, loading };

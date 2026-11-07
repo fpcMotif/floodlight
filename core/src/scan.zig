@@ -88,7 +88,6 @@ const Linux = struct {
     const linux = std.os.linux;
     const DT_UNKNOWN = 0;
     const DT_DIR = 4;
-    const DT_LNK = 10;
 
     fn drain(b: *index.Builder, fd: posix.fd_t, parent: u32, buf: []align(8) u8, opts: Options) !void {
         while (true) {
@@ -105,11 +104,8 @@ const Linux = struct {
                 const name = std.mem.sliceTo(rec[19..reclen], 0);
                 off += reclen;
 
-                var flags: index.Flags = .{
-                    .dir = dtype == DT_DIR,
-                    .symlink = dtype == DT_LNK,
-                };
-                if (dtype == DT_UNKNOWN) flags = statFlags(fd, name) orelse continue;
+                var flags: index.Flags = .{ .dir = dtype == DT_DIR };
+                if (dtype == DT_UNKNOWN) flags = statFlags(fd, name);
                 if (!keep(name, flags.dir, opts)) continue;
                 _ = try b.add(parent, name, flags);
             }
@@ -119,7 +115,7 @@ const Linux = struct {
     /// For filesystems that leave `d_type` blank. Opening as a directory
     /// with NOFOLLOW answers "is this a real directory" in one syscall; a
     /// symlink to a directory fails it, which is the answer the walk wants.
-    fn statFlags(fd: posix.fd_t, name: []const u8) ?index.Flags {
+    fn statFlags(fd: posix.fd_t, name: []const u8) index.Flags {
         const probe = sys.openat(fd, name, .dir) catch return .{};
         sys.close(probe);
         return .{ .dir = true };
@@ -156,7 +152,6 @@ const Darwin = struct {
     const FSOPT_PACK_INVAL_ATTRS: u64 = 0x00000008;
     // <sys/vnode.h> enum vtype
     const VDIR = 2;
-    const VLNK = 5;
 
     extern "c" fn getattrlistbulk(
         dirfd: c_int,
@@ -203,7 +198,7 @@ const Darwin = struct {
                 if (returned.commonattr & ATTR_CMN_OBJTYPE != 0) {
                     objtype = std.mem.readInt(u32, rec[at..][0..4], .little);
                 }
-                const flags: index.Flags = .{ .dir = objtype == VDIR, .symlink = objtype == VLNK };
+                const flags: index.Flags = .{ .dir = objtype == VDIR };
                 if (!keep(name, flags.dir, opts)) continue;
                 _ = try b.add(parent, name, flags);
             }

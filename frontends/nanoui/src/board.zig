@@ -49,10 +49,11 @@ pub const board_metrics = struct {
 pub const summon_label = "⌥⇧ C";
 
 /// ⌫ as a shortcut key; `ui.Shortcut` names no constant for it.
-const backspace: u21 = 0x7f;
+pub const backspace: u21 = 0x7f;
 const held_key_gap_seconds = 0.15;
 const detail_kept_bytes = 1 << 20;
-const max_line_bytes = 200;
+/// The bytes `shownHead` allows each line.
+pub const max_line_bytes = 200;
 const max_plain_lines = 40;
 const max_link_lines = 6;
 
@@ -112,16 +113,24 @@ pub const Board = struct {
     /// Asks the store again when the query changed or history did.
     pub fn refresh(b: *Board, query: []const u8) void {
         if (!b.list.needsQuery(query)) return;
+        b.answer(query) catch |err| {
+            std.log.err("clipboard history: {s}", .{@errorName(err)});
+            b.list.fail();
+        };
+    }
+
+    fn answer(b: *Board, query: []const u8) !void {
         const a = b.list.beginQuery(query);
-        const rows = if (b.store) |s| s.list(a, query) catch &.{} else &.{};
-        b.list.setRows(query, rows);
+        const rows = if (b.store) |s| try s.list(a, query) else &.{};
+        try b.list.setRows(query, rows);
     }
 
-    pub fn pasteLabel(b: *const Board, c: *ui.Context) []const u8 {
-        return if (b.paste_target.len > 0) c.print("Paste to {s}", .{b.paste_target}) else "Copy";
+    /// What Return does, for the footer chip and the actions menu.
+    pub fn pasteLabel(b: *const Board, arena: std.mem.Allocator) []const u8 {
+        if (b.paste_target.len == 0) return "Copy";
+        return std.fmt.allocPrint(arena, "Paste to {s}", .{b.paste_target}) catch "Paste";
     }
 
-    /// A file that exists, or an image with bytes to show.
     pub fn previewable(b: *Board, e: Entry) bool {
         return b.factsOf(e).previewable;
     }
@@ -131,6 +140,7 @@ pub const Board = struct {
         const store = b.store orelse return;
         store.togglePin(e.id, b.now) catch return;
         b.list.markStale();
+        b.refresh(b.list.answered());
     }
 
     pub fn delete(b: *Board) void {
@@ -198,9 +208,7 @@ pub const Board = struct {
         defer well.end();
         b.filterBar(c);
         if (b.list.visible.len == 0) {
-            const empty = ui.div(c).column().wFull().h(m.content_height).center().px(40);
-            defer empty.end();
-            ui.text(c, b.emptyMessage(c, host.query), .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6), .wrap = true });
+            chrome.emptyState(c, m.content_height, b.emptyMessage(c, host.query), true);
             return null;
         }
         var asked: ?Action = null;
@@ -217,8 +225,9 @@ pub const Board = struct {
     }
 
     fn emptyMessage(b: *const Board, c: *ui.Context, query: []const u8) []const u8 {
+        if (b.list.failed) return "Clipboard history could not be read.";
         const f = b.list.filter;
-        const name = std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
+        const name = chrome.lowerTitle(c, f);
         if (query.len == 0) {
             if (f == .all) return "Clipboard history is empty. Copied text, files, and images will appear here.";
             return c.print("No {s} clipboard entries", .{name});
@@ -227,7 +236,7 @@ pub const Board = struct {
     }
 
     fn filterBar(b: *Board, c: *ui.Context) void {
-        const bar = ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
+        const bar = chrome.filterBar(c);
         defer bar.end();
         for (Filter.options) |f| {
             if (chrome.filterChip(c, f.title(), f.symbol(), b.list.filter == f, .{ .count = b.list.count(f) })) b.list.selectFilter(f);
@@ -261,10 +270,9 @@ pub const Board = struct {
         const th = c.theme;
         ui.keyInt(c, @intCast(e.id));
         const selected = i == b.list.selected;
-        var box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
-        const it = c.interact(box.index, .{});
-        box = box.bg(chrome.rowFill(th, selected, it.hovered, false));
-        defer box.end();
+        const row_box = chrome.rowBox(c, selected, false);
+        defer row_box.box.end();
+        const it = row_box.it;
         if (it.clicked) b.list.selected = i;
         iconView(c, host, e);
         {
@@ -307,7 +315,7 @@ pub const Board = struct {
         }
         const path = e.filePath().?;
         const ext = clipboard.extension(path);
-        if (e.kind == .text and clipboard.inSet(ext, &clipboard.image_extensions)) return tile(c, "photo", cyan);
+        if (e.kind == .text and clipboard.inSet(ext, &clipboard.board_image_extensions)) return tile(c, "photo", cyan);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", purple);
         if (host.app_icon(host.ctx, path)) |png| {
             _ = ui.image(c, .{ .key = path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
@@ -380,7 +388,8 @@ pub const Board = struct {
                 }
                 codeLines(c, e.text);
             },
-            .plain, .path => ui.text(c, shownHead(e.text, max_plain_lines), .{ .size = 12.5, .wrap = true, .line_height = 12.5 * 1.2 + 3, .max_lines = max_plain_lines }),
+            .plain => ui.text(c, shownHead(e.text, max_plain_lines), .{ .size = 12.5, .wrap = true, .line_height = 12.5 * 1.2 + 3, .max_lines = max_plain_lines }),
+            .path => unreachable,
         }
     }
 
@@ -409,7 +418,8 @@ pub const Board = struct {
                 .link => "Link",
                 .code => "Code",
                 .color => "Color",
-                .plain, .path => "Text",
+                .plain => "Text",
+                .path => unreachable,
             });
             switch (e.content) {
                 .link => |d| infoRow(c, "Domain", d),
@@ -435,7 +445,7 @@ pub const Board = struct {
         ui.div(c).grow().end();
         const e = b.list.selection();
         var asked: ?Action = null;
-        if (footerChip(c, b.pasteLabel(c), "↵", e != null)) asked = .{ .paste = e.? };
+        if (footerChip(c, b.pasteLabel(c.arena.allocator()), "↵", e != null)) asked = .{ .paste = e.? };
         const can_preview = if (e) |x| b.previewable(x) else false;
         if (footerChip(c, "Preview", "␣", can_preview)) asked = .{ .preview = e.? };
         if (footerChip(c, "Actions", "⌘K", e != null)) asked = .{ .actions = e.? };

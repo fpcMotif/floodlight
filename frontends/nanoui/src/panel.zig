@@ -57,19 +57,13 @@ pub const Filter = enum {
             .files => r.kind == .file,
             .folders => r.kind == .folder,
             .pdfs => r.kind == .file and std.ascii.eqlIgnoreCase(ext, "pdf"),
-            .images => r.kind == .file and inSet(ext, &image_extensions),
-            .documents => r.kind == .file and inSet(ext, &document_extensions),
+            .images => r.kind == .file and clipboard.inSet(ext, &clipboard.image_extensions),
+            .documents => r.kind == .file and clipboard.inSet(ext, &document_extensions),
         };
     }
 };
 
-const image_extensions = [_][]const u8{ "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp" };
 const document_extensions = [_][]const u8{ "azw", "azw3", "cbr", "cbz", "csv", "djvu", "doc", "docx", "epub", "fb2", "key", "md", "mobi", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls", "xlsx" };
-
-fn inSet(ext: []const u8, set: []const []const u8) bool {
-    for (set) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return true;
-    return false;
-}
 
 fn rowKey(r: search.Row) u64 {
     return std.hash.Wyhash.hash(0, r.path);
@@ -157,10 +151,16 @@ pub const Panel = struct {
         const text = p.field.text();
         if (p.mode == .clipboard) return p.board.refresh(text);
         if (!p.list.needsQuery(text)) return;
-        const rows = p.catalog.query(p.list.beginQuery(text), text) catch &.{};
-        p.list.setRows(text, rows);
+        p.answer(text) catch |err| {
+            std.log.err("search: {s}", .{@errorName(err)});
+            return p.list.fail();
+        };
         const l = &p.list;
         if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
+    }
+
+    fn answer(p: *Panel, text: []const u8) !void {
+        try p.list.setRows(text, try p.catalog.query(p.list.beginQuery(text), text));
     }
 
     pub fn filterOptions(p: *const Panel, buf: *[Filter.primary.len + Filter.dynamic.len]Filter) []const Filter {
@@ -269,7 +269,7 @@ pub const Panel = struct {
     }
 
     fn filterBar(p: *Panel, c: *ui.Context) void {
-        const bar = ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
+        const bar = chrome.filterBar(c);
         defer bar.end();
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         for (p.filterOptions(&buf)) |f| {
@@ -280,10 +280,11 @@ pub const Panel = struct {
 
     fn resultList(p: *Panel, c: *ui.Context) void {
         if (p.list.visible.len == 0) {
-            const empty = ui.div(c).column().wFull().h(metrics.list_height).center().px(40);
-            defer empty.end();
-            ui.text(c, c.print("No {s} results for \u{201C}{s}\u{201D}", .{ lowerTitle(c, p.list.filter), p.field.text() }), .{ .size = 13.5, .weight = .medium, .color = c.theme.muted.alpha(0.6) });
-            return;
+            const message = if (p.list.failed)
+                c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()})
+            else
+                c.print("No {s} results for \u{201C}{s}\u{201D}", .{ chrome.lowerTitle(c, p.list.filter), p.field.text() });
+            return chrome.emptyState(c, metrics.list_height, message, false);
         }
         const box = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
         defer box.end();
@@ -297,10 +298,9 @@ pub const Panel = struct {
         ui.keyInt(c, i);
         const selected = i == p.list.selected;
         const top_hit = p.isTopHit(i);
-        var box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
-        const it = c.interact(box.index, .{});
-        box = box.bg(chrome.rowFill(th, selected, it.hovered, top_hit));
-        defer box.end();
+        const row_box = chrome.rowBox(c, selected, top_hit);
+        defer row_box.box.end();
+        const it = row_box.it;
         if (it.clicked) p.list.selected = i;
         if (it.double_clicked) p.ask(.{ .open = row.path });
         p.iconView(c, row, if (top_hit) metrics.top_hit_icon_size else metrics.icon_size);
@@ -353,7 +353,3 @@ pub const Panel = struct {
         ui.icon(c, row.kind.symbol(), .{ .size = size * 0.58, .color = c.theme.accent });
     }
 };
-
-fn lowerTitle(c: *ui.Context, f: Filter) []const u8 {
-    return std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
-}

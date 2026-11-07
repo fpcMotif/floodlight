@@ -15,8 +15,9 @@ pub const no_parent: u32 = std.math.maxInt(u32);
 
 pub const Flags = packed struct(u8) {
     dir: bool = false,
-    symlink: bool = false,
-    _pad: u6 = 0,
+    // Version-2 files written before this field went away set bit 1 for a
+    // symlink. Nothing reads it, and leaving it unnamed keeps them readable.
+    _pad: u7 = 0,
 };
 
 const magic = "FLIX".*;
