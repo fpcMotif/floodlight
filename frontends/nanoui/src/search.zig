@@ -40,6 +40,8 @@ pub const Row = struct {
     size: ?u64 = null,
     modified: ?i64 = null,
     suggestion: bool = false,
+    /// One of `web_engines`, listed under Google; never a Link Row.
+    engine: bool = false,
 
     pub fn extension(r: Row) []const u8 {
         if (r.kind != .file) return "";
@@ -50,6 +52,20 @@ pub const Row = struct {
 
 pub const web_search_url = "https://www.google.com/search?q=";
 pub const web_suggest_url = "https://suggestqueries.google.com/complete/search?client=firefox&q=";
+
+pub const WebEngine = struct {
+    title: []const u8,
+    host: []const u8,
+    url_prefix: []const u8,
+};
+
+/// Listed under Google and its suggestions, in this order. Gemini is absent
+/// until a query-prefill URL is confirmed against the live site.
+pub const web_engines = [_]WebEngine{
+    .{ .title = "YouTube", .host = "youtube.com", .url_prefix = "https://www.youtube.com/results?search_query=" },
+    .{ .title = "X", .host = "x.com", .url_prefix = "https://x.com/search?f=live&q=" },
+    .{ .title = "Grok", .host = "grok.com", .url_prefix = "https://grok.com/?q=" },
+};
 
 pub const App = struct {
     /// The bundle's name without `.app`.
@@ -81,18 +97,27 @@ pub const Catalog = struct {
 
     /// The best rows for `query`, best first, in `arena`'s memory.
     pub fn query(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
+        return cat.rank(arena, text, true);
+    }
+
+    pub fn queryApps(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
+        return cat.rank(arena, text, false);
+    }
+
+    fn rank(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, include_files: bool) ![]Row {
         var rows: std.ArrayList(Row) = .empty;
         const trimmed = std.mem.trim(u8, text, " ");
         if (trimmed.len == 0) return rows.items;
 
         const terms = core.search.Query.parse(trimmed);
+        try rows.ensureTotalCapacity(arena, cat.apps.items.len + max_rows);
         apps: for (cat.apps.items) |a| {
             var s: i32 = 0;
             for (0..terms.n) |i| s += core.match.score(a.name, terms.term(i), 0) orelse continue :apps;
             try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 
-        if (if (cat.files) |fi| fi.view() else null) |v| {
+        if (if (cat.files) |fi| if (include_files) fi.view() else null else null) |v| {
             var hits: [max_rows]core.search.Hit = undefined;
             const n = core.search.search(v, trimmed, &hits);
             const root = v.root;
@@ -111,10 +136,9 @@ pub const Catalog = struct {
                 });
             }
         }
-        std.mem.sort(Row, rows.items, {}, better);
         const link = try detectLink(arena, trimmed);
         const extra: usize = if (link != null) 2 else 1;
-        const ranked = rows.items[0..@min(rows.items.len, max_rows - extra)];
+        const ranked = try best(arena, rows.items, max_rows - extra);
         for (ranked) |*r| if (r.kind != .app) stamp(arena, r);
         var out = try arena.alloc(Row, ranked.len + extra);
         if (link) |url| {
@@ -165,6 +189,10 @@ fn stamp(arena: std.mem.Allocator, r: *Row) void {
 
 pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
     return buildQueryUrl(arena, web_search_url, query);
+}
+
+pub fn engineUrl(arena: std.mem.Allocator, engine: WebEngine, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, engine.url_prefix, query);
 }
 
 pub fn webSuggestUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
@@ -271,9 +299,20 @@ fn inTldSet(tld: []const u8) bool {
     return false;
 }
 
-fn better(_: void, a: Row, b: Row) bool {
+const RankKey = struct { score: i32, title_len: u32, at: u32 };
+
+fn best(arena: std.mem.Allocator, rows: []const Row, limit: usize) ![]Row {
+    const keys = try arena.alloc(RankKey, rows.len);
+    for (rows, keys, 0..) |r, *k, i| k.* = .{ .score = r.score, .title_len = @intCast(r.title.len), .at = @intCast(i) };
+    std.mem.sort(RankKey, keys, {}, better);
+    const out = try arena.alloc(Row, @min(rows.len, limit));
+    for (out, keys[0..out.len]) |*o, k| o.* = rows[k.at];
+    return out;
+}
+
+fn better(_: void, a: RankKey, b: RankKey) bool {
     if (a.score != b.score) return a.score > b.score;
-    return a.title.len < b.title.len;
+    return a.title_len < b.title_len;
 }
 
 /// Where apps are installed, besides the user's own `~/Applications`.

@@ -103,9 +103,15 @@ pub const Hooks = struct {
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     suggest: *const fn (?*anyopaque, u64, []const u8) void = noSuggest,
+    search_files: *const fn (?*anyopaque) void = noSearchFiles,
 };
 
 fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
+
+fn noSearchFiles(_: ?*anyopaque) void {}
+
+pub const file_search_budget_s: f64 = 0.004;
+const calibration_query = "e";
 
 pub const suggestion_cache_ttl: f64 = 5 * 60;
 
@@ -178,12 +184,15 @@ pub const Panel = struct {
     suggestion_cache: std.ArrayList(CachedSuggestions) = .empty,
     web_suggestions_enabled: bool = true,
     indexing: bool = false,
+    file_search_s: f64 = 0,
+    files_due: bool = false,
     suppressed_by_backspace: bool = false,
     caret_at_end: bool = true,
     composing: bool = false,
     completion: ?Completion = null,
     completion_buf: [512]u8 = undefined,
     pending: ?Action = null,
+    presented_key: ?u64 = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
@@ -205,6 +214,7 @@ pub const Panel = struct {
     fn forgetSearch(p: *Panel) void {
         p.retained_search.clear();
         p.list.reset();
+        p.files_due = false;
         p.base_rows = &.{};
         p.suggestions = &.{};
         p.cancelPendingSuggest();
@@ -344,7 +354,6 @@ pub const Panel = struct {
             p.list.filter = p.retained_search.filter;
             p.restoreField(p.retained_search.query.items);
             p.caret_at_end = p.field.text().len == 0;
-            p.list.markStale();
             p.refresh();
             const path = p.retained_search.path.items;
             if (path.len > 0) for (p.list.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, path)) {
@@ -410,6 +419,49 @@ pub const Panel = struct {
         p.resetCompletion();
     }
 
+    pub fn notePresented(p: *Panel) void {
+        p.presented_key = p.frameKey();
+    }
+
+    pub fn forgetPresented(p: *Panel) void {
+        p.presented_key = null;
+    }
+
+    pub fn lastFrameValid(p: *const Panel) bool {
+        const key = p.presented_key orelse return false;
+        return key == p.frameKey();
+    }
+
+    fn frameKey(p: *const Panel) u64 {
+        var h: std.hash.Wyhash = .init(0);
+        hashValue(&h, p.mode);
+        hashValue(&h, p.indexing);
+        hashValue(&h, p.panelWidth());
+        hashValue(&h, p.panelHeight());
+        hashBytes(&h, p.field.text());
+        switch (p.mode) {
+            .search => {
+                hashValue(&h, p.list.filter);
+                hashValue(&h, p.list.selected);
+                for (p.list.visible) |r| {
+                    hashValue(&h, r.kind);
+                    hashBytes(&h, r.path);
+                }
+            },
+            .clipboard => {
+                const l = &p.board.list;
+                hashValue(&h, l.filter);
+                hashValue(&h, l.selected);
+                hashValue(&h, @as(i64, @intFromFloat(@floor(p.clock.now() / 60))));
+                for (l.visible) |e| {
+                    hashValue(&h, e.id);
+                    hashValue(&h, e.pinned_at orelse std.math.inf(f64));
+                }
+            },
+        }
+        return h.final();
+    }
+
     pub fn panelHeight(p: *const Panel) f32 {
         if (p.mode == .clipboard) return board_mod.board_metrics.height;
         return if (p.field.text().len == 0) metrics.search_height else metrics.expanded_height;
@@ -443,14 +495,7 @@ pub const Panel = struct {
             p.list.filter = .all;
             p.retained_search.clear();
         }
-        const need_fetch = p.answer(text) catch |err| {
-            std.log.err("search: {s}", .{@errorName(err)});
-            p.base_rows = &.{};
-            p.suggestions = &.{};
-            p.cancelPendingSuggest();
-            p.completion = null;
-            return p.list.fail();
-        };
+        const need_fetch = p.answer(text, false) catch |err| return p.failSearch(err);
         const l = &p.list;
         if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
         p.completion = p.computeCompletion();
@@ -461,11 +506,50 @@ pub const Panel = struct {
             p.pending_suggest_query.appendSlice(p.list.arena.child_allocator, text) catch {};
             p.hooks.suggest(p.hooks.ctx, p.pending_suggest_seq, text);
         }
+        if (p.files_due) p.hooks.search_files(p.hooks.ctx);
+    }
+
+    pub fn landFiles(p: *Panel) void {
+        if (!p.files_due) return;
+        p.files_due = false;
+        const text = p.field.text();
+        if (p.mode != .search or !std.mem.eql(u8, text, p.list.answered())) return;
+        if (p.list.selected != 0) p.list.markStale();
+        _ = p.answer(text, true) catch |err| return p.failSearch(err);
+        p.completion = p.computeCompletion();
+    }
+
+    pub fn calibrateFileSearch(p: *Panel) void {
+        var arena: std.heap.ArenaAllocator = .init(p.list.arena.child_allocator);
+        defer arena.deinit();
+        const started = p.clock.now();
+        _ = p.catalog.query(arena.allocator(), calibration_query) catch return;
+        p.file_search_s = p.clock.now() - started;
+    }
+
+    fn failSearch(p: *Panel, err: anyerror) void {
+        std.log.err("search: {s}", .{@errorName(err)});
+        p.base_rows = &.{};
+        p.suggestions = &.{};
+        p.cancelPendingSuggest();
+        p.completion = null;
+        p.list.fail();
     }
 
     /// True when web suggestions for `text` must be fetched.
-    fn answer(p: *Panel, text: []const u8) !bool {
-        p.base_rows = try p.catalog.query(p.list.beginQuery(text), text);
+    fn answer(p: *Panel, text: []const u8, force_files: bool) !bool {
+        const a = p.list.beginQuery(text);
+        p.files_due = false;
+        if (p.catalog.files == null) {
+            p.base_rows = try p.catalog.query(a, text);
+        } else if (force_files or p.file_search_s <= file_search_budget_s) {
+            const started = p.clock.now();
+            p.base_rows = try p.catalog.query(a, text);
+            p.file_search_s = p.clock.now() - started;
+        } else {
+            p.base_rows = try p.catalog.queryApps(a, text);
+            p.files_due = true;
+        }
         p.suggestions = &.{};
         var need_fetch = false;
         if (p.shouldSuggest(text)) {
@@ -607,11 +691,17 @@ pub const Panel = struct {
         return out[0..n];
     }
 
-    /// The catalog's rows, then a Google row per suggestion.
+    /// The catalog's rows, a Google row per suggestion, then one row per
+    /// other web engine. Links and paths are not web queries, so they get no
+    /// engine rows.
     fn composeRows(p: *Panel) []const search.Row {
-        if (p.suggestions.len == 0 or p.base_rows.len == 0) return p.base_rows;
+        if (p.base_rows.len == 0) return p.base_rows;
+        const query = std.mem.trim(u8, p.field.text(), " \t\r\n");
+        const engines = p.mode == .search and query.len > 0 and !isPathLike(query) and !hasLinkRow(p.base_rows);
+        const engine_count = if (engines) search.web_engines.len else 0;
+        if (p.suggestions.len == 0 and engine_count == 0) return p.base_rows;
         const a = p.list.allocator();
-        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len) catch return p.base_rows;
+        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len + engine_count) catch return p.base_rows;
         @memcpy(out[0..p.base_rows.len], p.base_rows);
         for (p.suggestions, p.base_rows.len..) |s, i| out[i] = .{
             .kind = .web,
@@ -620,6 +710,16 @@ pub const Panel = struct {
             .path = search.webSearchUrl(a, s) catch "",
             .score = 0,
             .suggestion = true,
+        };
+        if (engines) for (search.web_engines, p.base_rows.len + p.suggestions.len..) |e, i| {
+            out[i] = .{
+                .kind = .web,
+                .title = e.title,
+                .subtitle = e.host,
+                .path = search.engineUrl(a, e, query) catch "",
+                .score = 0,
+                .engine = true,
+            };
         };
         return out;
     }
@@ -1009,13 +1109,22 @@ fn hasMarkedText(c: *const ui.Context) bool {
     return false;
 }
 
+fn hashValue(h: *std.hash.Wyhash, v: anytype) void {
+    h.update(std.mem.asBytes(&v));
+}
+
+fn hashBytes(h: *std.hash.Wyhash, s: []const u8) void {
+    hashValue(h, s.len);
+    h.update(s);
+}
+
 fn isPathLike(s: []const u8) bool {
     return s.len > 0 and (s[0] == '/' or s[0] == '~' or s[0] == '.');
 }
 
 fn hasLinkRow(rows: []const search.Row) bool {
     for (rows) |r| {
-        if (r.kind == .web and !r.suggestion and !std.mem.eql(u8, r.title, "Google")) return true;
+        if (r.kind == .web and !r.suggestion and !r.engine and !std.mem.eql(u8, r.title, "Google")) return true;
     }
     return false;
 }

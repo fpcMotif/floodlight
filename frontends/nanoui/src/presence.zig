@@ -23,6 +23,7 @@ pub const Effect = enum {
     open_board,
     /// Order the window in at alpha 0.
     order_in_unseen,
+    order_in_seen,
     /// Bring the already visible window to the front.
     order_front,
     /// Call `entranceTimedOut` after the fallback delay.
@@ -39,7 +40,12 @@ pub const Effect = enum {
 pub const Effects = struct {
     ctx: ?*anyopaque,
     run: *const fn (?*anyopaque, Effect) void,
+    last_frame_valid: *const fn (?*anyopaque) bool = neverValid,
 };
+
+fn neverValid(_: ?*anyopaque) bool {
+    return false;
+}
 
 pub const Presence = struct {
     phase: Phase = .hidden,
@@ -48,6 +54,7 @@ pub const Presence = struct {
     /// Timers share one delay on the main queue, so they fire in the order
     /// they started: the nth to fire belongs to the nth entrance.
     timers_fired: u32 = 0,
+    summon_open: bool = false,
 
     /// ⌥Space: hides only a focused panel that already shows search.
     pub fn search(p: *Presence, focused: bool, on_board: bool) void {
@@ -94,6 +101,7 @@ pub const Presence = struct {
     /// True for the frame the window is seen with: one being presented
     /// during an entrance. A frame without a drawable is not on screen.
     pub fn framePresented(p: *Presence, presenting: bool) bool {
+        if (p.summon_open and presenting) p.endSummon();
         if (p.phase != .entering or !presenting) return false;
         p.reveal();
         return true;
@@ -103,6 +111,10 @@ pub const Presence = struct {
     pub fn entranceTimedOut(p: *Presence) void {
         p.timers_fired += 1;
         if (p.phase == .entering and p.timers_fired == p.entrances) p.reveal();
+    }
+
+    pub fn wantsPresentedFrame(p: *const Presence) bool {
+        return p.phase == .entering;
     }
 
     pub fn isHidden(p: *const Presence) bool {
@@ -115,8 +127,13 @@ pub const Presence = struct {
         p.run(if (on_board) .open_board else .open_search);
         p.run(.place);
         if (!from_hidden) return p.run(.order_front);
-        p.phase = .entering;
         mac.signpostBegin(.summon);
+        p.summon_open = true;
+        if (p.effects.last_frame_valid(p.effects.ctx)) {
+            p.phase = .shown;
+            return p.run(.order_in_seen);
+        }
+        p.phase = .entering;
         p.entrances += 1;
         p.run(.order_in_unseen);
         p.run(.start_entrance_timer);
@@ -124,12 +141,18 @@ pub const Presence = struct {
 
     fn reveal(p: *Presence) void {
         p.phase = .shown;
-        mac.signpostEnd(.summon);
+        p.endSummon();
         p.run(.reveal);
     }
 
+    fn endSummon(p: *Presence) void {
+        if (!p.summon_open) return;
+        p.summon_open = false;
+        mac.signpostEnd(.summon);
+    }
+
     fn hide(p: *Presence) void {
-        if (p.phase == .entering) mac.signpostEnd(.summon);
+        p.endSummon();
         // First: ordering out resigns focus, and that must not hide again.
         p.phase = .hidden;
         p.run(.hide_window);

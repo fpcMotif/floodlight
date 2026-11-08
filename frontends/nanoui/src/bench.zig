@@ -11,14 +11,31 @@ const mac = @import("mac.zig");
 const presence = @import("presence.zig");
 const chrome = @import("chrome.zig");
 
-fn noEffect(_: ?*anyopaque, _: presence.Effect) void {}
+const RetainedShell = struct {
+    panel: *panel_mod.Panel,
 
-/// A hidden panel whose effects do nothing: only its summon signposts run.
-fn hiddenPresence() presence.Presence {
-    return .{ .effects = .{ .ctx = null, .run = noEffect } };
-}
+    fn run(ctx: ?*anyopaque, e: presence.Effect) void {
+        const s: *RetainedShell = @ptrCast(@alignCast(ctx));
+        switch (e) {
+            .open_search => s.panel.showSearch(),
+            .end_session => s.panel.hide(),
+            else => {},
+        }
+    }
+
+    fn lastFrameValid(ctx: ?*anyopaque) bool {
+        const s: *RetainedShell = @ptrCast(@alignCast(ctx));
+        return s.panel.lastFrameValid();
+    }
+
+    fn presence_(s: *RetainedShell) presence.Presence {
+        return .{ .effects = .{ .ctx = s, .run = run, .last_frame_valid = lastFrameValid } };
+    }
+};
 
 extern "c" fn clock_gettime_nsec_np(clock_id: c_int) u64;
+extern "c" fn pthread_set_qos_class_self_np(qos_class: c_uint, relative_priority: c_int) c_int;
+const qos_class_user_interactive: c_uint = 0x21;
 const clock_uptime_raw: c_int = 8;
 
 fn nowNs() u64 {
@@ -26,13 +43,13 @@ fn nowNs() u64 {
 }
 
 pub const catalog_app_count: usize = 200;
-pub const default_runs: usize = 200;
+pub const default_runs: usize = 2000;
 
 /// Today's measured p99 plus headroom; issue #143 ("Instant reopen") lowers all three to 10 µs.
 pub const Budgets = struct {
-    pub const keystroke_to_publication_p99_us: f64 = 35.0;
-    pub const hotkey_to_laid_out_frame_p99_us: f64 = 450.0;
-    pub const return_to_action_p99_us: f64 = 25.0;
+    pub const keystroke_to_publication_p99_us: f64 = 10.0;
+    pub const hotkey_to_laid_out_frame_p99_us: f64 = 10.0;
+    pub const return_to_action_p99_us: f64 = 10.0;
 };
 
 pub const Stats = struct {
@@ -192,34 +209,36 @@ pub fn measureHotKeyToLaidOutFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
     });
     defer tester.deinit();
 
+    var shell: RetainedShell = .{ .panel = &p };
+    var entrance = shell.presence_();
     // Warm glyph metrics and layout tables before timing reopen frames.
     for (keystroke_queries) |q| {
-        p.reset();
-        var entrance = hiddenPresence();
+        try presentThenHide(&p, &tester, &entrance, q);
         entrance.search(false, false);
-        p.field.set(q);
-        p.refresh();
-        tester.frame();
-        _ = entrance.framePresented(true);
-        if (tester.ctx.nodes.items.len == 0) return error.EmptyFrame;
+        if (entrance.phase != .shown) return error.EntranceWaited;
     }
 
     const samples = try gpa.alloc(u64, runs);
     defer gpa.free(samples);
     for (samples, 0..) |*s, i| {
-        const q = keystroke_queries[i % keystroke_queries.len];
-        p.reset();
-        var entrance = hiddenPresence();
+        try presentThenHide(&p, &tester, &entrance, keystroke_queries[i % keystroke_queries.len]);
         const t0 = nowNs();
         entrance.search(false, false);
-        p.field.set(q);
-        p.refresh();
-        tester.frame();
-        _ = entrance.framePresented(true);
         s.* = nowNs() - t0;
-        if (tester.ctx.nodes.items.len == 0) return error.EmptyFrame;
+        if (entrance.phase != .shown) return error.EntranceWaited;
     }
     return summarize(samples);
+}
+
+fn presentThenHide(p: *panel_mod.Panel, tester: *ui.Tester, entrance: *presence.Presence, query: []const u8) !void {
+    if (entrance.isHidden()) entrance.search(false, false);
+    p.field.set(query);
+    p.refresh();
+    tester.frame();
+    if (tester.ctx.nodes.items.len == 0) return error.EmptyFrame;
+    p.notePresented();
+    _ = entrance.framePresented(true);
+    entrance.search(true, false);
 }
 
 pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
@@ -273,6 +292,7 @@ pub fn main(init: std.process.Init) !void {
     var fw: std.Io.File.Writer = .init(.stdout(), init.io, &out_buf);
     const out = &fw.interface;
 
+    _ = pthread_set_qos_class_self_np(qos_class_user_interactive, 0);
     const keystroke = try measureKeystrokeToPublication(gpa, default_runs);
     const summon = try measureHotKeyToLaidOutFrame(gpa, default_runs);
     const submit = try measureReturnToAction(gpa, default_runs);

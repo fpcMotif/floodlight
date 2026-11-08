@@ -20,6 +20,7 @@ const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;
+const entrance_alpha = 0.01;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
 
@@ -43,6 +44,7 @@ const Shell = struct {
     paste_target: mac.RunningApp = .{},
     presence: Presence = undefined,
     submitting: bool = false,
+    landing_files: bool = false,
     headless: bool = false,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
@@ -71,8 +73,14 @@ const Shell = struct {
             },
             .open_board => s.openBoard(),
             .order_in_unseen => {
-                mac.setAlpha(s.panel_window, 0);
+                mac.setAlpha(s.panel_window, entrance_alpha);
                 s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
+            },
+            .order_in_seen => {
+                mac.setAlpha(s.panel_window, 1);
+                s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
             },
             .order_front => s.panel_window.show(),
             .start_entrance_timer => nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut),
@@ -118,7 +126,29 @@ const Shell = struct {
     fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
-        return s.presence.framePresented(surface.renderer.given_drawable != null);
+        const presenting = surface.renderer.given_drawable != null;
+        if (presenting) s.panel.notePresented();
+        if (!presenting and s.presence.wantsPresentedFrame()) surface.ctx.changed = true;
+        return s.presence.framePresented(presenting);
+    }
+
+    fn lastFrameValid(ctx: ?*anyopaque) bool {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        return s.panel.lastFrameValid();
+    }
+
+    fn searchFiles(ctx: ?*anyopaque) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.landing_files) return;
+        s.landing_files = true;
+        nanoui.App.after(0, s, landFiles);
+    }
+
+    fn landFiles(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.landing_files = false;
+        s.panel.landFiles();
+        if (!s.presence.isHidden()) s.panel_window.redraw();
     }
 
     fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
@@ -168,6 +198,8 @@ const Shell = struct {
     }
 
     fn releaseIdleMemory(s: *Shell) void {
+        s.panel.forgetPresented();
+        mac.releaseSurface(s.panel_window);
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -449,6 +481,7 @@ const Shell = struct {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.panel.indexing = s.files.busy();
         if (s.files.adopt()) {
+            s.panel.calibrateFileSearch();
             // The rows answer the old index: ask again.
             s.panel.list.markStale();
             if (!s.presence.isHidden()) s.panel.refresh();
@@ -500,8 +533,10 @@ pub fn main(init: std.process.Init) !void {
         .describe_date = Shell.describeDate,
         .detailed_date = Shell.detailedDate,
         .suggest = Shell.suggest,
+        .search_files = Shell.searchFiles,
     });
     defer shell.panel.deinit();
+    shell.panel.calibrateFileSearch();
     if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
         defer gpa.free(v);
         if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {
@@ -554,7 +589,7 @@ pub fn main(init: std.process.Init) !void {
     });
     if (mac.installSlab(shell.guide_window, 16, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
 
-    shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence } };
+    shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence, .last_frame_valid = Shell.lastFrameValid } };
 
     if (!headless) {
         try mac.registerHotKeys(&shell, Shell.hotKey);
