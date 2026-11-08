@@ -124,6 +124,62 @@ jobs:
       - name: Test, cross-build, and bench the core
         run: make test-core
 
+  # The GPUI frontend (ADR 0011). Its own job for the same reason as the
+  # core's: a Swift change should never wait on a Rust build of GPUI.
+  gpui:
+    name: GPUI frontend
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out Floodlight
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Restore pinned Zig
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools
+          key: floodlight-zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/tool-versions.env') }}
+
+      # Keyed on the lockfile, which pins the GPUI git rev, so a bump rebuilds
+      # from scratch instead of reusing objects from another zed tree.
+      - name: Restore Cargo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            frontends/gpui/target
+          key: floodlight-gpui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontends/gpui/Cargo.lock', 'frontends/gpui/rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            floodlight-gpui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontends/gpui/Cargo.lock', 'frontends/gpui/rust-toolchain.toml') }}-
+
+      - name: Install pinned Zig
+        run: make install-zig
+
+      # rust-toolchain.toml names the exact toolchain; rustup fetches it on
+      # first use. Only rustup itself is installed here, if the image lacks it.
+      - name: Install rustup
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Format, lint, test, and build
+        run: make test-gpui
+
+      - name: Bench the panel
+        run: make bench-gpui
+
+      - name: Record benchmark numbers
+        if: always()
+        run: |
+          if [ -f .build/gpui-bench.log ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep FLOODLIGHT_GPUI .build/gpui-bench.log >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   sanitizers:
     name: ${{ matrix.name }}
     runs-on: xcode-27

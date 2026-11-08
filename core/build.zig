@@ -10,6 +10,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         // getattrlistbulk comes from libSystem; Linux needs no libc at all.
         .link_libc = target.result.os.tag == .macos,
+        // Rust links position-independent executables by default; a non-PIC
+        // archive fails there on Linux. macOS code is always PIC already.
+        .pic = true,
     });
 
     // What the Swift shell links: one static archive plus the header.
