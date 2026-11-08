@@ -73,7 +73,9 @@ pub const Entry = struct {
 
     /// "{App} · {age}", then the parent folder or the image's size.
     pub fn subtitle(e: Entry, arena: std.mem.Allocator, now: f64) []const u8 {
-        const head = std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ e.source_name, age(arena, now - e.created_at) }) catch return "";
+        const when = age(arena, now - e.created_at);
+        const source_is_title = std.mem.eql(u8, e.source_name, e.title(arena));
+        const head = if (source_is_title) when else std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ e.source_name, when }) catch return "";
         const detail: ?[]const u8 = if (e.filePath()) |p| parentName(p) else if (e.kind == .image) std.fmt.allocPrint(arena, "{d}\u{00D7}{d}", .{ e.width, e.height }) catch null else null;
         const d = detail orelse return head;
         return std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ head, d }) catch head;
@@ -280,8 +282,8 @@ pub const Filter = enum {
 
 /// The inspector's Type for a file, from its extension.
 pub fn fileType(arena: std.mem.Allocator, path: []const u8, is_dir: bool) []const u8 {
-    if (is_dir) return "Folder";
     const ext = extension(path);
+    if (is_dir) return if (std.ascii.eqlIgnoreCase(ext, "app")) "Application" else "Folder";
     // Source Code before Video: `.ts` is TypeScript here, as in the Swift inspector.
     const table = [_]struct { []const u8, []const []const u8 }{
         .{ "Source Code", &.{ "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh" } },
@@ -713,8 +715,10 @@ pub const Store = struct {
 
     fn keepWithinBudget(s: Store) !void {
         try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)});
+        // The newest row is the copy `add` just reported stored: pinned bytes
+        // alone can exceed the budget, and it must not go with the rest.
         while ((s.int(stored_bytes_sql, .{}) orelse 0) > s.budget.bytes) {
-            const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
+            const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL AND id != (SELECT max(id) FROM entries) ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
             try s.removeWhere("id = ?", .{id});
         }
     }

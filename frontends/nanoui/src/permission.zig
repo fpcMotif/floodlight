@@ -105,7 +105,7 @@ pub fn shouldMove(from: Rect, to: Rect) bool {
 pub const Guidance = struct {
     /// The flow's phase, which this view only reads.
     phase: *const Phase,
-    app_name: []const u8 = "Floodlight",
+    app_name: []const u8 = "Nanospot",
     /// The app's icon as PNG, when the shell has one.
     icon_png: ?[]const u8 = null,
     dismissed: bool = false,

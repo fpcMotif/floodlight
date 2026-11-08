@@ -887,7 +887,32 @@ pub fn releaseSurface(window: *nanoui.Window) void {
     s.released = true;
     s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
     s.text.images.trimDecoded();
+    s.renderer.waitIdle();
+    forgetImageAtlas(s);
+    forgetFrameBuffers(s);
     _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+}
+
+fn forgetFrameBuffers(s: *nanoui.Surface) void {
+    s.instances.clearAndFree(s.gpa);
+    for (&s.renderer.buffers, &s.renderer.capacities) |*buffer, *capacity| {
+        if (buffer.*) |b| objc.release(b);
+        buffer.* = null;
+        capacity.* = 0;
+    }
+}
+
+fn forgetImageAtlas(s: *nanoui.Surface) void {
+    const texture = s.renderer.images_texture orelse return;
+    objc.release(texture);
+    s.renderer.images_texture = null;
+    s.renderer.images_generation = std.math.maxInt(u64);
+    const im = &s.text.images;
+    im.entries.clearAndFree(im.gpa);
+    im.shelf_x = 0;
+    im.shelf_y = 0;
+    im.shelf_h = 0;
+    im.resets +%= 1;
 }
 
 pub fn drawBeforeOcclusionUpdate(window: *nanoui.Window) void {

@@ -2,6 +2,7 @@
 import Landing from "../layouts/Landing.astro";
 import FloodlightPanel from "../components/FloodlightPanel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
+import BoardScene from "../components/BoardScene.astro";
 
 const base = import.meta.env.BASE_URL;
 const root = `${base.replace(/\/$/, "")}/`;
@@ -26,19 +27,6 @@ const docs = (slug: string) => `${root}${slug}/`;
         <p class="fine">macOS 14 or later · Apple silicon · MIT</p>
         <p class="credit">
           Created by <a href="https://vmg.dev" rel="author">Victor Garcia</a>
-          <a
-            class="credit__social"
-            href="https://x.com/vmg__0"
-            rel="me"
-            aria-label="Victor Garcia on X"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M18.9 2h3.68l-8.04 9.19L24 23.7h-7.41l-5.8-7.58-6.64 7.58H.47l8.6-9.83L0 2h7.59l5.24 6.93L18.9 2Zm-1.29 19.5h2.04L6.48 4.08H4.29L17.61 21.5Z"
-              />
-            </svg>
-          </a>
         </p>
       </div>
     </div>
@@ -143,4 +131,17 @@ const docs = (slug: string) => `${root}${slug}/`;
       </ul>
     </div>
   </header>
+
+  <section class="clip" aria-labelledby="clip-title">
+    <div class="wrap wrap--wide clip__copy">
+      <h2 class="h2" id="clip-title">Everything you copied, one keystroke away</h2>
+      <p class="lede">
+        <kbd class="clip__kbd">⌥⇧C</kbd> opens your clipboard history. Type to find text, links,
+        colors, code, and files.
+      </p>
+    </div>
+    <div class="wrap wrap--wide">
+      <BoardScene />
+    </div>
+  </section>
 </Landing>

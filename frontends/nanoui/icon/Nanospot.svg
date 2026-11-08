@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25211c"/>
+      <stop offset="1" stop-color="#0a0908"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc34d" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#ff9f1a" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ff8a00" stop-opacity="0.18"/>
+    </linearGradient>
+    <radialGradient id="pool" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff1c4"/>
+      <stop offset="0.35" stop-color="#ffbf3f" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ff8a00" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffb02e" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lamp" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset="1" stop-color="#f29a1f"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+    <clipPath id="clip">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <g clip-path="url(#clip)">
+    <ellipse cx="512" cy="712" rx="300" ry="110" fill="url(#halo)" filter="url(#glow)"/>
+    <path d="M478 300 L546 300 L650 712 L374 712 Z" fill="url(#beam)" filter="url(#soft)"/>
+    <ellipse cx="512" cy="712" rx="168" ry="44" fill="url(#pool)"/>
+    <ellipse cx="512" cy="712" rx="46" ry="12" fill="#fffaf0"/>
+  </g>
+  <rect x="452" y="214" width="120" height="96" rx="30" fill="url(#lamp)"/>
+  <rect x="470" y="290" width="84" height="24" rx="10" fill="#fff4d6"/>
+  <circle cx="512" cy="252" r="12" fill="#2a1d0c"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+</svg>

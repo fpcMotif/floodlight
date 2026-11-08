@@ -46,6 +46,7 @@
     </button>
   </div>
 
+  <div class="panel__well" data-well hidden>
   <div class="panel__chips" role="group" aria-label="Filter results by kind" data-chips hidden>
     <button class="chip" type="button" aria-pressed="true" data-filter="all">
       All <span class="chip__n" data-count="all">0</span>
@@ -74,6 +75,16 @@
   </div>
 
   <div class="panel__results" id="fl-list" role="listbox" aria-label="Results" data-results hidden></div>
+
+  <div class="panel__foot" aria-hidden="true">
+    <span class="panel__total" data-total></span>
+    <span class="panel__keys">
+      <span class="panel__key">Open <kbd>↵</kbd></span>
+      <span class="panel__key">Show in Finder <kbd>⌘↵</kbd></span>
+      <span class="panel__key">Copy <kbd>⌘C</kbd></span>
+    </span>
+  </div>
+  </div>
 
   <p class="sr-only" role="status" aria-live="polite" data-live></p>
 </div>
@@ -376,6 +387,8 @@
     const results = panel.querySelector<HTMLElement>("[data-results]")!;
     const chips = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-filter]"));
     const live = panel.querySelector<HTMLElement>("[data-live]")!;
+    const well = panel.querySelector<HTMLElement>("[data-well]")!;
+    const total = panel.querySelector<HTMLElement>("[data-total]")!;
     const note = document.querySelector<HTMLElement>("[data-note]")!;
 
     let filter: Kind | Group | "all" = "all";
@@ -402,6 +415,7 @@
       const hasQuery = compact.length > 0;
       chipBar.hidden = !hasQuery;
       results.hidden = !hasQuery;
+      well.hidden = !hasQuery;
       activePanel.classList.toggle("panel--idle", !hasQuery);
       input.setAttribute("aria-expanded", String(hasQuery));
 
@@ -476,6 +490,7 @@
       }
 
       rows = next;
+      total.textContent = `${rows.length} ${rows.length === 1 ? "result" : "results"}`;
       selected = Math.min(selected, Math.max(rows.length - 1, 0));
       paint();
 

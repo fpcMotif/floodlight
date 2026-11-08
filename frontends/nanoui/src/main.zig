@@ -23,6 +23,11 @@ const entrance_timeout_ms = 250;
 const entrance_alpha = 0.01;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
+const memory_session_flag = "--floodlight-memory-session";
+const memory_seed_flag = "--floodlight-memory-seed";
+const memory_cycles = 3;
+const memory_step_ms = 400;
+const memory_settle_ms = 1500;
 
 /// Icons drawn per session at most; all go when the session is forgotten.
 const max_icons = 64;
@@ -46,6 +51,7 @@ const Shell = struct {
     submitting: bool = false,
     landing_files: bool = false,
     headless: bool = false,
+    memory_step: u32 = 0,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -160,7 +166,7 @@ const Shell = struct {
         const screen = mac.pointerScreenVisibleFrame();
         s.panel_window.setSize(s.panel.panelWidth(), s.panel.panelHeight());
         const f = mac.frameOf(s.panel_window);
-        mac.setFrameOrigin(s.panel_window, .{ .x = screen.x + (screen.w - f.w) / 2, .y = screen.y + screen.h * 0.68 - f.h / 2, .w = f.w, .h = f.h });
+        mac.setFrameOrigin(s.panel_window, presence.panelFrame(screen, f.w, f.h));
     }
 
     /// Keeps the top edge and the horizontal centre where they are.
@@ -183,16 +189,17 @@ const Shell = struct {
         s.endSubmit();
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         s.panel.hide();
-        if (s.panel.nextExpiryMs()) |ms| return nanoui.App.after(ms, s, expireRetention);
-        s.releaseIdleMemory();
+        if (s.panel.nextExpiryMs() == null) return s.releaseIdleMemory();
+        if (s.panel.armExpiry()) |ms| nanoui.App.after(ms, s, expireRetention);
     }
 
     fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.panel.disarmExpiry();
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         if (s.panel.expire()) {
             if (s.presence.isHidden()) s.releaseIdleMemory();
-        } else if (s.panel.nextExpiryMs()) |ms| {
+        } else if (s.panel.armExpiry()) |ms| {
             nanoui.App.after(ms, s, expireRetention);
         }
     }
@@ -200,6 +207,7 @@ const Shell = struct {
     fn releaseIdleMemory(s: *Shell) void {
         s.panel.forgetPresented();
         mac.releaseSurface(s.panel_window);
+        if (!s.guide_window.isVisible()) mac.releaseSurface(s.guide_window);
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -298,7 +306,7 @@ const Shell = struct {
             .{ .title = "Delete", .key = "d", .modifiers = cmd },
         };
         const f = mac.frameOf(s.panel_window);
-        const at = [2]f64{ f.w - board_mod.board_metrics.well_inset - 110, f.h - board_mod.board_metrics.well_inset - board_mod.board_metrics.footer_height };
+        const at = [2]f64{ f.w - metrics.well_inset - 110, f.h - metrics.well_inset - metrics.footer_height };
         const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
         switch (choice) {
             0 => s.applyAndSettle(.{ .paste = e }),
@@ -396,6 +404,49 @@ const Shell = struct {
         defer arena.deinit();
         const items = search.parseSuggestions(arena.allocator(), res.body);
         if (s.panel.receiveSuggestionsFor(req.seq, req.query, items)) s.panel_window.redraw();
+    }
+
+    fn memoryLaunched(ctx: ?*anyopaque) callconv(.c) void {
+        markMemory("launched", 0);
+        nanoui.App.after(memory_settle_ms, ctx, memoryStep);
+    }
+
+    fn memoryStep(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const cycle = s.memory_step / memory_steps + 1;
+        const step = s.memory_step % memory_steps;
+        s.memory_step += 1;
+        switch (step) {
+            0 => s.presence.search(false, s.panel.mode == .clipboard),
+            1 => {
+                s.panel.field.set("cal");
+                s.panel.refresh();
+            },
+            2 => s.presence.board(false, s.panel.mode == .clipboard),
+            3 => {
+                markMemory("open", cycle);
+                return nanoui.App.after(memory_settle_ms, s, memoryStep);
+            },
+            else => {
+                s.presence.settle(.hide);
+                return nanoui.App.after(memory_settle_ms, s, memoryIdle);
+            },
+        }
+        s.panel_window.redraw();
+        nanoui.App.after(memory_step_ms, s, memoryStep);
+    }
+
+    const memory_steps = 5;
+
+    fn memoryIdle(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const cycle = s.memory_step / memory_steps;
+        markMemory("idle", cycle);
+        if (cycle < memory_cycles) nanoui.App.after(memory_settle_ms, s, memoryStep);
+    }
+
+    fn markMemory(phase: []const u8, cycle: u32) void {
+        std.debug.print("FLOODLIGHT_MEMORY phase={s} cycle={d}\n", .{ phase, cycle });
     }
 
     // The grant flow's effects.
@@ -496,12 +547,15 @@ pub fn main(init: std.process.Init) !void {
     try std.Io.Dir.cwd().createDirPath(init.io, support);
     const index_path = try std.fs.path.joinZ(gpa, &.{ support, "names.flix" });
 
-    const app = try nanoui.App.create(init, .{ .name = "Floodlight", .quit_on_last_window_closed = false });
+    const app = try nanoui.App.create(init, .{ .name = "Nanospot", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
     // Snapshots and hidden runs draw the panel and touch nothing else: no
     // hotkey, no System Settings, no scan of the home folder, no history on disk.
     const headless = app.flags.hidden or app.flags.snapshot != null;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const memory_session = hasFlag(args, memory_session_flag);
+    const memory_seed = hasFlag(args, memory_seed_flag);
 
     var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .headless = headless };
     defer shell.files.close();
@@ -524,6 +578,7 @@ pub fn main(init: std.process.Init) !void {
         };
     defer shell.store.close();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
+    if (memory_seed) return seedMemoryHistory(shell.store);
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
@@ -544,7 +599,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     shell.panel_window = try app.newWindow(.{
-        .title = "Floodlight",
+        .title = "Nanospot",
         .width = metrics.width,
         .height = metrics.search_height,
         .min_height = metrics.search_height,
@@ -572,7 +627,7 @@ pub fn main(init: std.process.Init) !void {
         .close = Shell.close,
         .on_granted = Shell.granted,
     } };
-    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
+    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Nanospot", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
     shell.guide_window = try app.newWindow(.{
         .title = "Full Disk Access",
@@ -598,7 +653,37 @@ pub fn main(init: std.process.Init) !void {
         nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
-        nanoui.App.after(0, &shell, Shell.launched);
+        nanoui.App.after(0, &shell, if (memory_session) Shell.memoryLaunched else Shell.launched);
     }
     try app.run();
+}
+
+fn hasFlag(args: []const [:0]const u8, flag: []const u8) bool {
+    for (args) |arg| if (std.mem.eql(u8, arg, flag)) return true;
+    return false;
+}
+
+fn seedMemoryHistory(store: clipboard.Store) void {
+    const texts = [_][]const u8{
+        "Meeting moved to 3pm, room 4B. Bring the Q3 numbers and the draft plan.",
+        "https://developer.apple.com/documentation/metal/mtldevice",
+        "const index = try FileIndex.open(gpa, path, home, .{});",
+        "#3478f6",
+        "/Users/shared/Projects/floodlight/README.md",
+    };
+    const pictures = [_][]const u8{ "/System/Applications/Calendar.app", "/System/Applications/Notes.app", "/System/Applications/Maps.app", "/System/Applications/Photos.app" };
+    const now = clipboard.wallClock();
+    var buf: [160]u8 = undefined;
+    for (0..300) |i| {
+        const text = std.fmt.bufPrint(&buf, "{s} ({d})", .{ texts[i % texts.len], i }) catch continue;
+        _ = store.add(.{ .text = text }, "com.apple.Safari", "Safari", now - @as(f64, @floatFromInt(300 - i)) * 72) catch {};
+    }
+    for (pictures, 0..) |path, i| {
+        const png = mac.iconPng(gpa, path, 1024) orelse continue;
+        defer gpa.free(png);
+        const thumbnail = mac.iconPng(gpa, path, 128) orelse continue;
+        defer gpa.free(thumbnail);
+        const image: clipboard.Capture.Image = .{ .name = "Screenshot", .png = png, .thumbnail = thumbnail, .width = 1024, .height = 1024 };
+        _ = store.add(.{ .image = image }, "com.apple.screencaptureui", "Screenshot", now - @as(f64, @floatFromInt(i))) catch {};
+    }
 }

@@ -13,9 +13,9 @@ cd "$PROJECT_DIR/frontends/nanoui"
 "$zig" build bench --release
 "$zig" build bundle --release
 
-bin="zig-out/Floodlight Nano.app/Contents/MacOS/floodlight-nanoui"
+bin="zig-out/Nanospot.app/Contents/MacOS/floodlight-nanoui"
 ls -l "$bin"
-requirement=$(codesign -d -r- "zig-out/Floodlight Nano.app" 2>&1)
+requirement=$(codesign -d -r- "zig-out/Nanospot.app" 2>&1)
 case "$requirement" in
 *'designated => identifier "com.floodlight.nano"'*) ;;
 *)

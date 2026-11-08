@@ -31,18 +31,12 @@ pub const Context = struct {
 
 /// The Swift shell's `FloodlightMetrics` clipboard values.
 pub const board_metrics = struct {
-    pub const list_width: f32 = 360;
-    pub const inspector_width: f32 = 465;
-    pub const well_inset: f32 = metrics.row_padding;
-    pub const width: f32 = list_width + 1 + inspector_width + well_inset * 2;
-    pub const well_radius: f32 = metrics.corner_radius - well_inset;
-    pub const well_stroke_opacity: f32 = 0.12;
-    pub const footer_height: f32 = 32;
-    pub const footer_chip_disabled_opacity: f32 = 0.4;
-    pub const height: f32 = metrics.search_height + metrics.filter_bar_height + metrics.row_padding * 2 +
-        metrics.max_visible_rows * metrics.row_height + 1 + footer_height + well_inset;
-    pub const content_height: f32 = height - metrics.search_height - well_inset - metrics.filter_bar_height;
-    pub const list_height: f32 = content_height - 1 - footer_height;
+    pub const list_width: f32 = 320;
+    pub const width: f32 = metrics.width;
+    pub const inspector_width: f32 = width - list_width - 1 - metrics.well_inset * 2;
+    pub const height: f32 = metrics.expanded_height;
+    pub const content_height: f32 = metrics.well_height - metrics.filter_bar_height;
+    pub const list_height: f32 = metrics.list_height;
     pub const info_label_width: f32 = 84;
 };
 
@@ -213,14 +207,11 @@ pub const Board = struct {
     pub fn view(b: *Board, c: *ui.Context, host: Context) ?Action {
         const th = c.theme;
         const m = board_metrics;
-        const outer = ui.div(c).column().wFull().px(m.well_inset).pb(m.well_inset);
-        defer outer.end();
-        const well = ui.div(c).column().wFull().h(m.height - metrics.search_height - m.well_inset)
-            .bg(th.background).rounded(m.well_radius).border(th.text.alpha(m.well_stroke_opacity)).borderW(1).clip();
+        const well = chrome.well(c);
         defer well.end();
         b.filterBar(c);
         if (b.list.visible.len == 0) {
-            chrome.emptyState(c, m.content_height, b.emptyMessage(c, host.query), true);
+            chrome.emptyState(c, m.content_height, b.emptyMessage(c, host.query));
             return null;
         }
         var asked: ?Action = null;
@@ -231,20 +222,17 @@ pub const Board = struct {
             ui.div(c).w(1).hFull().bg(th.border.alpha(0.45)).end();
             b.inspector(c, host);
         }
-        ui.div(c).wFull().h(1).bg(th.border.alpha(0.45)).end();
         if (b.footer(c)) |a| asked = a;
         return asked;
     }
 
-    fn emptyMessage(b: *const Board, c: *ui.Context, query: []const u8) []const u8 {
-        if (b.list.failed) return "Clipboard history could not be read.";
+    fn emptyMessage(b: *const Board, c: *ui.Context, query: []const u8) chrome.Empty {
+        if (b.list.failed) return .{ .symbol = "exclamationmark.triangle", .title = "Clipboard history could not be read" };
         const f = b.list.filter;
-        const name = chrome.lowerTitle(c, f);
-        if (query.len == 0) {
-            if (f == .all) return "Clipboard history is empty. Copied text, files, and images will appear here.";
-            return c.print("No {s} clipboard entries", .{name});
-        }
-        return c.print("No matching clipboard {s} for \u{201C}{s}\u{201D}", .{ name, query });
+        const name = if (f == .all) "entries" else chrome.sentenceNoun(c, f);
+        if (query.len > 0) return .{ .symbol = f.symbol(), .title = c.print("No {s} match \u{201C}{s}\u{201D}", .{ name, query }) };
+        if (f != .all) return .{ .symbol = f.symbol(), .title = c.print("No {s} copied yet", .{name}) };
+        return .{ .symbol = "clipboard", .title = "Nothing copied yet", .hint = "Text, files and images you copy appear here." };
     }
 
     fn filterBar(b: *Board, c: *ui.Context) void {
@@ -298,7 +286,7 @@ pub const Board = struct {
                 ui.text(c, e.subtitle(c.arena.allocator(), b.clock.now()), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
             }
         }
-        if (selected) chrome.keyChip(c, .{ .symbol = "return" });
+        chrome.rowKey(c, if (selected) .enter else .none);
         return if (it.double_clicked) .{ .paste = e } else null;
     }
 
@@ -449,18 +437,15 @@ pub const Board = struct {
     }
 
     fn footer(b: *Board, c: *ui.Context) ?Action {
-        const th = c.theme;
-        const bar = ui.div(c).row().wFull().h(board_metrics.footer_height).px(14).gap(12).itemsCenter().bg(th.muted.alpha(0.04));
-        defer bar.end();
         const n = b.list.visible.len;
-        ui.text(c, c.print("{d} {s}", .{ n, if (n == 1) "entry" else "entries" }), .{ .size = 11, .weight = .medium, .color = th.muted.alpha(0.6) });
-        ui.div(c).grow().end();
+        const bar = chrome.footerBar(c, c.print("{d} {s}", .{ n, if (n == 1) "entry" else "entries" }));
+        defer bar.end();
         const e = b.list.selection();
         var asked: ?Action = null;
-        if (footerChip(c, b.pasteLabel(c.arena.allocator()), "↵", e != null)) asked = .{ .paste = e.? };
+        if (chrome.footerChip(c, b.pasteLabel(c.arena.allocator()), "↵", e != null)) asked = .{ .paste = e.? };
         const can_preview = if (e) |x| b.previewable(x) else false;
-        if (footerChip(c, "Preview", "␣", can_preview)) asked = .{ .preview = e.? };
-        if (footerChip(c, "Actions", "⌘K", e != null)) asked = .{ .actions = e.? };
+        if (chrome.footerChip(c, "Preview", "␣", can_preview)) asked = .{ .preview = e.? };
+        if (chrome.footerChip(c, "Actions", "⌘K", e != null)) asked = .{ .actions = e.? };
         return asked;
     }
 };
@@ -517,19 +502,4 @@ fn codeLines(c: *ui.Context, text: []const u8) void {
         ui.text(c, if (line.len == 0) " " else std.mem.trimEnd(u8, shownHead(line, 1), "\r"), .{ .size = 11.5, .mono = true, .truncate = .ellipsis });
     }
     if (total > shown) ui.text(c, "Preview truncated", .{ .size = 10.5, .weight = .medium, .color = th.muted.alpha(0.6) });
-}
-
-fn footerChip(c: *ui.Context, title: []const u8, key: []const u8, enabled: bool) bool {
-    const th = c.theme;
-    ui.key(c, title);
-    const chip = ui.div(c).row().gap(5).px(8).py(4).itemsCenter().roundedFull().bg(th.muted.alpha(0.12))
-        .opacity(if (enabled) 1 else board_metrics.footer_chip_disabled_opacity).control();
-    defer chip.end();
-    ui.text(c, title, .{ .size = 11.5, .weight = .medium });
-    {
-        const k = ui.div(c).px(4).py(1).rounded(3).bg(th.muted.alpha(0.25));
-        defer k.end();
-        ui.text(c, key, .{ .size = 9, .weight = .semibold, .rounded = true });
-    }
-    return enabled and chip.clicked();
 }

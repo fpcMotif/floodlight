@@ -2,6 +2,15 @@
 //! that brings it up or sends it away. The shell carries out each effect.
 const mac = @import("mac.zig");
 const panel = @import("panel.zig");
+const chrome = @import("chrome.zig");
+const Rect = @import("permission.zig").Rect;
+
+const search_field_centre = 0.68;
+
+pub fn panelFrame(screen: Rect, w: f64, h: f64) Rect {
+    const top = screen.y + screen.h * search_field_centre + chrome.metrics.search_height / 2;
+    return .{ .x = screen.x + (screen.w - w) / 2, .y = @max(screen.y, top - h), .w = w, .h = h };
+}
 
 pub const Phase = enum {
     hidden,
@@ -82,8 +91,11 @@ pub const Presence = struct {
         if (p.phase != .hidden and !quick_look_open) p.hide();
     }
 
-    /// Call after the action itself is done.
+    /// Call after the action itself is done. The shell runs it a turn after
+    /// the panel asked, so the panel may have hidden since: then it stays
+    /// hidden, and ⌘V would land in whatever app took focus.
     pub fn settle(p: *Presence, a: panel.Action) void {
+        if (p.phase == .hidden) return;
         switch (a) {
             .open, .reveal, .copy, .hide => p.hide(),
             .show_search => p.search(true, true),

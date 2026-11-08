@@ -22,6 +22,27 @@ const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
 
+test "the search field sits at the same height whatever the panel's size" {
+    const compact = presence.panelFrame(screen, chrome.metrics.width, chrome.metrics.search_height);
+    const expanded = presence.panelFrame(screen, chrome.metrics.width, chrome.metrics.expanded_height);
+    const board = presence.panelFrame(screen, board_mod.board_metrics.width, board_mod.board_metrics.height);
+    try t.expectEqual(compact.y + compact.h, expanded.y + expanded.h);
+    try t.expectEqual(compact.y + compact.h, board.y + board.h);
+    try t.expectEqual(@as(f64, 642), compact.y + compact.h);
+    try t.expectEqual((screen.w - board.w) / 2, board.x);
+}
+
+test "search and the clipboard board share one size" {
+    try t.expectEqual(chrome.metrics.width, board_mod.board_metrics.width);
+    try t.expectEqual(chrome.metrics.expanded_height, board_mod.board_metrics.height);
+}
+
+test "a panel taller than the room under the field stays on screen" {
+    const short: permission.Rect = .{ .x = 0, .y = 25, .w = 1280, .h = 500 };
+    const f = presence.panelFrame(short, board_mod.board_metrics.width, 480);
+    try t.expectEqual(@as(f64, 25), f.y);
+}
+
 test "the guidance panel sits under System Settings, overlapping it" {
     const f = permission.anchorFrame(.{ .x = 400, .y = 300, .w = 640, .h = 480 }, null, screen);
     try t.expectEqual(permission.Rect{ .x = 530, .y = 210, .w = 380, .h = 110 }, f);
@@ -134,13 +155,13 @@ test "dismissing closes the panel and stops polling" {
 
 test "the guidance view offers the app card, then shows the grant" {
     var phase: permission.Phase = .guiding;
-    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Floodlight Nano" };
+    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Nanospot" };
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&g, permission.Guidance.view), .{ .width = 380, .height = 110 });
     defer tester.deinit();
     tester.settle(0.2);
-    try t.expect(tester.hasText("Drag Floodlight Nano into the Full Disk Access list"));
-    try t.expect(tester.hasText("Floodlight Nano"));
+    try t.expect(tester.hasText("Drag Nanospot into the Full Disk Access list"));
+    try t.expect(tester.hasText("Nanospot"));
     const card = g.card orelse return error.NoCard;
     try t.expect(card.w > 300 and card.h >= 30);
     phase = .granted;
@@ -215,6 +236,47 @@ test "a query finds apps and files, apps first" {
     try t.expectEqual(@as(usize, 0), (try cat.query(arena.allocator(), "  ")).len);
 }
 
+test "an app linked into the apps folder is listed, as Safari is" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Cryptex/Safari.app/Contents");
+    try tmp.dir.createDirPath(t.io, "Apps");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Cryptex/notes.txt", .data = "" });
+    try tmp.dir.symLink(t.io, "../Cryptex/Safari.app", "Apps/Safari.app", .{});
+    try tmp.dir.symLink(t.io, "../Cryptex/notes.txt", "Apps/Notes.app", .{});
+    try tmp.dir.symLink(t.io, "../Cryptex/Gone.app", "Apps/Gone.app", .{});
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const apps = try std.fs.path.join(t.allocator, &.{ root, "Apps" });
+    defer t.allocator.free(apps);
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try search.scanApps(&cat, t.io, apps);
+
+    try t.expectEqual(@as(usize, 1), cat.apps.items.len);
+    try t.expectEqualStrings("Safari", cat.apps.items[0].name);
+    try t.expectStringEndsWith(cat.apps.items[0].path, "/Apps/Safari.app");
+}
+
+test "an app whose name starts with the query outranks a folder named exactly the query" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Projects/cal");
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+
+    const rows = try cat.query(arena.allocator(), "cal");
+    try t.expectEqual(search.Kind.app, rows[0].kind);
+    try t.expectEqual(search.Kind.app, rows[1].kind);
+    try t.expectEqualStrings("cal", rows[2].title);
+    try t.expectEqual(search.Kind.folder, rows[2].kind);
+}
+
 fn appTitles(arena: std.mem.Allocator, cat: *const search.Catalog, text: []const u8) ![]const []const u8 {
     var titles: std.ArrayList([]const u8) = .empty;
     for (try cat.query(arena, text)) |r| if (r.kind == .app) try titles.append(arena, r.title);
@@ -282,6 +344,41 @@ const StubHooks = struct {
     }
 };
 
+fn clickText(tester: *ui.Tester, s: []const u8) !void {
+    const r = tester.findText(s) orelse return error.TextNotDrawn;
+    tester.click(r.x + r.w / 2, r.y + r.h / 2);
+    tester.settle(0.1);
+}
+
+test "the search footer counts the rows and opens, reveals or copies the selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    tester.typeText("cal");
+    tester.settle(0.2);
+
+    try t.expect(tester.hasText(tester.ctx.print("{d} results", .{p.list.visible.len})));
+    const path = p.list.selection().?.path;
+    try clickText(&tester, "Show in Finder");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).reveal);
+    p.pending = null;
+    try clickText(&tester, "Copy");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).copy.path);
+    p.pending = null;
+    try clickText(&tester, "Open");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).open);
+}
+
 fn countRows(rows: []const search.Row, kind: search.Kind) usize {
     var n: usize = 0;
     for (rows) |r| n += @intFromBool(r.kind == kind);
@@ -301,11 +398,11 @@ test "typing shows rows; Return opens the selected one; hiding keeps the session
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.2);
     try t.expectEqual(chrome.metrics.search_height, p.panelHeight());
-    try t.expect(tester.hasText("Floodlight"));
+    try t.expect(tester.hasText("Nanospot"));
     try t.expect(tester.hasText(panel_mod.summon_label));
 
     tester.typeText("cal");
@@ -317,7 +414,7 @@ test "typing shows rows; Return opens the selected one; hiding keeps the session
     try t.expect(tester.hasText("Application"));
     try t.expect(tester.hasText("Google"));
     try t.expect(!tester.hasText(panel_mod.summon_label));
-    try t.expectEqual(@as(f32, 521), p.panelHeight());
+    try t.expectEqual(chrome.metrics.expanded_height, p.panelHeight());
     try t.expect(hooks.requests > 0);
 
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.up }));
@@ -424,7 +521,7 @@ test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and a
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -470,7 +567,7 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -489,7 +586,10 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
     tester.settle(0.1);
     try t.expectEqual(@as(usize, 0), p.list.visible.len);
-    try t.expect(tester.hasText("No apps results for \u{201C}return\u{201D}"));
+    try t.expect(tester.hasText("No apps match \u{201C}return\u{201D}"));
+    try t.expect(tester.hasText("Press \u{2318}1 to search everything."));
+    try t.expectEqualStrings("PDFs", chrome.sentenceNoun(&tester.ctx, panel_mod.Filter.pdfs));
+    try t.expectEqualStrings("apps", chrome.sentenceNoun(&tester.ctx, panel_mod.Filter.apps));
 }
 
 test "Escape asks to hide" {
@@ -666,7 +766,7 @@ const CompletionFixture = struct {
         f.hooks = .{};
         f.p = panel_mod.Panel.init(t.allocator, &f.cat, null, f.hooks.hooks());
         errdefer f.p.deinit();
-        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         f.tester.settle(0.1);
     }
 
@@ -822,7 +922,7 @@ test "running a Selected-Result Action records its query across store restarts a
         var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
         defer p.deinit();
         var tester: ui.Tester = undefined;
-        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         defer tester.deinit();
         tester.settle(0.1);
 
@@ -845,7 +945,7 @@ test "running a Selected-Result Action records its query across store restarts a
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -962,7 +1062,7 @@ test "the board field completes from past board queries and skips queries matchi
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -1091,6 +1191,8 @@ test "rows name an entry's age, source and place" {
     try t.expectEqualStrings("Finder \u{00B7} 2m \u{00B7} Docs", file.subtitle(a, 1120));
     const img: clipboard.Entry = .{ .id = 2, .kind = .image, .text = "PNG Image", .created_at = 1000, .width = 3, .height = 4 };
     try t.expectEqualStrings("Clipboard \u{00B7} just now \u{00B7} 3\u{00D7}4", img.subtitle(a, 1001));
+    const shot: clipboard.Entry = .{ .id = 5, .kind = .image, .text = "Screenshot", .created_at = 1000, .source_name = "Screenshot", .width = 3, .height = 4 };
+    try t.expectEqualStrings("just now \u{00B7} 3\u{00D7}4", shot.subtitle(a, 1001));
     const text: clipboard.Entry = .{ .id = 3, .kind = .text, .text = "a\n\nb\u{2028}c ", .created_at = 0 };
     try t.expectEqualStrings("a b c", text.title(a));
     const blank: clipboard.Entry = .{ .id = 4, .kind = .text, .text = "\n\n", .created_at = 0 };
@@ -1671,7 +1773,7 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expect(tester.hasText("2 entries"));
     _ = tester.shortcut(.{ .key = '4', .cmd = true });
     tester.settle(1);
-    try t.expect(tester.hasText("No images clipboard entries"));
+    try t.expect(tester.hasText("No images copied yet"));
     _ = tester.shortcut(.{ .key = '1', .cmd = true });
     tester.settle(1);
 
@@ -1700,7 +1802,7 @@ test "the board lists history, inspects the selection, and filters" {
 
     tester.typeText("zzz");
     tester.settle(1);
-    try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
+    try t.expect(tester.hasText("No entries match \u{201C}zzz\u{201D}"));
 }
 
 test "⌫ on an empty board filter switches to search, and with text it edits the filter, never deleting an entry" {
@@ -1749,9 +1851,9 @@ test "⌫ on an empty board filter switches to search, and with text it edits th
     p.showSearch();
     tester.settle(1);
     try t.expectEqual(panel_mod.Mode.search, p.mode);
-    try t.expect(tester.hasText("Floodlight"));
+    try t.expect(tester.hasText("Nanospot"));
     try t.expect(!tester.hasText("Filter clipboard"));
-    try t.expect(p.panelWidth() != board_mod.board_metrics.width);
+    try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
 
     // The board's session went with it: ⌥⇧C opens a fresh board.
     p.showClipboard();
@@ -2239,7 +2341,8 @@ test "an empty history says so" {
     try f.init();
     defer f.deinit();
     try f.show();
-    try t.expect(f.tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
+    try t.expect(f.tester.hasText("Nothing copied yet"));
+    try t.expect(f.tester.hasText("Text, files and images you copy appear here."));
 }
 
 test "⌘. pins the selected entry, and the board shows it pinned at once" {
@@ -2293,7 +2396,7 @@ test "the injected clock advances board ages and pins, and forget clears both su
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -2353,7 +2456,7 @@ test "search retention selects the top row when the remembered path is gone, and
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2397,7 +2500,7 @@ test "a retained reopen keeps the last presented frame valid until what it shows
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
     try t.expect(!p.lastFrameValid());
@@ -2456,7 +2559,7 @@ test "a retained board's last frame stays valid within the minute its ages were 
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
@@ -2491,7 +2594,7 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2535,7 +2638,7 @@ test "board retention restores query, kind filter, and selection or selects the 
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -2598,7 +2701,7 @@ test "search and clipboard board sessions expire separately, and zero retention 
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2700,7 +2803,7 @@ test "the first frame after a keystroke does not wait for suggestions, and arriv
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2762,7 +2865,7 @@ test "YouTube, X and Grok rows follow Google and its suggestions and open that e
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2826,7 +2929,7 @@ test "Return on X and Grok opens their searches, and an engine row stays selecte
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2872,7 +2975,7 @@ test "an empty panel lists the apps opened most, recent ones first on a tie, and
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2920,7 +3023,7 @@ test "typing replaces the suggestions and clearing brings them back, the board s
         var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
         defer p.deinit();
         var tester: ui.Tester = undefined;
-        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         defer tester.deinit();
         tester.settle(0.1);
         openByQuery(&p, &tester, "alpha");
@@ -2938,7 +3041,7 @@ test "typing replaces the suggestions and clearing brings them back, the board s
     var p = panel_mod.Panel.init(t.allocator, &gone, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2978,7 +3081,7 @@ test "a late reply for an old query or superseded request is ignored, and an emp
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3020,7 +3123,7 @@ test "with the setting off, or for a Link Row, a path-like query, or Clipboard m
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3072,7 +3175,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3118,7 +3221,7 @@ test "the first web suggestion becomes the completion only when neither query hi
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3181,4 +3284,181 @@ test "Google suggestion URL encoding and Firefox JSON response parsing cap at fo
 
 test {
     _ = core;
+}
+
+fn fillAlphaBehind(tester: *ui.Tester, label: []const u8) ?f32 {
+    const nodes = tester.ctx.nodes.items;
+    for (nodes) |n| switch (n.content) {
+        .text => |tx| if (std.mem.eql(u8, tx.str, label)) {
+            var at = n.parent;
+            while (at < nodes.len) : (at = nodes[at].parent) {
+                if (nodes[at].style.background) |fill| return fill.a;
+            }
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn pointAt(tester: *ui.Tester, label: []const u8) !void {
+    const at = tester.findText(label) orelse return error.TextNotDrawn;
+    tester.moveTo(at.x + at.w / 2, at.y + at.h / 2);
+}
+
+test "a chip's fill deepens under the pointer and again while held, and a disabled chip's stays" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(2);
+    try f.show();
+    const tester = &f.tester;
+    inline for (.{ "Files", "Actions" }) |label| {
+        const rest = fillAlphaBehind(tester, label) orelse return error.TextNotDrawn;
+        try pointAt(tester, label);
+        const hovered = fillAlphaBehind(tester, label).?;
+        try t.expect(hovered > rest);
+        tester.ctx.pointerDown();
+        tester.frame();
+        try t.expect(fillAlphaBehind(tester, label).? > hovered);
+        tester.moveTo(1, 1);
+        tester.ctx.pointerUp();
+        tester.frame();
+        tester.frame();
+        try t.expectEqual(rest, fillAlphaBehind(tester, label).?);
+    }
+    const disabled = fillAlphaBehind(tester, "Preview") orelse return error.TextNotDrawn;
+    try pointAt(tester, "Preview");
+    try t.expectEqual(disabled, fillAlphaBehind(tester, "Preview").?);
+}
+
+test "a row's title is as wide selected as not, so moving the selection never cuts it anew" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const long = "a title long enough that the history list has to cut it short";
+    _ = try f.store.add(.{ .text = long ++ " one" }, "x", "Notes", 1000);
+    _ = try f.store.add(.{ .text = long ++ " two" }, "x", "Notes", 1001);
+    try f.show();
+    var widths: [2]f32 = undefined;
+    var n: usize = 0;
+    for (f.tester.ctx.nodes.items) |node| switch (node.content) {
+        .text => |tx| if (n < widths.len and tx.style.size == 15 and std.mem.startsWith(u8, tx.str, "a title")) {
+            widths[n] = node.rect.w;
+            n += 1;
+        },
+        else => {},
+    };
+    try t.expectEqual(widths.len, n);
+    try t.expectEqual(@as(usize, 0), f.p.board.list.selected);
+    try t.expectEqual(widths[0], widths[1]);
+}
+
+test "a copied app is an Application, and any other folder a Folder" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("Application", clipboard.fileType(a, "/System/Applications/Calendar.app", true));
+    try t.expectEqualStrings("Folder", clipboard.fileType(a, "/Users/me/Projects", true));
+}
+
+// The state machines' invariants, docs/state-machines.md. Each test names the
+// invalid state it once reached.
+
+test "a board action keeps the entry it named when a copy lands before the shell runs it" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "the entry the user chose" }, "x", "Notes", 1000);
+    try f.show();
+    f.tester.key(.enter);
+    const asked = (f.p.pending orelse return error.NoAction).clipboard.paste;
+    // The shell's capture tick, run before the shell's turn: an ⌘K menu's own run loop allows it.
+    _ = try f.store.add(.{ .text = "a copy from another app, longer than the first" }, "x", "Notes", 1001);
+    f.p.board.list.markStale();
+    f.p.refresh();
+    try t.expectEqualStrings("the entry the user chose", asked.text);
+}
+
+test "a search action keeps the row it named when the file rows land before the shell runs it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    // Over the budget: apps answer first, files land on the next turn.
+    p.file_search_s = 1;
+    tester.typeText("cal");
+    tester.settle(0.2);
+    try t.expect(p.files_due);
+    p.list.selected = p.list.visible.len - 1;
+    tester.key(.enter);
+    const asked = (p.pending orelse return error.NoAction).open;
+    const want = try t.allocator.dupe(u8, asked);
+    defer t.allocator.free(want);
+    p.landFiles();
+    try t.expectEqualStrings(want, asked);
+}
+
+test "an action settled after the panel already hid repeats no exit, sends no ⌘V, and summons nothing" {
+    const e: clipboard.Entry = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 };
+    const late = [_]panel_mod.Action{ .hide, .{ .open = "/a" }, .{ .clipboard = .{ .paste = e } }, .show_search };
+    for (late) |a| {
+        var spy: PresenceSpy = .{};
+        var p = shownPresence(&spy);
+        p.focusLost(false);
+        try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+        p.settle(a);
+        try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+        try t.expect(p.isHidden());
+    }
+}
+
+test "a copy stored while pinned entries alone fill the byte budget stays in history" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    store.budget = .{ .bytes = 3100, .entries = 100 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var pngs: [4][1000]u8 = undefined;
+    for (&pngs, 0..) |*png, i| {
+        @memset(png, @intCast('a' + i));
+        _ = try store.add(picture(png), "", "Preview", @floatFromInt(10 + i));
+        for (try store.list(a, "")) |e| if (e.pinned_at == null) try store.togglePin(e.id, @floatFromInt(20 + i));
+    }
+
+    try t.expect(try store.add(.{ .text = "just copied" }, "", "Notes", 100));
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expectEqualStrings("just copied", rows[4].text);
+}
+
+test "hiding again within the retention window arms no second expiry timer" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.showSearch();
+    p.field.set("notes");
+    p.hide();
+    try t.expect(p.armExpiry() != null);
+    hooks.clock.advance(60);
+    p.showSearch();
+    p.hide();
+    try t.expect(p.armExpiry() == null);
+    // The pending timer fires: its turn arms the next one.
+    p.disarmExpiry();
+    try t.expect(!p.expire());
+    try t.expect(p.armExpiry() != null);
 }

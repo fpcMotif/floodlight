@@ -75,6 +75,9 @@ pub const App = struct {
 
 /// Apps outrank files that score the same: a launcher's first job.
 pub const app_bonus: i32 = 60;
+/// Lifts an app the query begins to level with a file named exactly the
+/// query, so "cal" opens Calendar, not a folder called cal.
+pub const app_prefix_bonus: i32 = core.match.bonus_exact_name - core.match.bonus_name_prefix;
 pub const max_rows = 80;
 pub const max_suggestions = 4;
 /// Apps listed under Suggestions on an empty query: ⌘2 to ⌘6 plus the selected first row.
@@ -116,6 +119,7 @@ pub const Catalog = struct {
         apps: for (cat.apps.items) |a| {
             var s: i32 = 0;
             for (0..terms.n) |i| s += core.match.score(a.name, terms.term(i), 0) orelse continue :apps;
+            if (std.ascii.startsWithIgnoreCase(a.name, trimmed)) s += app_prefix_bonus;
             try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 
@@ -331,7 +335,14 @@ pub fn scanApps(cat: *Catalog, io: std.Io, folder: []const u8) !void {
     defer dir.close(io);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
-        if (entry.kind != .directory or !std.mem.endsWith(u8, entry.name, ".app")) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".app")) continue;
+        // Safari is a link into the system's sealed volume, not a folder here.
+        const bundle = switch (entry.kind) {
+            .directory => true,
+            .sym_link => if (dir.statFile(io, entry.name, .{})) |st| st.kind == .directory else |_| false,
+            else => false,
+        };
+        if (!bundle) continue;
         try cat.addApp(try std.fs.path.join(cat.gpa, &.{ folder, entry.name }));
     }
 }

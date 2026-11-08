@@ -1,0 +1,25 @@
+{
+  "time_limit": "5s",
+  "trace_lines": 122,
+  "trace_bytes": 89983531,
+  "action_states": 121,
+  "violations": 0,
+  "actions": {
+    "query-alpha": 32,
+    "put-unicode": 8,
+    "query-empty": 9,
+    "init": 32,
+    "remove-unicode": 6,
+    "query-unicode": 17,
+    "put-before-rename_and_rename-unicode": 6,
+    "rebuild": 2,
+    "quiesce": 6,
+    "observe": 3
+  },
+  "geometry": {
+    "columns": 300,
+    "rows": 16,
+    "scrollback_lines_max": 5,
+    "quiescence_timeout_ms": 20
+  }
+}

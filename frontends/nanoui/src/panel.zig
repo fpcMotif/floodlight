@@ -198,18 +198,24 @@ pub const Panel = struct {
     composing: bool = false,
     completion: ?Completion = null,
     completion_buf: [512]u8 = undefined,
+    /// Its bytes live in `action_arena`, not the rows': the shell runs it on
+    /// a later turn, after a capture or an index swap may have queried again.
     pending: ?Action = null,
+    action_arena: std.heap.ArenaAllocator,
+    /// The shell's expiry timer is pending; it keeps at most one.
+    expiry_armed: bool = false,
     presented_key: ?u64 = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .list = .init(gpa), .board = .init(gpa, store, hooks.clock), .frequent_arena = .init(gpa) };
+        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .list = .init(gpa), .board = .init(gpa, store, hooks.clock), .frequent_arena = .init(gpa), .action_arena = .init(gpa) };
     }
 
     pub fn deinit(p: *Panel) void {
         const gpa = p.list.arena.child_allocator;
         p.frequent_arena.deinit();
+        p.action_arena.deinit();
         p.retained_search.deinit(gpa);
         p.retained_board.deinit(gpa);
         p.board.deinit();
@@ -333,6 +339,20 @@ pub const Panel = struct {
         const due = earliest orelse return null;
         const rem_s = @max(0.0, due - p.clock.now());
         return @intFromFloat(@ceil(rem_s * 1000.0) + 1.0);
+    }
+
+    /// The delay for the shell's expiry timer; null when one is already
+    /// pending or nothing is retained. A later expiry is never earlier.
+    pub fn armExpiry(p: *Panel) ?u32 {
+        if (p.expiry_armed) return null;
+        const ms = p.nextExpiryMs() orelse return null;
+        p.expiry_armed = true;
+        return ms;
+    }
+
+    /// The expiry timer fired; call before `expire`.
+    pub fn disarmExpiry(p: *Panel) void {
+        p.expiry_armed = false;
     }
 
     /// Records the active surface's state for the retention window, or
@@ -867,7 +887,11 @@ pub const Panel = struct {
 
     fn ask(p: *Panel, a: Action) void {
         p.recordActionQuery(a);
-        p.pending = a;
+        _ = p.action_arena.reset(.retain_capacity);
+        p.pending = ownedAction(p.action_arena.allocator(), a) catch |err| {
+            std.log.err("action: {s}", .{@errorName(err)});
+            return;
+        };
         p.hooks.request(p.hooks.ctx);
     }
 
@@ -949,18 +973,18 @@ pub const Panel = struct {
         if (p.mode == .clipboard) {
             const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
             if (p.board.view(c, cx)) |a| p.ask(.{ .clipboard = a });
-        } else if (p.field.text().len > 0) {
-            ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
-            p.filterBar(c);
-            p.resultList(c);
-        } else if (p.list.visible.len > 0) {
-            ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
-            {
+        } else if (p.field.text().len > 0 or p.list.visible.len > 0) {
+            const well = chrome.well(c);
+            defer well.end();
+            if (p.field.text().len > 0) {
+                p.filterBar(c);
+            } else {
                 const bar = chrome.filterBar(c);
                 defer bar.end();
                 ui.text(c, "Suggestions", .{ .size = 12, .weight = .semibold, .color = c.theme.muted });
             }
             p.resultList(c);
+            p.footer(c);
         }
         const want_h = p.panelHeight();
         const want_w = p.panelWidth();
@@ -993,7 +1017,7 @@ pub const Panel = struct {
         const board = p.mode == .clipboard;
         p.observeInput(c);
         const suggestion = if (p.completion) |comp| comp.suffix else "";
-        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Floodlight", .size = 24, .width = .fill, .bare = true, .suggestion = suggestion });
+        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Nanospot", .size = 24, .width = .fill, .bare = true, .suggestion = suggestion });
         if (r.accepted) p.suppressed_by_backspace = false;
         if (board) {
             p.boardField(r);
@@ -1005,8 +1029,9 @@ pub const Panel = struct {
         if (p.field.text().len > 0) {
             const clear = ui.div(c).w(24).h(24).center().control();
             defer clear.end();
-            const hovered = clear.hovered();
-            ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = if (hovered) th.text else th.muted });
+            const it = c.interact(clear.index, .{});
+            const color = if (it.pressed) th.text.alpha(0.7) else if (it.hovered) th.text else th.muted;
+            ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = color });
             if (clear.clicked()) p.clearField();
         } else chrome.keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
     }
@@ -1050,17 +1075,33 @@ pub const Panel = struct {
 
     fn resultList(p: *Panel, c: *ui.Context) void {
         if (p.list.visible.len == 0) {
-            const message = if (p.list.failed)
-                c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()})
+            const f = p.list.filter;
+            const message: chrome.Empty = if (p.list.failed)
+                .{ .symbol = "exclamationmark.triangle", .title = c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()}) }
             else
-                c.print("No {s} results for \u{201C}{s}\u{201D}", .{ chrome.lowerTitle(c, p.list.filter), p.field.text() });
-            return chrome.emptyState(c, metrics.list_height, message, false);
+                .{
+                    .symbol = f.symbol(),
+                    .title = c.print("No {s} match \u{201C}{s}\u{201D}", .{ chrome.sentenceNoun(c, f), p.field.text() }),
+                    .hint = if (f == .all) null else "Press \u{2318}1 to search everything.",
+                };
+            return chrome.emptyState(c, metrics.list_height, message);
         }
         const box = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
         defer box.end();
         chrome.boundOverscroll(c, box.id());
         chrome.revealSelection(c, &p.list, box.id(), metrics.list_height - 2 * metrics.row_padding);
         for (p.list.visible, 0..) |row, i| p.rowView(c, row, i);
+    }
+
+    fn footer(p: *Panel, c: *ui.Context) void {
+        const n = p.list.visible.len;
+        const bar = chrome.footerBar(c, c.print("{d} {s}", .{ n, if (n == 1) "result" else "results" }));
+        defer bar.end();
+        const row = p.list.selection();
+        if (chrome.footerChip(c, "Open", "↵", row != null)) p.ask(.{ .open = row.?.path });
+        const revealable = if (row) |r| r.kind != .web else false;
+        if (chrome.footerChip(c, "Show in Finder", "⌘↵", revealable)) p.ask(.{ .reveal = row.?.path });
+        if (chrome.footerChip(c, "Copy", "⌘C", row != null)) p.ask(.{ .copy = row.? });
     }
 
     fn rowView(p: *Panel, c: *ui.Context, row: search.Row, i: usize) void {
@@ -1095,11 +1136,12 @@ pub const Panel = struct {
             }
             p.subtitleLine(c, row, top_hit);
         }
-        if (selected) {
-            chrome.keyChip(c, .{ .symbol = "return" });
-        } else if (p.field.text().len == 0 and i > 0 and i < search.max_suggested_apps) {
-            chrome.keyChip(c, .{ .label = c.print("\u{2318}{d}", .{i + 1}) });
-        }
+        chrome.rowKey(c, if (selected)
+            .enter
+        else if (p.field.text().len == 0 and i > 0 and i < search.max_suggested_apps)
+            .{ .label = c.print("\u{2318}{d}", .{i + 1}) }
+        else
+            .none);
     }
 
     /// The part of a suggestion past the typed query is bold.
@@ -1233,6 +1275,47 @@ fn copyRows(a: std.mem.Allocator, rows: []const search.Row) ![]const search.Row 
         r.subtitle = try a.dupe(u8, r.subtitle);
         r.path = try a.dupe(u8, r.path);
     }
+    return out;
+}
+
+/// `a` with every byte it points at copied into `arena`.
+fn ownedAction(arena: std.mem.Allocator, a: Action) !Action {
+    return switch (a) {
+        .open => |path| .{ .open = try arena.dupe(u8, path) },
+        .reveal => |path| .{ .reveal = try arena.dupe(u8, path) },
+        .copy => |row| .{ .copy = try ownedRow(arena, row) },
+        .hide, .show_search => a,
+        .clipboard => |b| .{ .clipboard = switch (b) {
+            .paste => |e| .{ .paste = try ownedEntry(arena, e) },
+            .copy => |e| .{ .copy = try ownedEntry(arena, e) },
+            .preview => |e| .{ .preview = try ownedEntry(arena, e) },
+            .actions => |e| .{ .actions = try ownedEntry(arena, e) },
+            .open => |url| .{ .open = try arena.dupe(u8, url) },
+            .reveal => |path| .{ .reveal = try arena.dupe(u8, path) },
+        } },
+    };
+}
+
+fn ownedRow(arena: std.mem.Allocator, r: search.Row) !search.Row {
+    var out = r;
+    out.title = try arena.dupe(u8, r.title);
+    out.subtitle = try arena.dupe(u8, r.subtitle);
+    out.path = try arena.dupe(u8, r.path);
+    return out;
+}
+
+fn ownedEntry(arena: std.mem.Allocator, e: clipboard.Entry) !clipboard.Entry {
+    var out = e;
+    out.text = try arena.dupe(u8, e.text);
+    out.source = try arena.dupe(u8, e.source);
+    out.source_name = try arena.dupe(u8, e.source_name);
+    out.thumbnail = try arena.dupe(u8, e.thumbnail);
+    out.content = switch (e.content) {
+        .plain, .color => e.content,
+        .link => |d| .{ .link = try arena.dupe(u8, d) },
+        .code => |lang| .{ .code = try arena.dupe(u8, lang) },
+        .path => |path| .{ .path = try arena.dupe(u8, path) },
+    };
     return out;
 }
 
