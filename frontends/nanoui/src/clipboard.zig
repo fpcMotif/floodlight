@@ -7,6 +7,8 @@ pub const Kind = enum { text, file, image };
 /// What a text entry holds, decided from its characters alone.
 pub const Content = enum { plain, link, color, code, path };
 
+pub const QueryScope = enum { search, clipboard };
+
 pub const Entry = struct {
     id: i64,
     kind: Kind,
@@ -20,6 +22,11 @@ pub const Entry = struct {
     height: u32 = 0,
     byte_count: u64 = 0,
     thumbnail: []const u8 = "",
+    sensitive: bool = false,
+
+    pub fn isSensitive(e: Entry) bool {
+        return e.sensitive or isSensitiveSource(e.source, e.source_name);
+    }
 
     pub fn content(e: Entry) Content {
         return if (e.kind == .text) classify(e.text) else .plain;
@@ -55,6 +62,39 @@ pub const Entry = struct {
         return std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ head, d }) catch head;
     }
 };
+
+const sensitive_source_markers = [_][]const u8{
+    "1password",
+    "onepassword",
+    "passwords",
+    "keychain",
+    "bitwarden",
+    "keepass",
+    "dashlane",
+    "lastpass",
+    "enpass",
+    "proton.pass",
+    "proton pass",
+    "concealed",
+    "sensitive",
+};
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+pub fn isSensitiveSource(source: []const u8, source_name: []const u8) bool {
+    for (sensitive_source_markers) |m| {
+        if (containsIgnoreCase(source, m) or containsIgnoreCase(source_name, m)) return true;
+    }
+    return false;
+}
 
 pub fn classify(text: []const u8) Content {
     const t = std.mem.trim(u8, text, " \t\r\n");
@@ -271,7 +311,7 @@ pub const max_text_bytes = 32_000;
 pub const max_image_bytes = 15 * 1024 * 1024;
 pub const retention_days = 30;
 pub const compact_after_days = 7;
-pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000 };
+pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000, queries: u32 = 1000 };
 pub const Compactor = *const fn (arena: std.mem.Allocator, png: []const u8) ?[]const u8;
 const window = 1000;
 const search_limit = 200;
@@ -325,10 +365,20 @@ const schema =
     \\  png BLOB,
     \\  image_format TEXT NOT NULL DEFAULT '',
     \\  stored_bytes INTEGER NOT NULL DEFAULT 0,
-    \\  compacted INTEGER NOT NULL DEFAULT 0);
+    \\  compacted INTEGER NOT NULL DEFAULT 0,
+    \\  sensitive INTEGER NOT NULL DEFAULT 0);
     \\CREATE INDEX IF NOT EXISTS entries_created ON entries(created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_pinned ON entries(pinned_at);
     \\CREATE INDEX IF NOT EXISTS entries_hash ON entries(hash);
+    \\CREATE TABLE IF NOT EXISTS queries(
+    \\  id INTEGER PRIMARY KEY,
+    \\  scope TEXT NOT NULL,
+    \\  norm TEXT NOT NULL,
+    \\  query TEXT NOT NULL,
+    \\  uses INTEGER NOT NULL DEFAULT 1,
+    \\  last_used REAL NOT NULL,
+    \\  UNIQUE(scope, norm));
+    \\CREATE INDEX IF NOT EXISTS queries_scope_norm ON queries(scope, norm);
     \\CREATE TEMP TABLE IF NOT EXISTS released(hash BLOB);
 ;
 
@@ -336,13 +386,14 @@ const columns_added_since_inline_images = [_][:0]const u8{
     "ALTER TABLE entries ADD COLUMN image_format TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE entries ADD COLUMN stored_bytes INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE entries ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE entries ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0",
 };
 
 const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail";
+const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, sensitive";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
@@ -553,10 +604,11 @@ pub const Store = struct {
         const img: Capture.Image = if (cap == .image) cap.image else .{ .name = "", .png = "", .thumbnail = "", .width = 0, .height = 0 };
         const in_file = cap == .image and s.images != null;
         if (in_file) try s.writeImage(&hash, "png", img.png);
-        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, png, image_format, stored_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
+        const sensitive: i64 = @intFromBool(isSensitiveSource(source, source_name));
+        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, png, image_format, stored_bytes, sensitive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
             @tagName(kind),                                  text,                       now,                                                 source,                                              source_name,
             @as(i64, img.width),                             @as(i64, img.height),       @as(i64, @intCast(img.png.len)),                     Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
-            Blob{ .bytes = if (in_file) null else img.png }, if (in_file) "png" else "", @as(i64, if (in_file) @intCast(img.png.len) else 0),
+            Blob{ .bytes = if (in_file) null else img.png }, if (in_file) "png" else "", @as(i64, if (in_file) @intCast(img.png.len) else 0), sensitive,
         });
         try s.keepWithinBudget();
         return true;
@@ -595,6 +647,7 @@ pub const Store = struct {
                 .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
                 .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
                 .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
+                .sensitive = lite.sqlite3_column_int64(stmt, 11) != 0,
             });
         }
         return out.items;
@@ -624,6 +677,43 @@ pub const Store = struct {
     pub fn prune(s: Store, now: f64, days: u32) !void {
         try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
         try s.keepWithinBudget();
+    }
+
+    pub fn recordQuery(s: Store, scope: QueryScope, raw: []const u8, now: f64) !void {
+        const q = std.mem.trim(u8, raw, " \t\r\n");
+        if (q.len == 0 or q.len > max_text_bytes) return;
+        try s.run(
+            "INSERT INTO queries(scope, norm, query, uses, last_used) VALUES(?, lower(?), ?, 1, ?) " ++
+                "ON CONFLICT(scope, norm) DO UPDATE SET query = excluded.query, uses = queries.uses + 1, last_used = excluded.last_used",
+            .{ @tagName(scope), q, q, now },
+        );
+        try s.run(
+            "DELETE FROM queries WHERE id NOT IN (SELECT id FROM queries ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT ?)",
+            .{ now, @as(i64, s.budget.queries) },
+        );
+    }
+
+    pub fn completeQuery(s: Store, buf: []u8, scope: QueryScope, prefix: []const u8, now: f64) ?[]const u8 {
+        if (prefix.len == 0 or prefix.len >= buf.len) return null;
+        const stmt = s.prepare(
+            "SELECT query FROM queries WHERE scope = ? AND length(norm) > length(?) AND substr(norm, 1, length(?)) = lower(?) " ++
+                "ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT 1",
+        ) catch return null;
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{ @tagName(scope), prefix, prefix, prefix, now });
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
+        const q = columnText(stmt, 0);
+        if (q.len <= prefix.len or q.len > buf.len or !std.ascii.startsWithIgnoreCase(q, prefix)) return null;
+        @memcpy(buf[0..q.len], q);
+        return buf[0..q.len];
+    }
+
+    pub fn clearQueries(s: Store) !void {
+        try s.run("DELETE FROM queries", .{});
+    }
+
+    pub fn queryCount(s: Store) usize {
+        return @intCast(s.int("SELECT count(*) FROM queries", .{}) orelse 0);
     }
 };
 

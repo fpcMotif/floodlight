@@ -38,6 +38,7 @@ pub const Row = struct {
     score: i32,
     size: ?u64 = null,
     modified: ?i64 = null,
+    suggestion: bool = false,
 
     pub fn extension(r: Row) []const u8 {
         if (r.kind != .file) return "";
@@ -47,6 +48,7 @@ pub const Row = struct {
 };
 
 pub const web_search_url = "https://www.google.com/search?q=";
+pub const web_suggest_url = "https://suggestqueries.google.com/complete/search?client=firefox&q=";
 
 pub const App = struct {
     /// The bundle's name without `.app`.
@@ -57,6 +59,7 @@ pub const App = struct {
 /// Apps outrank files that score the same: a launcher's first job.
 pub const app_bonus: i32 = 60;
 pub const max_rows = 80;
+pub const max_suggestions = 4;
 
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
@@ -168,14 +171,38 @@ fn stamp(arena: std.mem.Allocator, r: *Row) void {
 }
 
 pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, web_search_url, query);
+}
+
+pub fn webSuggestUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, web_suggest_url, query);
+}
+
+fn buildQueryUrl(arena: std.mem.Allocator, prefix: []const u8, query: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(arena, web_search_url);
+    try out.appendSlice(arena, prefix);
     for (query) |b| {
         if (std.ascii.isAlphanumeric(b) or b == '-' or b == '.' or b == '_' or b == '~') {
             try out.append(arena, b);
         } else {
             try out.print(arena, "%{X:0>2}", .{b});
         }
+    }
+    return out.items;
+}
+
+pub fn parseSuggestions(arena: std.mem.Allocator, body: []const u8) [][]const u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, arena, body, .{}) catch return &.{};
+    defer parsed.deinit();
+    if (parsed.value != .array or parsed.value.array.items.len < 2) return &.{};
+    const second = parsed.value.array.items[1];
+    if (second != .array) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (second.array.items) |item| {
+        if (item != .string or item.string.len == 0) continue;
+        const copy = arena.dupe(u8, item.string) catch break;
+        out.append(arena, copy) catch break;
+        if (out.items.len == max_suggestions) break;
     }
     return out.items;
 }
