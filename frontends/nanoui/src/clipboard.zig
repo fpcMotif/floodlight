@@ -17,6 +17,11 @@ pub const Content = union(enum) {
 
 pub const QueryScope = enum { search, clipboard };
 
+/// How many apps' open counts the store keeps; the lowest-ranked go first.
+const max_app_opens = 500;
+/// Frequency discounted by an hour of age each, the ranking Query History uses.
+const app_open_rank = "(CAST(opens AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0))";
+
 pub const Entry = struct {
     id: i64,
     kind: Kind,
@@ -532,6 +537,10 @@ const schema =
     \\  last_used REAL NOT NULL,
     \\  UNIQUE(scope, norm));
     \\CREATE INDEX IF NOT EXISTS queries_scope_norm ON queries(scope, norm);
+    \\CREATE TABLE IF NOT EXISTS app_opens(
+    \\  path TEXT PRIMARY KEY,
+    \\  opens INTEGER NOT NULL DEFAULT 1,
+    \\  last_used REAL NOT NULL);
     \\CREATE TEMP TABLE IF NOT EXISTS released(hash BLOB);
 ;
 
@@ -892,6 +901,33 @@ pub const Store = struct {
 
     pub fn clearQueries(s: Store) !void {
         try s.run("DELETE FROM queries", .{});
+    }
+
+    pub fn recordAppOpen(s: Store, path: []const u8, now: f64) !void {
+        if (path.len == 0 or path.len > std.fs.max_path_bytes) return;
+        try s.run(
+            "INSERT INTO app_opens(path, opens, last_used) VALUES(?, 1, ?) " ++
+                "ON CONFLICT(path) DO UPDATE SET opens = app_opens.opens + 1, last_used = excluded.last_used",
+            .{ path, now },
+        );
+        try s.run(
+            "DELETE FROM app_opens WHERE path NOT IN (SELECT path FROM app_opens ORDER BY " ++ app_open_rank ++ " DESC, last_used DESC LIMIT ?)",
+            .{ now, @as(i64, max_app_opens) },
+        );
+    }
+
+    /// Paths of the most-opened apps, best first, copied into `arena`.
+    pub fn topApps(s: Store, arena: std.mem.Allocator, limit: usize, now: f64) ![]const []const u8 {
+        const stmt = try s.prepare("SELECT path FROM app_opens ORDER BY " ++ app_open_rank ++ " DESC, last_used DESC LIMIT ?");
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{ now, @as(i64, @intCast(limit)) });
+        var out: std.ArrayList([]const u8) = .empty;
+        while (lite.sqlite3_step(stmt) == lite.row) try out.append(arena, try arena.dupe(u8, columnText(stmt, 0)));
+        return out.items;
+    }
+
+    pub fn clearAppOpens(s: Store) !void {
+        try s.run("DELETE FROM app_opens", .{});
     }
 
     pub fn queryCount(s: Store) usize {

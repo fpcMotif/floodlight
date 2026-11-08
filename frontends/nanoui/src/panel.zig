@@ -178,6 +178,12 @@ pub const Panel = struct {
     /// The catalog's rows for the answered query, before web suggestions.
     base_rows: []const search.Row = &.{},
     suggestions: []const []const u8 = &.{},
+    /// The apps listed on an empty query, ready before the hot key lands;
+    /// rebuilt only when a count or the app catalog changes.
+    frequent_rows: []const search.Row = &.{},
+    frequent_arena: std.heap.ArenaAllocator,
+    frequent_dirty: bool = true,
+    frequent_catalog_len: usize = 0,
     suggest_seq: u64 = 0,
     pending_suggest_seq: u64 = 0,
     pending_suggest_query: std.ArrayList(u8) = .empty,
@@ -197,11 +203,12 @@ pub const Panel = struct {
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .list = .init(gpa), .board = .init(gpa, store, hooks.clock) };
+        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .list = .init(gpa), .board = .init(gpa, store, hooks.clock), .frequent_arena = .init(gpa) };
     }
 
     pub fn deinit(p: *Panel) void {
         const gpa = p.list.arena.child_allocator;
+        p.frequent_arena.deinit();
         p.retained_search.deinit(gpa);
         p.retained_board.deinit(gpa);
         p.board.deinit();
@@ -263,6 +270,7 @@ pub const Panel = struct {
             return;
         }
         p.forgetSearch();
+        p.loadFrequentApps();
     }
 
     fn saveSearch(p: *Panel, now: f64) void {
@@ -332,6 +340,8 @@ pub const Panel = struct {
         p.pending = null;
         const now = p.clock.now();
         p.expireAt(now);
+        // Rebuilt while hidden, so the next summon only copies it.
+        _ = p.frequentApps();
         if (p.retention_seconds <= 0) {
             p.forget();
             p.hidden = true;
@@ -363,6 +373,7 @@ pub const Panel = struct {
             p.list.reveal = true;
         } else {
             p.forgetSearch();
+            p.loadFrequentApps();
             p.field.focus();
         }
         p.height = p.panelHeight();
@@ -464,7 +475,7 @@ pub const Panel = struct {
 
     pub fn panelHeight(p: *const Panel) f32 {
         if (p.mode == .clipboard) return board_mod.board_metrics.height;
-        return if (p.field.text().len == 0) metrics.search_height else metrics.expanded_height;
+        return if (p.field.text().len == 0 and p.list.visible.len == 0) metrics.search_height else metrics.expanded_height;
     }
 
     pub fn panelWidth(p: *const Panel) f32 {
@@ -540,7 +551,9 @@ pub const Panel = struct {
     fn answer(p: *Panel, text: []const u8, force_files: bool) !bool {
         const a = p.list.beginQuery(text);
         p.files_due = false;
-        if (p.catalog.files == null) {
+        if (text.len == 0) {
+            p.base_rows = try copyRows(a, p.frequentApps());
+        } else if (p.catalog.files == null) {
             p.base_rows = try p.catalog.query(a, text);
         } else if (force_files or p.file_search_s <= file_search_budget_s) {
             const started = p.clock.now();
@@ -774,6 +787,59 @@ pub const Panel = struct {
         return null;
     }
 
+    /// Up to `search.max_suggested_apps` most-opened apps still in the catalog.
+    fn frequentApps(p: *Panel) []const search.Row {
+        const store = p.store orelse return &.{};
+        if (!p.frequent_dirty and p.frequent_catalog_len == p.catalog.apps.items.len) return p.frequent_rows;
+        _ = p.frequent_arena.reset(.retain_capacity);
+        p.frequent_rows = &.{};
+        p.frequent_dirty = false;
+        p.frequent_catalog_len = p.catalog.apps.items.len;
+        const a = p.frequent_arena.allocator();
+        const paths = store.topApps(a, search.max_suggested_apps * 2, p.clock.now()) catch |err| {
+            std.log.err("frequent apps: {s}", .{@errorName(err)});
+            p.frequent_dirty = true;
+            return &.{};
+        };
+        var rows: std.ArrayList(search.Row) = .empty;
+        for (paths) |path| {
+            for (p.catalog.apps.items) |app| {
+                if (!std.mem.eql(u8, app.path, path)) continue;
+                rows.append(a, .{
+                    .kind = .app,
+                    .title = app.name,
+                    .subtitle = std.fs.path.dirname(path) orelse "/",
+                    .path = path,
+                    .score = 0,
+                }) catch return &.{};
+                break;
+            }
+            if (rows.items.len == search.max_suggested_apps) break;
+        }
+        p.frequent_rows = rows.items;
+        return p.frequent_rows;
+    }
+
+    /// Fills an empty search field with the frequent apps.
+    fn loadFrequentApps(p: *Panel) void {
+        if (p.mode != .search or p.field.text().len != 0) return;
+        p.list.markStale();
+        p.refresh();
+    }
+
+    fn recordAppOpen(p: *Panel, path: []const u8) void {
+        if (!std.mem.endsWith(u8, path, ".app")) return;
+        const store = p.store orelse return;
+        store.recordAppOpen(path, p.clock.now()) catch |err| return std.log.err("frequent apps: {s}", .{@errorName(err)});
+        p.frequent_dirty = true;
+    }
+
+    pub fn clearAppOpens(p: *Panel) void {
+        if (p.store) |store| store.clearAppOpens() catch |err| std.log.err("frequent apps: {s}", .{@errorName(err)});
+        p.frequent_dirty = true;
+        p.loadFrequentApps();
+    }
+
     pub fn clearQueryHistory(p: *Panel) void {
         if (p.store) |store| store.clearQueries() catch |err| std.log.err("query history: {s}", .{@errorName(err)});
         p.completion = p.computeCompletion();
@@ -795,7 +861,7 @@ pub const Panel = struct {
     }
 
     pub fn isTopHit(p: *const Panel, i: usize) bool {
-        return i == 0 and p.list.visible.len > 0 and p.list.filter == .all;
+        return i == 0 and p.list.visible.len > 0 and p.list.filter == .all and p.field.text().len > 0;
     }
 
     fn ask(p: *Panel, a: Action) void {
@@ -806,6 +872,7 @@ pub const Panel = struct {
 
     fn recordActionQuery(p: *Panel, a: Action) void {
         const store = p.store orelse return;
+        if (a == .open) p.recordAppOpen(a.open);
         const scope: clipboard.QueryScope = switch (a) {
             .open, .reveal, .copy => .search,
             .clipboard => |ba| switch (ba) {
@@ -832,6 +899,7 @@ pub const Panel = struct {
         const S = ui.Shortcut;
         if (c.shortcut(.{ .key = S.escape })) return p.ask(.hide);
         if (c.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true })) return p.clearQueryHistory();
+        if (c.shortcut(.{ .key = 0x7f, .cmd = true, .alt = true })) return p.clearAppOpens();
         if (p.completion) |comp| {
             if (c.shortcut(.{ .key = S.right }) or c.shortcut(.{ .key = S.tab }) or takeFieldKey(c, .right, false, .move_right) or takeFieldKey(c, .tab, false, .insert_tab)) {
                 p.acceptSlice(comp.suffix);
@@ -845,6 +913,13 @@ pub const Panel = struct {
         if (p.mode == .clipboard) {
             if (p.board.keys(c, p.field.text().len == 0)) |a| p.ask(.{ .clipboard = a });
             return;
+        }
+        if (p.field.text().len == 0) {
+            for (2..search.max_suggested_apps + 1) |n| {
+                if (!c.shortcut(.{ .key = '0' + @as(u21, @intCast(n)), .cmd = true })) continue;
+                if (n <= p.list.visible.len) p.ask(.{ .open = p.list.visible[n - 1].path });
+                return;
+            }
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
@@ -867,6 +942,14 @@ pub const Panel = struct {
         } else if (p.field.text().len > 0) {
             ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
             p.filterBar(c);
+            p.resultList(c);
+        } else if (p.list.visible.len > 0) {
+            ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
+            {
+                const bar = chrome.filterBar(c);
+                defer bar.end();
+                ui.text(c, "Suggestions", .{ .size = 12, .weight = .semibold, .color = c.theme.muted });
+            }
             p.resultList(c);
         }
         const want_h = p.panelHeight();
@@ -1002,7 +1085,11 @@ pub const Panel = struct {
             }
             p.subtitleLine(c, row, top_hit);
         }
-        if (selected) chrome.keyChip(c, .{ .symbol = "return" });
+        if (selected) {
+            chrome.keyChip(c, .{ .symbol = "return" });
+        } else if (p.field.text().len == 0 and i > 0 and i < search.max_suggested_apps) {
+            chrome.keyChip(c, .{ .label = c.print("\u{2318}{d}", .{i + 1}) });
+        }
     }
 
     /// The part of a suggestion past the typed query is bold.
@@ -1116,6 +1203,16 @@ fn hashValue(h: *std.hash.Wyhash, v: anytype) void {
 fn hashBytes(h: *std.hash.Wyhash, s: []const u8) void {
     hashValue(h, s.len);
     h.update(s);
+}
+
+/// The list outlives the frequent-apps cache's rebuilds, so it owns its rows.
+fn copyRows(a: std.mem.Allocator, rows: []const search.Row) ![]const search.Row {
+    const out = try a.dupe(search.Row, rows);
+    for (out) |*r| {
+        r.subtitle = try a.dupe(u8, r.subtitle);
+        r.path = try a.dupe(u8, r.path);
+    }
+    return out;
 }
 
 fn isPathLike(s: []const u8) bool {

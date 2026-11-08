@@ -77,6 +77,8 @@ pub const App = struct {
 pub const app_bonus: i32 = 60;
 pub const max_rows = 80;
 pub const max_suggestions = 4;
+/// Apps listed under Suggestions on an empty query: ⌘2 to ⌘6 plus the selected first row.
+pub const max_suggested_apps = 6;
 
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
