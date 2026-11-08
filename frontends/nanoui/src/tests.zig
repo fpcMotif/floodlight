@@ -1694,17 +1694,118 @@ test "the board lists history, inspects the selection, and filters" {
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("2 entries"));
-    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
+    _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("1 entry"));
 
     tester.typeText("zzz");
     tester.settle(1);
     try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
-    // ⌫ on the board deletes entries only, never the filter's text.
-    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
+}
+
+test "⌫ on an empty board filter switches to search, and with text it edits the filter, never deleting an entry" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(3);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
+
+    tester.typeText("entry");
     tester.settle(1);
+    tester.textOps(&.{.{ .command = .delete_backward }});
+    tester.settle(1);
+    try t.expectEqualStrings("entr", p.field.text());
+    try t.expect(tester.hasText("3 entries"));
+    try t.expect(p.pending == null);
+
+    for (0..4) |_| tester.textOps(&.{.{ .command = .delete_backward }});
+    tester.settle(1);
+    try t.expectEqualStrings("", p.field.text());
+    try t.expect(p.pending == null);
+
+    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .alt = true }));
+    tester.textOps(&.{.{ .command = .delete_word_backward }});
+    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .cmd = true }));
+    tester.textOps(&.{.{ .command = .delete_to_line_start }});
+    try t.expect(p.pending == null);
+    // Unfocused, AppKit hands ⌥⌫ and ⌘⌫ over as the bare key, modifiers held.
+    tester.setMods(.{ .alt = true });
+    tester.key(.backspace);
+    tester.setMods(.{ .cmd = true });
+    tester.key(.backspace);
+    tester.setMods(.{});
+    try t.expect(p.pending == null);
+
+    _ = tester.shortcut(.{ .key = '2', .cmd = true });
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    tester.textOps(&.{.{ .command = .delete_backward }});
+    try t.expect(p.pending.? == .show_search);
+    try t.expect(tester.hasText("3 entries"));
+
+    p.pending = null;
+    p.showSearch();
+    tester.settle(1);
+    try t.expectEqual(panel_mod.Mode.search, p.mode);
+    try t.expect(tester.hasText("Floodlight"));
+    try t.expect(!tester.hasText("Filter clipboard"));
+    try t.expect(p.panelWidth() != board_mod.board_metrics.width);
+
+    // The board's session went with it: ⌥⇧C opens a fresh board.
+    p.showClipboard();
+    tester.settle(1);
+    try t.expectEqual(clipboard.Filter.all, p.board.list.filter);
+    try t.expectEqual(@as(usize, 0), p.board.list.selected);
+}
+
+test "⌫ during IME composition on the board edits the composition and stays on the board" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(1);
+    try f.show();
+    f.tester.textOps(&.{.{ .set_marked = .{ .text = "z", .sel_start = 1, .sel_len = 0 } }});
+    f.tester.key(.backspace);
+    try t.expect(f.p.pending == null);
+    try t.expectEqual(panel_mod.Mode.clipboard, f.p.mode);
+}
+
+test "search → board → ⌫ brings the retained search query back, fully selected" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(1);
+    try f.show();
+    const p = &f.p;
+    p.showSearch();
+    f.tester.settle(1);
+    f.tester.typeText("zzz");
+    f.tester.settle(1);
+
+    p.showClipboard();
+    f.tester.settle(1);
+    f.tester.key(.backspace);
+    try t.expect(p.pending.? == .show_search);
+    p.pending = null;
+    p.showSearch();
+    f.tester.settle(1);
     try t.expectEqualStrings("zzz", p.field.text());
+    f.tester.typeText("a");
+    try t.expectEqualStrings("a", p.field.text());
+}
+
+test "⌫ on an empty search field changes nothing" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.show();
+    f.p.showSearch();
+    f.tester.settle(1);
+    f.tester.key(.backspace);
+    try t.expect(f.p.pending == null);
+    try t.expectEqual(panel_mod.Mode.search, f.p.mode);
 }
 
 test "a copied path keeps what the inspector found until the selection moves" {
@@ -1879,6 +1980,16 @@ test "an entrance asks for a presented frame until one reveals it" {
     spy.frame_valid = true;
     p.search(false, false);
     try t.expect(!p.wantsPresentedFrame());
+}
+
+test "leaving the board by ⌫ switches to search in place, exactly as ⌥Space over a focused board" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.board(true, false);
+    _ = spy.take();
+    p.settle(.show_search);
+    try t.expectEqualSlices(presence.Effect, &.{ .open_search, .place, .order_front }, spy.take());
+    try t.expect(!p.isHidden());
 }
 
 test "a retained panel whose last frame is still valid shows at once, with no entrance wait" {

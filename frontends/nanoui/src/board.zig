@@ -193,8 +193,6 @@ pub const Board = struct {
     pub fn keys(b: *Board, c: *ui.Context, field_empty: bool) ?Action {
         const S = ui.Shortcut;
         _ = chrome.listKeys(c, &b.list, &Filter.options);
-        // Taken even with nothing selected, so ⌫ never edits the filter.
-        if (c.shortcut(.{ .key = backspace })) b.delete();
         const e = b.list.selection() orelse return null;
         if (c.shortcut(.{ .key = 'o', .cmd = true })) {
             if (e.linkUrl()) |u| return .{ .open = u };

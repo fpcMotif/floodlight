@@ -220,10 +220,10 @@ const Shell = struct {
     fn panelRequest(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (s.panel.pending) |a| {
-            if (a != .hide and !s.submitting) {
+            if (a != .hide and a != .show_search and !s.submitting) {
                 s.submitting = true;
                 mac.signpostBegin(.submit);
-            } else if (a == .hide) {
+            } else if (a == .hide or a == .show_search) {
                 s.endSubmit();
             }
         }
@@ -238,7 +238,7 @@ const Shell = struct {
                 .open => |path| mac.open(path),
                 .reveal => |path| mac.reveal(path),
                 .copy => |row| mac.copy(row.path),
-                .hide => {},
+                .hide, .show_search => {},
                 .clipboard => |b| s.applyBoard(b),
             }
             s.endSubmit();

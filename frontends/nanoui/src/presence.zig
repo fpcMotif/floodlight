@@ -86,6 +86,7 @@ pub const Presence = struct {
     pub fn settle(p: *Presence, a: panel.Action) void {
         switch (a) {
             .open, .reveal, .copy, .hide => p.hide(),
+            .show_search => p.search(true, true),
             .clipboard => |b| switch (b) {
                 .paste => {
                     // ⌘V goes to the frontmost app: the panel must be gone.

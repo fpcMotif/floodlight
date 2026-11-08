@@ -77,6 +77,7 @@ pub const Action = union(enum) {
     reveal: []const u8,
     copy: search.Row,
     hide,
+    show_search,
     clipboard: board_mod.Action,
 };
 
@@ -879,7 +880,7 @@ pub const Panel = struct {
                 .paste, .copy, .open, .reveal => if (p.hasSensitiveBoardMatch(ba)) return else .clipboard,
                 .preview, .actions => return,
             },
-            .hide => return,
+            .hide, .show_search => return,
         };
         store.recordQuery(scope, p.field.text(), p.clock.now()) catch |err| std.log.err("query history: {s}", .{@errorName(err)});
     }
@@ -911,6 +912,7 @@ pub const Panel = struct {
             }
         }
         if (p.mode == .clipboard) {
+            if (p.field.text().len == 0 and hasPlainBackspace(c)) return p.leaveBoard();
             if (p.board.keys(c, p.field.text().len == 0)) |a| p.ask(.{ .clipboard = a });
             return;
         }
@@ -929,6 +931,14 @@ pub const Panel = struct {
             if (row.kind != .web) p.ask(.{ .reveal = row.path });
         }
         if (c.shortcut(.{ .key = S.enter, .alt = true }) or c.shortcut(.{ .key = 'c', .cmd = true })) p.ask(.{ .copy = row });
+    }
+
+    /// ⌫ on an empty filter, as the Swift board's: the board's session is
+    /// dropped, and the shell switches to search in place.
+    fn leaveBoard(p: *Panel) void {
+        p.forgetBoard();
+        p.board.refresh("");
+        p.ask(.show_search);
     }
 
     pub fn view(p: *Panel, c: *ui.Context) void {
@@ -1177,6 +1187,17 @@ fn hasBackspace(c: *const ui.Context) bool {
     if (c.input.key == .backspace) return true;
     for (c.input.ops) |op| {
         if (op == .command and (op.command == .delete_backward or op.command == .delete_word_backward or op.command == .delete_to_line_start)) return true;
+    }
+    return false;
+}
+
+/// ⌫ alone, never ⌥⌫ or ⌘⌫. AppKit never offers a bare ⌫ as a shortcut:
+/// a focused field gets `deleteBackward:`, an unfocused window the key.
+fn hasPlainBackspace(c: *const ui.Context) bool {
+    const in = c.input;
+    if (in.key == .backspace) return !(in.cmd or in.ctrl or in.alt);
+    for (c.input.ops) |op| {
+        if (op == .command and op.command == .delete_backward) return true;
     }
     return false;
 }
