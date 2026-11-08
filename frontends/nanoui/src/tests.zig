@@ -2736,6 +2736,128 @@ test "Return on X and Grok opens their searches, and an engine row stays selecte
     try t.expectEqualStrings("https://grok.com/?q=lofi", (p.pending orelse return error.NoAction).open);
 }
 
+fn openByQuery(p: *panel_mod.Panel, tester: *ui.Tester, query: []const u8) void {
+    p.reset();
+    tester.frame();
+    tester.typeText(query);
+    tester.key(.enter);
+    p.pending = null;
+}
+
+fn addApps(cat: *search.Catalog, names: []const []const u8) !void {
+    for (names) |n| try cat.addApp(try std.fmt.allocPrint(t.allocator, "/Applications/{s}.app", .{n}));
+}
+
+test "an empty panel lists the apps opened most, recent ones first on a tie, and the chord opens the row" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addApps(&cat, &.{ "Alpha", "Beta", "Gamma" });
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    p.showSearch();
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+    try t.expectEqual(chrome.metrics.search_height, p.panelHeight());
+
+    openByQuery(&p, &tester, "gamma");
+    hooks.clock.advance(7200);
+    openByQuery(&p, &tester, "alpha");
+    openByQuery(&p, &tester, "alpha");
+    hooks.clock.advance(7200);
+    openByQuery(&p, &tester, "beta");
+
+    p.reset();
+    p.showSearch();
+    tester.frame();
+    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqualStrings("Beta", p.list.visible[0].title);
+    try t.expectEqualStrings("Alpha", p.list.visible[1].title);
+    try t.expectEqualStrings("Gamma", p.list.visible[2].title);
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+    try t.expectEqual(chrome.metrics.expanded_height, p.panelHeight());
+
+    try t.expect(tester.shortcut(.{ .key = '3', .cmd = true }));
+    try t.expectEqualStrings("/Applications/Gamma.app", (p.pending orelse return error.NoAction).open);
+    p.pending = null;
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqualStrings("/Applications/Alpha.app", (p.pending orelse return error.NoAction).open);
+}
+
+test "typing replaces the suggestions and clearing brings them back, the board shows none, and counts survive a restart until cleared" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addApps(&cat, &.{ "Alpha", "Beta" });
+
+    {
+        var store = try clipboard.Store.open(ts.db, ts.images);
+        defer store.close();
+        var hooks: StubHooks = .{};
+        hooks.clock.advance(1000);
+        var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+        defer p.deinit();
+        var tester: ui.Tester = undefined;
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        defer tester.deinit();
+        tester.settle(0.1);
+        openByQuery(&p, &tester, "alpha");
+        openByQuery(&p, &tester, "alpha");
+        openByQuery(&p, &tester, "beta");
+    }
+
+    var gone: search.Catalog = .{ .gpa = t.allocator };
+    defer gone.deinit();
+    try addApps(&gone, &.{"Beta"});
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &gone, &store, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    p.showSearch();
+    tester.frame();
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqualStrings("Beta", p.list.visible[0].title);
+
+    tester.typeText("bet");
+    try t.expectEqualStrings("Beta", p.list.visible[0].title);
+    _ = tester.shortcut(.{ .key = '2', .cmd = true });
+    try t.expect(p.pending == null);
+
+    p.clearField();
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("Beta", p.list.visible[0].title);
+
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.board.list.visible.len);
+
+    p.showSearch();
+    p.clearAppOpens();
+    p.reset();
+    p.showSearch();
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+}
+
 test "a late reply for an old query or superseded request is ignored, and an empty failure leaves no rows" {
     var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
