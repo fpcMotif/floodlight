@@ -1856,6 +1856,31 @@ test "a reopened panel stays unseen until a frame of its own is presented, then 
     try t.expectEqual(presence.Phase.shown, p.phase);
 }
 
+test "an entrance asks for a presented frame until one reveals it" {
+    var spy: PresenceSpy = .{};
+    var p = spy.presence_();
+    try t.expect(!p.wantsPresentedFrame());
+    p.search(false, false);
+    try t.expect(p.wantsPresentedFrame());
+    try t.expect(!p.framePresented(false));
+    try t.expect(p.wantsPresentedFrame());
+    try t.expect(p.framePresented(true));
+    try t.expect(!p.wantsPresentedFrame());
+
+    p.search(true, false);
+    p.search(false, false);
+    _ = spy.take();
+    p.entranceTimedOut();
+    p.entranceTimedOut();
+    try t.expect(!p.wantsPresentedFrame());
+
+    p.search(true, false);
+    _ = spy.take();
+    spy.frame_valid = true;
+    p.search(false, false);
+    try t.expect(!p.wantsPresentedFrame());
+}
+
 test "a retained panel whose last frame is still valid shows at once, with no entrance wait" {
     var spy: PresenceSpy = .{ .frame_valid = true };
     var p = spy.presence_();

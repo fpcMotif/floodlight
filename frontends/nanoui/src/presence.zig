@@ -113,6 +113,10 @@ pub const Presence = struct {
         if (p.phase == .entering and p.timers_fired == p.entrances) p.reveal();
     }
 
+    pub fn wantsPresentedFrame(p: *const Presence) bool {
+        return p.phase == .entering;
+    }
+
     pub fn isHidden(p: *const Presence) bool {
         return p.phase == .hidden;
     }

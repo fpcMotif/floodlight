@@ -20,6 +20,7 @@ const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;
+const entrance_alpha = 0.01;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
 
@@ -72,12 +73,14 @@ const Shell = struct {
             },
             .open_board => s.openBoard(),
             .order_in_unseen => {
-                mac.setAlpha(s.panel_window, 0);
+                mac.setAlpha(s.panel_window, entrance_alpha);
                 s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
             },
             .order_in_seen => {
                 mac.setAlpha(s.panel_window, 1);
                 s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
             },
             .order_front => s.panel_window.show(),
             .start_entrance_timer => nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut),
@@ -125,6 +128,7 @@ const Shell = struct {
         mac.keepLinkAtDisplayRate(&surface.ctx);
         const presenting = surface.renderer.given_drawable != null;
         if (presenting) s.panel.notePresented();
+        if (!presenting and s.presence.wantsPresentedFrame()) surface.ctx.changed = true;
         return s.presence.framePresented(presenting);
     }
 

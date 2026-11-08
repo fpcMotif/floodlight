@@ -890,6 +890,15 @@ pub fn releaseSurface(window: *nanoui.Window) void {
     _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
 }
 
+pub fn drawBeforeOcclusionUpdate(window: *nanoui.Window) void {
+    const s = window.surface orelse return;
+    if (s.released) {
+        s.released = false;
+        s.renderer.resize(s.size, s.scale);
+    }
+    s.is_visible = true;
+}
+
 pub const retention_defaults_key = "sessionRetentionSeconds";
 
 /// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
