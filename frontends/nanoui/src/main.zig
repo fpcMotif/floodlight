@@ -9,8 +9,13 @@ const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const chrome = @import("chrome.zig");
+const file_index = @import("floodlight_core").file_index;
+const FileIndex = file_index.FileIndex;
+const presence = @import("presence.zig");
+const Presence = presence.Presence;
 
-const metrics = panel_mod.metrics;
+const metrics = chrome.metrics;
 const gpa = std.heap.smp_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
@@ -22,14 +27,11 @@ const compact_idle_ms = 60 * 60 * 1000;
 const max_icons = 64;
 
 const Shell = struct {
-    app: *nanoui.App,
-    io: std.Io,
-    home: []const u8,
-    index_path: [:0]const u8,
+    files: FileIndex,
     catalog: search.Catalog,
     panel: panel_mod.Panel = undefined,
     panel_window: *nanoui.Window = undefined,
-    guidance: permission.Guidance = .{},
+    guidance: permission.Guidance = undefined,
     guide_window: *nanoui.Window = undefined,
     flow: permission.Flow = undefined,
     drag: ?*mac.FileDragSource = null,
@@ -39,31 +41,58 @@ const Shell = struct {
     change_count: objc.NSInteger = 0,
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
-    entrance: mac.Entrance = .{},
+    presence: Presence = undefined,
     submitting: bool = false,
+    headless: bool = false,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        const shown = s.panel_window.isVisible() and s.panel_window.isFocused();
+        const focused = s.panel_window.isFocused();
         switch (which) {
             .search => {
-                if (shown and s.panel.mode == .search) return s.hidePanel();
-                s.showPanel();
+                s.presence.search(focused, s.panel.mode == .clipboard);
+                if (!s.presence.isHidden()) s.panel_window.redraw();
             },
             .clipboard => {
-                if (shown and s.panel.mode == .clipboard) return s.hidePanel();
-                if (!s.panel_window.isVisible()) {
-                    s.entrance.orderedIn();
-                    s.notePasteTarget();
-                }
-                s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-                s.panel.showClipboard();
-                s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-                s.positionOnPointerScreen();
-                s.orderIn();
-                s.panel_window.redraw();
+                s.presence.board(focused, s.panel.mode == .clipboard);
+                if (!s.presence.isHidden()) s.panel_window.redraw();
             },
         }
+    }
+
+    fn runPresence(ctx: ?*anyopaque, e: presence.Effect) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        switch (e) {
+            .note_paste_target => s.notePasteTarget(),
+            .place => s.positionOnPointerScreen(),
+            .open_search => {
+                s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+                s.panel.showSearch();
+            },
+            .open_board => s.openBoard(),
+            .order_in_unseen => {
+                mac.setAlpha(s.panel_window, 0);
+                s.panel_window.show();
+            },
+            .order_front => s.panel_window.show(),
+            .start_entrance_timer => nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut),
+            .reveal => mac.setAlpha(s.panel_window, 1),
+            .hide_window => s.panel_window.hide(),
+            .end_session => s.endSession(),
+            .deliver_paste => deliverPaste(s.paste_target.pid),
+        }
+    }
+
+    fn openBoard(s: *Shell) void {
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        s.panel.showClipboard();
+        s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
+    }
+
+    fn deliverPaste(pid: i32) void {
+        if (pid == 0) return;
+        if (!mac.canDeliverPaste()) return mac.promptAccessibility();
+        if (!mac.deliverPaste(pid)) std.log.err("paste: ⌘V not delivered to pid {d}", .{pid});
     }
 
     fn notePasteTarget(s: *Shell) void {
@@ -76,50 +105,25 @@ const Shell = struct {
 
     fn reopened(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.showPanel();
+        s.presence.reopened();
     }
 
     fn launched(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         mac.handleReopen(s, reopened);
-        if (s.flow.phase != .guiding) s.showPanel();
-    }
-
-    fn showPanel(s: *Shell) void {
-        if (!s.panel_window.isVisible()) {
-            s.entrance.orderedIn();
-            s.notePasteTarget();
-        }
-        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-        s.panel.showSearch();
-        s.positionOnPointerScreen();
-        s.orderIn();
-        s.panel_window.redraw();
-    }
-
-    fn orderIn(s: *Shell) void {
-        if (!s.panel_window.isVisible()) {
-            mac.setAlpha(s.panel_window, 0);
-            nanoui.App.after(entrance_timeout_ms, s, revealAnyway);
-        }
-        s.panel_window.show();
+        s.presence.launched(s.flow.phase == .guiding);
     }
 
     /// In the frame's own transaction: alpha and pixels land together.
     fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
-        if (!s.entrance.reveal(surface.renderer.given_drawable != null)) return false;
-        mac.setAlpha(s.panel_window, 1);
-        return true;
+        return s.presence.framePresented(surface.renderer.given_drawable != null);
     }
 
-    /// A panel left see-through would be worse than one old frame.
-    fn revealAnyway(ctx: ?*anyopaque) callconv(.c) void {
+    fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.entrance.waiting) return;
-        s.entrance.cancel();
-        mac.setAlpha(s.panel_window, 1);
+        s.presence.entranceTimedOut();
     }
 
     fn positionOnPointerScreen(s: *Shell) void {
@@ -145,24 +149,19 @@ const Shell = struct {
         s.panel_window.redraw();
     }
 
-    fn hidePanel(s: *Shell) void {
-        s.entrance.cancel();
-        if (s.panel.pending != null) s.endSubmit();
-        s.panel_window.hide();
+    fn endSession(s: *Shell) void {
+        s.endSubmit();
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         s.panel.hide();
-        if (s.panel.nextExpiryMs()) |ms| {
-            nanoui.App.after(ms, s, expireRetention);
-        } else {
-            s.releaseIdleMemory();
-        }
+        if (s.panel.nextExpiryMs()) |ms| return nanoui.App.after(ms, s, expireRetention);
+        s.releaseIdleMemory();
     }
 
     fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         if (s.panel.expire()) {
-            if (!s.panel_window.isVisible()) s.releaseIdleMemory();
+            if (s.presence.isHidden()) s.releaseIdleMemory();
         } else if (s.panel.nextExpiryMs()) |ms| {
             nanoui.App.after(ms, s, expireRetention);
         }
@@ -183,9 +182,7 @@ const Shell = struct {
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        // A click anywhere else dismisses it, as Spotlight; Quick Look over
-        // the board does not.
-        if (!w.isFocused() and w.isVisible() and !mac.previewVisible()) s.hidePanel();
+        if (!w.isFocused()) s.presence.focusLost(mac.previewVisible());
     }
 
     fn panelRequest(ctx: ?*anyopaque) void {
@@ -210,41 +207,30 @@ const Shell = struct {
                 .reveal => |path| mac.reveal(path),
                 .copy => |row| mac.copy(row.path),
                 .hide => {},
-                .clipboard => |b| {
-                    const should_hide = s.applyBoard(b);
-                    s.endSubmit();
-                    if (!should_hide) return s.panel_window.redraw();
-                },
+                .clipboard => |b| s.applyBoard(b),
             }
             s.endSubmit();
-            s.hidePanel();
+            s.presence.settle(a);
+            if (!s.presence.isHidden()) s.panel_window.redraw();
             return;
         }
         s.resizeKeepingTop(s.panel.width, s.panel.height);
     }
 
-    /// Carries out a board action; true when the panel should hide.
-    fn applyBoard(s: *Shell, a: board_mod.Action) bool {
+    /// Carries out a board action; `Presence.settle` decides whether the panel hides.
+    fn applyBoard(s: *Shell, a: board_mod.Action) void {
         switch (a) {
-            .paste => |e| {
-                s.writeEntry(e);
-                const pid = s.paste_target.pid;
-                s.hidePanel();
-                if (pid == 0) return false;
-                if (!mac.canDeliverPaste()) {
-                    mac.promptAccessibility();
-                    return false;
-                }
-                _ = mac.deliverPaste(pid);
-                return false;
-            },
-            .copy => |e| s.writeEntry(e),
+            .paste, .copy => |e| s.writeEntry(e),
             .open => |url| mac.open(url),
             .reveal => |path| mac.reveal(path),
             .preview => |e| s.preview(e),
             .actions => |e| s.actionsMenu(e),
         }
-        return a.hides();
+    }
+
+    fn applyAndSettle(s: *Shell, a: board_mod.Action) void {
+        s.applyBoard(a);
+        s.presence.settle(.{ .clipboard = a });
     }
 
     fn writeEntry(s: *Shell, e: clipboard.Entry) void {
@@ -268,11 +254,11 @@ const Shell = struct {
     }
 
     fn actionsMenu(s: *Shell, e: clipboard.Entry) void {
-        var label_buf: [128]u8 = undefined;
-        const paste_label = if (s.panel.board.paste_target.len > 0) std.fmt.bufPrint(&label_buf, "Paste to {s}", .{s.panel.board.paste_target}) catch "Paste" else "Copy";
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
         const cmd = mac.command_modifier;
         const items = [_]mac.MenuItem{
-            .{ .title = paste_label, .key = "\r", .modifiers = 0 },
+            .{ .title = s.panel.board.pasteLabel(arena.allocator()), .key = "\r", .modifiers = 0 },
             .{ .title = "Copy", .key = "c", .modifiers = cmd },
             .{ .title = "Quick Look", .key = " ", .modifiers = 0, .enabled = s.panel.board.previewable(e), .separator_before = true },
             .{ .title = "Show in Finder", .key = "r", .modifiers = cmd, .enabled = e.filePath() != null },
@@ -283,17 +269,11 @@ const Shell = struct {
         const at = [2]f64{ f.w - board_mod.board_metrics.well_inset - 110, f.h - board_mod.board_metrics.well_inset - board_mod.board_metrics.footer_height };
         const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
         switch (choice) {
-            0 => if (s.applyBoard(.{ .paste = e })) s.hidePanel(),
+            0 => s.applyAndSettle(.{ .paste = e }),
             1 => s.writeEntry(e),
             2 => s.preview(e),
-            3 => if (e.filePath()) |p| {
-                mac.reveal(p);
-                s.hidePanel();
-            },
-            4 => {
-                s.panel.board.togglePin();
-                s.panel.refresh();
-            },
+            3 => if (e.filePath()) |p| s.applyAndSettle(.{ .reveal = p }),
+            4 => s.panel.board.togglePin(),
             5 => s.panel.board.delete(),
             else => {},
         }
@@ -311,19 +291,23 @@ const Shell = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const front = mac.frontmostApp(arena.allocator());
-        var stored = false;
-        for (mac.readPasteboard(arena.allocator(), front.bundle_id)) |cap| {
-            stored = (s.store.add(cap, front.bundle_id, front.name, clipboard.wallClock()) catch false) or stored;
-        }
-        if (!stored or !s.panel_window.isVisible() or s.panel.mode != .clipboard) return;
-        s.panel.board.stale = true;
+        var reader = mac.PasteboardReader.begin();
+        defer reader.end();
+        const app: clipboard.App = .{ .bundle_id = front.bundle_id, .name = front.name };
+        const stored = s.store.capture(arena.allocator(), reader.pasteboard(), app, clipboard.wallClock()) catch |err| blk: {
+            std.log.err("clipboard capture: {s}", .{@errorName(err)});
+            break :blk false;
+        };
+        if (!stored or s.panel.mode != .clipboard) return;
+        s.panel.board.list.markStale();
+        if (s.presence.isHidden()) return;
         s.panel.refresh();
         s.panel_window.redraw();
     }
 
     fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.panel_window.isVisible()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        if (!s.presence.isHidden()) return nanoui.App.after(compact_next_ms, s, compactTick);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
@@ -356,7 +340,7 @@ const Shell = struct {
 
     fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.app.flags.hidden or s.app.flags.snapshot != null) return;
+        if (s.headless) return;
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, query, " \t\r\n")) catch return;
@@ -394,7 +378,6 @@ const Shell = struct {
 
     fn present(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.guidance.phase = .guiding;
         s.guidance.dismissed = false;
         const parent: ?permission.Rect = if (s.panel_window.isVisible()) mac.frameOf(s.panel_window) else null;
         const want = permission.anchorFrame(mac.systemSettingsWindow(), parent, mac.mainScreenVisibleFrame());
@@ -416,7 +399,6 @@ const Shell = struct {
     fn granted(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (!s.guide_window.isVisible()) return s.rebuildIndex();
-        s.guidance.phase = .granted;
         s.guide_window.redraw();
         nanoui.App.after(permission.granted_linger_ms, s, lingerDone);
         // Folders that were closed to the scan are open now.
@@ -431,7 +413,7 @@ const Shell = struct {
     fn pollTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.polling = false;
-        if (s.flow.phase == .guiding) _ = s.flow.poll();
+        s.flow.poll();
     }
 
     fn guidanceRequest(ctx: ?*anyopaque) void {
@@ -452,41 +434,26 @@ const Shell = struct {
     // The file index: the last run's opens at once, a fresh one replaces it.
 
     fn rebuildIndex(s: *Shell) void {
+        const t = std.Thread.spawn(.{}, FileIndex.rebuild, .{ &s.files, file_index.Notify{ .ctx = s, .ready = indexReady } }) catch |err|
+            return std.log.err("file index: no rebuild thread: {s}", .{@errorName(err)});
         s.panel.indexing = true;
-        const t = std.Thread.spawn(.{}, buildIndex, .{s}) catch return;
         t.detach();
     }
 
-    fn buildIndex(s: *Shell) void {
-        const mapped = search.buildFileIndex(gpa, s.home, s.index_path) catch |e| {
-            std.log.err("file index: {s}", .{@errorName(e)});
-            return objc.dispatchMain(s, indexFailed);
-        };
-        const box = gpa.create(Built) catch return;
-        box.* = .{ .shell = s, .mapped = mapped };
-        objc.dispatchMain(box, indexBuilt);
+    fn indexReady(ctx: ?*anyopaque, outcome: file_index.Outcome) void {
+        if (outcome == .failed) std.log.err("file index: {s}", .{@errorName(outcome.failed)});
+        objc.dispatchMain(ctx, indexLanded);
     }
 
-    const Built = struct { shell: *Shell, mapped: @import("floodlight_core").index.Mapped };
-
-    fn indexBuilt(ctx: ?*anyopaque) callconv(.c) void {
-        const b: *Built = @ptrCast(@alignCast(ctx));
-        defer gpa.destroy(b);
-        const s = b.shell;
-        s.catalog.setFiles(b.mapped);
-        s.panel.indexing = false;
-        // The rows answer the old index: ask again.
-        s.panel.answered.clearRetainingCapacity();
-        if (s.panel_window.isVisible()) {
-            s.panel.refresh();
-            s.panel_window.redraw();
-        }
-    }
-
-    fn indexFailed(ctx: ?*anyopaque) callconv(.c) void {
+    fn indexLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel.indexing = false;
-        s.panel_window.redraw();
+        s.panel.indexing = s.files.busy();
+        if (s.files.adopt()) {
+            // The rows answer the old index: ask again.
+            s.panel.list.markStale();
+            if (!s.presence.isHidden()) s.panel.refresh();
+        }
+        if (!s.presence.isHidden()) s.panel_window.redraw();
     }
 };
 
@@ -499,22 +466,31 @@ pub fn main(init: std.process.Init) !void {
     const app = try nanoui.App.create(init, .{ .name = "Floodlight", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
+    // Snapshots and hidden runs draw the panel and touch nothing else: no
+    // hotkey, no System Settings, no scan of the home folder, no history on disk.
+    const headless = app.flags.hidden or app.flags.snapshot != null;
 
-    var shell: Shell = .{ .app = app, .io = init.io, .home = home, .index_path = index_path, .catalog = .{ .gpa = gpa, .home = home } };
+    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .headless = headless };
+    defer shell.files.close();
+    shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
     try search.scanApps(&shell.catalog, init.io, try std.fs.path.join(gpa, &.{ home, "Applications" }));
-    if (@import("floodlight_core").index.Mapped.open(@import("floodlight_core").sys.cwd, index_path)) |m| shell.catalog.setFiles(m) else |_| {}
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
     const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
-    const touches_history = !(app.flags.hidden or app.flags.snapshot != null);
-    shell.store = if (touches_history)
-        clipboard.Store.open(store_path, images_path) catch try clipboard.Store.open(":memory:", null)
+    const tmp = std.mem.trimEnd(u8, std.mem.span(std.c.getenv("TMPDIR") orelse "/tmp"), "/");
+    const scratch_images = try std.fmt.allocPrint(gpa, "{s}/floodlight-nano-{d}-images", .{ tmp, std.c.getpid() });
+    defer std.Io.Dir.cwd().deleteTree(init.io, scratch_images) catch {};
+    shell.store = if (headless)
+        try clipboard.Store.open(":memory:", scratch_images)
     else
-        try clipboard.Store.open(":memory:", null);
+        clipboard.Store.open(store_path, images_path) catch |err| fallback: {
+            std.log.err("clipboard history: {s} at {s}; keeping this session's in memory", .{ @errorName(err), store_path });
+            break :fallback try clipboard.Store.open(":memory:", scratch_images);
+        };
     defer shell.store.close();
-    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch {};
+    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
@@ -553,7 +529,15 @@ pub fn main(init: std.process.Init) !void {
         surface.after_frame_ctx = &shell;
     }
 
-    shell.guidance = .{ .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
+    shell.flow = .{ .effects = .{
+        .ctx = &shell,
+        .is_granted = Shell.isGranted,
+        .open_settings = Shell.openSettings,
+        .present = Shell.present,
+        .close = Shell.close,
+        .on_granted = Shell.granted,
+    } };
+    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
     shell.guide_window = try app.newWindow(.{
         .title = "Full Disk Access",
@@ -570,18 +554,8 @@ pub fn main(init: std.process.Init) !void {
     });
     if (mac.installSlab(shell.guide_window, 16, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
 
-    shell.flow = .{ .effects = .{
-        .ctx = &shell,
-        .is_granted = Shell.isGranted,
-        .open_settings = Shell.openSettings,
-        .present = Shell.present,
-        .close = Shell.close,
-        .on_granted = Shell.granted,
-    } };
+    shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence } };
 
-    // Snapshots and hidden runs draw the panel and touch nothing else: no
-    // hotkey, no System Settings, no scan of the home folder.
-    const headless = app.flags.hidden or app.flags.snapshot != null;
     if (!headless) {
         try mac.registerHotKeys(&shell, Shell.hotKey);
         shell.change_count = mac.pasteboardChangeCount();

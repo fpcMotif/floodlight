@@ -116,8 +116,8 @@ pub const TopK = struct {
         }
     }
 
-    /// Best first. Consumes the heap order; call once at the end.
-    pub fn sorted(h: *TopK, out: []Hit) usize {
+    /// Best first.
+    pub fn sorted(h: *const TopK, out: []Hit) usize {
         const n = @min(h.len, out.len);
         var pairs: [max_k]struct { hit: Hit, tie: u64 } = undefined;
         for (0..h.len) |i| pairs[i] = .{ .hit = h.items[i], .tie = h.tie[i] };
@@ -136,7 +136,7 @@ pub const TopK = struct {
 const lanes = 8;
 const Vec = @Vector(lanes, u32);
 
-/// Scores ids in `[lo, hi)` into `heap`.
+/// Requires `lo <= hi <= v.count()`.
 pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
     const need: Vec = @splat(q.path_mask);

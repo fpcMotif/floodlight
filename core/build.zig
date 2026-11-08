@@ -12,7 +12,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = target.result.os.tag == .macos,
     });
 
-    // What the Swift shell links: one static archive plus the header.
+    // The C ABI as one static archive plus the header, for a Swift adapter
+    // that does not link it yet.
     const lib = b.addLibrary(.{
         .name = "floodlight_core",
         .linkage = .static,

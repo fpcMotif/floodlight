@@ -1,17 +1,16 @@
-//! The C ABI the Swift shell links against. See include/floodlight_core.h for
-//! the contract; this file only translates it.
+//! The C ABI for a Swift adapter, which does not link it yet. See
+//! include/floodlight_core.h for the contract; this file only translates it.
 
 const std = @import("std");
 const index = @import("index.zig");
-const scan = @import("scan.zig");
+const file_index = @import("file_index.zig");
 const search = @import("search.zig");
 const sys = @import("sys.zig");
 
-const Handle = struct {
-    mapped: index.Mapped,
-};
+/// The `fl_index` the header keeps opaque.
+const Handle = index.Mapped;
 
-/// Handles are a few words each and live for the app's lifetime, so the
+/// There is one handle per open index, a few words each, so the
 /// general-purpose allocator's per-thread caches buy nothing here.
 const gpa = std.heap.smp_allocator;
 
@@ -30,11 +29,8 @@ fn errnoOf(err: anyerror) c_int {
 }
 
 export fn fl_index_build(root: [*:0]const u8, out_path: [*:0]const u8) c_int {
-    var b = index.Builder.init(gpa);
-    defer b.deinit();
-    scan.scan(&b, std.mem.span(root), .{}) catch |e| return errnoOf(e);
-    b.writeFile(sys.cwd, std.mem.span(out_path)) catch |e| return errnoOf(e);
-    return @intCast(@min(b.count(), std.math.maxInt(c_int)));
+    const n = file_index.writeIndex(gpa, .{}, std.mem.span(root), std.mem.span(out_path)) catch |e| return errnoOf(e);
+    return @intCast(@min(n, std.math.maxInt(c_int)));
 }
 
 export fn fl_index_open(path: [*:0]const u8, out: *?*Handle) c_int {
@@ -43,31 +39,31 @@ export fn fl_index_open(path: [*:0]const u8, out: *?*Handle) c_int {
     const h = gpa.create(Handle) catch {
         var m = mapped;
         m.close();
-        return -12;
+        return errnoOf(error.OutOfMemory);
     };
-    h.* = .{ .mapped = mapped };
+    h.* = mapped;
     out.* = h;
     return 0;
 }
 
 export fn fl_index_close(h: ?*Handle) void {
     const handle = h orelse return;
-    handle.mapped.close();
+    handle.close();
     gpa.destroy(handle);
 }
 
 export fn fl_index_count(h: *const Handle) u32 {
-    return h.mapped.view.count();
+    return h.view.count();
 }
 
 export fn fl_search(h: *const Handle, query: [*:0]const u8, out: [*]search.Hit, cap: u32) u32 {
-    const n = search.search(h.mapped.view, std.mem.span(query), out[0..@min(cap, search.max_k)]);
+    const n = search.search(h.view, std.mem.span(query), out[0..@min(cap, search.max_k)]);
     return @intCast(n);
 }
 
 export fn fl_relative_path(h: *const Handle, id: u32, buf: [*]u8, cap: u32) u32 {
-    const v = h.mapped.view;
-    if (id >= v.count() or cap == 0) return 0;
+    const v = h.view;
+    if (id >= v.count()) return 0;
     var scratch: [4096]u8 = undefined;
     const p = v.relativePath(id, &scratch) orelse return 0;
     if (p.len + 1 > cap) return 0;
@@ -77,7 +73,7 @@ export fn fl_relative_path(h: *const Handle, id: u32, buf: [*]u8, cap: u32) u32 
 }
 
 export fn fl_is_dir(h: *const Handle, id: u32) bool {
-    const v = h.mapped.view;
+    const v = h.view;
     return id < v.count() and v.flags[id].dir;
 }
 

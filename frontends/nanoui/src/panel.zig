@@ -6,36 +6,13 @@ const ui = nanoui.ui;
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
+const chrome = @import("chrome.zig");
+const list = @import("list.zig");
 const mac = @import("mac.zig");
 
-/// The Swift shell's `FloodlightMetrics`, so both panels measure the same.
-pub const metrics = struct {
-    pub const width: f32 = 680;
-    pub const search_height: f32 = 60;
-    pub const filter_bar_height: f32 = 40;
-    pub const corner_radius: f32 = search_height / 2;
-    pub const row_height: f32 = 58;
-    pub const row_padding: f32 = 7;
-    pub const row_radius: f32 = 12;
-    pub const max_visible_rows = 7;
-    pub const icon_size: f32 = 38;
-    pub const top_hit_icon_size: f32 = 46;
-    pub const search_icon_size: f32 = 22;
-    pub const clear_button_size: f32 = 18;
-    pub const icon_tile_radius: f32 = row_radius - 3;
-    pub const max_overscroll: f32 = row_height / 2;
-    pub const expanded_height: f32 = search_height + 1 + filter_bar_height + row_padding * 2 + max_visible_rows * row_height;
-    pub const list_height: f32 = expanded_height - search_height - 1 - filter_bar_height;
-};
+const metrics = chrome.metrics;
 
 pub const summon_label = "⌥ Space";
-pub const suggestion_cache_ttl: f64 = 5 * 60;
-
-const CachedSuggestions = struct {
-    query: []u8,
-    items: [][]u8,
-    fetched_at: f64,
-};
 
 pub const Filter = enum {
     all,
@@ -81,19 +58,19 @@ pub const Filter = enum {
             .files => r.kind == .file,
             .folders => r.kind == .folder,
             .pdfs => r.kind == .file and std.ascii.eqlIgnoreCase(ext, "pdf"),
-            .images => r.kind == .file and inSet(ext, &image_extensions),
-            .documents => r.kind == .file and inSet(ext, &document_extensions),
+            .images => r.kind == .file and clipboard.inSet(ext, &clipboard.image_extensions),
+            .documents => r.kind == .file and clipboard.inSet(ext, &document_extensions),
         };
     }
 };
 
-const image_extensions = [_][]const u8{ "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp" };
 const document_extensions = [_][]const u8{ "azw", "azw3", "cbr", "cbz", "csv", "djvu", "doc", "docx", "epub", "fb2", "key", "md", "mobi", "numbers", "pages", "ppt", "pptx", "rtf", "txt", "xls", "xlsx" };
 
-fn inSet(ext: []const u8, set: []const []const u8) bool {
-    for (set) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return true;
-    return false;
+fn rowKey(r: search.Row) u64 {
+    return std.hash.Wyhash.hash(0, r.path);
 }
+
+pub const Results = list.List(search.Row, Filter, u64, rowKey);
 
 pub const Action = union(enum) {
     open: []const u8,
@@ -129,6 +106,14 @@ pub const Hooks = struct {
 };
 
 fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
+
+pub const suggestion_cache_ttl: f64 = 5 * 60;
+
+const CachedSuggestions = struct {
+    query: []u8,
+    items: [][]u8,
+    fetched_at: f64,
+};
 
 pub const default_retention_seconds: f64 = 5 * 60;
 
@@ -183,21 +168,15 @@ pub const Panel = struct {
     retained_board: RetainedBoard = .{},
     board: board_mod.Board,
     field: ui.TextBuffer = .{},
-    arena: std.heap.ArenaAllocator,
-    base_rows: []search.Row = &.{},
+    list: Results,
+    /// The catalog's rows for the answered query, before web suggestions.
+    base_rows: []const search.Row = &.{},
     suggestions: []const []const u8 = &.{},
-    rows: []search.Row = &.{},
-    visible: []search.Row = &.{},
-    /// The query `rows` answers, to search again only when it changes.
-    answered: std.ArrayList(u8) = .empty,
     suggest_seq: u64 = 0,
     pending_suggest_seq: u64 = 0,
     pending_suggest_query: std.ArrayList(u8) = .empty,
     suggestion_cache: std.ArrayList(CachedSuggestions) = .empty,
     web_suggestions_enabled: bool = true,
-    filter: Filter = .all,
-    selected: usize = 0,
-    reveal_selection: bool = false,
     indexing: bool = false,
     suppressed_by_backspace: bool = false,
     caret_at_end: bool = true,
@@ -209,33 +188,27 @@ pub const Panel = struct {
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .arena = .init(gpa), .board = .init(gpa, store, hooks.clock) };
+        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .list = .init(gpa), .board = .init(gpa, store, hooks.clock) };
     }
 
     pub fn deinit(p: *Panel) void {
-        const gpa = p.arena.child_allocator;
+        const gpa = p.list.arena.child_allocator;
         p.retained_search.deinit(gpa);
         p.retained_board.deinit(gpa);
         p.board.deinit();
         p.field.deinit();
-        p.answered.deinit(gpa);
         p.pending_suggest_query.deinit(gpa);
         p.freeAllCachedSuggestions();
-        p.arena.deinit();
+        p.list.deinit();
     }
 
     fn forgetSearch(p: *Panel) void {
         p.retained_search.clear();
+        p.list.reset();
         p.base_rows = &.{};
         p.suggestions = &.{};
-        p.rows = &.{};
-        p.visible = &.{};
-        p.answered.clearRetainingCapacity();
         p.cancelPendingSuggest();
-        p.filter = .all;
-        p.selected = 0;
         p.resetCompletion();
-        _ = p.arena.reset(.free_all);
         if (p.mode == .search) {
             p.field.clear();
             p.height = p.panelHeight();
@@ -253,7 +226,8 @@ pub const Panel = struct {
         }
     }
 
-    /// Drops retained search and clipboard state, queries, rows, and arenas.
+    /// Drops both surfaces' retained sessions: queries, rows, and the
+    /// memory behind them.
     pub fn forget(p: *Panel) void {
         p.forgetSearch();
         p.forgetBoard();
@@ -274,10 +248,7 @@ pub const Panel = struct {
         p.field.clear();
         if (p.mode == .clipboard) {
             p.retained_board.clear();
-            p.board.filter = .all;
-            p.board.answered.clearRetainingCapacity();
-            p.board.selected = 0;
-            p.board.stale = true;
+            p.board.forget();
             p.board.refresh("");
             return;
         }
@@ -285,41 +256,41 @@ pub const Panel = struct {
     }
 
     fn saveSearch(p: *Panel, now: f64) void {
-        if (p.retention_seconds <= 0 or p.field.text().len == 0) {
-            p.forgetSearch();
-            return;
-        }
-        const gpa = p.arena.child_allocator;
+        if (p.retention_seconds <= 0 or p.field.text().len == 0) return p.forgetSearch();
+        const gpa = p.list.arena.child_allocator;
         p.retained_search.query.clearRetainingCapacity();
         p.retained_search.query.appendSlice(gpa, p.field.text()) catch {};
         p.retained_search.path.clearRetainingCapacity();
-        if (p.selected < p.visible.len) {
-            p.retained_search.path.appendSlice(gpa, p.visible[p.selected].path) catch {};
-        }
-        p.retained_search.filter = p.filter;
+        if (p.list.selection()) |row| p.retained_search.path.appendSlice(gpa, row.path) catch {};
+        p.retained_search.filter = p.list.filter;
         p.retained_search.hidden_at = now;
     }
 
     fn saveBoard(p: *Panel, now: f64) void {
-        if (p.retention_seconds <= 0 or (p.field.text().len == 0 and p.board.filter == .all and p.board.selected == 0)) {
-            p.forgetBoard();
-            return;
-        }
-        const gpa = p.arena.child_allocator;
+        const l = &p.board.list;
+        if (p.retention_seconds <= 0 or (p.field.text().len == 0 and l.filter == .all and l.selected == 0)) return p.forgetBoard();
+        const gpa = p.list.arena.child_allocator;
         p.retained_board.query.clearRetainingCapacity();
         p.retained_board.query.appendSlice(gpa, p.field.text()) catch {};
-        p.retained_board.filter = p.board.filter;
-        p.retained_board.selected_id = if (p.board.selection()) |e| e.id else null;
+        p.retained_board.filter = l.filter;
+        p.retained_board.selected_id = if (l.selection()) |e| e.id else null;
         p.retained_board.hidden_at = now;
         p.board.releaseDetail();
     }
 
-    fn expireAt(p: *Panel, now: f64) void {
-        if (p.retained_search.hidden_at) |t| {
-            if (p.retention_seconds <= 0 or now - t >= p.retention_seconds) p.forgetSearch();
+    fn saveActive(p: *Panel, now: f64) void {
+        switch (p.mode) {
+            .search => p.saveSearch(now),
+            .clipboard => p.saveBoard(now),
         }
-        if (p.retained_board.hidden_at) |t| {
-            if (p.retention_seconds <= 0 or now - t >= p.retention_seconds) p.forgetBoard();
+    }
+
+    fn expireAt(p: *Panel, now: f64) void {
+        if (p.retained_search.hidden_at) |at| {
+            if (p.retention_seconds <= 0 or now - at >= p.retention_seconds) p.forgetSearch();
+        }
+        if (p.retained_board.hidden_at) |at| {
+            if (p.retention_seconds <= 0 or now - at >= p.retention_seconds) p.forgetBoard();
         }
     }
 
@@ -334,15 +305,14 @@ pub const Panel = struct {
     /// nothing is retained.
     pub fn nextExpiryMs(p: *const Panel) ?u32 {
         if (p.retention_seconds <= 0) return null;
-        const now = p.clock.now();
         var earliest: ?f64 = null;
-        if (p.retained_search.hidden_at) |t| earliest = t + p.retention_seconds;
-        if (p.retained_board.hidden_at) |t| {
-            const due = t + p.retention_seconds;
+        if (p.retained_search.hidden_at) |at| earliest = at + p.retention_seconds;
+        if (p.retained_board.hidden_at) |at| {
+            const due = at + p.retention_seconds;
             earliest = if (earliest) |e| @min(e, due) else due;
         }
         const due = earliest orelse return null;
-        const rem_s = @max(0.0, due - now);
+        const rem_s = @max(0.0, due - p.clock.now());
         return @intFromFloat(@ceil(rem_s * 1000.0) + 1.0);
     }
 
@@ -357,44 +327,31 @@ pub const Panel = struct {
             p.hidden = true;
             return;
         }
-        if (!p.hidden) {
-            switch (p.mode) {
-                .search => p.saveSearch(now),
-                .clipboard => p.saveBoard(now),
-            }
-            p.hidden = true;
-        }
+        if (!p.hidden) p.saveActive(now);
+        p.hidden = true;
     }
 
     /// Opens search, restoring the retained query (fully selected), filter,
     /// and selected row by path when within the retention window.
     pub fn showSearch(p: *Panel) void {
         const now = p.clock.now();
-        if (!p.hidden) switch (p.mode) {
-            .search => p.saveSearch(now),
-            .clipboard => p.saveBoard(now),
-        };
+        if (!p.hidden) p.saveActive(now);
         p.expireAt(now);
         p.hidden = false;
         p.mode = .search;
         if (p.retained_search.hidden_at != null) {
             p.retained_search.hidden_at = null;
-            p.filter = p.retained_search.filter;
-            p.field.set(p.retained_search.query.items);
-            p.field.want_caret = null;
-            p.field.want_selection = .{ 0, p.field.text().len };
-            p.field.focus();
-            p.resetCompletion();
+            p.list.filter = p.retained_search.filter;
+            p.restoreField(p.retained_search.query.items);
             p.caret_at_end = p.field.text().len == 0;
-            p.answered.clearRetainingCapacity();
+            p.list.markStale();
             p.refresh();
-            if (p.retained_search.path.items.len > 0) {
-                for (p.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, p.retained_search.path.items)) {
-                    p.selected = i;
-                    break;
-                };
-            }
-            p.reveal_selection = true;
+            const path = p.retained_search.path.items;
+            if (path.len > 0) for (p.list.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, path)) {
+                p.list.selected = i;
+                break;
+            };
+            p.list.reveal = true;
         } else {
             p.forgetSearch();
             p.field.focus();
@@ -407,52 +364,50 @@ pub const Panel = struct {
     /// and selection (or selecting the newest matching copy since hide).
     pub fn showClipboard(p: *Panel) void {
         const now = p.clock.now();
-        if (!p.hidden) switch (p.mode) {
-            .search => p.saveSearch(now),
-            .clipboard => p.saveBoard(now),
-        };
+        if (!p.hidden) p.saveActive(now);
         p.expireAt(now);
         p.hidden = false;
         p.mode = .clipboard;
         p.cancelPendingSuggest();
         p.suggestions = &.{};
         p.resetCompletion();
+        const l = &p.board.list;
         if (p.retained_board.hidden_at) |hidden_at| {
             p.retained_board.hidden_at = null;
-            p.board.filter = p.retained_board.filter;
-            p.field.set(p.retained_board.query.items);
-            p.field.want_caret = null;
-            p.field.want_selection = .{ 0, p.field.text().len };
-            p.field.focus();
-            p.board.stale = true;
-            p.board.answered.clearRetainingCapacity();
+            l.filter = p.retained_board.filter;
+            p.restoreField(p.retained_board.query.items);
+            l.markStale();
             p.board.refresh(p.field.text());
-            p.board.selected = 0;
-            var newest_idx: ?usize = null;
-            var newest_at: f64 = hidden_at;
-            for (p.board.visible, 0..) |e, i| {
-                if (e.created_at > newest_at) {
-                    newest_at = e.created_at;
-                    newest_idx = i;
-                }
-            }
-            if (newest_idx) |idx| {
-                p.board.selected = idx;
-            } else if (p.retained_board.selected_id) |id| {
-                for (p.board.visible, 0..) |e, i| if (e.id == id) {
-                    p.board.selected = i;
-                    break;
-                };
-            }
-            p.board.reveal_selection = true;
+            l.selected = 0;
+            var newest_at = hidden_at;
+            var newest: ?usize = null;
+            for (l.visible, 0..) |e, i| if (e.created_at > newest_at) {
+                newest_at = e.created_at;
+                newest = i;
+            };
+            if (newest) |i| {
+                l.selected = i;
+            } else if (p.retained_board.selected_id) |id| for (l.visible, 0..) |e, i| if (e.id == id) {
+                l.selected = i;
+                break;
+            };
+            l.reveal = true;
         } else {
             p.forgetBoard();
             p.field.focus();
-            p.board.stale = true;
             p.board.refresh("");
         }
         p.height = p.panelHeight();
         p.width = p.panelWidth();
+    }
+
+    /// The retained query, fully selected so typing replaces it.
+    fn restoreField(p: *Panel, query: []const u8) void {
+        p.field.set(query);
+        p.field.want_caret = null;
+        p.field.want_selection = .{ 0, p.field.text().len };
+        p.field.focus();
+        p.resetCompletion();
     }
 
     pub fn panelHeight(p: *const Panel) f32 {
@@ -468,57 +423,59 @@ pub const Panel = struct {
     pub fn refresh(p: *Panel) void {
         const text = p.field.text();
         if (p.mode == .clipboard) {
-            if (!p.board.stale and std.mem.eql(u8, text, p.board.answered.items)) return;
+            if (!p.board.list.needsQuery(text)) return;
             mac.signpostBegin(.keystroke);
             defer mac.signpostEnd(.keystroke);
-            if (text.len == 0 and p.board.answered.items.len > 0) {
-                p.board.filter = .all;
+            if (text.len == 0 and p.board.list.answered().len > 0) {
+                p.board.list.filter = .all;
                 p.retained_board.clear();
             }
-            if (text.len == 0 or text.len > p.board.answered.items.len) p.suppressed_by_backspace = false;
+            if (text.len == 0 or text.len > p.board.list.answered().len) p.suppressed_by_backspace = false;
             p.board.refresh(text);
             p.completion = p.computeCompletion();
             return;
         }
-        if (std.mem.eql(u8, text, p.answered.items)) return;
+        if (!p.list.needsQuery(text)) return;
         mac.signpostBegin(.keystroke);
         defer mac.signpostEnd(.keystroke);
-        if (text.len == 0 or text.len > p.answered.items.len) p.suppressed_by_backspace = false;
+        if (text.len == 0 or text.len > p.list.answered().len) p.suppressed_by_backspace = false;
         if (text.len == 0) {
-            p.filter = .all;
+            p.list.filter = .all;
             p.retained_search.clear();
         }
-        _ = p.arena.reset(.retain_capacity);
-        p.base_rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
-        p.suggestions = &.{};
-        const eligible = p.shouldSuggest(text);
-        var need_fetch = false;
-        if (eligible) {
-            if (p.suggestion_cache.items.len > 0) {
-                if (p.cachedSuggestions(text, p.clock.now())) |cached| {
-                    p.cancelPendingSuggest();
-                    p.suggestions = p.dupeSuggestions(cached);
-                } else {
-                    need_fetch = true;
-                }
-            } else {
-                need_fetch = true;
-            }
-        } else {
+        const need_fetch = p.answer(text) catch |err| {
+            std.log.err("search: {s}", .{@errorName(err)});
+            p.base_rows = &.{};
+            p.suggestions = &.{};
             p.cancelPendingSuggest();
-        }
-        p.rebuildRows();
-        p.answered.clearRetainingCapacity();
-        p.answered.appendSlice(p.arena.child_allocator, text) catch {};
-        if (p.filter != .all and p.count(p.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, p.filter) != null) p.filter = .all;
-        p.applyFilter();
+            p.completion = null;
+            return p.list.fail();
+        };
+        const l = &p.list;
+        if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
+        p.completion = p.computeCompletion();
         if (need_fetch) {
             p.suggest_seq += 1;
             p.pending_suggest_seq = p.suggest_seq;
             p.pending_suggest_query.clearRetainingCapacity();
-            p.pending_suggest_query.appendSlice(p.arena.child_allocator, text) catch {};
+            p.pending_suggest_query.appendSlice(p.list.arena.child_allocator, text) catch {};
             p.hooks.suggest(p.hooks.ctx, p.pending_suggest_seq, text);
         }
+    }
+
+    /// True when web suggestions for `text` must be fetched.
+    fn answer(p: *Panel, text: []const u8) !bool {
+        p.base_rows = try p.catalog.query(p.list.beginQuery(text), text);
+        p.suggestions = &.{};
+        var need_fetch = false;
+        if (p.shouldSuggest(text)) {
+            if (p.cachedSuggestions(text, p.clock.now())) |cached| {
+                p.cancelPendingSuggest();
+                p.suggestions = p.dupeSuggestions(cached);
+            } else need_fetch = true;
+        } else p.cancelPendingSuggest();
+        try p.list.setRows(text, p.composeRows());
+        return need_fetch;
     }
 
     pub fn setWebSuggestionsEnabled(p: *Panel, enabled: bool) void {
@@ -527,12 +484,12 @@ pub const Panel = struct {
         if (!enabled) {
             p.cancelPendingSuggest();
             p.suggestions = &.{};
-            p.rebuildRows();
-            p.updateVisible();
+            p.list.replaceRows(p.composeRows());
+            p.completion = p.computeCompletion();
             return;
         }
         if (p.mode == .search and p.field.text().len > 0) {
-            p.answered.clearRetainingCapacity();
+            p.list.markStale();
             p.refresh();
         }
     }
@@ -542,8 +499,7 @@ pub const Panel = struct {
         const trimmed = std.mem.trim(u8, text, " \t\r\n");
         if (trimmed.len == 0) return false;
         if (isPathLike(text) or isPathLike(trimmed)) return false;
-        if (hasLinkRow(p.base_rows)) return false;
-        return true;
+        return !hasLinkRow(p.base_rows);
     }
 
     fn cancelPendingSuggest(p: *Panel) void {
@@ -555,6 +511,8 @@ pub const Panel = struct {
         _ = p.receiveSuggestionsFor(p.pending_suggest_seq, query, items);
     }
 
+    /// False for a late reply: an old query, a superseded request, or a
+    /// panel that has left search.
     pub fn receiveSuggestionsFor(p: *Panel, seq: u64, query: []const u8, items: []const []const u8) bool {
         if (!p.web_suggestions_enabled or p.mode != .search) return false;
         if (p.pending_suggest_seq == 0 or seq != p.pending_suggest_seq) return false;
@@ -563,13 +521,13 @@ pub const Panel = struct {
         p.cancelPendingSuggest();
         p.storeCachedSuggestions(query, items, p.clock.now());
         p.suggestions = p.dupeSuggestions(items);
-        p.rebuildRows();
-        p.updateVisible();
+        p.list.replaceRows(p.composeRows());
+        p.completion = p.computeCompletion();
         return true;
     }
 
     fn cachedSuggestions(p: *Panel, query: []const u8, now: f64) ?[]const []const u8 {
-        const gpa = p.arena.child_allocator;
+        const gpa = p.list.arena.child_allocator;
         var i: usize = 0;
         while (i < p.suggestion_cache.items.len) {
             const entry = p.suggestion_cache.items[i];
@@ -585,7 +543,7 @@ pub const Panel = struct {
     }
 
     fn storeCachedSuggestions(p: *Panel, query: []const u8, items: []const []const u8, now: f64) void {
-        const gpa = p.arena.child_allocator;
+        const gpa = p.list.arena.child_allocator;
         var i: usize = 0;
         while (i < p.suggestion_cache.items.len) {
             const entry = p.suggestion_cache.items[i];
@@ -596,19 +554,15 @@ pub const Panel = struct {
             }
             i += 1;
         }
-        var total: usize = 0;
-        for (items) |s| {
-            if (s.len == 0) continue;
-            total += 1;
-            if (total == search.max_suggestions) break;
-        }
+        const kept = nonEmpty(items);
         const q_copy = gpa.dupe(u8, query) catch return;
-        const owned = gpa.alloc([]u8, total) catch {
+        const owned = gpa.alloc([]u8, kept) catch {
             gpa.free(q_copy);
             return;
         };
         var n: usize = 0;
         for (items) |s| {
+            if (n == kept) break;
             if (s.len == 0) continue;
             owned[n] = gpa.dupe(u8, s) catch {
                 for (owned[0..n]) |prev| gpa.free(prev);
@@ -617,7 +571,6 @@ pub const Panel = struct {
                 return;
             };
             n += 1;
-            if (n == total) break;
         }
         p.suggestion_cache.append(gpa, .{ .query = q_copy, .items = owned, .fetched_at = now }) catch {
             for (owned) |prev| gpa.free(prev);
@@ -627,7 +580,7 @@ pub const Panel = struct {
     }
 
     fn freeAllCachedSuggestions(p: *Panel) void {
-        const gpa = p.arena.child_allocator;
+        const gpa = p.list.arena.child_allocator;
         for (p.suggestion_cache.items) |entry| freeCacheEntry(gpa, entry);
         p.suggestion_cache.deinit(gpa);
     }
@@ -638,54 +591,37 @@ pub const Panel = struct {
         gpa.free(entry.query);
     }
 
+    /// Copies up to `search.max_suggestions` non-empty items into the rows' memory.
     fn dupeSuggestions(p: *Panel, items: []const []const u8) []const []const u8 {
-        const a = p.arena.allocator();
-        var total: usize = 0;
-        for (items) |s| {
-            if (s.len == 0) continue;
-            total += 1;
-            if (total == search.max_suggestions) break;
-        }
-        if (total == 0) return &.{};
-        const out = a.alloc([]const u8, total) catch return &.{};
+        const a = p.list.allocator();
+        const kept = nonEmpty(items);
+        if (kept == 0) return &.{};
+        const out = a.alloc([]const u8, kept) catch return &.{};
         var n: usize = 0;
         for (items) |s| {
+            if (n == kept) break;
             if (s.len == 0) continue;
             out[n] = a.dupe(u8, s) catch return out[0..n];
             n += 1;
-            if (n == total) break;
         }
         return out[0..n];
     }
 
-    fn rebuildRows(p: *Panel) void {
-        if (p.suggestions.len == 0 or p.base_rows.len == 0) {
-            p.rows = p.base_rows;
-            return;
-        }
-        const a = p.arena.allocator();
-        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len) catch {
-            p.rows = p.base_rows;
-            return;
-        };
+    /// The catalog's rows, then a Google row per suggestion.
+    fn composeRows(p: *Panel) []const search.Row {
+        if (p.suggestions.len == 0 or p.base_rows.len == 0) return p.base_rows;
+        const a = p.list.allocator();
+        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len) catch return p.base_rows;
         @memcpy(out[0..p.base_rows.len], p.base_rows);
-        for (p.suggestions, 0..) |s, i| {
-            out[p.base_rows.len + i] = .{
-                .kind = .web,
-                .title = s,
-                .subtitle = "google.com",
-                .path = search.webSearchUrl(a, s) catch "",
-                .score = 0,
-                .suggestion = true,
-            };
-        }
-        p.rows = out;
-    }
-
-    pub fn count(p: *const Panel, f: Filter) usize {
-        var n: usize = 0;
-        for (p.rows) |r| n += @intFromBool(f.includes(r));
-        return n;
+        for (p.suggestions, p.base_rows.len..) |s, i| out[i] = .{
+            .kind = .web,
+            .title = s,
+            .subtitle = "google.com",
+            .path = search.webSearchUrl(a, s) catch "",
+            .score = 0,
+            .suggestion = true,
+        };
+        return out;
     }
 
     pub fn filterOptions(p: *const Panel, buf: *[Filter.primary.len + Filter.dynamic.len]Filter) []const Filter {
@@ -694,7 +630,7 @@ pub const Panel = struct {
             buf[n] = f;
             n += 1;
         }
-        for (Filter.dynamic) |f| if (p.filter == f or p.count(f) > 0) {
+        for (Filter.dynamic) |f| if (p.list.filter == f or p.list.count(f) > 0) {
             buf[n] = f;
             n += 1;
         };
@@ -702,33 +638,12 @@ pub const Panel = struct {
     }
 
     pub fn selectFilter(p: *Panel, f: Filter) void {
-        p.filter = f;
-        p.applyFilter();
+        p.list.selectFilter(f);
+        p.completion = p.computeCompletion();
         p.field.focus();
     }
 
-    fn updateVisible(p: *Panel) void {
-        const out = p.arena.allocator().alloc(search.Row, p.rows.len) catch return;
-        var n: usize = 0;
-        for (p.rows) |r| if (p.filter.includes(r)) {
-            out[n] = r;
-            n += 1;
-        };
-        p.visible = out[0..n];
-        if (p.visible.len == 0) {
-            p.selected = 0;
-        } else if (p.selected >= p.visible.len) {
-            p.selected = p.visible.len - 1;
-        }
-        p.completion = p.computeCompletion();
-    }
-
-    fn applyFilter(p: *Panel) void {
-        p.selected = 0;
-        p.reveal_selection = true;
-        p.updateVisible();
-    }
-
+    /// Query history first, then the top hit's title, then the first web suggestion.
     fn computeCompletion(p: *Panel) ?Completion {
         if (p.suppressed_by_backspace or !p.caret_at_end or p.composing) return null;
         const query = p.field.text();
@@ -738,14 +653,14 @@ pub const Panel = struct {
             const match = store.completeQuery(&p.completion_buf, .clipboard, query, p.clock.now()) orelse return null;
             return .{ .suffix = match[query.len..], .source = .history };
         }
-        if (hasLinkRow(p.rows)) return null;
+        if (hasLinkRow(p.list.rows)) return null;
         if (p.store) |store| {
             if (store.completeQuery(&p.completion_buf, .search, query, p.clock.now())) |match| {
                 return .{ .suffix = match[query.len..], .source = .history };
             }
         }
         if (p.isTopHit(0)) {
-            const top = p.visible[0];
+            const top = p.list.visible[0];
             if (top.kind != .web and top.title.len > query.len and std.ascii.startsWithIgnoreCase(top.title, query)) {
                 return .{ .suffix = top.title[query.len..], .source = .top_hit };
             }
@@ -760,7 +675,7 @@ pub const Panel = struct {
     }
 
     pub fn clearQueryHistory(p: *Panel) void {
-        if (p.store) |store| store.clearQueries() catch {};
+        if (p.store) |store| store.clearQueries() catch |err| std.log.err("query history: {s}", .{@errorName(err)});
         p.completion = p.computeCompletion();
     }
 
@@ -780,7 +695,7 @@ pub const Panel = struct {
     }
 
     pub fn isTopHit(p: *const Panel, i: usize) bool {
-        return i == 0 and p.visible.len > 0 and p.filter == .all;
+        return i == 0 and p.list.visible.len > 0 and p.list.filter == .all;
     }
 
     fn ask(p: *Panel, a: Action) void {
@@ -791,33 +706,26 @@ pub const Panel = struct {
 
     fn recordActionQuery(p: *Panel, a: Action) void {
         const store = p.store orelse return;
-        switch (a) {
-            .open, .reveal, .copy => store.recordQuery(.search, p.field.text(), p.clock.now()) catch {},
+        const scope: clipboard.QueryScope = switch (a) {
+            .open, .reveal, .copy => .search,
             .clipboard => |ba| switch (ba) {
-                .paste, .copy, .open, .reveal => {
-                    if (!p.hasSensitiveBoardMatch(ba)) store.recordQuery(.clipboard, p.field.text(), p.clock.now()) catch {};
-                },
-                .preview, .actions => {},
+                .paste, .copy, .open, .reveal => if (p.hasSensitiveBoardMatch(ba)) return else .clipboard,
+                .preview, .actions => return,
             },
-            .hide => {},
-        }
+            .hide => return,
+        };
+        store.recordQuery(scope, p.field.text(), p.clock.now()) catch |err| std.log.err("query history: {s}", .{@errorName(err)});
     }
 
+    /// A query that matched a password manager's copy is never remembered.
     fn hasSensitiveBoardMatch(p: *const Panel, action: board_mod.Action) bool {
         const entry: ?clipboard.Entry = switch (action) {
-            .paste => |e| e,
-            .copy => |e| e,
-            .open, .reveal, .preview, .actions => p.board.selection(),
+            .paste, .copy => |e| e,
+            .open, .reveal, .preview, .actions => p.board.list.selection(),
         };
         if (entry) |e| if (e.isSensitive()) return true;
-        for (p.board.rows) |r| if (r.isSensitive()) return true;
+        for (p.board.list.rows) |r| if (r.isSensitive()) return true;
         return false;
-    }
-
-    fn move(p: *Panel, down: bool) void {
-        if (p.visible.len == 0) return;
-        p.selected = if (down) @min(p.selected + 1, p.visible.len - 1) else p.selected -| 1;
-        p.reveal_selection = true;
     }
 
     fn keys(p: *Panel, c: *ui.Context) void {
@@ -840,14 +748,8 @@ pub const Panel = struct {
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
-        for (options, 0..) |f, i| {
-            if (i >= 5) break;
-            if (c.shortcut(.{ .key = '1' + @as(u21, @intCast(i)), .cmd = true })) p.selectFilter(f);
-        }
-        if (p.visible.len == 0) return;
-        if (c.shortcut(.{ .key = S.down })) p.move(true);
-        if (c.shortcut(.{ .key = S.up })) p.move(false);
-        const row = p.visible[p.selected];
+        if (chrome.listKeys(c, &p.list, options[0..@min(options.len, 5)])) p.field.focus();
+        const row = p.list.selection() orelse return;
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (row.kind != .web) p.ask(.{ .reveal = row.path });
         }
@@ -860,7 +762,8 @@ pub const Panel = struct {
         defer root.end();
         p.searchBar(c);
         if (p.mode == .clipboard) {
-            if (p.board.view(c, p)) |a| p.ask(.{ .clipboard = a });
+            const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
+            if (p.board.view(c, cx)) |a| p.ask(.{ .clipboard = a });
         } else if (p.field.text().len > 0) {
             ui.div(c).wFull().h(1).bg(c.theme.border.alpha(0.45)).end();
             p.filterBar(c);
@@ -879,13 +782,13 @@ pub const Panel = struct {
     /// previews, as the Swift board's.
     fn boardField(p: *Panel, r: anytype) void {
         if (r.changed) {
-            if (std.mem.eql(u8, p.field.text(), " ")) if (p.board.selection()) |e| if (p.board.previewable(e)) {
+            if (std.mem.eql(u8, p.field.text(), " ")) if (p.board.list.selection()) |e| if (p.board.previewable(e)) {
                 p.field.clear();
                 return p.ask(.{ .clipboard = .{ .preview = e } });
             };
             p.refresh();
         }
-        if (r.submitted) if (p.board.selection()) |e| p.ask(.{ .clipboard = .{ .paste = e } });
+        if (r.submitted) if (p.board.list.selection()) |e| p.ask(.{ .clipboard = .{ .paste = e } });
     }
 
     fn searchBar(p: *Panel, c: *ui.Context) void {
@@ -903,7 +806,7 @@ pub const Panel = struct {
             p.boardField(r);
         } else {
             if (r.changed) p.refresh();
-            if (r.submitted and p.visible.len > 0) p.ask(.{ .open = p.visible[p.selected].path });
+            if (r.submitted) if (p.list.selection()) |row| p.ask(.{ .open = row.path });
         }
         p.syncFieldState(c, r.caret);
         if (p.field.text().len > 0) {
@@ -912,7 +815,7 @@ pub const Panel = struct {
             const hovered = clear.hovered();
             ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = if (hovered) th.text else th.muted });
             if (clear.clicked()) p.clearField();
-        } else keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
+        } else chrome.keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
     }
 
     fn observeInput(p: *Panel, c: *const ui.Context) void {
@@ -943,63 +846,39 @@ pub const Panel = struct {
     }
 
     fn filterBar(p: *Panel, c: *ui.Context) void {
-        const bar = ui.div(c).row().wFull().h(metrics.filter_bar_height).px(14).gap(7).itemsCenter().clip();
+        const bar = chrome.filterBar(c);
         defer bar.end();
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
-        for (p.filterOptions(&buf)) |f| p.filterChip(c, f);
-    }
-
-    fn filterChip(p: *Panel, c: *ui.Context, f: Filter) void {
-        const th = c.theme;
-        ui.key(c, f.title());
-        const selected = p.filter == f;
-        const chip = ui.div(c).row().h(26).pl(10).pr(7).gap(5).itemsCenter().roundedFull()
-            .bg(th.text.alpha(if (selected) 0.14 else 0.055)).control();
-        defer chip.end();
-        if (chip.clicked()) p.selectFilter(f);
-        ui.icon(c, f.symbol(), .{ .size = 11, .weight = .semibold, .color = if (selected) th.text else th.muted });
-        ui.text(c, f.title(), .{ .size = 11.5, .weight = .semibold });
-        const slot = ui.div(c).w(27).h(13).center();
-        defer slot.end();
-        const loading = p.indexing and f != .apps;
-        if (loading) {
-            ui.icon(c, "ellipsis", .{ .size = 10, .weight = .semibold, .color = th.muted });
-        } else {
-            ui.text(c, compactCount(c, p.count(f)), .{ .size = 10, .weight = .semibold, .color = th.muted });
+        for (p.filterOptions(&buf)) |f| {
+            const slot: chrome.ChipSlot = if (p.indexing and f != .apps) .loading else .{ .count = p.list.count(f) };
+            if (chrome.filterChip(c, f.title(), f.symbol(), p.list.filter == f, slot)) p.selectFilter(f);
         }
     }
 
     fn resultList(p: *Panel, c: *ui.Context) void {
-        if (p.visible.len == 0) {
-            const empty = ui.div(c).column().wFull().h(metrics.list_height).center().px(40);
-            defer empty.end();
-            ui.text(c, c.print("No {s} results for \u{201C}{s}\u{201D}", .{ lowerTitle(c, p.filter), p.field.text() }), .{ .size = 13.5, .weight = .medium, .color = c.theme.muted.alpha(0.6) });
-            return;
+        if (p.list.visible.len == 0) {
+            const message = if (p.list.failed)
+                c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()})
+            else
+                c.print("No {s} results for \u{201C}{s}\u{201D}", .{ chrome.lowerTitle(c, p.list.filter), p.field.text() });
+            return chrome.emptyState(c, metrics.list_height, message, false);
         }
-        const list = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
-        defer list.end();
-        boundOverscroll(c, list.id());
-        if (p.reveal_selection) {
-            p.reveal_selection = false;
-            const id = list.id();
-            const top = @as(f32, @floatFromInt(p.selected)) * metrics.row_height;
-            const view_h = metrics.list_height - 2 * metrics.row_padding;
-            const now = c.scroll.get(id) orelse 0;
-            if (top < now) c.setScroll(id, .y, top) else if (top + metrics.row_height > now + view_h) c.setScroll(id, .y, top + metrics.row_height - view_h);
-        }
-        for (p.visible, 0..) |row, i| p.rowView(c, row, i);
+        const box = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
+        defer box.end();
+        chrome.boundOverscroll(c, box.id());
+        chrome.revealSelection(c, &p.list, box.id(), metrics.list_height - 2 * metrics.row_padding);
+        for (p.list.visible, 0..) |row, i| p.rowView(c, row, i);
     }
 
     fn rowView(p: *Panel, c: *ui.Context, row: search.Row, i: usize) void {
         const th = c.theme;
         ui.keyInt(c, i);
-        const selected = i == p.selected;
+        const selected = i == p.list.selected;
         const top_hit = p.isTopHit(i);
-        var box = ui.div(c).row().wFull().h(metrics.row_height).px(12).gap(12).itemsCenter().rounded(metrics.row_radius).control();
-        const it = c.interact(box.index, .{});
-        box = box.bg(rowFill(th, selected, it.hovered, top_hit));
-        defer box.end();
-        if (it.clicked) p.selected = i;
+        const row_box = chrome.rowBox(c, selected, top_hit);
+        defer row_box.box.end();
+        const it = row_box.it;
+        if (it.clicked) p.list.selected = i;
         if (it.double_clicked) p.ask(.{ .open = row.path });
         p.iconView(c, row, if (top_hit) metrics.top_hit_icon_size else metrics.icon_size);
         {
@@ -1023,9 +902,10 @@ pub const Panel = struct {
             }
             p.subtitleLine(c, row, top_hit);
         }
-        if (selected) keyChip(c, .{ .symbol = "return" });
+        if (selected) chrome.keyChip(c, .{ .symbol = "return" });
     }
 
+    /// The part of a suggestion past the typed query is bold.
     fn suggestionTitle(p: *const Panel, c: *ui.Context, title: []const u8) void {
         const query = p.field.text();
         const trimmed = std.mem.trim(u8, query, " ");
@@ -1036,16 +916,10 @@ pub const Panel = struct {
         else
             0;
         const style: ui.TextStyle = .{ .size = 15, .weight = .regular, .truncate = .ellipsis };
-        if (prefix_len >= title.len) {
-            ui.text(c, title, style);
-            return;
-        }
+        if (prefix_len >= title.len) return ui.text(c, title, style);
         const spans = c.arena.allocator().dupe(ui.Span, &.{
             .{ .start = @intCast(prefix_len), .end = @intCast(title.len), .weight = .bold },
-        }) catch {
-            ui.text(c, title, style);
-            return;
-        };
+        }) catch return ui.text(c, title, style);
         ui.richText(c, title, spans, style);
     }
 
@@ -1056,7 +930,7 @@ pub const Panel = struct {
         ui.text(c, row.subtitle, .{ .size = style.size, .weight = style.weight, .color = style.color, .truncate = .ellipsis });
         if (row.size) |size| if (size > 0) {
             ui.text(c, "·", style);
-            ui.text(c, formatSize(c, size), style);
+            ui.text(c, chrome.formatSize(c, size), style);
         };
         if (row.modified) |secs| {
             ui.text(c, "·", style);
@@ -1078,11 +952,6 @@ pub const Panel = struct {
         ui.icon(c, row.kind.symbol(), .{ .size = size * 0.58, .color = c.theme.accent });
     }
 };
-
-pub fn boundOverscroll(c: *ui.Context, scroll_box: u64) void {
-    const over = c.overscroll.getPtr(scroll_box) orelse return;
-    over.* = std.math.clamp(over.*, -metrics.max_overscroll, metrics.max_overscroll);
-}
 
 fn takeFieldKey(c: *ui.Context, key: anytype, alt: bool, cmd: anytype) bool {
     if (c.input.shift or c.input.cmd or c.input.ctrl) return false;
@@ -1151,45 +1020,9 @@ fn hasLinkRow(rows: []const search.Row) bool {
     return false;
 }
 
-pub fn rowFill(th: ui.Theme, selected: bool, hovered: bool, top_hit: bool) ui.Color {
-    const ink: ui.Color = if (th.dark) .hex(0xffffff) else .hex(0x000000);
-    if (selected) return ink.alpha(if (th.dark) (if (hovered) 0.16 else 0.12) else (if (hovered) 0.11 else 0.08));
-    if (hovered) return ink.alpha(if (th.dark) 0.075 else 0.055);
-    if (top_hit) return th.text.alpha(0.045);
-    return ink.alpha(0);
-}
-
-const ChipContent = union(enum) { label: []const u8, symbol: []const u8 };
-
-pub fn keyChip(c: *ui.Context, content: ChipContent) void {
-    const th = c.theme;
-    const chip = ui.div(c).row().minW(24).h(24).px(7).center().rounded(7).bg(th.muted.alpha(0.1));
-    defer chip.end();
-    const color = th.text.alpha(0.82);
-    switch (content) {
-        .label => |s| ui.text(c, s, .{ .size = 11, .weight = .semibold, .color = color }),
-        .symbol => |s| ui.icon(c, s, .{ .size = 11, .weight = .semibold, .color = color }),
-    }
-}
-
-fn lowerTitle(c: *ui.Context, f: Filter) []const u8 {
-    return std.ascii.allocLowerString(c.arena.allocator(), f.title()) catch f.title();
-}
-
-pub fn compactCount(c: *ui.Context, n: usize) []const u8 {
-    if (n < 1000) return c.print("{d}", .{n});
-    const tenths = (n + 50) / 100;
-    if (tenths % 10 == 0) return c.print("{d}K", .{tenths / 10});
-    return c.print("{d}.{d}K", .{ tenths / 10, tenths % 10 });
-}
-
-pub fn formatSize(c: *ui.Context, bytes: u64) []const u8 {
-    if (bytes < 1000) return c.print("{d} bytes", .{bytes});
-    if (bytes < 1_000_000) return c.print("{d} KB", .{(bytes + 500) / 1000});
-    const units = [_][]const u8{ "MB", "GB", "TB" };
-    var scaled: f64 = @as(f64, @floatFromInt(bytes)) / 1_000_000;
-    var u: usize = 0;
-    while (scaled >= 1000 and u + 1 < units.len) : (u += 1) scaled /= 1000;
-    if (u == 0) return c.print("{d:.1} {s}", .{ scaled, units[u] });
-    return c.print("{d:.2} {s}", .{ scaled, units[u] });
+/// How many of `items` a suggestion list keeps: non-empty ones, up to the cap.
+fn nonEmpty(items: []const []const u8) usize {
+    var n: usize = 0;
+    for (items) |s| n += @intFromBool(s.len > 0);
+    return @min(n, search.max_suggestions);
 }

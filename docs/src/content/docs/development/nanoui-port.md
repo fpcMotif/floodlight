@@ -83,6 +83,8 @@ Queries that contain `/` do not prune yet and take about 70 ms at 1M entries. Se
 2. If Full Disk Access is granted, a background thread rebuilds the index from `$HOME`. The new index replaces the old mapping on the main thread.
 3. When access is granted later, the index rebuilds again, because folders that were closed to the scan are now open.
 
+`FileIndex` in `core/src/file_index.zig` owns these steps. One scan runs at a time, and requests that arrive during a scan share one follow-up scan. A failed scan keeps the last index.
+
 ### C ABI
 
 ```c
@@ -218,8 +220,8 @@ Measured on the same Mac mini (macOS 27.2):
 
 | Command | What it runs |
 |---|---|
-| `make test-nanoui` | `zig fmt` check, 37 tests, 200-app latency benchmark (`zig build bench --release`), app bundle, panel snapshot |
-| `make test-core` | `zig fmt`, 19 tests, cross-build, CLI smoke and bench |
+| `make test-nanoui` | `zig fmt` check, 82 tests, 200-app latency benchmark (`zig build bench --release`), app bundle, panel snapshot |
+| `make test-core` | `zig fmt`, 27 tests, cross-build, CLI smoke and bench |
 
 ## Open items
 

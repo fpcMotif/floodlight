@@ -8,6 +8,15 @@ const ui = nanoui.ui;
 const search = @import("search.zig");
 const panel_mod = @import("panel.zig");
 const mac = @import("mac.zig");
+const presence = @import("presence.zig");
+const chrome = @import("chrome.zig");
+
+fn noEffect(_: ?*anyopaque, _: presence.Effect) void {}
+
+/// A hidden panel whose effects do nothing: only its summon signposts run.
+fn hiddenPresence() presence.Presence {
+    return .{ .effects = .{ .ctx = null, .run = noEffect } };
+}
 
 extern "c" fn clock_gettime_nsec_np(clock_id: c_int) u64;
 const clock_uptime_raw: c_int = 8;
@@ -141,7 +150,7 @@ fn summarize(samples: []u64) Stats {
 }
 
 pub fn measureKeystrokeToPublication(gpa: std.mem.Allocator, runs: usize) !Stats {
-    var cat: search.Catalog = .{ .gpa = gpa, .home = "/Users/bench" };
+    var cat: search.Catalog = .{ .gpa = gpa };
     defer cat.deinit();
     try populateCatalog(&cat, catalog_app_count);
 
@@ -152,7 +161,7 @@ pub fn measureKeystrokeToPublication(gpa: std.mem.Allocator, runs: usize) !Stats
     for (keystroke_queries) |q| {
         p.field.set(q);
         p.refresh();
-        if (p.visible.len == 0) return error.EmptyPublication;
+        if (p.list.visible.len == 0) return error.EmptyPublication;
     }
 
     const samples = try gpa.alloc(u64, runs);
@@ -163,13 +172,13 @@ pub fn measureKeystrokeToPublication(gpa: std.mem.Allocator, runs: usize) !Stats
         p.field.set(q);
         p.refresh();
         s.* = nowNs() - t0;
-        if (p.visible.len == 0) return error.EmptyPublication;
+        if (p.list.visible.len == 0) return error.EmptyPublication;
     }
     return summarize(samples);
 }
 
 pub fn measureHotKeyToLaidOutFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
-    var cat: search.Catalog = .{ .gpa = gpa, .home = "/Users/bench" };
+    var cat: search.Catalog = .{ .gpa = gpa };
     defer cat.deinit();
     try populateCatalog(&cat, catalog_app_count);
 
@@ -178,21 +187,20 @@ pub fn measureHotKeyToLaidOutFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
 
     var tester: ui.Tester = undefined;
     try tester.init(gpa, .init(&p, panel_mod.Panel.view), .{
-        .width = panel_mod.metrics.width,
-        .height = panel_mod.metrics.expanded_height,
+        .width = chrome.metrics.width,
+        .height = chrome.metrics.expanded_height,
     });
     defer tester.deinit();
-
-    var entrance: mac.Entrance = .{};
 
     // Warm glyph metrics and layout tables before timing reopen frames.
     for (keystroke_queries) |q| {
         p.reset();
-        entrance.orderedIn();
+        var entrance = hiddenPresence();
+        entrance.search(false, false);
         p.field.set(q);
         p.refresh();
         tester.frame();
-        _ = entrance.reveal(true);
+        _ = entrance.framePresented(true);
         if (tester.ctx.nodes.items.len == 0) return error.EmptyFrame;
     }
 
@@ -201,12 +209,13 @@ pub fn measureHotKeyToLaidOutFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
     for (samples, 0..) |*s, i| {
         const q = keystroke_queries[i % keystroke_queries.len];
         p.reset();
+        var entrance = hiddenPresence();
         const t0 = nowNs();
-        entrance.orderedIn();
+        entrance.search(false, false);
         p.field.set(q);
         p.refresh();
         tester.frame();
-        _ = entrance.reveal(true);
+        _ = entrance.framePresented(true);
         s.* = nowNs() - t0;
         if (tester.ctx.nodes.items.len == 0) return error.EmptyFrame;
     }
@@ -214,7 +223,7 @@ pub fn measureHotKeyToLaidOutFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
 }
 
 pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
-    var cat: search.Catalog = .{ .gpa = gpa, .home = "/Users/bench" };
+    var cat: search.Catalog = .{ .gpa = gpa };
     defer cat.deinit();
     try populateCatalog(&cat, catalog_app_count);
 
@@ -225,8 +234,8 @@ pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
 
     var tester: ui.Tester = undefined;
     try tester.init(gpa, .init(&p, panel_mod.Panel.view), .{
-        .width = panel_mod.metrics.width,
-        .height = panel_mod.metrics.expanded_height,
+        .width = chrome.metrics.width,
+        .height = chrome.metrics.expanded_height,
     });
     defer tester.deinit();
 
