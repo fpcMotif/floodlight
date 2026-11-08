@@ -2,6 +2,7 @@
 //! home folder's name index, mapped from disk by the Zig core.
 const std = @import("std");
 const core = @import("floodlight_core");
+const clipboard = @import("clipboard.zig");
 
 pub const Kind = enum {
     app,
@@ -38,6 +39,7 @@ pub const Row = struct {
     score: i32,
     size: ?u64 = null,
     modified: ?i64 = null,
+    suggestion: bool = false,
 
     pub fn extension(r: Row) []const u8 {
         if (r.kind != .file) return "";
@@ -47,6 +49,7 @@ pub const Row = struct {
 };
 
 pub const web_search_url = "https://www.google.com/search?q=";
+pub const web_suggest_url = "https://suggestqueries.google.com/complete/search?client=firefox&q=";
 
 pub const App = struct {
     /// The bundle's name without `.app`.
@@ -57,6 +60,7 @@ pub const App = struct {
 /// Apps outrank files that score the same: a launcher's first job.
 pub const app_bonus: i32 = 60;
 pub const max_rows = 80;
+pub const max_suggestions = 4;
 
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
@@ -108,11 +112,32 @@ pub const Catalog = struct {
             }
         }
         std.mem.sort(Row, rows.items, {}, better);
-        const ranked = rows.items[0..@min(rows.items.len, max_rows - 1)];
+        const link = try detectLink(arena, trimmed);
+        const extra: usize = if (link != null) 2 else 1;
+        const ranked = rows.items[0..@min(rows.items.len, max_rows - extra)];
         for (ranked) |*r| if (r.kind != .app) stamp(arena, r);
-        var out = try arena.alloc(Row, ranked.len + 1);
-        @memcpy(out[0..ranked.len], ranked);
-        out[ranked.len] = .{
+        var out = try arena.alloc(Row, ranked.len + extra);
+        if (link) |url| {
+            const link_row: Row = .{
+                .kind = .web,
+                .title = try std.fmt.allocPrint(arena, "Open {s}", .{clipboard.domain(url) orelse trimmed}),
+                .subtitle = url,
+                .path = url,
+                .score = 0,
+            };
+            if (exactMatchIndex(ranked, trimmed)) |idx| {
+                out[0] = ranked[idx];
+                out[1] = link_row;
+                @memcpy(out[2 .. 2 + idx], ranked[0..idx]);
+                @memcpy(out[2 + idx .. ranked.len + 1], ranked[idx + 1 ..]);
+            } else {
+                out[0] = link_row;
+                @memcpy(out[1 .. ranked.len + 1], ranked);
+            }
+        } else {
+            @memcpy(out[0..ranked.len], ranked);
+        }
+        out[ranked.len + extra - 1] = .{
             .kind = .web,
             .title = "Google",
             .subtitle = "google.com",
@@ -123,6 +148,13 @@ pub const Catalog = struct {
     }
 };
 
+fn exactMatchIndex(rows: []const Row, query: []const u8) ?usize {
+    for (rows, 0..) |r, i| {
+        if ((r.kind == .app or r.kind == .file) and std.ascii.eqlIgnoreCase(r.title, query)) return i;
+    }
+    return null;
+}
+
 fn stamp(arena: std.mem.Allocator, r: *Row) void {
     const z = arena.dupeSentinel(u8, r.path, 0) catch return;
     var st: std.c.Stat = undefined;
@@ -132,8 +164,16 @@ fn stamp(arena: std.mem.Allocator, r: *Row) void {
 }
 
 pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, web_search_url, query);
+}
+
+pub fn webSuggestUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
+    return buildQueryUrl(arena, web_suggest_url, query);
+}
+
+fn buildQueryUrl(arena: std.mem.Allocator, prefix: []const u8, query: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(arena, web_search_url);
+    try out.appendSlice(arena, prefix);
     for (query) |b| {
         if (std.ascii.isAlphanumeric(b) or b == '-' or b == '.' or b == '_' or b == '~') {
             try out.append(arena, b);
@@ -142,6 +182,93 @@ pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
         }
     }
     return out.items;
+}
+
+pub fn parseSuggestions(arena: std.mem.Allocator, body: []const u8) [][]const u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, arena, body, .{}) catch return &.{};
+    defer parsed.deinit();
+    if (parsed.value != .array or parsed.value.array.items.len < 2) return &.{};
+    const second = parsed.value.array.items[1];
+    if (second != .array) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (second.array.items) |item| {
+        if (item != .string or item.string.len == 0) continue;
+        const copy = arena.dupe(u8, item.string) catch break;
+        out.append(arena, copy) catch break;
+        if (out.items.len == max_suggestions) break;
+    }
+    return out.items;
+}
+
+const web_tlds = [_][]const u8{
+    "com",     "org",    "net",    "edu",   "gov",    "mil",  "int",  "io",      "co",    "ai",    "dev",  "me",      "gg",
+    "xyz",     "tv",     "fm",     "am",    "to",     "ly",   "uk",   "de",      "fr",    "jp",    "cn",   "au",      "ca",
+    "ch",      "nl",     "se",     "no",    "dk",     "fi",   "es",   "pt",      "it",    "is",    "at",   "be",      "us",
+    "eu",      "kr",     "tw",     "hk",    "sg",     "nz",   "ie",   "ru",      "ua",    "cz",    "sk",   "hu",      "ro",
+    "bg",      "gr",     "tr",     "il",    "za",     "mx",   "ar",   "cl",      "pe",    "tech",  "site", "online",  "blog",
+    "biz",     "design", "studio", "cloud", "page",   "live", "work", "world",   "space", "fun",   "club", "team",    "zone",
+    "chat",    "social", "media",  "games", "lol",    "wtf",  "fyi",  "run",     "build", "tools", "wiki", "systems", "security",
+    "finance", "money",  "bank",   "law",   "health", "care", "bio",  "science", "math",  "art",   "book", "books",
+};
+
+pub fn detectLink(arena: std.mem.Allocator, text: []const u8) !?[]const u8 {
+    const s = std.mem.trimEnd(u8, std.mem.trim(u8, text, " \t\r\n"), ".,;)");
+    if (s.len == 0 or std.mem.indexOfAny(u8, s, " \t\r\n") != null) return null;
+    for ([_][]const u8{ "https://", "http://" }) |scheme| {
+        if (std.mem.startsWith(u8, s, scheme)) {
+            return if (clipboard.domain(s) != null) try arena.dupe(u8, s) else null;
+        }
+    }
+    if (std.mem.indexOf(u8, s, "://") != null) return null;
+    const slash = std.mem.indexOfAny(u8, s, "/?#");
+    const host_port = if (slash) |idx| s[0..idx] else s;
+    const colon = std.mem.indexOfScalar(u8, host_port, ':');
+    const host = if (colon) |idx| host_port[0..idx] else host_port;
+    if (colon) |idx| if (!isValidPort(host_port[idx + 1 ..])) return null;
+    if (std.ascii.eqlIgnoreCase(host, "localhost") or isIpv4(host)) {
+        return try std.fmt.allocPrint(arena, "http://{s}", .{s});
+    }
+    const tld = lastHostLabel(host) orelse return null;
+    const www = std.ascii.startsWithIgnoreCase(host, "www.") and std.mem.indexOfScalar(u8, host["www.".len..], '.') != null;
+    if (www or colon != null or slash != null or inTldSet(tld)) {
+        return try std.fmt.allocPrint(arena, "https://{s}", .{s});
+    }
+    return null;
+}
+
+fn isValidPort(port: []const u8) bool {
+    if (port.len == 0 or port.len > 5) return false;
+    const n = std.fmt.parseInt(u16, port, 10) catch return false;
+    return n > 0;
+}
+
+fn isIpv4(host: []const u8) bool {
+    var it = std.mem.splitScalar(u8, host, '.');
+    var parts: usize = 0;
+    while (it.next()) |part| : (parts += 1) {
+        if (parts == 4 or part.len == 0 or part.len > 3) return false;
+        _ = std.fmt.parseInt(u8, part, 10) catch return false;
+    }
+    return parts == 4;
+}
+
+fn lastHostLabel(host: []const u8) ?[]const u8 {
+    if (std.mem.indexOfScalar(u8, host, '.') == null) return null;
+    var it = std.mem.splitScalar(u8, host, '.');
+    var last: []const u8 = "";
+    while (it.next()) |label| {
+        if (label.len == 0 or label.len > 63 or label[0] == '-' or label[label.len - 1] == '-') return null;
+        for (label) |c| if (!std.ascii.isAlphanumeric(c) and c != '-') return null;
+        last = label;
+    }
+    if (last.len < 2) return null;
+    for (last) |c| if (!std.ascii.isAlphabetic(c)) return null;
+    return last;
+}
+
+fn inTldSet(tld: []const u8) bool {
+    for (web_tlds) |w| if (std.ascii.eqlIgnoreCase(tld, w)) return true;
+    return false;
 }
 
 fn better(_: void, a: Row, b: Row) bool {

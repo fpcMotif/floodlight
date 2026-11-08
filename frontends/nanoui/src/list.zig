@@ -91,6 +91,22 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
             };
         }
 
+        /// Rows for the query already answered, allocated from `allocator()`:
+        /// more arrived late. The selection keeps its place.
+        pub fn replaceRows(l: *Self, rows: []const Item) void {
+            const at = l.selected;
+            const reveal = l.reveal;
+            l.rows = rows;
+            l.applyFilter();
+            if (l.visible.len > 0) l.selected = @min(at, l.visible.len - 1);
+            l.reveal = reveal;
+        }
+
+        /// What the current rows live in, until the next `beginQuery`.
+        pub fn allocator(l: *Self) std.mem.Allocator {
+            return l.arena.allocator();
+        }
+
         /// After a failed fetch: no rows, and the next refresh asks again.
         pub fn fail(l: *Self) void {
             l.rows = &.{};

@@ -23,7 +23,7 @@ const entrance_timeout_ms = 250;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
 
-/// Icons drawn per session at most; all go when the panel hides.
+/// Icons drawn per session at most; all go when the session is forgotten.
 const max_icons = 64;
 
 const Shell = struct {
@@ -42,12 +42,17 @@ const Shell = struct {
     /// The app that was frontmost when the panel opened: Return pastes there.
     paste_target: mac.RunningApp = .{},
     presence: Presence = undefined,
+    submitting: bool = false,
+    headless: bool = false,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         const focused = s.panel_window.isFocused();
         switch (which) {
-            .search => s.presence.search(focused),
+            .search => {
+                s.presence.search(focused, s.panel.mode == .clipboard);
+                if (!s.presence.isHidden()) s.panel_window.redraw();
+            },
             .clipboard => {
                 s.presence.board(focused, s.panel.mode == .clipboard);
                 if (!s.presence.isHidden()) s.panel_window.redraw();
@@ -60,6 +65,10 @@ const Shell = struct {
         switch (e) {
             .note_paste_target => s.notePasteTarget(),
             .place => s.positionOnPointerScreen(),
+            .open_search => {
+                s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+                s.panel.showSearch();
+            },
             .open_board => s.openBoard(),
             .order_in_unseen => {
                 mac.setAlpha(s.panel_window, 0);
@@ -75,9 +84,9 @@ const Shell = struct {
     }
 
     fn openBoard(s: *Shell) void {
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         s.panel.showClipboard();
         s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-        s.panel.board.now = clipboard.wallClock();
     }
 
     fn deliverPaste(pid: i32) void {
@@ -141,11 +150,34 @@ const Shell = struct {
     }
 
     fn endSession(s: *Shell) void {
-        s.panel.reset();
+        s.endSubmit();
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        s.panel.hide();
+        if (s.panel.nextExpiryMs()) |ms| return nanoui.App.after(ms, s, expireRetention);
+        s.releaseIdleMemory();
+    }
+
+    fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
+        if (s.panel.expire()) {
+            if (s.presence.isHidden()) s.releaseIdleMemory();
+        } else if (s.panel.nextExpiryMs()) |ms| {
+            nanoui.App.after(ms, s, expireRetention);
+        }
+    }
+
+    fn releaseIdleMemory(s: *Shell) void {
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
         mac.releaseFreedMemory();
+    }
+
+    fn endSubmit(s: *Shell) void {
+        if (!s.submitting) return;
+        s.submitting = false;
+        mac.signpostEnd(.submit);
     }
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
@@ -154,6 +186,15 @@ const Shell = struct {
     }
 
     fn panelRequest(ctx: ?*anyopaque) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.panel.pending) |a| {
+            if (a != .hide and !s.submitting) {
+                s.submitting = true;
+                mac.signpostBegin(.submit);
+            } else if (a == .hide) {
+                s.endSubmit();
+            }
+        }
         objc.dispatchMain(ctx, applyPanel);
     }
 
@@ -168,6 +209,7 @@ const Shell = struct {
                 .hide => {},
                 .clipboard => |b| s.applyBoard(b),
             }
+            s.endSubmit();
             s.presence.settle(a);
             if (!s.presence.isHidden()) s.panel_window.redraw();
             return;
@@ -179,6 +221,7 @@ const Shell = struct {
     fn applyBoard(s: *Shell, a: board_mod.Action) void {
         switch (a) {
             .paste, .copy => |e| s.writeEntry(e),
+            .open => |url| mac.open(url),
             .reveal => |path| mac.reveal(path),
             .preview => |e| s.preview(e),
             .actions => |e| s.actionsMenu(e),
@@ -257,7 +300,7 @@ const Shell = struct {
         };
         if (!stored or s.panel.mode != .clipboard) return;
         s.panel.board.list.markStale();
-        s.panel.board.now = clipboard.wallClock();
+        if (s.presence.isHidden()) return;
         s.panel.refresh();
         s.panel_window.redraw();
     }
@@ -287,6 +330,40 @@ const Shell = struct {
         const key = gpa.dupe(u8, path) catch return png;
         s.icons.put(gpa, key, png) catch {};
         return png;
+    }
+
+    const SuggestRequest = struct {
+        shell: *Shell,
+        seq: u64,
+        query: []u8,
+    };
+
+    fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.headless) return;
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, query, " \t\r\n")) catch return;
+        const q_copy = gpa.dupe(u8, query) catch return;
+        const req = gpa.create(SuggestRequest) catch {
+            gpa.free(q_copy);
+            return;
+        };
+        req.* = .{ .shell = s, .seq = seq, .query = q_copy };
+        nanoui.http.fetch(gpa, .{ .url = url }, req, onSuggest);
+    }
+
+    fn onSuggest(req: *SuggestRequest, res: nanoui.http.Response) void {
+        defer {
+            gpa.free(req.query);
+            gpa.destroy(req);
+        }
+        const s = req.shell;
+        if (res.err.len > 0 or res.status != 200) return;
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const items = search.parseSuggestions(arena.allocator(), res.body);
+        if (s.panel.receiveSuggestionsFor(req.seq, req.query, items)) s.panel_window.redraw();
     }
 
     // The grant flow's effects.
@@ -374,9 +451,9 @@ const Shell = struct {
         if (s.files.adopt()) {
             // The rows answer the old index: ask again.
             s.panel.list.markStale();
-            s.panel.refresh();
+            if (!s.presence.isHidden()) s.panel.refresh();
         }
-        s.panel_window.redraw();
+        if (!s.presence.isHidden()) s.panel_window.redraw();
     }
 };
 
@@ -393,7 +470,7 @@ pub fn main(init: std.process.Init) !void {
     // hotkey, no System Settings, no scan of the home folder, no history on disk.
     const headless = app.flags.hidden or app.flags.snapshot != null;
 
-    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa } };
+    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .headless = headless };
     defer shell.files.close();
     shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
@@ -417,12 +494,20 @@ pub fn main(init: std.process.Init) !void {
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
+        .clock = .wall_clock,
         .request = Shell.panelRequest,
         .app_icon = Shell.appIcon,
         .describe_date = Shell.describeDate,
         .detailed_date = Shell.detailedDate,
+        .suggest = Shell.suggest,
     });
     defer shell.panel.deinit();
+    if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
+        defer gpa.free(v);
+        if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {
+            shell.panel.setWebSuggestionsEnabled(false);
+        }
+    }
     shell.panel_window = try app.newWindow(.{
         .title = "Floodlight",
         .width = metrics.width,

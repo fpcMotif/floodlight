@@ -57,6 +57,19 @@ pub fn build(b: *std.Build) void {
     linkSystem(test_module);
     const tests = b.addTest(.{ .root_module = test_module });
     b.step("test", "Run the tests").dependOn(&b.addRunArtifact(tests).step);
+
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("src/bench.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = imports,
+    });
+    bench_module.linkFramework("Carbon", .{});
+    bench_module.linkFramework("ImageIO", .{});
+    bench_module.linkFramework("Quartz", .{});
+    bench_module.linkSystemLibrary("sqlite3", .{});
+    const bench = b.addExecutable(.{ .name = "floodlight-nanoui-bench", .root_module = bench_module });
+    b.step("bench", "Run the in-process latency benchmark").dependOn(&b.addRunArtifact(bench).step);
 }
 
 /// What the app and its tests both link from macOS.

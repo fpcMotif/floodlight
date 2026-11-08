@@ -116,6 +116,69 @@ pub fn orderFrontRegardless(window: *nanoui.Window) void {
     objc.msg(void, window.nswindow, "orderFrontRegardless", .{});
 }
 
+const OsLog = *opaque {};
+extern "c" fn _dyld_get_prog_image_header() *const anyopaque;
+extern "c" fn os_log_create(subsystem: [*:0]const u8, category: [*:0]const u8) OsLog;
+extern "c" fn os_signpost_enabled(log: OsLog) bool;
+extern "c" fn _os_signpost_emit_with_name_impl(
+    dso: *const anyopaque,
+    log: OsLog,
+    kind: u8,
+    spid: u64,
+    name: [*:0]const u8,
+    format: [*:0]const u8,
+    buf: [*]u8,
+    size: u32,
+) void;
+
+pub const Signpost = enum {
+    summon,
+    keystroke,
+    submit,
+};
+
+const signpost_begin: u8 = 1;
+const signpost_end: u8 = 2;
+const signpost_exclusive_id: u64 = 0xeeeeb0b5b2b2eeee;
+
+var signpost_log: ?OsLog = null;
+var signpost_dso: ?*const anyopaque = null;
+
+fn signpostLog() OsLog {
+    if (signpost_log) |l| return l;
+    const l = os_log_create("com.floodlight.nano", "PointsOfInterest");
+    signpost_log = l;
+    signpost_dso = _dyld_get_prog_image_header();
+    return l;
+}
+
+// `logd` resolves signpost strings only from `__TEXT,__oslogstring`; `export`
+// keeps ReleaseFast from merging them into `__TEXT,__const`.
+export const fl_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
+export const fl_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
+export const fl_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
+export const fl_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
+
+fn signpostEmit(s: Signpost, kind: u8) void {
+    const log = signpostLog();
+    if (!os_signpost_enabled(log)) return;
+    var buf: [2]u8 align(16) = .{ 0, 0 };
+    const name: [*:0]const u8 = switch (s) {
+        .summon => &fl_signpost_summon,
+        .keystroke => &fl_signpost_keystroke,
+        .submit => &fl_signpost_submit,
+    };
+    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &fl_signpost_fmt, &buf, buf.len);
+}
+
+pub fn signpostBegin(s: Signpost) void {
+    signpostEmit(s, signpost_begin);
+}
+
+pub fn signpostEnd(s: Signpost) void {
+    signpostEmit(s, signpost_end);
+}
+
 /// For a surface's `after_frame`. nanoui 0.9.2 slows its display link to a
 /// frame the view asks for later (a caret blink, a scroll bar's fade): the
 /// slow link's drawables are for up to half a second ahead, and one drawn
@@ -199,8 +262,13 @@ fn fileURL(path: []const u8) objc.Object {
     return objc.msg(objc.Object, objc.class("NSURL"), "fileURLWithPath:", .{objc.nsString(path)});
 }
 
+fn isWebUrl(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "https://") or std.mem.startsWith(u8, path, "http://");
+}
+
 fn urlFor(path: []const u8) ?objc.Object {
-    if (std.mem.startsWith(u8, path, "https://")) return objc.msg(?objc.Object, objc.class("NSURL"), "URLWithString:", .{objc.nsString(path)});
+    if (isWebUrl(path))
+        return objc.msg(?objc.Object, objc.class("NSURL"), "URLWithString:", .{objc.nsString(path)});
     return fileURL(path);
 }
 
@@ -218,6 +286,8 @@ pub fn copy(path: []const u8) void {
     const board = beginWrite();
     const items = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{url});
     _ = objc.msg(objc.BOOL, board, "writeObjects:", .{items});
+    if (isWebUrl(path))
+        _ = objc.msg(objc.BOOL, board, "setString:forType:", .{ objc.nsString(path), objc.nsString("public.utf8-plain-text") });
     markOwnWrite(board);
 }
 
@@ -808,6 +878,19 @@ extern "c" fn malloc_zone_pressure_relief(zone: ?*anyopaque, goal: usize) usize;
 /// Gives freed pages back to the system while the panel is hidden.
 pub fn releaseFreedMemory() void {
     _ = malloc_zone_pressure_relief(null, 0);
+}
+
+pub const retention_defaults_key = "sessionRetentionSeconds";
+
+/// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
+/// user defaults; `default_seconds` when unset, `0` when non-positive).
+pub fn retentionSeconds(default_seconds: f64) f64 {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const defaults = objc.msg(objc.Object, objc.class("NSUserDefaults"), "standardUserDefaults", .{});
+    const key = objc.nsString(retention_defaults_key);
+    if (objc.msg(?objc.Object, defaults, "objectForKey:", .{key}) == null) return default_seconds;
+    return @max(0.0, objc.msg(f64, defaults, "doubleForKey:", .{key}));
 }
 
 /// A native view over the guidance card that starts a drag carrying the

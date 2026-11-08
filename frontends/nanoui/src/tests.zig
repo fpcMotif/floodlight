@@ -17,6 +17,7 @@ const board_mod = @import("board.zig");
 const presence = @import("presence.zig");
 const list_mod = @import("list.zig");
 const chrome = @import("chrome.zig");
+const bench = @import("bench.zig");
 const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
@@ -237,8 +238,23 @@ test "apps match by the same terms as files" {
     try t.expectEqualStrings("Calculator", (try appTitles(a, &cat, "calc"))[0]);
 }
 
+const FakeClock = struct {
+    now: f64 = 0,
+    fn read(ctx: ?*anyopaque) f64 {
+        const c: *const FakeClock = @ptrCast(@alignCast(ctx));
+        return c.now;
+    }
+    fn advance(c: *FakeClock, seconds: f64) void {
+        c.now += seconds;
+    }
+    fn binding(c: *FakeClock) panel_mod.Clock {
+        return .{ .ctx = c, .read = read };
+    }
+};
+
 const StubHooks = struct {
     requests: u32 = 0,
+    clock: FakeClock = .{},
     fn request(ctx: ?*anyopaque) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
@@ -255,11 +271,11 @@ const StubHooks = struct {
         }.at;
     }
     fn hooks(h: *StubHooks) panel_mod.Hooks {
-        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64) };
+        return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64) };
     }
 };
 
-test "typing shows rows; Return opens the selected one; hiding forgets the session" {
+test "typing shows rows; Return opens the selected one; hiding keeps the session within the window and forgets it after" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.posix.PATH_MAX]u8 = undefined;
@@ -302,15 +318,131 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     tester.settle(0.1);
     const pending = p.pending orelse return error.NoAction;
     try t.expectEqualStrings(p.list.visible[1].path, pending.open);
+    const chosen_path = try t.allocator.dupe(u8, p.list.visible[1].path);
+    defer t.allocator.free(chosen_path);
 
-    p.pending = null;
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(panel_mod.Filter.apps, p.list.filter);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
+
+    p.hide();
+    hooks.clock.advance(4 * 60);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(panel_mod.Filter.apps, p.list.filter);
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
+    const focused = tester.ctx.focused_text orelse return error.NotFocused;
+    try t.expectEqual(@as(usize, 0), focused.anchor);
+    try t.expectEqual(@as(usize, 3), focused.caret);
+
+    tester.key(.right);
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(@as(usize, 3), tester.ctx.focused_text.?.anchor);
+    try t.expectEqual(@as(usize, 3), tester.ctx.focused_text.?.caret);
+
+    // Each hide starts a fresh 5-minute window.
+    p.hide();
+    hooks.clock.advance(4 * 60);
+    p.showSearch();
+    try t.expect(tester.shortcut(.{ .key = '1', .cmd = true }));
+    tester.typeText("ret");
+    tester.settle(0.1);
+    try t.expectEqualStrings("ret", p.field.text());
+
     for (0..p.list.visible.len + 2) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
     try t.expectEqual(p.list.visible.len - 1, p.list.selected);
 
-    p.reset();
+    p.hide();
+    hooks.clock.advance(6 * 60);
+    p.showSearch();
+    tester.frame();
     try t.expectEqual(@as(usize, 0), p.list.rows.len);
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+    try t.expectEqual(panel_mod.Filter.all, p.list.filter);
+    try t.expectEqual(@as(usize, 0), p.list.selected);
     try t.expectEqualStrings("", p.field.text());
     try t.expectEqual(chrome.metrics.search_height, p.panelHeight());
+}
+
+test "typed links normalize to URLs while prose and source files stay searches" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = [_]struct { []const u8, ?[]const u8 }{
+        .{ "github.com", "https://github.com" },
+        .{ "github.com/fpcMotif/floodlight", "https://github.com/fpcMotif/floodlight" },
+        .{ "https://x.y/z", "https://x.y/z" },
+        .{ "localhost:3000", "http://localhost:3000" },
+        .{ "127.0.0.1:8080/a", "http://127.0.0.1:8080/a" },
+        .{ "www.example.org", "https://www.example.org" },
+        .{ "see github.com.", null },
+        .{ "github.com.", "https://github.com" },
+        .{ "README.md", null },
+        .{ "main.zig", null },
+        .{ "google stock", null },
+        .{ "build.rs", null },
+        .{ "claude.ai", "https://claude.ai" },
+        .{ "Claude.app", null },
+        .{ "https://:8080", null },
+        .{ "https://www./path", null },
+    };
+    for (cases) |c| {
+        const got = try search.detectLink(a, c[0]);
+        if (c[1]) |want| {
+            try t.expectEqualStrings(want, got orelse return error.ExpectedLink);
+        } else {
+            try t.expect(got == null);
+        }
+    }
+}
+
+test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and an exact title match stays first" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("github.com");
+    tester.settle(0.2);
+    try t.expect(p.list.visible.len >= 2);
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+    try t.expectEqualStrings("Open github.com", p.list.visible[0].title);
+    try t.expectEqualStrings("https://github.com", p.list.visible[0].subtitle);
+    try t.expectEqualStrings("Google", p.list.visible[p.list.visible.len - 1].title);
+
+    tester.key(.enter);
+    tester.settle(0.1);
+    try t.expectEqualStrings("https://github.com", (p.pending orelse return error.NoAction).open);
+    p.pending = null;
+
+    try t.expect(tester.shortcut(.{ .key = 'c', .cmd = true }));
+    try t.expectEqualStrings("https://github.com", (p.pending orelse return error.NoAction).copy.path);
+    p.pending = null;
+
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Documents/github.com", .data = "" });
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    p.list.markStale();
+    p.refresh();
+    try t.expect(p.list.visible.len >= 3);
+    try t.expectEqual(search.Kind.file, p.list.visible[0].kind);
+    try t.expectEqualStrings("github.com", p.list.visible[0].title);
+    try t.expectEqualStrings("Open github.com", p.list.visible[1].title);
+    try t.expectEqualStrings("https://github.com", p.list.visible[1].subtitle);
+    try t.expectEqualStrings("Google", p.list.visible[p.list.visible.len - 1].title);
 }
 
 test "filter chips count, narrow the rows, and drop Top Hit" {
@@ -500,6 +632,355 @@ test "only the rows in view and a margin are built, within the list" {
     try t.expectEqual(@as(usize, 0), above.first);
     const short = list_mod.rowsInView(0, 2, 10, 30, 2);
     try t.expectEqual(@as(usize, 2), short.end);
+}
+
+const CompletionFixture = struct {
+    tmp: std.testing.TmpDir,
+    buf: [std.posix.PATH_MAX]u8 = undefined,
+    files: core.file_index.FileIndex = undefined,
+    cat: search.Catalog = undefined,
+    hooks: StubHooks = .{},
+    p: panel_mod.Panel = undefined,
+    tester: ui.Tester = undefined,
+
+    fn init(f: *CompletionFixture, extra_apps: []const []const u8) !void {
+        f.tmp = t.tmpDir(.{});
+        errdefer f.tmp.cleanup();
+        for (extra_apps) |app| try f.tmp.dir.createDirPath(t.io, app);
+        f.cat = try tmpCatalog(&f.tmp, &f.buf, &f.files);
+        errdefer f.files.close();
+        errdefer f.cat.deinit();
+        f.hooks = .{};
+        f.p = panel_mod.Panel.init(t.allocator, &f.cat, null, f.hooks.hooks());
+        errdefer f.p.deinit();
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        f.tester.settle(0.1);
+    }
+
+    fn deinit(f: *CompletionFixture) void {
+        f.tester.deinit();
+        f.p.deinit();
+        f.cat.deinit();
+        f.files.close();
+        f.tmp.cleanup();
+    }
+};
+
+test "top hit offers a case-preserving inline completion suffix without changing the rows" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Grant.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    const comp = fx.p.completion orelse return error.NoCompletion;
+    try t.expectEqualStrings("igravity", comp.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, comp.source);
+    try t.expect(fx.tester.hasText("igravity"));
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expect(fx.tester.hasText("Grant"));
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ANT");
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("ANT", fx.p.field.text());
+}
+
+test "Right arrow and Tab accept the full completion on the same frame while Return opens the selected row" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Grant.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    try t.expect(fx.tester.hasText("Grant"));
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.down }));
+    fx.tester.key(.enter);
+    try t.expectEqualStrings(fx.p.list.visible[1].path, fx.p.pending.?.open);
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    fx.p.pending = null;
+
+    fx.tester.key(.right);
+    try t.expectEqualStrings("antigravity", fx.p.field.text());
+    try t.expectEqualStrings("antigravity", fx.p.list.answered());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("Grant"));
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ANT");
+    try t.expect(fx.tester.hasText("Grant"));
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.tab }));
+    try t.expectEqualStrings("ANTigravity", fx.p.field.text());
+    try t.expectEqualStrings("ANTigravity", fx.p.list.answered());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("Grant"));
+}
+
+test "Option-Right accepts a multi-word completion one word at a time" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{"Apps/Visual Studio Code.app/Contents"});
+    defer fx.deinit();
+
+    fx.tester.typeText("vi");
+    try t.expectEqualStrings("sual Studio Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual", fx.p.field.text());
+    try t.expectEqualStrings("visual", fx.p.list.answered());
+    try t.expectEqualStrings(" Studio Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual Studio", fx.p.field.text());
+    try t.expectEqualStrings("visual Studio", fx.p.list.answered());
+    try t.expectEqualStrings(" Code", fx.p.completion.?.suffix);
+
+    try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("visual Studio Code", fx.p.field.text());
+    try t.expectEqualStrings("visual Studio Code", fx.p.list.answered());
+    try t.expect(fx.p.completion == null);
+}
+
+test "completion hides on Backspace, mid-text caret, IME composition, Link Row query, and exact match" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/github.com Desktop.app/Contents", "Apps/localhost Helper.app/Contents" });
+    defer fx.deinit();
+
+    fx.tester.typeText("ant");
+    try t.expect(fx.p.completion != null);
+
+    fx.tester.key(.backspace);
+    try t.expectEqualStrings("an", fx.p.field.text());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("tigravity"));
+
+    fx.tester.typeText("t");
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.tester.key(.left);
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("igravity"));
+
+    fx.tester.key(.right);
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.textOps(&.{.{ .set_marked = .{ .text = "ant", .sel_start = 3, .sel_len = 0 } }});
+    try t.expectEqualStrings("ant", fx.p.field.text());
+    try t.expect(fx.p.completion == null);
+    try t.expect(!fx.tester.hasText("igravity"));
+
+    fx.tester.textOps(&.{.unmark});
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("github.com");
+    try t.expect(fx.p.completion == null);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("localhost:3000");
+    try t.expect(fx.p.completion == null);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("antigravity");
+    try t.expect(fx.p.completion == null);
+}
+
+test "running a Selected-Result Action records its query across store restarts and beats the top hit" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    try ts.tmp.dir.createDirPath(t.io, "Apps/Antigravity.app/Contents");
+    try ts.tmp.dir.createDirPath(t.io, "Apps/Anthropic Console.app/Contents");
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&ts.tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+
+    {
+        var store = try clipboard.Store.open(ts.db, ts.images);
+        defer store.close();
+        var hooks: StubHooks = .{};
+        hooks.clock.advance(100);
+        var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+        defer p.deinit();
+        var tester: ui.Tester = undefined;
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        defer tester.deinit();
+        tester.settle(0.1);
+
+        tester.typeText("github.com");
+        tester.key(.enter);
+        try t.expectEqualStrings("https://github.com", p.pending.?.open);
+        p.pending = null;
+
+        p.reset();
+        tester.frame();
+        tester.typeText("Anthropic Console");
+        tester.key(.enter);
+        p.pending = null;
+    }
+
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(200);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("git");
+    const link_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, link_comp.source);
+    try t.expectEqualStrings("hub.com", link_comp.suffix);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("ant");
+    try t.expectEqualStrings("Antigravity", p.list.visible[0].title);
+    const beat_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, beat_comp.source);
+    try t.expectEqualStrings("hropic Console", beat_comp.suffix);
+}
+
+test "Query History ranks by recency and frequency, evicts lowest-ranked entries at its bound, and falls back to the top hit when cleared" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Anthropic Console.app/Contents", "Apps/Anthem Studio.app/Contents" });
+    defer fx.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    store.budget = .{ .queries = 3 };
+    fx.p.store = &store;
+    fx.p.board.store = &store;
+
+    fx.hooks.clock.advance(100);
+    fx.tester.typeText("anthropic console");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(100);
+    fx.tester.typeText("anthem studio");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hem studio", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+
+    fx.p.reset();
+    fx.tester.frame();
+    for (0..2) |_| {
+        fx.tester.typeText("anthropic console");
+        fx.tester.key(.enter);
+        fx.p.pending = null;
+        fx.p.reset();
+        fx.tester.frame();
+    }
+    fx.hooks.clock.advance(60);
+    fx.tester.typeText("anthem studio");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(10);
+    fx.tester.typeText("calendar notes");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+    try t.expectEqual(@as(usize, 3), store.queryCount());
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(10);
+    fx.tester.typeText("calculator pro");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+    try t.expectEqual(@as(usize, 3), store.queryCount());
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("cal");
+    try t.expectEqualStrings("culator pro", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+
+    try t.expect(fx.tester.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true }));
+    try t.expectEqual(@as(usize, 0), store.queryCount());
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, fx.p.completion.?.source);
+}
+
+test "the board field completes from past board queries and skips queries matching a sensitive entry" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    _ = try store.add(.{ .text = "quarterly invoice summary" }, "com.apple.Notes", "Notes", 100);
+    _ = try store.add(.{ .text = "vault-recovery-phrase-99" }, "com.1password.1password", "1Password", 200);
+
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(300);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    tester.typeText("quarterly invoice");
+    tester.key(.enter);
+    try t.expectEqualStrings("quarterly invoice summary", p.pending.?.clipboard.paste.text);
+    p.pending = null;
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("quar");
+    const comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, comp.source);
+    try t.expectEqualStrings("terly invoice", comp.suffix);
+    try t.expect(tester.hasText("terly invoice"));
+
+    tester.key(.right);
+    try t.expectEqualStrings("quarterly invoice", p.field.text());
+    try t.expectEqualStrings("quarterly invoice", p.board.list.answered());
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("vault-recovery");
+    tester.key(.enter);
+    try t.expectEqualStrings("vault-recovery-phrase-99", p.pending.?.clipboard.paste.text);
+    p.pending = null;
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("vault");
+    try t.expect(p.completion == null);
 }
 
 test "the access probe names a file that exists" {
@@ -1148,7 +1629,7 @@ test "the board lists history, inspects the selection, and filters" {
     _ = try f.store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
     _ = try f.store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
     _ = try f.store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
-    f.p.board.now = 2060;
+    f.hooks.clock.advance(2060);
     try f.show();
     const p = &f.p;
     const tester = &f.tester;
@@ -1185,6 +1666,17 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expect(p.pending != null);
     try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.paste.text);
     p.pending = null;
+
+    try t.expect(tester.shortcut(.{ .key = 'o', .cmd = true }));
+    try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.open);
+    try t.expect(p.pending.?.clipboard.hides());
+    p.pending = null;
+
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    try t.expect(!tester.shortcut(.{ .key = 'o', .cmd = true }) or p.pending == null);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.up });
+    tester.settle(1);
 
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
@@ -1320,12 +1812,12 @@ const PresenceSpy = struct {
     }
 };
 
-const showing = [_]presence.Effect{ .note_paste_target, .place, .order_in_unseen, .start_entrance_timer };
+const showing = [_]presence.Effect{ .note_paste_target, .open_search, .place, .order_in_unseen, .start_entrance_timer };
 const hiding = [_]presence.Effect{ .hide_window, .end_session };
 
 fn shownPresence(spy: *PresenceSpy) presence.Presence {
     var p = spy.presence_();
-    p.search(false);
+    p.search(false, false);
     _ = p.framePresented(true);
     _ = spy.take();
     return p;
@@ -1335,7 +1827,7 @@ test "a reopened panel stays unseen until a frame of its own is presented, then 
     var spy: PresenceSpy = .{};
     var p = spy.presence_();
     try t.expect(!p.framePresented(true));
-    p.search(false);
+    p.search(false, false);
     try t.expectEqualSlices(presence.Effect, &showing, spy.take());
     try t.expectEqual(presence.Phase.entering, p.phase);
     // A frame built without a drawable is not on screen: the old one still is.
@@ -1349,13 +1841,13 @@ test "a reopened panel stays unseen until a frame of its own is presented, then 
 test "⌥Space while focused hides and forgets the session, during the entrance too" {
     var spy: PresenceSpy = .{};
     var p = shownPresence(&spy);
-    p.search(true);
+    p.search(true, false);
     try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
     try t.expect(p.isHidden());
 
-    p.search(false);
+    p.search(false, false);
     _ = spy.take();
-    p.search(true);
+    p.search(true, false);
     try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
     try t.expect(!p.framePresented(true));
 }
@@ -1363,9 +1855,9 @@ test "⌥Space while focused hides and forgets the session, during the entrance 
 test "an entrance's fallback timer reveals only its own entrance" {
     var spy: PresenceSpy = .{};
     var p = spy.presence_();
-    p.search(false);
-    p.search(true);
-    p.search(false);
+    p.search(false, false);
+    p.search(true, false);
+    p.search(false, false);
     _ = spy.take();
     // The first show's timer fires during the second entrance.
     p.entranceTimedOut();
@@ -1386,8 +1878,8 @@ test "a timer after a frame revealed the panel does nothing" {
 test "⌥Space on a panel that is up but not focused brings it front with no entrance" {
     var spy: PresenceSpy = .{};
     var p = shownPresence(&spy);
-    p.search(false);
-    try t.expectEqualSlices(presence.Effect, &.{ .place, .order_front }, spy.take());
+    p.search(false, false);
+    try t.expectEqualSlices(presence.Effect, &.{ .open_search, .place, .order_front }, spy.take());
     try t.expectEqual(presence.Phase.shown, p.phase);
 }
 
@@ -1403,6 +1895,16 @@ test "⌥⇧C opens the board, notes the target only from hidden, and hides only
     try t.expectEqualSlices(presence.Effect, &.{ .open_board, .place, .order_front }, spy.take());
     p.board(true, true);
     try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+}
+
+test "⌥Space over a focused board switches to search in place instead of hiding" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.board(true, false);
+    _ = spy.take();
+    p.search(true, true);
+    try t.expectEqualSlices(presence.Effect, &.{ .open_search, .place, .order_front }, spy.take());
+    try t.expect(!p.isHidden());
 }
 
 test "launch shows the panel unless the grant guide is up; a reopen always does" {
@@ -1456,6 +1958,36 @@ test "a board paste hides the panel before it sends ⌘V, so the target app has 
     var p = shownPresence(&spy);
     p.settle(.{ .clipboard = .{ .paste = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 } } });
     try t.expectEqualSlices(presence.Effect, &.{ .hide_window, .end_session, .deliver_paste }, spy.take());
+}
+
+test "the 200-app latency benchmark measures keystroke publication, summon layout, and Return action" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try bench.populateCatalog(&cat, bench.catalog_app_count);
+    try t.expectEqual(@as(usize, 200), cat.apps.items.len);
+
+    const keystroke = try bench.measureKeystrokeToPublication(t.allocator, 16);
+    try t.expect(keystroke.p50_ns > 0);
+    try t.expect(keystroke.p99_ns >= keystroke.p50_ns);
+
+    const summon = try bench.measureHotKeyToLaidOutFrame(t.allocator, 16);
+    try t.expect(summon.p50_ns > 0);
+    try t.expect(summon.p99_ns >= summon.p50_ns);
+
+    const submit = try bench.measureReturnToAction(t.allocator, 16);
+    try t.expect(submit.p50_ns > 0);
+    try t.expect(submit.p99_ns >= submit.p50_ns);
+
+    try t.expect(bench.withinBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+    ));
+    try t.expect(!bench.withinBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 500_000, .runs = 16 },
+        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+    ));
 }
 
 test "a board frame that waits for a later one keeps the display link at the display's pace" {
@@ -1564,4 +2096,564 @@ test "the inspector types a file by the extensions the board's tiles use" {
     // `.ts` is TypeScript to the Swift inspector, not a video stream.
     try t.expectEqualStrings("Source Code", clipboard.fileType(a, "/x.ts", false));
     try t.expectEqualStrings("ZZZ", clipboard.fileType(a, "/x.zzz", false));
+}
+
+test "the injected clock advances board ages and pins, and forget clears both surfaces" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    _ = try store.add(.{ .text = "first snippet" }, "com.apple.Notes", "Notes", 1000);
+    _ = try store.add(.{ .text = "second snippet" }, "com.apple.Safari", "Safari", 1000);
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1120);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    tester.typeText("cal");
+    tester.settle(0.2);
+    p.selectFilter(.apps);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    try t.expectEqual(panel_mod.Filter.apps, p.list.filter);
+    try t.expectEqual(@as(usize, 1), p.list.selected);
+
+    p.showClipboard();
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Safari \u{00B7} 2m"));
+    hooks.clock.advance(180);
+    try t.expectEqual(@as(f64, 1300), p.clock.now());
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Safari \u{00B7} 5m"));
+
+    _ = tester.shortcut(.{ .key = '.', .cmd = true });
+    p.refresh();
+    try t.expectEqual(@as(?f64, 1300), p.board.list.rows[0].pinned_at);
+
+    p.board.list.selectFilter(.text);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.typeText("first");
+    tester.settle(0.2);
+    try t.expectEqual(clipboard.Filter.text, p.board.list.filter);
+    try t.expectEqualStrings("first", p.field.text());
+
+    p.forget();
+    try t.expectEqual(panel_mod.Mode.search, p.mode);
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.list.rows.len);
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+    try t.expectEqual(panel_mod.Filter.all, p.list.filter);
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+    try t.expectEqual(chrome.metrics.search_height, p.panelHeight());
+    try t.expectEqual(chrome.metrics.width, p.panelWidth());
+    try t.expectEqual(@as(usize, 0), p.board.list.rows.len);
+    try t.expectEqual(@as(usize, 0), p.board.list.visible.len);
+    try t.expectEqual(clipboard.Filter.all, p.board.list.filter);
+    try t.expectEqual(@as(usize, 0), p.board.list.selected);
+    try t.expect(p.board.list.stale);
+    try t.expect(p.board.detail_id == null);
+}
+
+test "search retention selects the top row when the remembered path is gone, and clearing the field forgets at once" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.list.selected);
+    const removed = cat.apps.orderedRemove(1);
+    t.allocator.free(removed.path);
+
+    p.hide();
+    hooks.clock.advance(60);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(panel_mod.Filter.apps, p.list.filter);
+    p.clearField();
+    p.hide();
+    hooks.clock.advance(10);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(panel_mod.Filter.all, p.list.filter);
+    try t.expectEqual(@as(usize, 0), p.list.visible.len);
+}
+
+test "board retention restores query, kind filter, and selection or selects the newest matching copy" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    _ = try store.add(.{ .file = "/tmp/report.pdf" }, "com.apple.finder", "Finder", 100);
+    _ = try store.add(.{ .text = "hello older note" }, "com.apple.Notes", "Notes", 200);
+    _ = try store.add(.{ .text = "hello newer note" }, "com.apple.Notes", "Notes", 300);
+
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(clipboard.Filter.text, p.board.list.filter);
+    tester.typeText("hello");
+    tester.settle(0.2);
+    try t.expectEqual(@as(usize, 2), p.board.list.visible.len);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.board.list.selected);
+    const remembered_id = p.board.list.selection().?.id;
+
+    p.hide();
+    // An unrelated copy while hidden does not match the query+filter, so the remembered selection stays.
+    _ = try store.add(.{ .file = "/tmp/hello-other.pdf" }, "com.apple.finder", "Finder", 1050);
+    _ = try store.add(.{ .text = "unrelated text" }, "com.apple.Notes", "Notes", 1060);
+    hooks.clock.advance(4 * 60);
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("hello", p.field.text());
+    try t.expectEqual(clipboard.Filter.text, p.board.list.filter);
+    try t.expectEqual(remembered_id, p.board.list.selection().?.id);
+    try t.expectEqual(@as(usize, 0), tester.ctx.focused_text.?.anchor);
+    try t.expectEqual(@as(usize, 5), tester.ctx.focused_text.?.caret);
+
+    p.hide();
+    _ = try store.add(.{ .text = "hello brand new" }, "com.apple.Notes", "Notes", 1300);
+    hooks.clock.advance(60);
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("hello", p.field.text());
+    try t.expectEqual(clipboard.Filter.text, p.board.list.filter);
+    try t.expectEqual(@as(usize, 0), p.board.list.selected);
+    try t.expectEqualStrings("hello brand new", p.board.list.selection().?.text);
+
+    p.clearField();
+    p.hide();
+    try t.expect(p.nextExpiryMs() == null);
+    try t.expectEqual(@as(usize, 0), p.board.list.rows.len);
+}
+
+test "search and clipboard board sessions expire separately, and zero retention forgets on hide" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    _ = try store.add(.{ .file = "/tmp/report.pdf" }, "com.apple.finder", "Finder", 50);
+    _ = try store.add(.{ .text = "alpha clip" }, "com.apple.Notes", "Notes", 60);
+
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(100);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    p.hide();
+
+    hooks.clock.advance(3 * 60);
+    p.showClipboard();
+    tester.frame();
+    try t.expect(tester.shortcut(.{ .key = '3', .cmd = true }));
+    tester.typeText("report");
+    tester.settle(0.1);
+    try t.expectEqual(clipboard.Filter.files, p.board.list.filter);
+    p.hide();
+
+    // Search is 6m old (expired) while the board is 3m old (still retained).
+    hooks.clock.advance(3 * 60);
+    try t.expect(!p.expire());
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(panel_mod.Filter.all, p.list.filter);
+
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("report", p.field.text());
+    try t.expectEqual(clipboard.Filter.files, p.board.list.filter);
+
+    p.retention_seconds = 0;
+    p.hide();
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(clipboard.Filter.all, p.board.list.filter);
+
+    p.showSearch();
+    tester.frame();
+    tester.typeText("cal");
+    tester.settle(0.1);
+    p.hide();
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.list.rows.len);
+}
+
+const SuggestSpy = struct {
+    hooks_base: StubHooks = .{},
+    seqs: std.ArrayList(u64) = .empty,
+    queries: std.ArrayList([]u8) = .empty,
+
+    fn deinit(s: *SuggestSpy) void {
+        for (s.queries.items) |q| t.allocator.free(q);
+        s.queries.deinit(t.allocator);
+        s.seqs.deinit(t.allocator);
+    }
+
+    fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
+        const s: *SuggestSpy = @ptrCast(@alignCast(ctx));
+        const copy = t.allocator.dupe(u8, query) catch return;
+        s.queries.append(t.allocator, copy) catch {
+            t.allocator.free(copy);
+            return;
+        };
+        s.seqs.append(t.allocator, seq) catch {};
+    }
+
+    fn request(ctx: ?*anyopaque) void {
+        const s: *SuggestSpy = @ptrCast(@alignCast(ctx));
+        s.hooks_base.requests += 1;
+    }
+
+    fn hooks(s: *SuggestSpy) panel_mod.Hooks {
+        return .{
+            .ctx = s,
+            .clock = s.hooks_base.clock.binding(),
+            .request = request,
+            .app_icon = StubHooks.icon,
+            .describe_date = StubHooks.date(i64),
+            .detailed_date = StubHooks.date(f64),
+            .suggest = suggest,
+        };
+    }
+};
+
+test "the first frame after a keystroke does not wait for suggestions, and arrival adds up to four bold-tail rows under Google without moving selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqualStrings("cal", spy.queries.items[0]);
+    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqualStrings("Calendar", p.list.visible[0].title);
+    try t.expectEqualStrings("Calculator", p.list.visible[1].title);
+    try t.expectEqualStrings("Google", p.list.visible[2].title);
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.list.selected);
+
+    p.receiveSuggestions("cal", &.{
+        "calculator online",
+        "calendar 2026",
+        "california dmv",
+        "caltrain schedule",
+        "calories in an apple",
+    });
+    tester.frame();
+
+    try t.expectEqual(@as(usize, 1), p.list.selected);
+    try t.expectEqual(@as(usize, 7), p.list.visible.len);
+    try t.expectEqualStrings("Google", p.list.visible[2].title);
+    try t.expectEqualStrings("calculator online", p.list.visible[3].title);
+    try t.expectEqualStrings("calendar 2026", p.list.visible[4].title);
+    try t.expectEqualStrings("california dmv", p.list.visible[5].title);
+    try t.expectEqualStrings("caltrain schedule", p.list.visible[6].title);
+    try t.expect(!tester.hasText("calories in an apple"));
+
+    var found_node = false;
+    for (tester.ctx.nodes.items) |n| {
+        if (n.content == .text and std.mem.eql(u8, n.content.text.str, "calculator online")) {
+            found_node = true;
+            try t.expectEqual(ui.Weight.regular, n.content.text.style.weight);
+            try t.expectEqual(@as(usize, 1), n.content.text.spans.len);
+            try t.expectEqual(@as(u32, 3), n.content.text.spans[0].start);
+            try t.expectEqual(@as(u32, "calculator online".len), n.content.text.spans[0].end);
+            try t.expectEqual(@as(?ui.Weight, .bold), n.content.text.spans[0].weight);
+        }
+    }
+    try t.expect(found_node);
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 3), p.list.selected);
+    tester.key(.enter);
+    try t.expectEqualStrings("https://www.google.com/search?q=calculator%20online", (p.pending orelse return error.NoAction).open);
+}
+
+test "a late reply for an old query or superseded request is ignored, and an empty failure leaves no rows" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("wea");
+    const first_seq = spy.seqs.items[0];
+    try t.expect(first_seq > 0);
+
+    tester.typeText("ther");
+    const second_seq = spy.seqs.items[1];
+    try t.expect(second_seq > first_seq);
+
+    try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"weather radar"}));
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqualStrings("Google", p.list.visible[0].title);
+
+    for (0..4) |_| tester.key(.backspace);
+    try t.expectEqualStrings("wea", p.field.text());
+    const third_seq = spy.seqs.getLast();
+    try t.expect(third_seq > second_seq);
+
+    try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"stale weather"}));
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+
+    try t.expect(p.receiveSuggestionsFor(third_seq, "wea", &.{}));
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    try t.expectEqualStrings("Google", p.list.visible[0].title);
+}
+
+test "with the setting off, or for a Link Row, a path-like query, or Clipboard mode, the suggestion source receives no request" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    p.setWebSuggestionsEnabled(false);
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 0), spy.queries.items.len);
+    p.receiveSuggestions("weather", &.{"weather today"});
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+
+    p.setWebSuggestionsEnabled(true);
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqualStrings("weather", spy.queries.items[0]);
+    p.receiveSuggestions("weather", &.{"weather today"});
+    try t.expectEqual(@as(usize, 2), p.list.visible.len);
+
+    p.setWebSuggestionsEnabled(false);
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+    p.setWebSuggestionsEnabled(true);
+
+    const suppressed = [_][]const u8{
+        "github.com",
+        "https://example.org",
+        "localhost:3000",
+        "/Applications",
+        "~/Documents",
+        "./build.zig",
+    };
+    const count_before = spy.queries.items.len;
+    for (suppressed) |q| {
+        p.reset();
+        tester.frame();
+        tester.typeText(q);
+        try t.expectEqual(count_before, spy.queries.items.len);
+    }
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(count_before, spy.queries.items.len);
+}
+
+test "a cached query reuses suggestions within five minutes without sending a second request, then refetches after expiry" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    spy.hooks_base.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    p.receiveSuggestions("weather", &.{ "weather forecast", "weather radar" });
+    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+
+    spy.hooks_base.clock.advance(299);
+    p.reset();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqual(@as(usize, 3), p.list.visible.len);
+    try t.expectEqualStrings("weather forecast", p.list.visible[1].title);
+    try t.expectEqualStrings("weather radar", p.list.visible[2].title);
+
+    spy.hooks_base.clock.advance(2);
+    p.reset();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 2), spy.queries.items.len);
+    try t.expectEqualStrings("weather", spy.queries.items[1]);
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
+}
+
+test "the first web suggestion becomes the completion only when neither query history nor top hit matches" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    spy.hooks_base.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("WEA");
+    try t.expect(p.completion == null);
+    p.receiveSuggestions("WEA", &.{ "weather forecast", "wealthsimple" });
+    tester.frame();
+    const web_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.web_suggestion, web_comp.source);
+    try t.expectEqualStrings("ther forecast", web_comp.suffix);
+    try t.expect(tester.hasText("ther forecast"));
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("WEAther", p.field.text());
+    p.receiveSuggestions("WEAther", &.{ "forecast tomorrow", "weather radar" });
+    tester.frame();
+    try t.expect(p.completion == null);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("cal");
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    p.receiveSuggestions("cal", &.{"calculator online"});
+    tester.frame();
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    try store.recordQuery(.search, "weather radar", 1000);
+    p.reset();
+    tester.frame();
+    tester.typeText("wea");
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+    p.receiveSuggestions("wea", &.{"weather forecast"});
+    tester.frame();
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+}
+
+test "Google suggestion URL encoding and Firefox JSON response parsing cap at four items and ignore malformed payloads" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const url = try search.webSuggestUrl(a, "zig std.mem");
+    try t.expectEqualStrings("https://suggestqueries.google.com/complete/search?client=firefox&q=zig%20std.mem", url);
+
+    const parsed = search.parseSuggestions(a, "[\"zig\",[\"ziglang\",\"zig download\",\"zig tutorial\",\"zig build\",\"zig fifth\"]]");
+    try t.expectEqual(@as(usize, 4), parsed.len);
+    try t.expectEqualStrings("ziglang", parsed[0]);
+    try t.expectEqualStrings("zig download", parsed[1]);
+    try t.expectEqualStrings("zig tutorial", parsed[2]);
+    try t.expectEqualStrings("zig build", parsed[3]);
+
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "not json").len);
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "[\"only_one\"]").len);
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "{}").len);
+}
+
+test {
+    _ = core;
 }

@@ -15,12 +15,16 @@ pub const Content = union(enum) {
     path: []const u8,
 };
 
+pub const QueryScope = enum { search, clipboard };
+
 pub const Entry = struct {
     id: i64,
     kind: Kind,
     /// The text; a file's path; an image's name.
     text: []const u8,
     created_at: f64,
+    /// The bundle ID of the app it was copied from.
+    source: []const u8 = "",
     source_name: []const u8 = "Clipboard",
     pinned_at: ?f64 = null,
     width: u32 = 0,
@@ -29,6 +33,18 @@ pub const Entry = struct {
     thumbnail: []const u8 = "",
     /// Decided when the entry was recorded; never parsed again.
     content: Content = .plain,
+    sensitive: bool = false,
+
+    pub fn isSensitive(e: Entry) bool {
+        return e.sensitive or isSensitiveSource(e.source, e.source_name);
+    }
+
+    pub fn linkUrl(e: Entry) ?[]const u8 {
+        return switch (e.content) {
+            .link => std.mem.trim(u8, e.text, " \t\r\n"),
+            else => null,
+        };
+    }
 
     /// A file, or text that names one.
     pub fn filePath(e: Entry) ?[]const u8 {
@@ -58,6 +74,39 @@ pub const Entry = struct {
         return std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ head, d }) catch head;
     }
 };
+
+const sensitive_source_markers = [_][]const u8{
+    "1password",
+    "onepassword",
+    "passwords",
+    "keychain",
+    "bitwarden",
+    "keepass",
+    "dashlane",
+    "lastpass",
+    "enpass",
+    "proton.pass",
+    "proton pass",
+    "concealed",
+    "sensitive",
+};
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+pub fn isSensitiveSource(source: []const u8, source_name: []const u8) bool {
+    for (sensitive_source_markers) |m| {
+        if (containsIgnoreCase(source, m) or containsIgnoreCase(source_name, m)) return true;
+    }
+    return false;
+}
 
 /// The content of copied text. Its slices point into `text`.
 pub fn classify(text: []const u8) Content {
@@ -104,14 +153,15 @@ fn parentName(path: []const u8) ?[]const u8 {
 }
 
 /// A link's host without `www.`; null when the text is not an http(s) link.
-fn domain(text: []const u8) ?[]const u8 {
+pub fn domain(text: []const u8) ?[]const u8 {
     const rest = if (std.mem.startsWith(u8, text, "https://")) text["https://".len..] else if (std.mem.startsWith(u8, text, "http://")) text["http://".len..] else return null;
     if (std.mem.indexOfAny(u8, text, " \t\r\n") != null) return null;
     var host = rest[0 .. std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len];
     if (std.mem.lastIndexOfScalar(u8, host, '@')) |at| host = host[at + 1 ..];
     if (std.mem.indexOfScalar(u8, host, ':')) |colon| host = host[0..colon];
+    if (std.ascii.startsWithIgnoreCase(host, "www.")) host = host[4..];
     if (host.len == 0) return null;
-    return if (std.mem.startsWith(u8, host, "www.")) host[4..] else host;
+    return host;
 }
 
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: ?u8 = null };
@@ -412,7 +462,7 @@ pub const max_text_bytes = 32_000;
 pub const max_image_bytes = 15 * 1024 * 1024;
 pub const retention_days = 30;
 pub const compact_after_days = 7;
-pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000 };
+pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000, queries: u32 = 1000 };
 pub const Compactor = *const fn (arena: std.mem.Allocator, png: []const u8) ?[]const u8;
 const window = 1000;
 const search_limit = 200;
@@ -468,10 +518,20 @@ const schema =
     \\  stored_bytes INTEGER NOT NULL DEFAULT 0,
     \\  compacted INTEGER NOT NULL DEFAULT 0,
     \\  content_kind TEXT,
-    \\  content_detail TEXT);
+    \\  content_detail TEXT,
+    \\  sensitive INTEGER NOT NULL DEFAULT 0);
     \\CREATE INDEX IF NOT EXISTS entries_created ON entries(created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_pinned ON entries(pinned_at);
     \\CREATE INDEX IF NOT EXISTS entries_hash ON entries(hash);
+    \\CREATE TABLE IF NOT EXISTS queries(
+    \\  id INTEGER PRIMARY KEY,
+    \\  scope TEXT NOT NULL,
+    \\  norm TEXT NOT NULL,
+    \\  query TEXT NOT NULL,
+    \\  uses INTEGER NOT NULL DEFAULT 1,
+    \\  last_used REAL NOT NULL,
+    \\  UNIQUE(scope, norm));
+    \\CREATE INDEX IF NOT EXISTS queries_scope_norm ON queries(scope, norm);
     \\CREATE TEMP TABLE IF NOT EXISTS released(hash BLOB);
 ;
 
@@ -481,13 +541,14 @@ const columns_added_since_first_schema = [_][:0]const u8{
     "ALTER TABLE entries ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE entries ADD COLUMN content_kind TEXT",
     "ALTER TABLE entries ADD COLUMN content_detail TEXT",
+    "ALTER TABLE entries ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0",
 };
 
 const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail";
+const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail, sensitive";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
@@ -704,10 +765,11 @@ pub const Store = struct {
         if (cap == .image) try s.writeImage(&hash, "png", img.png);
         const content: Content = if (cap == .text) classify(text) else .plain;
         var detail_buf: [9]u8 = undefined;
-        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, image_format, stored_bytes, content_kind, content_detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
+        const sensitive: i64 = @intFromBool(isSensitiveSource(source, source_name));
+        try s.run("INSERT INTO entries(kind, text, created_at, source, source_name, width, height, byte_count, hash, thumbnail, image_format, stored_bytes, content_kind, content_detail, sensitive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", .{
             @tagName(kind),                   text,                            now,                             source,                                              source_name,
             @as(i64, img.width),              @as(i64, img.height),            @as(i64, @intCast(img.png.len)), Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
-            if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               storedDetail(&detail_buf, content),
+            if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               storedDetail(&detail_buf, content),                  sensitive,
         });
         try s.keepWithinBudget();
         return true;
@@ -762,13 +824,15 @@ pub const Store = struct {
                 .kind = std.meta.stringToEnum(Kind, columnText(stmt, 1)) orelse .text,
                 .text = try arena.dupe(u8, columnText(stmt, 2)),
                 .created_at = lite.sqlite3_column_double(stmt, 3),
-                .source_name = try arena.dupe(u8, columnText(stmt, 4)),
-                .pinned_at = if (lite.sqlite3_column_type(stmt, 5) == lite.null_type) null else lite.sqlite3_column_double(stmt, 5),
-                .width = @intCast(lite.sqlite3_column_int64(stmt, 6)),
-                .height = @intCast(lite.sqlite3_column_int64(stmt, 7)),
-                .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 8)),
-                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 9)),
-                .content = storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
+                .source = try arena.dupe(u8, columnText(stmt, 4)),
+                .source_name = try arena.dupe(u8, columnText(stmt, 5)),
+                .pinned_at = if (lite.sqlite3_column_type(stmt, 6) == lite.null_type) null else lite.sqlite3_column_double(stmt, 6),
+                .width = @intCast(lite.sqlite3_column_int64(stmt, 7)),
+                .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
+                .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
+                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
+                .content = storedContent(columnText(stmt, 11), try arena.dupe(u8, columnText(stmt, 12))),
+                .sensitive = lite.sqlite3_column_int64(stmt, 13) != 0,
             });
         }
         return out.items;
@@ -795,6 +859,43 @@ pub const Store = struct {
     pub fn prune(s: Store, now: f64, days: u32) !void {
         try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
         try s.keepWithinBudget();
+    }
+
+    pub fn recordQuery(s: Store, scope: QueryScope, raw: []const u8, now: f64) !void {
+        const q = std.mem.trim(u8, raw, " \t\r\n");
+        if (q.len == 0 or q.len > max_text_bytes) return;
+        try s.run(
+            "INSERT INTO queries(scope, norm, query, uses, last_used) VALUES(?, lower(?), ?, 1, ?) " ++
+                "ON CONFLICT(scope, norm) DO UPDATE SET query = excluded.query, uses = queries.uses + 1, last_used = excluded.last_used",
+            .{ @tagName(scope), q, q, now },
+        );
+        try s.run(
+            "DELETE FROM queries WHERE id NOT IN (SELECT id FROM queries ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT ?)",
+            .{ now, @as(i64, s.budget.queries) },
+        );
+    }
+
+    pub fn completeQuery(s: Store, buf: []u8, scope: QueryScope, prefix: []const u8, now: f64) ?[]const u8 {
+        if (prefix.len == 0 or prefix.len >= buf.len) return null;
+        const stmt = s.prepare(
+            "SELECT query FROM queries WHERE scope = ? AND length(norm) > length(?) AND substr(norm, 1, length(?)) = lower(?) " ++
+                "ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT 1",
+        ) catch return null;
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{ @tagName(scope), prefix, prefix, prefix, now });
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
+        const q = columnText(stmt, 0);
+        if (q.len <= prefix.len or q.len > buf.len or !std.ascii.startsWithIgnoreCase(q, prefix)) return null;
+        @memcpy(buf[0..q.len], q);
+        return buf[0..q.len];
+    }
+
+    pub fn clearQueries(s: Store) !void {
+        try s.run("DELETE FROM queries", .{});
+    }
+
+    pub fn queryCount(s: Store) usize {
+        return @intCast(s.int("SELECT count(*) FROM queries", .{}) orelse 0);
     }
 };
 
@@ -828,3 +929,18 @@ pub fn wallClock() f64 {
     _ = std.posix.system.clock_gettime(.REALTIME, &ts);
     return @as(f64, @floatFromInt(ts.sec)) + @as(f64, @floatFromInt(ts.nsec)) / std.time.ns_per_s;
 }
+
+pub const Clock = struct {
+    ctx: ?*anyopaque = null,
+    read: *const fn (?*anyopaque) f64 = wall,
+
+    pub const wall_clock: Clock = .{};
+
+    pub fn now(c: Clock) f64 {
+        return c.read(c.ctx);
+    }
+
+    fn wall(_: ?*anyopaque) f64 {
+        return wallClock();
+    }
+};

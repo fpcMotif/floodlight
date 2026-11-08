@@ -1,5 +1,6 @@
 //! Panel Presence: whether the search panel is on screen, and every rule
 //! that brings it up or sends it away. The shell carries out each effect.
+const mac = @import("mac.zig");
 const panel = @import("panel.zig");
 
 pub const Phase = enum {
@@ -16,6 +17,8 @@ pub const Effect = enum {
     note_paste_target,
     /// Size the panel and centre it on the pointer's screen.
     place,
+    /// Switch the panel to search, restoring a retained session.
+    open_search,
     /// Switch the panel to the clipboard board.
     open_board,
     /// Order the window in at alpha 0.
@@ -27,7 +30,7 @@ pub const Effect = enum {
     /// Set the window's alpha to 1.
     reveal,
     hide_window,
-    /// Forget the session: query, rows, icons, and the memory behind them.
+    /// End the session: keep it for the retention window, or forget it.
     end_session,
     /// Send ⌘V to the noted paste target.
     deliver_paste,
@@ -46,9 +49,9 @@ pub const Presence = struct {
     /// they started: the nth to fire belongs to the nth entrance.
     timers_fired: u32 = 0,
 
-    /// ⌥Space.
-    pub fn search(p: *Presence, focused: bool) void {
-        if (p.phase != .hidden and focused) return p.hide();
+    /// ⌥Space: hides only a focused panel that already shows search.
+    pub fn search(p: *Presence, focused: bool, on_board: bool) void {
+        if (p.phase != .hidden and focused and !on_board) return p.hide();
         p.show(false);
     }
 
@@ -82,7 +85,7 @@ pub const Presence = struct {
                     p.hide();
                     p.run(.deliver_paste);
                 },
-                .reveal => p.hide(),
+                .open, .reveal => p.hide(),
                 .copy, .preview, .actions => {},
             },
         }
@@ -109,10 +112,11 @@ pub const Presence = struct {
     fn show(p: *Presence, on_board: bool) void {
         const from_hidden = p.phase == .hidden;
         if (from_hidden) p.run(.note_paste_target);
-        if (on_board) p.run(.open_board);
+        p.run(if (on_board) .open_board else .open_search);
         p.run(.place);
         if (!from_hidden) return p.run(.order_front);
         p.phase = .entering;
+        mac.signpostBegin(.summon);
         p.entrances += 1;
         p.run(.order_in_unseen);
         p.run(.start_entrance_timer);
@@ -120,10 +124,12 @@ pub const Presence = struct {
 
     fn reveal(p: *Presence) void {
         p.phase = .shown;
+        mac.signpostEnd(.summon);
         p.run(.reveal);
     }
 
     fn hide(p: *Presence) void {
+        if (p.phase == .entering) mac.signpostEnd(.summon);
         // First: ordering out resigns focus, and that must not hide again.
         p.phase = .hidden;
         p.run(.hide_window);

@@ -68,9 +68,17 @@ pub fn shownHead(text: []const u8, lines: usize) []const u8 {
 pub const Action = union(enum) {
     paste: Entry,
     copy: Entry,
+    open: []const u8,
     reveal: []const u8,
     preview: Entry,
     actions: Entry,
+
+    pub fn hides(a: Action) bool {
+        return switch (a) {
+            .paste, .open, .reveal => true,
+            .copy, .preview, .actions => false,
+        };
+    }
 };
 
 pub const Board = struct {
@@ -78,8 +86,7 @@ pub const Board = struct {
     list: History,
     /// The selection's payload: a full image, a file's head.
     detail_arena: std.heap.ArenaAllocator,
-    /// Seconds since 1970 that ages are measured from.
-    now: f64 = 0,
+    clock: clipboard.Clock = .wall_clock,
     /// The app Return pastes into; empty when Return only copies.
     paste_target: []const u8 = "",
     detail_id: ?i64 = null,
@@ -91,8 +98,8 @@ pub const Board = struct {
     facts: clipboard.Facts = .{},
     facts_id: ?i64 = null,
 
-    pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store) Board {
-        var b: Board = .{ .store = store, .list = .init(gpa), .detail_arena = .init(gpa) };
+    pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
+        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa) };
         b.list.markStale();
         return b;
     }
@@ -102,9 +109,13 @@ pub const Board = struct {
         b.detail_arena.deinit();
     }
 
-    pub fn reset(b: *Board) void {
+    pub fn forget(b: *Board) void {
         b.list.reset();
         b.list.markStale();
+        b.releaseDetail();
+    }
+
+    pub fn releaseDetail(b: *Board) void {
         b.detail_id = null;
         b.facts_id = null;
         _ = b.detail_arena.reset(.free_all);
@@ -138,7 +149,7 @@ pub const Board = struct {
     pub fn togglePin(b: *Board) void {
         const e = b.list.selection() orelse return;
         const store = b.store orelse return;
-        store.togglePin(e.id, b.now) catch return;
+        store.togglePin(e.id, b.clock.now()) catch return;
         b.list.markStale();
         b.refresh(b.list.answered());
     }
@@ -185,6 +196,9 @@ pub const Board = struct {
         // Taken even with nothing selected, so ⌫ never edits the filter.
         if (c.shortcut(.{ .key = backspace })) b.delete();
         const e = b.list.selection() orelse return null;
+        if (c.shortcut(.{ .key = 'o', .cmd = true })) {
+            if (e.linkUrl()) |u| return .{ .open = u };
+        }
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (e.filePath()) |p| return .{ .reveal = p };
         }
@@ -283,7 +297,7 @@ pub const Board = struct {
                 const line = ui.div(c).row().gap(5).itemsCenter();
                 defer line.end();
                 if (e.pinned_at != null) ui.icon(c, "pin.fill", .{ .size = 9, .weight = .semibold, .color = th.muted });
-                ui.text(c, e.subtitle(c.arena.allocator(), b.now), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
+                ui.text(c, e.subtitle(c.arena.allocator(), b.clock.now()), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
             }
         }
         if (selected) chrome.keyChip(c, .{ .symbol = "return" });
