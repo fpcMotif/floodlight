@@ -348,6 +348,40 @@ const Shell = struct {
         return png;
     }
 
+    const SuggestRequest = struct {
+        shell: *Shell,
+        seq: u64,
+        query: []u8,
+    };
+
+    fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        if (s.app.flags.hidden or s.app.flags.snapshot != null) return;
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, query, " \t\r\n")) catch return;
+        const q_copy = gpa.dupe(u8, query) catch return;
+        const req = gpa.create(SuggestRequest) catch {
+            gpa.free(q_copy);
+            return;
+        };
+        req.* = .{ .shell = s, .seq = seq, .query = q_copy };
+        nanoui.http.fetch(gpa, .{ .url = url }, req, onSuggest);
+    }
+
+    fn onSuggest(req: *SuggestRequest, res: nanoui.http.Response) void {
+        defer {
+            gpa.free(req.query);
+            gpa.destroy(req);
+        }
+        const s = req.shell;
+        if (res.err.len > 0 or res.status != 200) return;
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const items = search.parseSuggestions(arena.allocator(), res.body);
+        if (s.panel.receiveSuggestionsFor(req.seq, req.query, items)) s.panel_window.redraw();
+    }
+
     // The grant flow's effects.
 
     fn isGranted(_: ?*anyopaque) bool {
@@ -489,8 +523,15 @@ pub fn main(init: std.process.Init) !void {
         .app_icon = Shell.appIcon,
         .describe_date = Shell.describeDate,
         .detailed_date = Shell.detailedDate,
+        .suggest = Shell.suggest,
     });
     defer shell.panel.deinit();
+    if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
+        defer gpa.free(v);
+        if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {
+            shell.panel.setWebSuggestionsEnabled(false);
+        }
+    }
     shell.panel_window = try app.newWindow(.{
         .title = "Floodlight",
         .width = metrics.width,

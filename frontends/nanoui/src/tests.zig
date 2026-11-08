@@ -599,6 +599,193 @@ test "completion hides on Backspace, mid-text caret, IME composition, Link Row q
     try t.expect(fx.p.completion == null);
 }
 
+test "running a Selected-Result Action records its query across store restarts and beats the top hit" {
+    var ts: TmpStore = .{ .tmp = undefined };
+    try ts.init();
+    defer ts.deinit();
+    try ts.tmp.dir.createDirPath(t.io, "Apps/Antigravity.app/Contents");
+    try ts.tmp.dir.createDirPath(t.io, "Apps/Anthropic Console.app/Contents");
+    var cat = try tmpCatalog(&ts.tmp, &ts.buf);
+    defer cat.deinit();
+
+    {
+        var store = try clipboard.Store.open(ts.db, null);
+        defer store.close();
+        var hooks: NoHooks = .{};
+        hooks.clock.advance(100);
+        var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+        defer p.deinit();
+        var tester: ui.Tester = undefined;
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+        defer tester.deinit();
+        tester.settle(0.1);
+
+        tester.typeText("github.com");
+        tester.key(.enter);
+        try t.expectEqualStrings("https://github.com", p.pending.?.open);
+        p.pending = null;
+
+        p.reset();
+        tester.frame();
+        tester.typeText("Anthropic Console");
+        tester.key(.enter);
+        p.pending = null;
+    }
+
+    var store = try clipboard.Store.open(ts.db, null);
+    defer store.close();
+    var hooks: NoHooks = .{};
+    hooks.clock.advance(200);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("git");
+    const link_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, link_comp.source);
+    try t.expectEqualStrings("hub.com", link_comp.suffix);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("ant");
+    try t.expectEqualStrings("Antigravity", p.visible[0].title);
+    const beat_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, beat_comp.source);
+    try t.expectEqualStrings("hropic Console", beat_comp.suffix);
+}
+
+test "Query History ranks by recency and frequency, evicts lowest-ranked entries at its bound, and falls back to the top hit when cleared" {
+    var fx: CompletionFixture = .{ .tmp = undefined };
+    try fx.init(&.{ "Apps/Antigravity.app/Contents", "Apps/Anthropic Console.app/Contents", "Apps/Anthem Studio.app/Contents" });
+    defer fx.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    store.budget = .{ .queries = 3 };
+    fx.p.store = &store;
+    fx.p.board.store = &store;
+
+    fx.hooks.clock.advance(100);
+    fx.tester.typeText("anthropic console");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(100);
+    fx.tester.typeText("anthem studio");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hem studio", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+
+    fx.p.reset();
+    fx.tester.frame();
+    for (0..2) |_| {
+        fx.tester.typeText("anthropic console");
+        fx.tester.key(.enter);
+        fx.p.pending = null;
+        fx.p.reset();
+        fx.tester.frame();
+    }
+    fx.hooks.clock.advance(60);
+    fx.tester.typeText("anthem studio");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(10);
+    fx.tester.typeText("calendar notes");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+    try t.expectEqual(@as(usize, 3), store.queryCount());
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.hooks.clock.advance(10);
+    fx.tester.typeText("calculator pro");
+    fx.tester.key(.enter);
+    fx.p.pending = null;
+    try t.expectEqual(@as(usize, 3), store.queryCount());
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("cal");
+    try t.expectEqualStrings("culator pro", fx.p.completion.?.suffix);
+
+    fx.p.reset();
+    fx.tester.frame();
+    fx.tester.typeText("ant");
+    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+
+    try t.expect(fx.tester.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true }));
+    try t.expectEqual(@as(usize, 0), store.queryCount());
+    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, fx.p.completion.?.source);
+}
+
+test "the board field completes from past board queries and skips queries matching a sensitive entry" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    _ = try store.add(.{ .text = "quarterly invoice summary" }, "com.apple.Notes", "Notes", 100);
+    _ = try store.add(.{ .text = "vault-recovery-phrase-99" }, "com.1password.1password", "1Password", 200);
+
+    var hooks: NoHooks = .{};
+    hooks.clock.advance(300);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    tester.typeText("quarterly invoice");
+    tester.key(.enter);
+    try t.expectEqualStrings("quarterly invoice summary", p.pending.?.clipboard.paste.text);
+    p.pending = null;
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("quar");
+    const comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.history, comp.source);
+    try t.expectEqualStrings("terly invoice", comp.suffix);
+    try t.expect(tester.hasText("terly invoice"));
+
+    tester.key(.right);
+    try t.expectEqualStrings("quarterly invoice", p.field.text());
+    try t.expectEqualStrings("quarterly invoice", p.board.answered.items);
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("vault-recovery");
+    tester.key(.enter);
+    try t.expectEqualStrings("vault-recovery-phrase-99", p.pending.?.clipboard.paste.text);
+    p.pending = null;
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("vault");
+    try t.expect(p.completion == null);
+}
+
 test "the access probe names a file that exists" {
     const failed = std.c.access(mac.full_disk_access_probe, 0) != 0;
     const missing = failed and @as(std.c.E, @fromBackingInt(@intCast(std.c._errno().*))) == .NOENT;
@@ -1502,6 +1689,314 @@ test "search and clipboard board sessions expire separately, and zero retention 
     tester.frame();
     try t.expectEqualStrings("", p.field.text());
     try t.expectEqual(@as(usize, 0), p.rows.len);
+}
+
+const SuggestSpy = struct {
+    hooks_base: NoHooks = .{},
+    seqs: std.ArrayList(u64) = .empty,
+    queries: std.ArrayList([]u8) = .empty,
+
+    fn deinit(s: *SuggestSpy) void {
+        for (s.queries.items) |q| t.allocator.free(q);
+        s.queries.deinit(t.allocator);
+        s.seqs.deinit(t.allocator);
+    }
+
+    fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
+        const s: *SuggestSpy = @ptrCast(@alignCast(ctx));
+        const copy = t.allocator.dupe(u8, query) catch return;
+        s.queries.append(t.allocator, copy) catch {
+            t.allocator.free(copy);
+            return;
+        };
+        s.seqs.append(t.allocator, seq) catch {};
+    }
+
+    fn request(ctx: ?*anyopaque) void {
+        const s: *SuggestSpy = @ptrCast(@alignCast(ctx));
+        s.hooks_base.requests += 1;
+    }
+
+    fn hooks(s: *SuggestSpy) panel_mod.Hooks {
+        return .{
+            .ctx = s,
+            .clock = s.hooks_base.clock.binding(),
+            .request = request,
+            .app_icon = NoHooks.icon,
+            .describe_date = NoHooks.date,
+            .detailed_date = NoHooks.detailed,
+            .suggest = suggest,
+        };
+    }
+};
+
+test "the first frame after a keystroke does not wait for suggestions, and arrival adds up to four bold-tail rows under Google without moving selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqualStrings("cal", spy.queries.items[0]);
+    try t.expectEqual(@as(usize, 3), p.visible.len);
+    try t.expectEqualStrings("Calendar", p.visible[0].title);
+    try t.expectEqualStrings("Calculator", p.visible[1].title);
+    try t.expectEqualStrings("Google", p.visible[2].title);
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.selected);
+
+    p.receiveSuggestions("cal", &.{
+        "calculator online",
+        "calendar 2026",
+        "california dmv",
+        "caltrain schedule",
+        "calories in an apple",
+    });
+    tester.frame();
+
+    try t.expectEqual(@as(usize, 1), p.selected);
+    try t.expectEqual(@as(usize, 7), p.visible.len);
+    try t.expectEqualStrings("Google", p.visible[2].title);
+    try t.expectEqualStrings("calculator online", p.visible[3].title);
+    try t.expectEqualStrings("calendar 2026", p.visible[4].title);
+    try t.expectEqualStrings("california dmv", p.visible[5].title);
+    try t.expectEqualStrings("caltrain schedule", p.visible[6].title);
+    try t.expect(!tester.hasText("calories in an apple"));
+
+    var found_node = false;
+    for (tester.ctx.nodes.items) |n| {
+        if (n.content == .text and std.mem.eql(u8, n.content.text.str, "calculator online")) {
+            found_node = true;
+            try t.expectEqual(ui.Weight.regular, n.content.text.style.weight);
+            try t.expectEqual(@as(usize, 1), n.content.text.spans.len);
+            try t.expectEqual(@as(u32, 3), n.content.text.spans[0].start);
+            try t.expectEqual(@as(u32, "calculator online".len), n.content.text.spans[0].end);
+            try t.expectEqual(@as(?ui.Weight, .bold), n.content.text.spans[0].weight);
+        }
+    }
+    try t.expect(found_node);
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 3), p.selected);
+    tester.key(.enter);
+    try t.expectEqualStrings("https://www.google.com/search?q=calculator%20online", (p.pending orelse return error.NoAction).open);
+}
+
+test "a late reply for an old query or superseded request is ignored, and an empty failure leaves no rows" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("wea");
+    const first_seq = spy.seqs.items[0];
+    try t.expect(first_seq > 0);
+
+    tester.typeText("ther");
+    const second_seq = spy.seqs.items[1];
+    try t.expect(second_seq > first_seq);
+
+    try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"weather radar"}));
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+    try t.expectEqualStrings("Google", p.visible[0].title);
+
+    for (0..4) |_| tester.key(.backspace);
+    try t.expectEqualStrings("wea", p.field.text());
+    const third_seq = spy.seqs.getLast();
+    try t.expect(third_seq > second_seq);
+
+    try t.expect(!p.receiveSuggestionsFor(first_seq, "wea", &.{"stale weather"}));
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+
+    try t.expect(p.receiveSuggestionsFor(third_seq, "wea", &.{}));
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+    try t.expectEqualStrings("Google", p.visible[0].title);
+}
+
+test "with the setting off, or for a Link Row, a path-like query, or Clipboard mode, the suggestion source receives no request" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    p.setWebSuggestionsEnabled(false);
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 0), spy.queries.items.len);
+    p.receiveSuggestions("weather", &.{"weather today"});
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+
+    p.setWebSuggestionsEnabled(true);
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqualStrings("weather", spy.queries.items[0]);
+    p.receiveSuggestions("weather", &.{"weather today"});
+    try t.expectEqual(@as(usize, 2), p.visible.len);
+
+    p.setWebSuggestionsEnabled(false);
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+    p.setWebSuggestionsEnabled(true);
+
+    const suppressed = [_][]const u8{
+        "github.com",
+        "https://example.org",
+        "localhost:3000",
+        "/Applications",
+        "~/Documents",
+        "./build.zig",
+    };
+    const count_before = spy.queries.items.len;
+    for (suppressed) |q| {
+        p.reset();
+        tester.frame();
+        tester.typeText(q);
+        try t.expectEqual(count_before, spy.queries.items.len);
+    }
+
+    p.showClipboard();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(count_before, spy.queries.items.len);
+}
+
+test "a cached query reuses suggestions within five minutes without sending a second request, then refetches after expiry" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    spy.hooks_base.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    p.receiveSuggestions("weather", &.{ "weather forecast", "weather radar" });
+    try t.expectEqual(@as(usize, 3), p.visible.len);
+
+    spy.hooks_base.clock.advance(299);
+    p.reset();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 1), spy.queries.items.len);
+    try t.expectEqual(@as(usize, 3), p.visible.len);
+    try t.expectEqualStrings("weather forecast", p.visible[1].title);
+    try t.expectEqualStrings("weather radar", p.visible[2].title);
+
+    spy.hooks_base.clock.advance(2);
+    p.reset();
+    tester.frame();
+    tester.typeText("weather");
+    try t.expectEqual(@as(usize, 2), spy.queries.items.len);
+    try t.expectEqualStrings("weather", spy.queries.items[1]);
+    try t.expectEqual(@as(usize, 1), p.visible.len);
+}
+
+test "the first web suggestion becomes the completion only when neither query history nor top hit matches" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    spy.hooks_base.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("WEA");
+    try t.expect(p.completion == null);
+    p.receiveSuggestions("WEA", &.{ "weather forecast", "wealthsimple" });
+    tester.frame();
+    const web_comp = p.completion orelse return error.NoCompletion;
+    try t.expectEqual(panel_mod.CompletionSource.web_suggestion, web_comp.source);
+    try t.expectEqualStrings("ther forecast", web_comp.suffix);
+    try t.expect(tester.hasText("ther forecast"));
+
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
+    try t.expectEqualStrings("WEAther", p.field.text());
+    p.receiveSuggestions("WEAther", &.{ "forecast tomorrow", "weather radar" });
+    tester.frame();
+    try t.expect(p.completion == null);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("cal");
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    p.receiveSuggestions("cal", &.{"calculator online"});
+    tester.frame();
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    try store.recordQuery(.search, "weather radar", 1000);
+    p.reset();
+    tester.frame();
+    tester.typeText("wea");
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+    p.receiveSuggestions("wea", &.{"weather forecast"});
+    tester.frame();
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+}
+
+test "Google suggestion URL encoding and Firefox JSON response parsing cap at four items and ignore malformed payloads" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const url = try search.webSuggestUrl(a, "zig std.mem");
+    try t.expectEqualStrings("https://suggestqueries.google.com/complete/search?client=firefox&q=zig%20std.mem", url);
+
+    const parsed = search.parseSuggestions(a, "[\"zig\",[\"ziglang\",\"zig download\",\"zig tutorial\",\"zig build\",\"zig fifth\"]]");
+    try t.expectEqual(@as(usize, 4), parsed.len);
+    try t.expectEqualStrings("ziglang", parsed[0]);
+    try t.expectEqualStrings("zig download", parsed[1]);
+    try t.expectEqualStrings("zig tutorial", parsed[2]);
+    try t.expectEqualStrings("zig build", parsed[3]);
+
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "not json").len);
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "[\"only_one\"]").len);
+    try t.expectEqual(@as(usize, 0), search.parseSuggestions(a, "{}").len);
 }
 
 test {

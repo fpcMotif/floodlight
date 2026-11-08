@@ -29,6 +29,13 @@ pub const metrics = struct {
 };
 
 pub const summon_label = "⌥ Space";
+pub const suggestion_cache_ttl: f64 = 5 * 60;
+
+const CachedSuggestions = struct {
+    query: []u8,
+    items: [][]u8,
+    fetched_at: f64,
+};
 
 pub const Filter = enum {
     all,
@@ -118,7 +125,10 @@ pub const Hooks = struct {
     describe_date: *const fn (?*anyopaque, i64, std.mem.Allocator) []const u8,
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
+    suggest: *const fn (?*anyopaque, u64, []const u8) void = noSuggest,
 };
+
+fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
 pub const default_retention_seconds: f64 = 5 * 60;
 
@@ -163,6 +173,7 @@ const RetainedBoard = struct {
 
 pub const Panel = struct {
     catalog: *search.Catalog,
+    store: ?*const clipboard.Store = null,
     hooks: Hooks,
     clock: Clock = .wall_clock,
     retention_seconds: f64 = default_retention_seconds,
@@ -173,10 +184,17 @@ pub const Panel = struct {
     board: board_mod.Board,
     field: ui.TextBuffer = .{},
     arena: std.heap.ArenaAllocator,
+    base_rows: []search.Row = &.{},
+    suggestions: []const []const u8 = &.{},
     rows: []search.Row = &.{},
     visible: []search.Row = &.{},
     /// The query `rows` answers, to search again only when it changes.
     answered: std.ArrayList(u8) = .empty,
+    suggest_seq: u64 = 0,
+    pending_suggest_seq: u64 = 0,
+    pending_suggest_query: std.ArrayList(u8) = .empty,
+    suggestion_cache: std.ArrayList(CachedSuggestions) = .empty,
+    web_suggestions_enabled: bool = true,
     filter: Filter = .all,
     selected: usize = 0,
     reveal_selection: bool = false,
@@ -185,12 +203,13 @@ pub const Panel = struct {
     caret_at_end: bool = true,
     composing: bool = false,
     completion: ?Completion = null,
+    completion_buf: [512]u8 = undefined,
     pending: ?Action = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
     pub fn init(gpa: std.mem.Allocator, catalog: *search.Catalog, store: ?*const clipboard.Store, hooks: Hooks) Panel {
-        return .{ .catalog = catalog, .hooks = hooks, .clock = hooks.clock, .arena = .init(gpa), .board = .init(gpa, store, hooks.clock) };
+        return .{ .catalog = catalog, .store = store, .hooks = hooks, .clock = hooks.clock, .arena = .init(gpa), .board = .init(gpa, store, hooks.clock) };
     }
 
     pub fn deinit(p: *Panel) void {
@@ -200,14 +219,19 @@ pub const Panel = struct {
         p.board.deinit();
         p.field.deinit();
         p.answered.deinit(gpa);
+        p.pending_suggest_query.deinit(gpa);
+        p.freeAllCachedSuggestions();
         p.arena.deinit();
     }
 
     fn forgetSearch(p: *Panel) void {
         p.retained_search.clear();
+        p.base_rows = &.{};
+        p.suggestions = &.{};
         p.rows = &.{};
         p.visible = &.{};
         p.answered.clearRetainingCapacity();
+        p.cancelPendingSuggest();
         p.filter = .all;
         p.selected = 0;
         p.resetCompletion();
@@ -390,6 +414,8 @@ pub const Panel = struct {
         p.expireAt(now);
         p.hidden = false;
         p.mode = .clipboard;
+        p.cancelPendingSuggest();
+        p.suggestions = &.{};
         p.resetCompletion();
         if (p.retained_board.hidden_at) |hidden_at| {
             p.retained_board.hidden_at = null;
@@ -449,7 +475,10 @@ pub const Panel = struct {
                 p.board.filter = .all;
                 p.retained_board.clear();
             }
-            return p.board.refresh(text);
+            if (text.len == 0 or text.len > p.board.answered.items.len) p.suppressed_by_backspace = false;
+            p.board.refresh(text);
+            p.completion = p.computeCompletion();
+            return;
         }
         if (std.mem.eql(u8, text, p.answered.items)) return;
         mac.signpostBegin(.keystroke);
@@ -460,11 +489,197 @@ pub const Panel = struct {
             p.retained_search.clear();
         }
         _ = p.arena.reset(.retain_capacity);
-        p.rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
+        p.base_rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
+        p.suggestions = &.{};
+        const eligible = p.shouldSuggest(text);
+        var need_fetch = false;
+        if (eligible) {
+            if (p.suggestion_cache.items.len > 0) {
+                if (p.cachedSuggestions(text, p.clock.now())) |cached| {
+                    p.cancelPendingSuggest();
+                    p.suggestions = p.dupeSuggestions(cached);
+                } else {
+                    need_fetch = true;
+                }
+            } else {
+                need_fetch = true;
+            }
+        } else {
+            p.cancelPendingSuggest();
+        }
+        p.rebuildRows();
         p.answered.clearRetainingCapacity();
         p.answered.appendSlice(p.arena.child_allocator, text) catch {};
         if (p.filter != .all and p.count(p.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, p.filter) != null) p.filter = .all;
         p.applyFilter();
+        if (need_fetch) {
+            p.suggest_seq += 1;
+            p.pending_suggest_seq = p.suggest_seq;
+            p.pending_suggest_query.clearRetainingCapacity();
+            p.pending_suggest_query.appendSlice(p.arena.child_allocator, text) catch {};
+            p.hooks.suggest(p.hooks.ctx, p.pending_suggest_seq, text);
+        }
+    }
+
+    pub fn setWebSuggestionsEnabled(p: *Panel, enabled: bool) void {
+        if (p.web_suggestions_enabled == enabled) return;
+        p.web_suggestions_enabled = enabled;
+        if (!enabled) {
+            p.cancelPendingSuggest();
+            p.suggestions = &.{};
+            p.rebuildRows();
+            p.updateVisible();
+            return;
+        }
+        if (p.mode == .search and p.field.text().len > 0) {
+            p.answered.clearRetainingCapacity();
+            p.refresh();
+        }
+    }
+
+    fn shouldSuggest(p: *Panel, text: []const u8) bool {
+        if (!p.web_suggestions_enabled or p.mode != .search) return false;
+        const trimmed = std.mem.trim(u8, text, " \t\r\n");
+        if (trimmed.len == 0) return false;
+        if (isPathLike(text) or isPathLike(trimmed)) return false;
+        if (hasLinkRow(p.base_rows)) return false;
+        return true;
+    }
+
+    fn cancelPendingSuggest(p: *Panel) void {
+        p.pending_suggest_seq = 0;
+        p.pending_suggest_query.clearRetainingCapacity();
+    }
+
+    pub fn receiveSuggestions(p: *Panel, query: []const u8, items: []const []const u8) void {
+        _ = p.receiveSuggestionsFor(p.pending_suggest_seq, query, items);
+    }
+
+    pub fn receiveSuggestionsFor(p: *Panel, seq: u64, query: []const u8, items: []const []const u8) bool {
+        if (!p.web_suggestions_enabled or p.mode != .search) return false;
+        if (p.pending_suggest_seq == 0 or seq != p.pending_suggest_seq) return false;
+        if (!std.mem.eql(u8, query, p.pending_suggest_query.items)) return false;
+        if (!std.mem.eql(u8, query, p.field.text())) return false;
+        p.cancelPendingSuggest();
+        p.storeCachedSuggestions(query, items, p.clock.now());
+        p.suggestions = p.dupeSuggestions(items);
+        p.rebuildRows();
+        p.updateVisible();
+        return true;
+    }
+
+    fn cachedSuggestions(p: *Panel, query: []const u8, now: f64) ?[]const []const u8 {
+        const gpa = p.arena.child_allocator;
+        var i: usize = 0;
+        while (i < p.suggestion_cache.items.len) {
+            const entry = p.suggestion_cache.items[i];
+            if (now - entry.fetched_at >= suggestion_cache_ttl) {
+                freeCacheEntry(gpa, entry);
+                _ = p.suggestion_cache.swapRemove(i);
+                continue;
+            }
+            if (std.mem.eql(u8, entry.query, query)) return entry.items;
+            i += 1;
+        }
+        return null;
+    }
+
+    fn storeCachedSuggestions(p: *Panel, query: []const u8, items: []const []const u8, now: f64) void {
+        const gpa = p.arena.child_allocator;
+        var i: usize = 0;
+        while (i < p.suggestion_cache.items.len) {
+            const entry = p.suggestion_cache.items[i];
+            if (now - entry.fetched_at >= suggestion_cache_ttl or std.mem.eql(u8, entry.query, query)) {
+                freeCacheEntry(gpa, entry);
+                _ = p.suggestion_cache.swapRemove(i);
+                continue;
+            }
+            i += 1;
+        }
+        var total: usize = 0;
+        for (items) |s| {
+            if (s.len == 0) continue;
+            total += 1;
+            if (total == search.max_suggestions) break;
+        }
+        const q_copy = gpa.dupe(u8, query) catch return;
+        const owned = gpa.alloc([]u8, total) catch {
+            gpa.free(q_copy);
+            return;
+        };
+        var n: usize = 0;
+        for (items) |s| {
+            if (s.len == 0) continue;
+            owned[n] = gpa.dupe(u8, s) catch {
+                for (owned[0..n]) |prev| gpa.free(prev);
+                gpa.free(owned);
+                gpa.free(q_copy);
+                return;
+            };
+            n += 1;
+            if (n == total) break;
+        }
+        p.suggestion_cache.append(gpa, .{ .query = q_copy, .items = owned, .fetched_at = now }) catch {
+            for (owned) |prev| gpa.free(prev);
+            gpa.free(owned);
+            gpa.free(q_copy);
+        };
+    }
+
+    fn freeAllCachedSuggestions(p: *Panel) void {
+        const gpa = p.arena.child_allocator;
+        for (p.suggestion_cache.items) |entry| freeCacheEntry(gpa, entry);
+        p.suggestion_cache.deinit(gpa);
+    }
+
+    fn freeCacheEntry(gpa: std.mem.Allocator, entry: CachedSuggestions) void {
+        for (entry.items) |s| gpa.free(s);
+        gpa.free(entry.items);
+        gpa.free(entry.query);
+    }
+
+    fn dupeSuggestions(p: *Panel, items: []const []const u8) []const []const u8 {
+        const a = p.arena.allocator();
+        var total: usize = 0;
+        for (items) |s| {
+            if (s.len == 0) continue;
+            total += 1;
+            if (total == search.max_suggestions) break;
+        }
+        if (total == 0) return &.{};
+        const out = a.alloc([]const u8, total) catch return &.{};
+        var n: usize = 0;
+        for (items) |s| {
+            if (s.len == 0) continue;
+            out[n] = a.dupe(u8, s) catch return out[0..n];
+            n += 1;
+            if (n == total) break;
+        }
+        return out[0..n];
+    }
+
+    fn rebuildRows(p: *Panel) void {
+        if (p.suggestions.len == 0 or p.base_rows.len == 0) {
+            p.rows = p.base_rows;
+            return;
+        }
+        const a = p.arena.allocator();
+        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len) catch {
+            p.rows = p.base_rows;
+            return;
+        };
+        @memcpy(out[0..p.base_rows.len], p.base_rows);
+        for (p.suggestions, 0..) |s, i| {
+            out[p.base_rows.len + i] = .{
+                .kind = .web,
+                .title = s,
+                .subtitle = "google.com",
+                .path = search.webSearchUrl(a, s) catch "",
+                .score = 0,
+                .suggestion = true,
+            };
+        }
+        p.rows = out;
     }
 
     pub fn count(p: *const Panel, f: Filter) usize {
@@ -492,7 +707,7 @@ pub const Panel = struct {
         p.field.focus();
     }
 
-    fn applyFilter(p: *Panel) void {
+    fn updateVisible(p: *Panel) void {
         const out = p.arena.allocator().alloc(search.Row, p.rows.len) catch return;
         var n: usize = 0;
         for (p.rows) |r| if (p.filter.includes(r)) {
@@ -500,19 +715,53 @@ pub const Panel = struct {
             n += 1;
         };
         p.visible = out[0..n];
-        p.selected = 0;
-        p.reveal_selection = true;
-        p.completion = p.topHitCompletion();
+        if (p.visible.len == 0) {
+            p.selected = 0;
+        } else if (p.selected >= p.visible.len) {
+            p.selected = p.visible.len - 1;
+        }
+        p.completion = p.computeCompletion();
     }
 
-    fn topHitCompletion(p: *const Panel) ?Completion {
-        if (p.mode != .search or p.suppressed_by_backspace or !p.caret_at_end or p.composing or !p.isTopHit(0)) return null;
+    fn applyFilter(p: *Panel) void {
+        p.selected = 0;
+        p.reveal_selection = true;
+        p.updateVisible();
+    }
+
+    fn computeCompletion(p: *Panel) ?Completion {
+        if (p.suppressed_by_backspace or !p.caret_at_end or p.composing) return null;
         const query = p.field.text();
-        if (query.len == 0 or isLinkQuery(query) or hasLinkRow(p.rows)) return null;
-        const top = p.visible[0];
-        if (top.kind == .web) return null;
-        if (top.title.len <= query.len or !std.ascii.startsWithIgnoreCase(top.title, query)) return null;
-        return .{ .suffix = top.title[query.len..], .source = .top_hit };
+        if (query.len == 0) return null;
+        if (p.mode == .clipboard) {
+            const store = p.store orelse return null;
+            const match = store.completeQuery(&p.completion_buf, .clipboard, query, p.clock.now()) orelse return null;
+            return .{ .suffix = match[query.len..], .source = .history };
+        }
+        if (hasLinkRow(p.rows)) return null;
+        if (p.store) |store| {
+            if (store.completeQuery(&p.completion_buf, .search, query, p.clock.now())) |match| {
+                return .{ .suffix = match[query.len..], .source = .history };
+            }
+        }
+        if (p.isTopHit(0)) {
+            const top = p.visible[0];
+            if (top.kind != .web and top.title.len > query.len and std.ascii.startsWithIgnoreCase(top.title, query)) {
+                return .{ .suffix = top.title[query.len..], .source = .top_hit };
+            }
+        }
+        if (p.web_suggestions_enabled and p.suggestions.len > 0) {
+            const first = p.suggestions[0];
+            if (first.len > query.len and std.ascii.startsWithIgnoreCase(first, query)) {
+                return .{ .suffix = first[query.len..], .source = .web_suggestion };
+            }
+        }
+        return null;
+    }
+
+    pub fn clearQueryHistory(p: *Panel) void {
+        if (p.store) |store| store.clearQueries() catch {};
+        p.completion = p.computeCompletion();
     }
 
     fn resetCompletion(p: *Panel) void {
@@ -535,8 +784,34 @@ pub const Panel = struct {
     }
 
     fn ask(p: *Panel, a: Action) void {
+        p.recordActionQuery(a);
         p.pending = a;
         p.hooks.request(p.hooks.ctx);
+    }
+
+    fn recordActionQuery(p: *Panel, a: Action) void {
+        const store = p.store orelse return;
+        switch (a) {
+            .open, .reveal, .copy => store.recordQuery(.search, p.field.text(), p.clock.now()) catch {},
+            .clipboard => |ba| switch (ba) {
+                .paste, .copy, .open, .reveal => {
+                    if (!p.hasSensitiveBoardMatch(ba)) store.recordQuery(.clipboard, p.field.text(), p.clock.now()) catch {};
+                },
+                .preview, .actions => {},
+            },
+            .hide => {},
+        }
+    }
+
+    fn hasSensitiveBoardMatch(p: *const Panel, action: board_mod.Action) bool {
+        const entry: ?clipboard.Entry = switch (action) {
+            .paste => |e| e,
+            .copy => |e| e,
+            .open, .reveal, .preview, .actions => p.board.selection(),
+        };
+        if (entry) |e| if (e.isSensitive()) return true;
+        for (p.board.rows) |r| if (r.isSensitive()) return true;
+        return false;
     }
 
     fn move(p: *Panel, down: bool) void {
@@ -548,10 +823,7 @@ pub const Panel = struct {
     fn keys(p: *Panel, c: *ui.Context) void {
         const S = ui.Shortcut;
         if (c.shortcut(.{ .key = S.escape })) return p.ask(.hide);
-        if (p.mode == .clipboard) {
-            if (p.board.keys(c, p.field.text().len == 0)) |a| p.ask(.{ .clipboard = a });
-            return;
-        }
+        if (c.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true })) return p.clearQueryHistory();
         if (p.completion) |comp| {
             if (c.shortcut(.{ .key = S.right }) or c.shortcut(.{ .key = S.tab }) or takeFieldKey(c, .right, false, .move_right) or takeFieldKey(c, .tab, false, .insert_tab)) {
                 p.acceptSlice(comp.suffix);
@@ -561,6 +833,10 @@ pub const Panel = struct {
                 p.acceptSlice(comp.suffix[0..nextWordEnd(comp.suffix)]);
                 return;
             }
+        }
+        if (p.mode == .clipboard) {
+            if (p.board.keys(c, p.field.text().len == 0)) |a| p.ask(.{ .clipboard = a });
+            return;
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
@@ -619,17 +895,17 @@ pub const Panel = struct {
         ui.icon(c, "magnifyingglass", .{ .size = metrics.search_icon_size, .weight = .medium, .color = th.muted, .frame = metrics.search_icon_size });
         if (p.field.text().len == 0) p.field.focus();
         const board = p.mode == .clipboard;
-        if (!board) p.observeInput(c);
-        const suggestion = if (!board and p.completion != null) p.completion.?.suffix else "";
+        p.observeInput(c);
+        const suggestion = if (p.completion) |comp| comp.suffix else "";
         const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Floodlight", .size = 24, .width = .fill, .bare = true, .suggestion = suggestion });
+        if (r.accepted) p.suppressed_by_backspace = false;
         if (board) {
             p.boardField(r);
         } else {
-            if (r.accepted) p.suppressed_by_backspace = false;
             if (r.changed) p.refresh();
-            p.syncFieldState(c, r.caret);
             if (r.submitted and p.visible.len > 0) p.ask(.{ .open = p.visible[p.selected].path });
         }
+        p.syncFieldState(c, r.caret);
         if (p.field.text().len > 0) {
             const clear = ui.div(c).w(24).h(24).center().control();
             defer clear.end();
@@ -659,7 +935,7 @@ pub const Panel = struct {
         const marked = if (edit) |e| (e.marked != null) else false;
         p.caret_at_end = at_end;
         p.composing = marked;
-        const next = p.topHitCompletion();
+        const next = p.computeCompletion();
         if (!sameCompletion(p.completion, next)) {
             p.completion = next;
             c.changed = true;
@@ -735,7 +1011,11 @@ pub const Panel = struct {
                 if (top_hit) {
                     ui.text(c, row.title, .{ .size = 19, .weight = .semibold, .truncate = .ellipsis });
                 } else {
-                    ui.text(c, row.title, .{ .size = 15, .weight = .medium, .truncate = .ellipsis });
+                    if (row.suggestion) {
+                        p.suggestionTitle(c, row.title);
+                    } else {
+                        ui.text(c, row.title, .{ .size = 15, .weight = .medium, .truncate = .ellipsis });
+                    }
                     const badge = ui.div(c).px(5).py(2).roundedFull().bg(th.muted.alpha(0.07));
                     defer badge.end();
                     ui.text(c, row.kind.label(), .{ .size = 8.5, .weight = .bold, .color = th.muted });
@@ -744,6 +1024,29 @@ pub const Panel = struct {
             p.subtitleLine(c, row, top_hit);
         }
         if (selected) keyChip(c, .{ .symbol = "return" });
+    }
+
+    fn suggestionTitle(p: *const Panel, c: *ui.Context, title: []const u8) void {
+        const query = p.field.text();
+        const trimmed = std.mem.trim(u8, query, " ");
+        const prefix_len: usize = if (query.len > 0 and std.ascii.startsWithIgnoreCase(title, query))
+            query.len
+        else if (trimmed.len > 0 and std.ascii.startsWithIgnoreCase(title, trimmed))
+            trimmed.len
+        else
+            0;
+        const style: ui.TextStyle = .{ .size = 15, .weight = .regular, .truncate = .ellipsis };
+        if (prefix_len >= title.len) {
+            ui.text(c, title, style);
+            return;
+        }
+        const spans = c.arena.allocator().dupe(ui.Span, &.{
+            .{ .start = @intCast(prefix_len), .end = @intCast(title.len), .weight = .bold },
+        }) catch {
+            ui.text(c, title, style);
+            return;
+        };
+        ui.richText(c, title, spans, style);
     }
 
     fn subtitleLine(p: *Panel, c: *ui.Context, row: search.Row, top_hit: bool) void {
@@ -837,69 +1140,15 @@ fn hasMarkedText(c: *const ui.Context) bool {
     return false;
 }
 
+fn isPathLike(s: []const u8) bool {
+    return s.len > 0 and (s[0] == '/' or s[0] == '~' or s[0] == '.');
+}
+
 fn hasLinkRow(rows: []const search.Row) bool {
     for (rows) |r| {
-        if (r.kind == .web and !std.mem.eql(u8, r.title, "Google")) return true;
+        if (r.kind == .web and !r.suggestion and !std.mem.eql(u8, r.title, "Google")) return true;
     }
     return false;
-}
-
-const web_tlds = [_][]const u8{
-    "com",     "org",    "net",    "edu",   "gov",    "mil",  "int",  "io",      "co",    "ai",    "dev",  "me",      "gg",
-    "xyz",     "tv",     "fm",     "am",    "to",     "ly",   "uk",   "de",      "fr",    "jp",    "cn",   "au",      "ca",
-    "ch",      "nl",     "se",     "no",    "dk",     "fi",   "es",   "pt",      "it",    "is",    "at",   "be",      "us",
-    "eu",      "kr",     "tw",     "hk",    "sg",     "nz",   "ie",   "ru",      "ua",    "cz",    "sk",   "hu",      "ro",
-    "bg",      "gr",     "tr",     "il",    "za",     "mx",   "ar",   "cl",      "pe",    "tech",  "site", "online",  "blog",
-    "biz",     "design", "studio", "cloud", "page",   "live", "work", "world",   "space", "fun",   "club", "team",    "zone",
-    "chat",    "social", "media",  "games", "lol",    "wtf",  "fyi",  "run",     "build", "tools", "wiki", "systems", "security",
-    "finance", "money",  "bank",   "law",   "health", "care", "bio",  "science", "math",  "art",   "book", "books",
-};
-
-fn isLinkQuery(text: []const u8) bool {
-    const s = std.mem.trimEnd(u8, std.mem.trim(u8, text, " \t\r\n"), ".,;)");
-    if (s.len == 0 or std.mem.indexOfAny(u8, s, " \t\r\n") != null) return false;
-    for ([_][]const u8{ "https://", "http://" }) |scheme| {
-        if (std.ascii.startsWithIgnoreCase(s, scheme)) return clipboard.domain(s) != null;
-    }
-    if (std.mem.indexOf(u8, s, "://") != null) return false;
-    const slash = std.mem.indexOfAny(u8, s, "/?#");
-    const host_port = if (slash) |idx| s[0..idx] else s;
-    const colon = std.mem.indexOfScalar(u8, host_port, ':');
-    const host = if (colon) |idx| host_port[0..idx] else host_port;
-    if (colon) |idx| if (!isValidPort(host_port[idx + 1 ..])) return false;
-    if (std.ascii.eqlIgnoreCase(host, "localhost") or isIpv4(host)) return true;
-    const tld = lastHostLabel(host) orelse return false;
-    const www = std.ascii.startsWithIgnoreCase(host, "www.") and std.mem.indexOfScalar(u8, host["www.".len..], '.') != null;
-    return www or colon != null or slash != null or inSet(tld, &web_tlds);
-}
-
-fn isValidPort(port: []const u8) bool {
-    if (port.len == 0 or port.len > 5) return false;
-    return (std.fmt.parseInt(u16, port, 10) catch 0) > 0;
-}
-
-fn isIpv4(host: []const u8) bool {
-    var it = std.mem.splitScalar(u8, host, '.');
-    var parts: usize = 0;
-    while (it.next()) |part| : (parts += 1) {
-        if (parts == 4 or part.len == 0 or part.len > 3) return false;
-        _ = std.fmt.parseInt(u8, part, 10) catch return false;
-    }
-    return parts == 4;
-}
-
-fn lastHostLabel(host: []const u8) ?[]const u8 {
-    if (std.mem.indexOfScalar(u8, host, '.') == null) return null;
-    var it = std.mem.splitScalar(u8, host, '.');
-    var last: []const u8 = "";
-    while (it.next()) |label| {
-        if (label.len == 0 or label.len > 63 or label[0] == '-' or label[label.len - 1] == '-') return null;
-        for (label) |c| if (!std.ascii.isAlphanumeric(c) and c != '-') return null;
-        last = label;
-    }
-    if (last.len < 2) return null;
-    for (last) |c| if (!std.ascii.isAlphabetic(c)) return null;
-    return last;
 }
 
 pub fn rowFill(th: ui.Theme, selected: bool, hovered: bool, top_hit: bool) ui.Color {
