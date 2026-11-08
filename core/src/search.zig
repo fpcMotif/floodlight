@@ -8,6 +8,7 @@ const std = @import("std");
 const index = @import("index.zig");
 const mask = @import("mask.zig");
 const match = @import("match.zig");
+const slash = @import("slash.zig");
 
 pub const max_terms = 8;
 pub const max_term_len = 64;
@@ -27,6 +28,13 @@ pub const Query = struct {
     has_slash: [max_terms]bool = undefined,
     term_mask: [max_terms]u32 = undefined,
     n: u8 = 0,
+    /// The first slash term short enough to score from directory summaries,
+    /// or `max_terms` when there is none.
+    summarized: u8 = max_terms,
+    /// For the summarized term: the mask of its characters from each
+    /// position on, so `rest_mask[j]` is what a name must hold once a
+    /// directory path has matched the first `j`.
+    rest_mask: [slash.max_len + 1]u32 = @splat(0),
     path_mask: u32 = 0,
 
     pub fn parse(text: []const u8) Query {
@@ -38,6 +46,10 @@ pub const Query = struct {
             for (word, 0..) |c, i| q.terms[q.n][i] = std.ascii.toLower(c);
             q.lens[q.n] = @intCast(word.len);
             q.has_slash[q.n] = std.mem.indexOfScalar(u8, word, '/') != null;
+            if (q.summarized == max_terms and q.has_slash[q.n] and word.len <= slash.max_len) {
+                q.summarized = q.n;
+                for (0..word.len) |j| q.rest_mask[j] = mask.of(word[j..]);
+            }
             q.term_mask[q.n] = mask.of(word);
             q.path_mask |= q.term_mask[q.n];
             q.n += 1;
@@ -138,7 +150,20 @@ const Vec = @Vector(lanes, u32);
 
 /// Scores ids in `[lo, hi)` into `heap`.
 pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
+    if (q.summarized == max_terms) return scanRange(false, v, q, lo, hi, heap);
+    scanRange(true, v, q, lo, hi, heap);
+}
+
+/// The directory memo, for a query with a summarized term; nothing for one
+/// without, so a name query's loop is the one it always was.
+fn Dirs(comptime summarized: bool) type {
+    return if (summarized) slash.Memo else void;
+}
+
+fn scanRange(comptime summarized: bool, v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
+    var dirs: Dirs(summarized) = undefined;
+    if (summarized) dirs.reset();
     const need: Vec = @splat(q.path_mask);
     var i = lo;
     // Eight path masks per compare; most queries reject most lanes here.
@@ -150,11 +175,14 @@ pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK
         var m = bits;
         while (m != 0) : (m &= m - 1) {
             const lane: u32 = @ctz(m);
-            scoreOne(v, q, i + lane, heap, &paths);
+            if (summarized and settled(v, q, i + lane, heap, &dirs)) continue;
+            scoreOne(summarized, v, q, i + lane, heap, &paths, &dirs);
         }
     }
     while (i < hi) : (i += 1) {
-        if (v.path_mask[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, &paths);
+        if (v.path_mask[i] & q.path_mask != q.path_mask) continue;
+        if (summarized and settled(v, q, i, heap, &dirs)) continue;
+        scoreOne(summarized, v, q, i, heap, &paths, &dirs);
     }
 }
 
@@ -190,15 +218,41 @@ const PathCache = struct {
 /// top k holds name matches.
 pub const path_only_penalty: i32 = 1000;
 
-fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCache) void {
+/// True when `id` cannot place, decided from its parent's summary alone. The
+/// usual path query is a single slash term, and most files under it are
+/// settled here, before their name is read or `scoreOne` is entered.
+inline fn settled(v: index.View, q: *const Query, id: u32, heap: *const TopK, dirs: *slash.Memo) bool {
+    if (q.n != 1 or q.summarized != 0 or v.parent[id] == index.no_parent) return false;
+    const d = dirs.get(v, q.term(0), v.parent[id]) orelse return false;
+    const rest = q.rest_mask[d.reach];
+    if (v.name_mask[id] & rest != rest) return true;
+    const floor = heap.floor() orelse return false;
+    return d.best < floor;
+}
+
+fn scoreOne(comptime summarized: bool, v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCache, dirs: *Dirs(summarized)) void {
     const name = v.name(id);
     const name_mask = v.name_mask[id];
+
+    // The summarized term's directory state, when this file has one: it both
+    // tightens the bound below and scores the term without the path.
+    const dir: ?*const slash.State = if (!summarized) null else if (v.parent[id] != index.no_parent and name.len <= slash.max_name)
+        dirs.get(v, q.term(q.summarized), v.parent[id])
+    else
+        null;
+    if (dir) |d| {
+        // What the directory's path did not match has to be in the name.
+        const rest = q.rest_mask[d.reach];
+        if (name_mask & rest != rest) return;
+    }
 
     if (heap.floor()) |floor| {
         var bound: i32 = 0;
         for (0..q.n) |ti| {
             const term = q.term(ti);
-            bound += if (q.has_slash[ti])
+            bound += if (ti == q.summarized and dir != null)
+                dir.?.best
+            else if (q.has_slash[ti])
                 match.upperBoundAnywhere(term.len)
             else if (name_mask & q.term_mask[ti] == q.term_mask[ti])
                 match.upperBound(name, term)
@@ -212,7 +266,10 @@ fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCa
     var total: i32 = 0;
     for (0..q.n) |ti| {
         const term = q.term(ti);
-        if (!q.has_slash[ti] and name_mask & q.term_mask[ti] == q.term_mask[ti]) {
+        if (ti == q.summarized and dir != null) {
+            total += slash.scoreFile(term, dir.?, name) orelse return;
+            continue;
+        } else if (!q.has_slash[ti] and name_mask & q.term_mask[ti] == q.term_mask[ti]) {
             if (match.score(name, term, 0)) |s| {
                 total += s;
                 continue;
@@ -333,4 +390,82 @@ test "parallel path agrees with serial" {
     const ns = heap.sorted(&ser);
     try t.expectEqual(ns, np);
     for (par[0..np], ser[0..ns]) |a, c| try t.expectEqual(a, c);
+}
+
+/// Random names over a small alphabet, so terms match often and in many
+/// shapes: runs, gaps, boundaries, a camel hump.
+fn randomName(r: std.Random, buf: []u8) []const u8 {
+    const alphabet = "abcilx-_.B";
+    const len = 1 + r.uintLessThan(usize, buf.len);
+    for (buf[0..len]) |*c| c.* = alphabet[r.uintLessThan(usize, alphabet.len)];
+    return buf[0..len];
+}
+
+/// A tree written the way a scan writes one: each directory's children
+/// together, then each child directory's subtree.
+fn scanOrderTree(b: *index.Builder, r: std.Random, parent: u32, depth: u8, budget: *usize) !void {
+    var name: [10]u8 = undefined;
+    const first = b.count();
+    const n = 1 + r.uintLessThan(usize, 12);
+    for (0..n) |_| {
+        if (budget.* == 0) break;
+        budget.* -= 1;
+        _ = try b.add(parent, randomName(r, &name), .{ .dir = depth < 7 and r.uintLessThan(u32, 4) == 0 });
+    }
+    for (first..b.count()) |id| {
+        if (b.isDir(@intCast(id))) try scanOrderTree(b, r, @intCast(id), depth + 1, budget);
+    }
+}
+
+/// The same tree shape with parents picked at random, so siblings scatter.
+fn scatteredTree(b: *index.Builder, r: std.Random, count: usize) !void {
+    var dirs: std.ArrayList(u32) = .empty;
+    defer dirs.deinit(t.allocator);
+    var name: [10]u8 = undefined;
+    for (0..count) |_| {
+        const parent = if (dirs.items.len == 0 or r.uintLessThan(u32, 8) == 0)
+            index.no_parent
+        else
+            dirs.items[r.uintLessThan(usize, dirs.items.len)];
+        const id = try b.add(parent, randomName(r, &name), .{ .dir = r.uintLessThan(u32, 4) == 0 });
+        if (b.isDir(id)) try dirs.append(t.allocator, id);
+    }
+}
+
+/// Every entry scored on its full path and ranked with no pruning: what a
+/// single-term slash query must return, however it gets there.
+fn expectRanksLikeFullPaths(v: index.View, term: []const u8, k: usize) !void {
+    var heap = TopK.init(k);
+    var buf: [1024]u8 = undefined;
+    for (0..v.count()) |i| {
+        const id: u32 = @intCast(i);
+        const path = v.relativePath(id, &buf).?;
+        const name = v.name(id);
+        const s = match.score(path, term, path.len - name.len) orelse continue;
+        const tie = @as(u64, v.depth[id]) << 48 | @as(u64, name.len) << 32 | id;
+        heap.offer(.{ .id = id, .score = s }, tie);
+    }
+    var want: [max_k]Hit = undefined;
+    const nw = heap.sorted(&want);
+    var got: [max_k]Hit = undefined;
+    const ng = search(v, term, got[0..k]);
+    try t.expectEqualSlices(Hit, want[0..nw], got[0..ng]);
+}
+
+test "slash queries rank as full-path scoring does" {
+    var prng = std.Random.DefaultPrng.init(7);
+    const r = prng.random();
+    var scanned = index.Builder.init(t.allocator);
+    defer scanned.deinit();
+    var budget: usize = 20_000;
+    while (budget > 0) try scanOrderTree(&scanned, r, index.no_parent, 0, &budget);
+    // Large enough that the memo sees it is thrashing and steps aside.
+    var scattered = index.Builder.init(t.allocator);
+    defer scattered.deinit();
+    try scatteredTree(&scattered, r, 20_000);
+
+    const terms = [_][]const u8{ "lib/x", "a/b", "b/", "/a", "ab/c", "l/i/b", "b/x.a", "c/c/c/c" };
+    for ([_]*index.Builder{ &scanned, &scattered }) |b| {
+        for (terms) |term| for ([_]usize{ 1, 7, 60 }) |k| try expectRanksLikeFullPaths(b.view(), term, k);
+    }
 }

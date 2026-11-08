@@ -101,14 +101,16 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
         if (j == needle.len) break;
     }
 
-    const name = hay[name_start..];
-    if (name.len >= needle.len and startsWithFold(name, needle)) {
-        total += if (name.len == needle.len or name[needle.len] == '.')
-            bonus_exact_name
-        else
-            bonus_name_prefix;
-    }
-    return total;
+    return total + nameBonus(hay[name_start..], needle);
+}
+
+/// What `score` adds when the file's own name starts with the needle.
+pub fn nameBonus(name: []const u8, needle: []const u8) i32 {
+    if (name.len < needle.len or !startsWithFold(name, needle)) return 0;
+    return if (name.len == needle.len or name[needle.len] == '.')
+        bonus_exact_name
+    else
+        bonus_name_prefix;
 }
 
 /// The most a first matched character can earn: a name start, doubled.
