@@ -240,8 +240,10 @@ test "apps match by the same terms as files" {
 
 const FakeClock = struct {
     now: f64 = 0,
+    step: f64 = 0,
     fn read(ctx: ?*anyopaque) f64 {
-        const c: *const FakeClock = @ptrCast(@alignCast(ctx));
+        const c: *FakeClock = @ptrCast(@alignCast(ctx));
+        defer c.now += c.step;
         return c.now;
     }
     fn advance(c: *FakeClock, seconds: f64) void {
@@ -254,10 +256,15 @@ const FakeClock = struct {
 
 const StubHooks = struct {
     requests: u32 = 0,
+    file_searches: u32 = 0,
     clock: FakeClock = .{},
     fn request(ctx: ?*anyopaque) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
+    }
+    fn searchFiles(ctx: ?*anyopaque) void {
+        const h: *StubHooks = @ptrCast(@alignCast(ctx));
+        h.file_searches += 1;
     }
     fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
         return null;
@@ -271,9 +278,15 @@ const StubHooks = struct {
         }.at;
     }
     fn hooks(h: *StubHooks) panel_mod.Hooks {
-        return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64) };
+        return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64), .search_files = searchFiles };
     }
 };
+
+fn countRows(rows: []const search.Row, kind: search.Kind) usize {
+    var n: usize = 0;
+    for (rows) |r| n += @intFromBool(r.kind == kind);
+    return n;
+}
 
 test "typing shows rows; Return opens the selected one; hiding keeps the session within the window and forgets it after" {
     var tmp = t.tmpDir(.{});
@@ -1796,14 +1809,19 @@ test "a long history builds the rows in view only, and still reaches its end" {
 const PresenceSpy = struct {
     log: [16]presence.Effect = undefined,
     len: usize = 0,
+    frame_valid: bool = false,
 
     fn record(ctx: ?*anyopaque, e: presence.Effect) void {
         const s: *PresenceSpy = @ptrCast(@alignCast(ctx));
         s.log[s.len] = e;
         s.len += 1;
     }
+    fn lastFrameValid(ctx: ?*anyopaque) bool {
+        const s: *PresenceSpy = @ptrCast(@alignCast(ctx));
+        return s.frame_valid;
+    }
     fn presence_(s: *PresenceSpy) presence.Presence {
-        return .{ .effects = .{ .ctx = s, .run = record } };
+        return .{ .effects = .{ .ctx = s, .run = record, .last_frame_valid = lastFrameValid } };
     }
     /// The effects since the last call, in order.
     fn take(s: *PresenceSpy) []const presence.Effect {
@@ -1836,6 +1854,27 @@ test "a reopened panel stays unseen until a frame of its own is presented, then 
     try t.expectEqualSlices(presence.Effect, &.{.reveal}, spy.take());
     try t.expect(!p.framePresented(true));
     try t.expectEqual(presence.Phase.shown, p.phase);
+}
+
+test "a retained panel whose last frame is still valid shows at once, with no entrance wait" {
+    var spy: PresenceSpy = .{ .frame_valid = true };
+    var p = spy.presence_();
+    p.search(false, false);
+    try t.expectEqualSlices(presence.Effect, &.{ .note_paste_target, .open_search, .place, .order_in_seen }, spy.take());
+    try t.expectEqual(presence.Phase.shown, p.phase);
+    try t.expect(!p.framePresented(true));
+
+    p.search(true, false);
+    _ = spy.take();
+    p.board(false, false);
+    try t.expectEqualSlices(presence.Effect, &.{ .note_paste_target, .open_board, .place, .order_in_seen }, spy.take());
+
+    p.board(true, true);
+    _ = spy.take();
+    spy.frame_valid = false;
+    p.search(false, false);
+    try t.expectEqualSlices(presence.Effect, &showing, spy.take());
+    try t.expectEqual(presence.Phase.entering, p.phase);
 }
 
 test "⌥Space while focused hides and forgets the session, during the entrance too" {
@@ -1979,14 +2018,14 @@ test "the 200-app latency benchmark measures keystroke publication, summon layou
     try t.expect(submit.p99_ns >= submit.p50_ns);
 
     try t.expect(bench.withinBudgets(
-        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
-        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
-        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
     ));
     try t.expect(!bench.withinBudgets(
-        .{ .p50_ns = 1_000, .p99_ns = 500_000, .runs = 16 },
-        .{ .p50_ns = 10_000, .p99_ns = 40_000, .runs = 16 },
-        .{ .p50_ns = 1_000, .p99_ns = 5_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 11_000, .runs = 16 },
+        .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
     ));
 }
 
@@ -2188,6 +2227,7 @@ test "search retention selects the top row when the remembered path is gone, and
     try t.expectEqual(@as(usize, 1), p.list.selected);
     const removed = cat.apps.orderedRemove(1);
     t.allocator.free(removed.path);
+    p.list.markStale();
 
     p.hide();
     hooks.clock.advance(60);
@@ -2206,6 +2246,139 @@ test "search retention selects the top row when the remembered path is gone, and
     try t.expectEqualStrings("", p.field.text());
     try t.expectEqual(panel_mod.Filter.all, p.list.filter);
     try t.expectEqual(@as(usize, 0), p.list.visible.len);
+}
+
+test "a retained reopen keeps the last presented frame valid until what it shows changes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+    try t.expect(!p.lastFrameValid());
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    tester.frame();
+    p.notePresented();
+    try t.expect(p.lastFrameValid());
+
+    p.hide();
+    hooks.clock.advance(60);
+    p.showSearch();
+    try t.expect(p.lastFrameValid());
+    try t.expectEqual(@as(usize, 1), p.list.selected);
+    try t.expect(p.completion == null);
+
+    tester.frame();
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.up }));
+    try t.expect(!p.lastFrameValid());
+    p.notePresented();
+    p.hide();
+    for (cat.apps.items, 0..) |a, i| if (std.mem.eql(u8, a.name, "Calculator")) {
+        t.allocator.free(cat.apps.orderedRemove(i).path);
+        break;
+    };
+    p.list.markStale();
+    hooks.clock.advance(60);
+    p.showSearch();
+    try t.expect(!p.lastFrameValid());
+
+    tester.frame();
+    p.notePresented();
+    p.hide();
+    hooks.clock.advance(6 * 60);
+    p.showSearch();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expect(!p.lastFrameValid());
+}
+
+test "a retained board's last frame stays valid within the minute its ages were drawn in" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var mem = try TmpStore.init();
+    defer mem.deinit();
+    var store = try openMemory(&mem);
+    defer store.close();
+    _ = try store.add(.{ .text = "older note" }, "com.apple.Notes", "Notes", 100);
+    _ = try store.add(.{ .text = "newer note" }, "com.apple.Notes", "Notes", 200);
+
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    tester.frame();
+    p.notePresented();
+
+    p.hide();
+    hooks.clock.advance(10);
+    p.showClipboard();
+    try t.expectEqual(@as(usize, 1), p.board.list.selected);
+    try t.expect(p.lastFrameValid());
+
+    tester.frame();
+    p.notePresented();
+    p.hide();
+    hooks.clock.advance(60);
+    p.showClipboard();
+    try t.expectEqual(@as(usize, 1), p.board.list.selected);
+    try t.expect(!p.lastFrameValid());
+}
+
+test "a slow file index publishes apps on the keystroke's frame and file rows on the next; a retained reopen shows both at once" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    hooks.clock.step = 0.01;
+    p.calibrateFileSearch();
+    tester.typeText("a");
+    tester.frame();
+    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expect(tester.hasText("Calculator"));
+    try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+
+    p.landFiles();
+    tester.frame();
+    try t.expect(countRows(p.list.visible, .file) > 0);
+    try t.expect(tester.hasText("kind-of-blue.flac"));
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+
+    p.hide();
+    hooks.clock.advance(60);
+    p.showSearch();
+    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expect(countRows(p.list.visible, .file) > 0);
 }
 
 test "board retention restores query, kind filter, and selection or selects the newest matching copy" {

@@ -880,6 +880,16 @@ pub fn releaseFreedMemory() void {
     _ = malloc_zone_pressure_relief(null, 0);
 }
 
+pub fn releaseSurface(window: *nanoui.Window) void {
+    const s = window.surface orelse return;
+    if (s.released or s.is_visible) return;
+    s.pending = true;
+    s.released = true;
+    s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
+    s.text.images.trimDecoded();
+    _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+}
+
 pub const retention_defaults_key = "sessionRetentionSeconds";
 
 /// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
