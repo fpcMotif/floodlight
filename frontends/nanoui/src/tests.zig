@@ -232,7 +232,7 @@ const NoHooks = struct {
     }
 };
 
-test "typing shows rows; Return opens the selected one; hiding forgets the session" {
+test "typing shows rows; Return opens the selected one; hiding keeps the session within the window and forgets it after" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.posix.PATH_MAX]u8 = undefined;
@@ -273,13 +273,50 @@ test "typing shows rows; Return opens the selected one; hiding forgets the sessi
     tester.settle(0.1);
     const pending = p.pending orelse return error.NoAction;
     try t.expectEqualStrings(p.visible[1].path, pending.open);
+    const chosen_path = try t.allocator.dupe(u8, p.visible[1].path);
+    defer t.allocator.free(chosen_path);
 
-    p.pending = null;
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(panel_mod.Filter.apps, p.filter);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqualStrings(chosen_path, p.visible[p.selected].path);
+
+    p.hide();
+    hooks.clock.advance(4 * 60);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(panel_mod.Filter.apps, p.filter);
+    try t.expectEqualStrings(chosen_path, p.visible[p.selected].path);
+    const focused = tester.ctx.focused_text orelse return error.NotFocused;
+    try t.expectEqual(@as(usize, 0), focused.anchor);
+    try t.expectEqual(@as(usize, 3), focused.caret);
+
+    tester.key(.right);
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(@as(usize, 3), tester.ctx.focused_text.?.anchor);
+    try t.expectEqual(@as(usize, 3), tester.ctx.focused_text.?.caret);
+
+    // Each hide starts a fresh 5-minute window.
+    p.hide();
+    hooks.clock.advance(4 * 60);
+    p.showSearch();
+    try t.expect(tester.shortcut(.{ .key = '1', .cmd = true }));
+    tester.typeText("ret");
+    tester.settle(0.1);
+    try t.expectEqualStrings("ret", p.field.text());
+
     for (0..p.visible.len + 2) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
     try t.expectEqual(p.visible.len - 1, p.selected);
 
-    p.reset();
+    p.hide();
+    hooks.clock.advance(6 * 60);
+    p.showSearch();
+    tester.frame();
     try t.expectEqual(@as(usize, 0), p.rows.len);
+    try t.expectEqual(@as(usize, 0), p.visible.len);
+    try t.expectEqual(panel_mod.Filter.all, p.filter);
+    try t.expectEqual(@as(usize, 0), p.selected);
     try t.expectEqualStrings("", p.field.text());
     try t.expectEqual(panel_mod.metrics.search_height, p.panelHeight());
 }
@@ -1487,6 +1524,171 @@ test "the injected clock advances board ages and pins, and forget clears both su
     try t.expectEqual(@as(usize, 0), p.board.selected);
     try t.expect(p.board.stale);
     try t.expect(p.board.detail_id == null);
+}
+
+test "search retention selects the top row when the remembered path is gone, and clearing the field forgets at once" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var hooks: NoHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = panel_mod.metrics.width, .height = 521 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.selected);
+    const removed = cat.apps.orderedRemove(1);
+    t.allocator.free(removed.path);
+
+    p.hide();
+    hooks.clock.advance(60);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("cal", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.selected);
+
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(panel_mod.Filter.apps, p.filter);
+    p.clearField();
+    p.hide();
+    hooks.clock.advance(10);
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(panel_mod.Filter.all, p.filter);
+    try t.expectEqual(@as(usize, 0), p.visible.len);
+}
+
+test "board retention restores query, kind filter, and selection or selects the newest matching copy" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    _ = try store.add(.{ .file = "/tmp/report.pdf" }, "com.apple.finder", "Finder", 100);
+    _ = try store.add(.{ .text = "hello older note" }, "com.apple.Notes", "Notes", 200);
+    _ = try store.add(.{ .text = "hello newer note" }, "com.apple.Notes", "Notes", 300);
+
+    var hooks: NoHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+    p.showClipboard();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.2);
+
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    try t.expectEqual(clipboard.Filter.text, p.board.filter);
+    tester.typeText("hello");
+    tester.settle(0.2);
+    try t.expectEqual(@as(usize, 2), p.board.visible.len);
+    try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
+    try t.expectEqual(@as(usize, 1), p.board.selected);
+    const remembered_id = p.board.selection().?.id;
+
+    p.hide();
+    // An unrelated copy while hidden does not match the query+filter, so the remembered selection stays.
+    _ = try store.add(.{ .file = "/tmp/hello-other.pdf" }, "com.apple.finder", "Finder", 1050);
+    _ = try store.add(.{ .text = "unrelated text" }, "com.apple.Notes", "Notes", 1060);
+    hooks.clock.advance(4 * 60);
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("hello", p.field.text());
+    try t.expectEqual(clipboard.Filter.text, p.board.filter);
+    try t.expectEqual(remembered_id, p.board.selection().?.id);
+    try t.expectEqual(@as(usize, 0), tester.ctx.focused_text.?.anchor);
+    try t.expectEqual(@as(usize, 5), tester.ctx.focused_text.?.caret);
+
+    p.hide();
+    _ = try store.add(.{ .text = "hello brand new" }, "com.apple.Notes", "Notes", 1300);
+    hooks.clock.advance(60);
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("hello", p.field.text());
+    try t.expectEqual(clipboard.Filter.text, p.board.filter);
+    try t.expectEqual(@as(usize, 0), p.board.selected);
+    try t.expectEqualStrings("hello brand new", p.board.selection().?.text);
+
+    p.clearField();
+    p.hide();
+    try t.expect(p.nextExpiryMs() == null);
+    try t.expectEqual(@as(usize, 0), p.board.rows.len);
+}
+
+test "search and clipboard board sessions expire separately, and zero retention forgets on hide" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var cat = try tmpCatalog(&tmp, &buf);
+    defer cat.deinit();
+    var store = try clipboard.Store.open(":memory:", null);
+    defer store.close();
+    _ = try store.add(.{ .file = "/tmp/report.pdf" }, "com.apple.finder", "Finder", 50);
+    _ = try store.add(.{ .text = "alpha clip" }, "com.apple.Notes", "Notes", 60);
+
+    var hooks: NoHooks = .{};
+    hooks.clock.advance(100);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
+    p.hide();
+
+    hooks.clock.advance(3 * 60);
+    p.showClipboard();
+    tester.frame();
+    try t.expect(tester.shortcut(.{ .key = '3', .cmd = true }));
+    tester.typeText("report");
+    tester.settle(0.1);
+    try t.expectEqual(clipboard.Filter.files, p.board.filter);
+    p.hide();
+
+    // Search is 6m old (expired) while the board is 3m old (still retained).
+    hooks.clock.advance(3 * 60);
+    try t.expect(!p.expire());
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(panel_mod.Filter.all, p.filter);
+
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("report", p.field.text());
+    try t.expectEqual(clipboard.Filter.files, p.board.filter);
+
+    p.retention_seconds = 0;
+    p.hide();
+    p.showClipboard();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(clipboard.Filter.all, p.board.filter);
+
+    p.showSearch();
+    tester.frame();
+    tester.typeText("cal");
+    tester.settle(0.1);
+    p.hide();
+    p.showSearch();
+    tester.frame();
+    try t.expectEqualStrings("", p.field.text());
+    try t.expectEqual(@as(usize, 0), p.rows.len);
 }
 
 const SuggestSpy = struct {

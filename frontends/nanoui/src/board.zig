@@ -108,8 +108,16 @@ pub const Board = struct {
         b.stale = true;
         b.filter = .all;
         b.selected = 0;
-        b.detail_id = null;
+        b.releaseDetail();
         _ = b.arena.reset(.free_all);
+    }
+
+    pub fn releaseDetail(b: *Board) void {
+        b.detail_id = null;
+        b.full_image = null;
+        b.file_preview = .none;
+        b.file_size = null;
+        b.file_is_dir = false;
         _ = b.detail_arena.reset(.free_all);
     }
 

@@ -889,6 +889,19 @@ pub fn releaseFreedMemory() void {
     _ = malloc_zone_pressure_relief(null, 0);
 }
 
+pub const retention_defaults_key = "sessionRetentionSeconds";
+
+/// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
+/// user defaults; `default_seconds` when unset, `0` when non-positive).
+pub fn retentionSeconds(default_seconds: f64) f64 {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const defaults = objc.msg(objc.Object, objc.class("NSUserDefaults"), "standardUserDefaults", .{});
+    const key = objc.nsString(retention_defaults_key);
+    if (objc.msg(?objc.Object, defaults, "objectForKey:", .{key}) == null) return default_seconds;
+    return @max(0.0, objc.msg(f64, defaults, "doubleForKey:", .{key}));
+}
+
 /// A native view over the guidance card that starts a drag carrying the
 /// app's file URL, as SwiftUI's `.draggable(appURL)`: System Settings' list
 /// takes files, and nanoui's own drags carry text.

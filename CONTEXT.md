@@ -8,6 +8,10 @@ Floodlight turns a person’s current search intent into progressively refined l
 The user’s active interaction with Floodlight, including the current query, mode, filter, and selection.
 _Avoid_: Search lifecycle, coordinator state
 
+**Session Retention**:
+The bounded in-memory lifetime that keeps a hidden Search Session and clipboard board state for a configurable window before forgetting them.
+_Avoid_: Session cache, state persistence, draft recovery
+
 **Search Execution**:
 The live attempt to answer the current query, progressively incorporating available matches and later source changes. It remains idle while settled and ends when superseded or explicitly cancelled.
 _Avoid_: Search task, search pipeline

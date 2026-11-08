@@ -130,12 +130,57 @@ pub const Hooks = struct {
 
 fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
+pub const default_retention_seconds: f64 = 5 * 60;
+
+const RetainedSearch = struct {
+    query: std.ArrayList(u8) = .empty,
+    path: std.ArrayList(u8) = .empty,
+    filter: Filter = .all,
+    hidden_at: ?f64 = null,
+
+    fn deinit(r: *RetainedSearch, gpa: std.mem.Allocator) void {
+        r.query.deinit(gpa);
+        r.path.deinit(gpa);
+        r.* = .{};
+    }
+
+    fn clear(r: *RetainedSearch) void {
+        r.query.clearRetainingCapacity();
+        r.path.clearRetainingCapacity();
+        r.filter = .all;
+        r.hidden_at = null;
+    }
+};
+
+const RetainedBoard = struct {
+    query: std.ArrayList(u8) = .empty,
+    filter: clipboard.Filter = .all,
+    selected_id: ?i64 = null,
+    hidden_at: ?f64 = null,
+
+    fn deinit(r: *RetainedBoard, gpa: std.mem.Allocator) void {
+        r.query.deinit(gpa);
+        r.* = .{};
+    }
+
+    fn clear(r: *RetainedBoard) void {
+        r.query.clearRetainingCapacity();
+        r.filter = .all;
+        r.selected_id = null;
+        r.hidden_at = null;
+    }
+};
+
 pub const Panel = struct {
     catalog: *search.Catalog,
     store: ?*const clipboard.Store = null,
     hooks: Hooks,
     clock: Clock = .wall_clock,
+    retention_seconds: f64 = default_retention_seconds,
     mode: Mode = .search,
+    hidden: bool = false,
+    retained_search: RetainedSearch = .{},
+    retained_board: RetainedBoard = .{},
     board: board_mod.Board,
     field: ui.TextBuffer = .{},
     arena: std.heap.ArenaAllocator,
@@ -168,18 +213,19 @@ pub const Panel = struct {
     }
 
     pub fn deinit(p: *Panel) void {
+        const gpa = p.arena.child_allocator;
+        p.retained_search.deinit(gpa);
+        p.retained_board.deinit(gpa);
         p.board.deinit();
         p.field.deinit();
-        p.answered.deinit(p.arena.child_allocator);
-        p.pending_suggest_query.deinit(p.arena.child_allocator);
+        p.answered.deinit(gpa);
+        p.pending_suggest_query.deinit(gpa);
         p.freeAllCachedSuggestions();
         p.arena.deinit();
     }
 
-    /// Hidden panels keep nothing per session: the query, the rows, and
-    /// the arena behind them all go (PR #130's rule for the Swift panel).
-    pub fn forget(p: *Panel) void {
-        p.field.clear();
+    fn forgetSearch(p: *Panel) void {
+        p.retained_search.clear();
         p.base_rows = &.{};
         p.suggestions = &.{};
         p.rows = &.{};
@@ -189,10 +235,32 @@ pub const Panel = struct {
         p.filter = .all;
         p.selected = 0;
         p.resetCompletion();
-        p.pending = null;
-        p.mode = .search;
-        p.board.forget();
         _ = p.arena.reset(.free_all);
+        if (p.mode == .search) {
+            p.field.clear();
+            p.height = p.panelHeight();
+            p.width = p.panelWidth();
+        }
+    }
+
+    fn forgetBoard(p: *Panel) void {
+        p.retained_board.clear();
+        p.board.forget();
+        if (p.mode == .clipboard) {
+            p.field.clear();
+            p.height = p.panelHeight();
+            p.width = p.panelWidth();
+        }
+    }
+
+    /// Drops retained search and clipboard state, queries, rows, and arenas.
+    pub fn forget(p: *Panel) void {
+        p.forgetSearch();
+        p.forgetBoard();
+        p.field.clear();
+        p.pending = null;
+        p.hidden = false;
+        p.mode = .search;
         p.height = p.panelHeight();
         p.width = p.panelWidth();
     }
@@ -201,15 +269,188 @@ pub const Panel = struct {
         p.forget();
     }
 
-    /// The board, with history listed before anything is typed.
+    /// Clears the field and forgets the active surface's retained session.
+    pub fn clearField(p: *Panel) void {
+        p.field.clear();
+        if (p.mode == .clipboard) {
+            p.retained_board.clear();
+            p.board.filter = .all;
+            p.board.answered.clearRetainingCapacity();
+            p.board.selected = 0;
+            p.board.stale = true;
+            p.board.refresh("");
+            return;
+        }
+        p.forgetSearch();
+    }
+
+    fn saveSearch(p: *Panel, now: f64) void {
+        if (p.retention_seconds <= 0 or p.field.text().len == 0) {
+            p.forgetSearch();
+            return;
+        }
+        const gpa = p.arena.child_allocator;
+        p.retained_search.query.clearRetainingCapacity();
+        p.retained_search.query.appendSlice(gpa, p.field.text()) catch {};
+        p.retained_search.path.clearRetainingCapacity();
+        if (p.selected < p.visible.len) {
+            p.retained_search.path.appendSlice(gpa, p.visible[p.selected].path) catch {};
+        }
+        p.retained_search.filter = p.filter;
+        p.retained_search.hidden_at = now;
+    }
+
+    fn saveBoard(p: *Panel, now: f64) void {
+        if (p.retention_seconds <= 0 or (p.field.text().len == 0 and p.board.filter == .all and p.board.selected == 0)) {
+            p.forgetBoard();
+            return;
+        }
+        const gpa = p.arena.child_allocator;
+        p.retained_board.query.clearRetainingCapacity();
+        p.retained_board.query.appendSlice(gpa, p.field.text()) catch {};
+        p.retained_board.filter = p.board.filter;
+        p.retained_board.selected_id = if (p.board.selection()) |e| e.id else null;
+        p.retained_board.hidden_at = now;
+        p.board.releaseDetail();
+    }
+
+    fn expireAt(p: *Panel, now: f64) void {
+        if (p.retained_search.hidden_at) |t| {
+            if (p.retention_seconds <= 0 or now - t >= p.retention_seconds) p.forgetSearch();
+        }
+        if (p.retained_board.hidden_at) |t| {
+            if (p.retention_seconds <= 0 or now - t >= p.retention_seconds) p.forgetBoard();
+        }
+    }
+
+    /// Drops any surface whose retention window has elapsed; true when
+    /// neither surface remains retained.
+    pub fn expire(p: *Panel) bool {
+        p.expireAt(p.clock.now());
+        return p.retained_search.hidden_at == null and p.retained_board.hidden_at == null;
+    }
+
+    /// Milliseconds until the earliest retained surface expires; null when
+    /// nothing is retained.
+    pub fn nextExpiryMs(p: *const Panel) ?u32 {
+        if (p.retention_seconds <= 0) return null;
+        const now = p.clock.now();
+        var earliest: ?f64 = null;
+        if (p.retained_search.hidden_at) |t| earliest = t + p.retention_seconds;
+        if (p.retained_board.hidden_at) |t| {
+            const due = t + p.retention_seconds;
+            earliest = if (earliest) |e| @min(e, due) else due;
+        }
+        const due = earliest orelse return null;
+        const rem_s = @max(0.0, due - now);
+        return @intFromFloat(@ceil(rem_s * 1000.0) + 1.0);
+    }
+
+    /// Records the active surface's state for the retention window, or
+    /// forgets at once when retention is off or the field was cleared.
+    pub fn hide(p: *Panel) void {
+        p.pending = null;
+        const now = p.clock.now();
+        p.expireAt(now);
+        if (p.retention_seconds <= 0) {
+            p.forget();
+            p.hidden = true;
+            return;
+        }
+        if (!p.hidden) {
+            switch (p.mode) {
+                .search => p.saveSearch(now),
+                .clipboard => p.saveBoard(now),
+            }
+            p.hidden = true;
+        }
+    }
+
+    /// Opens search, restoring the retained query (fully selected), filter,
+    /// and selected row by path when within the retention window.
+    pub fn showSearch(p: *Panel) void {
+        const now = p.clock.now();
+        if (!p.hidden) switch (p.mode) {
+            .search => p.saveSearch(now),
+            .clipboard => p.saveBoard(now),
+        };
+        p.expireAt(now);
+        p.hidden = false;
+        p.mode = .search;
+        if (p.retained_search.hidden_at != null) {
+            p.retained_search.hidden_at = null;
+            p.filter = p.retained_search.filter;
+            p.field.set(p.retained_search.query.items);
+            p.field.want_caret = null;
+            p.field.want_selection = .{ 0, p.field.text().len };
+            p.field.focus();
+            p.resetCompletion();
+            p.caret_at_end = p.field.text().len == 0;
+            p.answered.clearRetainingCapacity();
+            p.refresh();
+            if (p.retained_search.path.items.len > 0) {
+                for (p.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, p.retained_search.path.items)) {
+                    p.selected = i;
+                    break;
+                };
+            }
+            p.reveal_selection = true;
+        } else {
+            p.forgetSearch();
+            p.field.focus();
+        }
+        p.height = p.panelHeight();
+        p.width = p.panelWidth();
+    }
+
+    /// Opens the clipboard board, restoring its retained query, kind filter,
+    /// and selection (or selecting the newest matching copy since hide).
     pub fn showClipboard(p: *Panel) void {
+        const now = p.clock.now();
+        if (!p.hidden) switch (p.mode) {
+            .search => p.saveSearch(now),
+            .clipboard => p.saveBoard(now),
+        };
+        p.expireAt(now);
+        p.hidden = false;
         p.mode = .clipboard;
         p.cancelPendingSuggest();
         p.suggestions = &.{};
         p.resetCompletion();
-        p.field.clear();
-        p.board.stale = true;
-        p.board.refresh("");
+        if (p.retained_board.hidden_at) |hidden_at| {
+            p.retained_board.hidden_at = null;
+            p.board.filter = p.retained_board.filter;
+            p.field.set(p.retained_board.query.items);
+            p.field.want_caret = null;
+            p.field.want_selection = .{ 0, p.field.text().len };
+            p.field.focus();
+            p.board.stale = true;
+            p.board.answered.clearRetainingCapacity();
+            p.board.refresh(p.field.text());
+            p.board.selected = 0;
+            var newest_idx: ?usize = null;
+            var newest_at: f64 = hidden_at;
+            for (p.board.visible, 0..) |e, i| {
+                if (e.created_at > newest_at) {
+                    newest_at = e.created_at;
+                    newest_idx = i;
+                }
+            }
+            if (newest_idx) |idx| {
+                p.board.selected = idx;
+            } else if (p.retained_board.selected_id) |id| {
+                for (p.board.visible, 0..) |e, i| if (e.id == id) {
+                    p.board.selected = i;
+                    break;
+                };
+            }
+            p.board.reveal_selection = true;
+        } else {
+            p.forgetBoard();
+            p.field.focus();
+            p.board.stale = true;
+            p.board.refresh("");
+        }
         p.height = p.panelHeight();
         p.width = p.panelWidth();
     }
@@ -230,6 +471,10 @@ pub const Panel = struct {
             if (!p.board.stale and std.mem.eql(u8, text, p.board.answered.items)) return;
             mac.signpostBegin(.keystroke);
             defer mac.signpostEnd(.keystroke);
+            if (text.len == 0 and p.board.answered.items.len > 0) {
+                p.board.filter = .all;
+                p.retained_board.clear();
+            }
             if (text.len == 0 or text.len > p.board.answered.items.len) p.suppressed_by_backspace = false;
             p.board.refresh(text);
             p.completion = p.computeCompletion();
@@ -239,6 +484,10 @@ pub const Panel = struct {
         mac.signpostBegin(.keystroke);
         defer mac.signpostEnd(.keystroke);
         if (text.len == 0 or text.len > p.answered.items.len) p.suppressed_by_backspace = false;
+        if (text.len == 0) {
+            p.filter = .all;
+            p.retained_search.clear();
+        }
         _ = p.arena.reset(.retain_capacity);
         p.base_rows = p.catalog.query(p.arena.allocator(), text) catch &.{};
         p.suggestions = &.{};
@@ -662,11 +911,7 @@ pub const Panel = struct {
             defer clear.end();
             const hovered = clear.hovered();
             ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = if (hovered) th.text else th.muted });
-            if (clear.clicked()) {
-                p.field.clear();
-                p.resetCompletion();
-                p.refresh();
-            }
+            if (clear.clicked()) p.clearField();
         } else keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
     }
 
