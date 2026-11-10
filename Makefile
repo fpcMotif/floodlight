@@ -1,6 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
-	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer
+	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
+	install-zig test-core gpui-core test-gpui bench-gpui
 
 debug:
 	swift build
@@ -83,3 +84,22 @@ install: bundle
 # means by "clean". Remove it by hand to force a re-fetch.
 clean:
 	swift package clean
+
+# The Zig file index in core/. Separate from `make check` and `make test` so a
+# Swift-only change never waits on a second toolchain; CI runs it as its own job.
+install-zig:
+	./scripts/install-zig.sh
+
+test-core:
+	./scripts/test-core.sh
+
+# The GPUI frontend in frontends/gpui/ (ADR 0011). Like the core, its own
+# targets and its own CI job; it needs Rust from rustup plus `make install-zig`.
+gpui-core:
+	./scripts/build-gpui-core.sh
+
+test-gpui: gpui-core
+	./scripts/test-gpui.sh
+
+bench-gpui:
+	./scripts/bench-gpui.sh

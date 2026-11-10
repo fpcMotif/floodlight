@@ -15,6 +15,7 @@ package final class FFFIndex: @unchecked Sendable {
     private let includeBinaryFiles: Bool
     private let watch: Bool
     private let enableHomeDirectoryScanning: Bool
+    private let contentCacheBudget: FFFContentCacheBudget
     private let logFilePath: String?
     private let logLevel: String
 
@@ -25,6 +26,7 @@ package final class FFFIndex: @unchecked Sendable {
         includeBinaryFiles: Bool = true,
         watch: Bool = true,
         enableHomeDirectoryScanning: Bool = false,
+        contentCacheBudget: FFFContentCacheBudget = .automatic,
         logFilePath: String? = nil,
         logLevel: String = "info",
         homeURL: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -39,6 +41,7 @@ package final class FFFIndex: @unchecked Sendable {
         self.includeBinaryFiles = includeBinaryFiles
         self.watch = watch
         self.enableHomeDirectoryScanning = enableHomeDirectoryScanning
+        self.contentCacheBudget = contentCacheBudget
         self.logFilePath = logFilePath
         self.logLevel = logLevel
     }
@@ -80,9 +83,10 @@ package final class FFFIndex: @unchecked Sendable {
                                 options.ai_mode = false
                                 options.log_file_path = logFile
                                 options.log_level = logFile == nil ? nil : logLevel
-                                options.cache_budget_max_files = 0
-                                options.cache_budget_max_bytes = 0
-                                options.cache_budget_max_file_size = 0
+                                options.cache_budget_max_files = self.contentCacheBudget.maxFiles
+                                options.cache_budget_max_bytes = self.contentCacheBudget.maxBytes
+                                options.cache_budget_max_file_size = self.contentCacheBudget
+                                    .maxFileSize
                                 options.enable_fs_root_scanning = false
                                 options.enable_home_dir_scanning = self.enableHomeDirectoryScanning
                                 options.follow_symlinks = false

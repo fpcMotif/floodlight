@@ -21,3 +21,10 @@ Floodlight.xcodeproj/xcuserdata/
 
 # Local vendored checkouts (fff-swift etc.) that Package.swift does not reference.
 Vendor/
+
+# Zig build output for core/.
+core/.zig-cache/
+core/zig-out/
+
+# Cargo output for the GPUI frontend.
+frontends/gpui/target/

@@ -21,6 +21,7 @@ project conventions live in the README and `docs/adr/`.
 make check   # format, lint, ast-grep rules, architecture, build, dead code — same as CI
 make test    # swift test
 make format  # fix formatting; never hand-format
+make test-core  # Zig file index in core/ (after `make install-zig`)
 ```
 
 Every change must leave `make check` and `make test` green. Never commit a
