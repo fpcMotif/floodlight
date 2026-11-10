@@ -1,0 +1,881 @@
+---
+import magnifier from "../assets/symbols/magnifyingglass.png?url";
+import docText from "../assets/symbols/doc-text.png?url";
+import linkGlyph from "../assets/symbols/link.png?url";
+import palette from "../assets/symbols/paintpalette-fill.png?url";
+import braces from "../assets/symbols/curlybraces.png?url";
+import returnGlyph from "../assets/symbols/return.png?url";
+import markdown from "../assets/icons/markdown.png?url";
+import clearGlyph from "../assets/symbols/xmark-circle-fill.png?url";
+
+type Kind = "text" | "color" | "link" | "code" | "file";
+
+interface Entry {
+  id: string;
+  kind: Kind;
+  text: string;
+  title: string;
+  sub: string;
+  source: string;
+  copied: string;
+}
+
+const meeting = "Meeting moved to 3pm, room 4B. Bring the Q3 numbers and the draft plan.";
+const code = "struct Theme {\n  let accent = Color(hex: 0x3478F6)\n}";
+
+const entries: Entry[] = [
+  { id: "meeting", kind: "text", text: meeting, title: meeting, sub: "Messages · 1m", source: "Messages", copied: "Today at 9:41" },
+  { id: "color", kind: "color", text: "#3478F6", title: "#3478F6", sub: "Figma · 4m", source: "Figma", copied: "Today at 9:38" },
+  {
+    id: "link",
+    kind: "link",
+    text: "https://developer.apple.com/design/human-interface-guidelines",
+    title: "https://developer.apple.com/design/human-interface-guidelines",
+    sub: "Safari · 12m",
+    source: "Safari",
+    copied: "Today at 9:30",
+  },
+  { id: "notes", kind: "file", text: "~/Developer/floodlight/docs/release-notes.md", title: "release-notes.md", sub: "Finder · 18m · docs", source: "Finder", copied: "Today at 9:24" },
+  { id: "code", kind: "code", text: code, title: code.replace(/\s*\n\s*/g, " "), sub: "Xcode · 25m", source: "Xcode", copied: "Today at 9:17" },
+  { id: "q3", kind: "text", text: "Q3 numbers: revenue up 12%, churn flat", title: "Q3 numbers: revenue up 12%, churn flat", sub: "Notes · 1h", source: "Notes", copied: "Today at 8:42" },
+  { id: "pickup", kind: "text", text: "Pickup at 6:30 from the north entrance", title: "Pickup at 6:30 from the north entrance", sub: "Messages · 2h", source: "Messages", copied: "Today at 7:40" },
+];
+
+const tile: Record<Kind, { glyph: string; tone: string } | null> = {
+  text: { glyph: docText, tone: "gray" },
+  link: { glyph: linkGlyph, tone: "blue" },
+  color: { glyph: palette, tone: "purple" },
+  code: { glyph: braces, tone: "cyan" },
+  file: null,
+};
+
+const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+const mask = (url: string) => `--glyph: url(${url})`;
+---
+
+<figure class="board" aria-label="The clipboard board, filtered to a copied color" data-board>
+  <div class="ss-stage board__stage" data-stage data-mark="open">
+    <div class="board__panel">
+      <div class="board__field">
+        <span class="board__glyph board__search" style={mask(magnifier)}></span>
+        <span class="board__input">
+          <span class="board__query" data-query></span><span class="board__caret"></span>
+          <span class="board__placeholder" data-placeholder>Filter clipboard</span>
+        </span>
+        <span class="board__end">
+          <span class="board__summon" data-summon>⌥⇧ C</span>
+          <span class="board__clear" data-clear data-hidden><span class="board__glyph" style={mask(clearGlyph)}></span></span>
+        </span>
+      </div>
+
+      <div class="board__well">
+        <div class="board__chips">
+          <span class="board__chip" data-chip="all" data-on>All <span class="board__n" data-n></span></span>
+          <span class="board__chip" data-chip="text">Text <span class="board__n" data-n></span></span>
+          <span class="board__chip" data-chip="file">Files <span class="board__n" data-n></span></span>
+          <span class="board__chip" data-chip="image">Images <span class="board__n" data-n></span></span>
+        </div>
+
+        <div class="board__columns">
+          <div class="board__list">
+            {
+              entries.map((e) => (
+                <div class="board__track" data-row={e.id} data-kind={e.kind} data-text={e.text.toLowerCase()}>
+                  <div class="board__clip">
+                    <div class="board__row">
+                      {tile[e.kind] ? (
+                        <span class={`board__tile board__tile--${tile[e.kind]!.tone}`}>
+                          <span class="board__glyph" style={mask(tile[e.kind]!.glyph)} />
+                        </span>
+                      ) : (
+                        <img class="board__art" src={markdown} alt="" width="38" height="38" />
+                      )}
+                      <span class="board__text">
+                        <span class="board__title">{e.title}</span>
+                        <span class="board__sub">{e.sub}</span>
+                      </span>
+                      <span class="board__return">
+                        <span class="board__glyph" style={mask(returnGlyph)} />
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+
+          <div class="board__inspector">
+            {
+              entries.map((e) => (
+                <div class="board__layer" data-layer={e.id}>
+                  {e.kind === "color" && (
+                    <div class="board__preview">
+                      <span class="board__swatch" />
+                      <span class="board__mono">
+                        #3478F6 <span class="board__muted">rgb(52, 120, 246)</span>
+                      </span>
+                    </div>
+                  )}
+                  {e.kind === "code" && (
+                    <div class="board__preview">
+                      <span class="board__tag">Code</span>
+                      <div class="board__code">
+                        {e.text.split("\n").map((line, i) => (
+                          <span class="board__line">
+                            <span class="board__gutter">{i + 1}</span>
+                            <span class="board__mono">{line}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {e.kind === "text" && <p class="board__body">{e.text}</p>}
+                  {e.kind === "link" && <p class="board__body board__mono board__muted">{e.text}</p>}
+                  {e.kind === "file" && <p class="board__body">{e.title}</p>}
+                  <span class="board__rule" />
+                  <div class="board__info">
+                    <span class="board__info-head">Information</span>
+                    <dl>
+                      <dt>Source</dt>
+                      <dd>{e.source}</dd>
+                      <dt>Type</dt>
+                      <dd>{{ text: "Text", color: "Color", link: "Link", code: "Code", file: "Markdown Document" }[e.kind]}</dd>
+                      {e.kind === "color" && (
+                        <>
+                          <dt>RGB</dt>
+                          <dd>rgb(52, 120, 246)</dd>
+                        </>
+                      )}
+                      {(e.kind === "text" || e.kind === "code") && (
+                        <>
+                          <dt>Characters</dt>
+                          <dd>{e.text.length}</dd>
+                          <dt>Words</dt>
+                          <dd>{words(e.text)}</dd>
+                        </>
+                      )}
+                      {e.kind === "code" && (
+                        <>
+                          <dt>Lines</dt>
+                          <dd>{e.text.split("\n").length}</dd>
+                        </>
+                      )}
+                      <dt>Copied</dt>
+                      <dd>{e.copied}</dd>
+                    </dl>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <span class="board__key" data-key aria-hidden="true"></span>
+  </div>
+</figure>
+
+<script>
+  const QUERY = "3478";
+  const EASE_WAIT = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+  for (const figure of document.querySelectorAll<HTMLElement>("[data-board]")) {
+    const stage = figure.querySelector<HTMLElement>("[data-stage]")!;
+    const query = stage.querySelector<HTMLElement>("[data-query]")!;
+    const placeholder = stage.querySelector<HTMLElement>("[data-placeholder]")!;
+    const summon = stage.querySelector<HTMLElement>("[data-summon]")!;
+    const clear = stage.querySelector<HTMLElement>("[data-clear]")!;
+    const key = stage.querySelector<HTMLElement>("[data-key]")!;
+    const tracks = [...stage.querySelectorAll<HTMLElement>("[data-row]")];
+    const layers = [...stage.querySelectorAll<HTMLElement>("[data-layer]")];
+    const chips = [...stage.querySelectorAll<HTMLElement>("[data-chip]")];
+
+    let selected = "";
+
+    function visible() {
+      return tracks.filter((t) => t.dataset.text!.includes(query.textContent!.toLowerCase()));
+    }
+
+    function select(id: string) {
+      selected = id;
+      for (const t of tracks) t.toggleAttribute("data-selected", t.dataset.row === id);
+      for (const l of layers) l.toggleAttribute("data-show", l.dataset.layer === id);
+    }
+
+    function roll(slot: HTMLElement, value: string) {
+      const current = slot.querySelector<HTMLElement>("[data-value]:not([data-leaving])");
+      if (current?.textContent === value) return;
+      for (const old of slot.querySelectorAll("[data-leaving]")) old.remove();
+      const next = document.createElement("span");
+      next.dataset.value = "";
+      next.textContent = value;
+      slot.append(next);
+      if (!current) return;
+      current.setAttribute("data-leaving", "");
+      next.setAttribute("data-entering", "");
+      requestAnimationFrame(() => requestAnimationFrame(() => next.removeAttribute("data-entering")));
+      setTimeout(() => current.remove(), 400);
+    }
+
+    function render() {
+      const shown = visible();
+      for (const t of tracks) t.toggleAttribute("data-out", !shown.includes(t));
+      const count = (kind: string) =>
+        shown.filter((t) => (kind === "all" ? true : kind === "text" ? t.dataset.kind !== "file" : t.dataset.kind === kind)).length;
+      for (const chip of chips) {
+        const n = count(chip.dataset.chip!);
+        roll(chip.querySelector<HTMLElement>("[data-n]")!, String(n));
+        chip.toggleAttribute("data-empty", n === 0 && !chip.hasAttribute("data-on"));
+      }
+      const hasQuery = query.textContent!.length > 0;
+      placeholder.toggleAttribute("data-hidden", hasQuery);
+      summon.toggleAttribute("data-hidden", hasQuery);
+      clear.toggleAttribute("data-hidden", !hasQuery);
+      if (!shown.some((t) => t.dataset.row === selected) && shown[0]) select(shown[0].dataset.row!);
+    }
+
+    let keyTimer = 0;
+    function press(label: string) {
+      key.textContent = label;
+      key.setAttribute("data-show", "");
+      window.clearTimeout(keyTimer);
+      keyTimer = window.setTimeout(() => key.removeAttribute("data-show"), 650);
+    }
+
+    function poster() {
+      query.textContent = QUERY;
+      select("color");
+      render();
+      stage.dataset.mark = "found";
+    }
+
+    function reset() {
+      query.textContent = "";
+      select("meeting");
+      render();
+    }
+
+    let running = false;
+    let generation = 0;
+
+    async function play() {
+      const mine = ++generation;
+      const alive = () => running && mine === generation;
+      while (alive()) {
+        stage.dataset.mark = "open";
+        await EASE_WAIT(1700);
+        stage.dataset.mark = "type";
+        for (const char of QUERY) {
+          if (!alive()) return;
+          query.textContent += char;
+          render();
+          await EASE_WAIT(170);
+        }
+        stage.dataset.mark = "found";
+        await EASE_WAIT(3000);
+        if (!alive()) return;
+        stage.dataset.mark = "next";
+        press("↓");
+        select("code");
+        await EASE_WAIT(2400);
+        if (!alive()) return;
+        stage.dataset.mark = "clear";
+        for (let i = 0; i < QUERY.length; i++) {
+          if (!alive()) return;
+          press("⌫");
+          query.textContent = query.textContent!.slice(0, -1);
+          render();
+          await EASE_WAIT(140);
+        }
+        select("meeting");
+        await EASE_WAIT(700);
+      }
+    }
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reduced.matches) {
+      poster();
+    } else {
+      reset();
+      new IntersectionObserver(([entry]) => {
+        const next = entry.isIntersecting;
+        if (next === running) return;
+        running = next;
+        if (running) {
+          reset();
+          play();
+        }
+      }, { threshold: 0.35 }).observe(stage);
+    }
+
+    function fit() {
+      const width = figure.clientWidth;
+      const compact = width < 560;
+      stage.toggleAttribute("data-compact", compact);
+      const design = compact ? 358 : 960;
+      const height = compact ? 416 : 500;
+      const scale = Math.min(1, width / design);
+      stage.style.scale = String(scale);
+      figure.style.height = `${height * scale}px`;
+    }
+    new ResizeObserver(fit).observe(figure);
+    fit();
+  }
+</script>
+
+<style>
+  .board {
+    position: relative;
+    width: 100%;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  .board__stage {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 960px;
+    height: 500px;
+    overflow: hidden;
+    translate: -50% 0;
+    transform-origin: 50% 0;
+    font-family: var(--fl-font);
+    color: #f5f5f7;
+    text-align: left;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .board__stage[data-compact] {
+    width: 358px;
+    height: 416px;
+  }
+
+  .board__panel {
+    position: absolute;
+    top: 40px;
+    left: 100px;
+    width: 760px;
+    height: 560px;
+    border: 1px solid var(--fl-panel-line);
+    border-radius: 30px;
+    background: var(--fl-panel-bg);
+    box-shadow:
+      0 2.5rem 5rem rgb(0 0 0 / 55%),
+      inset 0 1px rgb(255 255 255 / 8%);
+    backdrop-filter: blur(2.5rem) saturate(150%);
+    -webkit-backdrop-filter: blur(2.5rem) saturate(150%);
+  }
+
+  [data-compact] .board__panel {
+    top: 24px;
+    left: 16px;
+    width: 326px;
+  }
+
+  .board__glyph {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: currentColor;
+    mask: var(--glyph) center / contain no-repeat;
+    -webkit-mask: var(--glyph) center / contain no-repeat;
+  }
+
+  .board__field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 60px;
+    padding: 0 20px;
+  }
+
+  .board__search {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    color: rgb(245 245 247 / 55%);
+  }
+
+  .board__input {
+    position: relative;
+    display: flex;
+    flex: 1;
+    align-items: center;
+    min-width: 0;
+    font-size: 24px;
+    letter-spacing: -0.01em;
+  }
+
+  .board__caret {
+    width: 2px;
+    height: 26px;
+    margin-left: 1px;
+    border-radius: 1px;
+    background: var(--fl-blue-dark);
+    animation: board-blink 1s steps(1) infinite;
+  }
+
+  .board__placeholder {
+    position: absolute;
+    left: 4px;
+    color: rgb(245 245 247 / 34%);
+    transition: opacity 120ms;
+  }
+
+  .board__placeholder[data-hidden],
+  .board__summon[data-hidden],
+  .board__clear[data-hidden] {
+    opacity: 0;
+  }
+
+  .board__end {
+    display: grid;
+    flex: none;
+    place-items: center end;
+  }
+
+  .board__end > * {
+    grid-area: 1 / 1;
+  }
+
+  .board__clear {
+    width: 18px;
+    height: 18px;
+    margin-right: 3px;
+    color: rgb(245 245 247 / 45%);
+    transition: opacity 160ms;
+  }
+
+  .board__summon {
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: rgb(255 255 255 / 10%);
+    color: rgb(245 245 247 / 82%);
+    font-size: 11px;
+    font-weight: 600;
+    transition: opacity 160ms;
+  }
+
+  .board__well {
+    margin: 0 7px;
+    height: 493px;
+    overflow: hidden;
+    border: 1px solid rgb(255 255 255 / 12%);
+    border-radius: 23px;
+    background: var(--fl-well);
+  }
+
+  .board__chips {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 14px;
+  }
+
+  .board__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 11px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 5.5%);
+    font-size: 11.5px;
+    font-weight: 600;
+    transition: opacity 200ms;
+  }
+
+  .board__chip[data-on] {
+    background: rgb(255 255 255 / 14%);
+  }
+
+  .board__chip[data-empty] {
+    opacity: 0.5;
+  }
+
+  .board__n {
+    position: relative;
+    display: inline-grid;
+    height: 13px;
+    overflow: hidden;
+    color: rgb(245 245 247 / 55%);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    line-height: 13px;
+    text-align: center;
+  }
+
+  .board__n :global([data-value]) {
+    grid-area: 1 / 1;
+    will-change: transform;
+    transition:
+      translate 300ms cubic-bezier(0.45, 0, 0.1, 1),
+      opacity 160ms 140ms;
+  }
+
+  .board__n :global([data-leaving]) {
+    opacity: 0;
+    translate: 0 -45%;
+    transition:
+      translate 300ms cubic-bezier(0.45, 0, 0.1, 1),
+      opacity 90ms;
+  }
+
+  .board__n :global([data-entering]) {
+    opacity: 0;
+    translate: 0 45%;
+    transition: none;
+  }
+
+  .board__columns {
+    display: flex;
+    height: 453px;
+  }
+
+  .board__list {
+    flex: none;
+    width: 320px;
+    padding: 7px;
+    border-right: 1px solid rgb(255 255 255 / 9%);
+  }
+
+  [data-compact] .board__columns {
+    flex-direction: column;
+    height: auto;
+  }
+
+  [data-compact] .board__list {
+    width: 100%;
+    border-right: 0;
+  }
+
+  [data-compact] .board__inspector {
+    flex: none;
+    height: 136px;
+    border-top: 1px solid rgb(255 255 255 / 9%);
+    will-change: transform;
+  }
+
+  [data-compact] .board__preview {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  [data-compact] .board__swatch {
+    flex: 1;
+    height: auto;
+  }
+
+  [data-compact] .board__preview > .board__mono {
+    order: -1;
+  }
+
+  [data-compact] .board__rule,
+  [data-compact] .board__info {
+    display: none;
+  }
+
+  [data-compact] .board__line .board__mono {
+    font-size: 10.5px;
+  }
+
+  .board__track {
+    display: grid;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transition:
+      grid-template-rows 420ms cubic-bezier(0.45, 0, 0.1, 1),
+      opacity 200ms 320ms;
+  }
+
+  .board__track[data-out] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows 420ms cubic-bezier(0.45, 0, 0.1, 1) 160ms,
+      opacity 140ms;
+  }
+
+  .board__clip {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .board__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 58px;
+    padding: 0 12px;
+    border-radius: 12px;
+    will-change: transform;
+    transition: background 150ms;
+  }
+
+  [data-selected] .board__row {
+    background: rgb(255 255 255 / 12%);
+  }
+
+  .board__tile,
+  .board__art {
+    flex: none;
+    width: 38px;
+    height: 38px;
+  }
+
+  .board__tile {
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+  }
+
+  .board__tile .board__glyph {
+    width: 19px;
+    height: 19px;
+  }
+
+  .board__tile--gray {
+    background: rgb(142 142 147 / 14%);
+    color: #8e8e93;
+  }
+
+  .board__tile--blue {
+    background: rgb(10 132 255 / 14%);
+    color: #0a84ff;
+  }
+
+  .board__tile--purple {
+    background: rgb(191 90 242 / 14%);
+    color: #bf5af2;
+  }
+
+  .board__tile--cyan {
+    background: rgb(50 173 230 / 14%);
+    color: #32ade6;
+  }
+
+  .board__text {
+    display: grid;
+    flex: 1;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .board__title,
+  .board__sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .board__title {
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .board__sub {
+    color: rgb(245 245 247 / 55%);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .board__return {
+    display: grid;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    border-radius: 7px;
+    background: rgb(255 255 255 / 10%);
+    color: rgb(245 245 247 / 82%);
+    opacity: 0;
+    transition: opacity 150ms;
+  }
+
+  .board__return .board__glyph {
+    width: 12px;
+    height: 12px;
+  }
+
+  [data-selected] .board__return {
+    opacity: 1;
+  }
+
+  .board__inspector {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    background: rgb(255 255 255 / 3%);
+  }
+
+  .board__layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    opacity: 0;
+    transition: opacity 200ms;
+  }
+
+  .board__layer[data-show] {
+    opacity: 1;
+  }
+
+  .board__preview {
+    display: grid;
+    gap: 10px;
+  }
+
+  .board__swatch {
+    height: 72px;
+    border: 1px solid rgb(255 255 255 / 15%);
+    border-radius: 12px;
+    background: #3478f6;
+  }
+
+  .board__mono {
+    font-family: var(--fl-font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: pre;
+  }
+
+  .board__muted {
+    margin-left: 6px;
+    color: rgb(245 245 247 / 55%);
+    font-weight: 400;
+  }
+
+  .board__body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .board__body.board__mono {
+    white-space: normal;
+    word-break: break-all;
+    margin-left: 0;
+  }
+
+  .board__tag {
+    justify-self: start;
+    align-self: flex-start;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 10%);
+    color: rgb(245 245 247 / 60%);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .board__code {
+    display: grid;
+    gap: 4px;
+    padding: 10px;
+    border-radius: 8px;
+    background: rgb(255 255 255 / 6%);
+  }
+
+  .board__line {
+    display: flex;
+    gap: 10px;
+  }
+
+  .board__line .board__mono {
+    font-size: 12px;
+  }
+
+  .board__gutter {
+    width: 10px;
+    color: rgb(245 245 247 / 35%);
+    font-family: var(--fl-font-mono);
+    font-size: 11px;
+    text-align: right;
+  }
+
+  .board__rule {
+    height: 1px;
+    background: rgb(255 255 255 / 9%);
+  }
+
+  .board__info {
+    display: grid;
+    gap: 9px;
+    font-size: 12px;
+  }
+
+  .board__info-head {
+    color: rgb(245 245 247 / 55%);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .board__info dl {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    gap: 8px 12px;
+    margin: 0;
+  }
+
+  .board__info dt {
+    color: rgb(245 245 247 / 55%);
+    text-align: right;
+  }
+
+  .board__info dd {
+    margin: 0;
+  }
+
+  .board__key {
+    position: absolute;
+    bottom: 28px;
+    left: 267px;
+    min-width: 40px;
+    will-change: transform;
+    padding: 8px 14px;
+    border: 1px solid rgb(255 255 255 / 16%);
+    border-radius: 10px;
+    background: #2c2c2e;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 50%);
+    color: #f5f5f7;
+    font-size: 17px;
+    font-weight: 600;
+    text-align: center;
+    opacity: 0;
+    translate: -50% 6px;
+    transition:
+      opacity 160ms,
+      translate 160ms cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+
+  .board__key[data-show] {
+    opacity: 1;
+    translate: -50% 0;
+  }
+
+  [data-compact] .board__key {
+    left: 50%;
+  }
+
+  @keyframes board-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .board__caret {
+      animation: none;
+    }
+  }
+</style>

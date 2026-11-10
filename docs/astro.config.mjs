@@ -4,7 +4,7 @@ import starlight from "@astrojs/starlight";
 const repository =
   process.env.PUBLIC_GITHUB_REPOSITORY ??
   process.env.GITHUB_REPOSITORY ??
-  "vmg-dev/floodlight";
+  "fpcMotif/floodlight";
 const [owner, repositoryName] = repository.split("/");
 const isUserPagesRepository = repositoryName === `${owner}.github.io`;
 const isGitHubPagesBuild = process.env.GITHUB_ACTIONS === "true";
