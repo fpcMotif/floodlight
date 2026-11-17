@@ -2255,6 +2255,29 @@ test "the 200-app latency benchmark measures keystroke publication, summon layou
     try t.expect(submit.p50_ns > 0);
     try t.expect(submit.p99_ns >= submit.p50_ns);
 
+    const built = try bench.measureKeystrokeToBuiltFrame(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), built.runs);
+    try t.expect(built.p99_ns >= built.p50_ns);
+
+    const icons = try bench.measureFirstFrameWithIcons(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), icons.runs);
+    try t.expect(icons.p99_ns >= icons.p50_ns);
+
+    const built_summon = try bench.measureHotKeyToBuiltFrame(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), built_summon.runs);
+    try t.expect(built_summon.p99_ns >= built_summon.p50_ns);
+
+    try t.expect(bench.withinFrameBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 6_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 500_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
+    ));
+    try t.expect(!bench.withinFrameBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 6_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 600_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
+    ));
+
     try t.expect(bench.withinBudgets(
         .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
         .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },

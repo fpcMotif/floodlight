@@ -424,6 +424,11 @@ const Shell = struct {
             },
             2 => s.presence.board(false, s.panel.mode == .clipboard),
             3 => {
+                s.panel.field.set("meeting");
+                s.panel.refresh();
+            },
+            4 => for (0..memory_board_moves) |_| s.panel.board.list.move(true),
+            5 => {
                 markMemory("open", cycle);
                 return nanoui.App.after(memory_settle_ms, s, memoryStep);
             },
@@ -436,7 +441,8 @@ const Shell = struct {
         nanoui.App.after(memory_step_ms, s, memoryStep);
     }
 
-    const memory_steps = 5;
+    const memory_steps = 7;
+    const memory_board_moves = 20;
 
     fn memoryIdle(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -673,17 +679,47 @@ fn seedMemoryHistory(store: clipboard.Store) void {
     };
     const pictures = [_][]const u8{ "/System/Applications/Calendar.app", "/System/Applications/Notes.app", "/System/Applications/Maps.app", "/System/Applications/Photos.app" };
     const now = clipboard.wallClock();
+    const text_count = 5000;
+    const long_text_every = 50;
+    const long_text_bytes = 30_000;
+    const picture_repeats = 50;
+    const sentence = "The quarterly review covers roadmap, hiring, and the migration plan. ";
+    const long_buf = gpa.alloc(u8, long_text_bytes) catch return;
+    defer gpa.free(long_buf);
+    for (long_buf, 0..) |*c, i| c.* = sentence[i % sentence.len];
     var buf: [160]u8 = undefined;
-    for (0..300) |i| {
+    for (0..text_count) |i| {
+        const age = now - @as(f64, @floatFromInt(text_count - i)) * 72;
+        if (i % long_text_every == 0) {
+            _ = store.add(.{ .text = long_buf }, "com.apple.Safari", "Safari", age) catch {};
+            continue;
+        }
         const text = std.fmt.bufPrint(&buf, "{s} ({d})", .{ texts[i % texts.len], i }) catch continue;
-        _ = store.add(.{ .text = text }, "com.apple.Safari", "Safari", now - @as(f64, @floatFromInt(300 - i)) * 72) catch {};
+        _ = store.add(.{ .text = text }, "com.apple.Safari", "Safari", age) catch {};
     }
-    for (pictures, 0..) |path, i| {
+    var pngs: [pictures.len][]u8 = undefined;
+    var thumbnails: [pictures.len][]u8 = undefined;
+    var loaded: usize = 0;
+    defer for (0..loaded) |i| {
+        gpa.free(pngs[i]);
+        gpa.free(thumbnails[i]);
+    };
+    for (pictures) |path| {
         const png = mac.iconPng(gpa, path, 1024) orelse continue;
-        defer gpa.free(png);
-        const thumbnail = mac.iconPng(gpa, path, 128) orelse continue;
-        defer gpa.free(thumbnail);
-        const image: clipboard.Capture.Image = .{ .name = "Screenshot", .png = png, .thumbnail = thumbnail, .width = 1024, .height = 1024 };
-        _ = store.add(.{ .image = image }, "com.apple.screencaptureui", "Screenshot", now - @as(f64, @floatFromInt(i))) catch {};
+        const thumbnail = mac.iconPng(gpa, path, 128) orelse {
+            gpa.free(png);
+            continue;
+        };
+        pngs[loaded] = png;
+        thumbnails[loaded] = thumbnail;
+        loaded += 1;
+    }
+    if (loaded == 0) return;
+    var name: [32]u8 = undefined;
+    for (0..loaded * picture_repeats) |j| {
+        const k = j % loaded;
+        const label = std.fmt.bufPrint(&name, "Screenshot {d}", .{j}) catch continue;
+        const image: clipboard.Capture.Image = .{ .name = label, .png = pngs[k], .thumbnail = thumbnails[k], .width = 1024, .height = 1024 };
+        _ = store.add(.{ .image = image }, "com.apple.screencaptureui", "Screenshot", now - @as(f64, @floatFromInt(loaded * picture_repeats - j))) catch {};
     }
 }
