@@ -16,7 +16,7 @@ const presence = @import("presence.zig");
 const Presence = presence.Presence;
 
 const metrics = chrome.metrics;
-const gpa = std.heap.smp_allocator;
+const gpa = std.heap.c_allocator;
 const clipboard_poll_ms = 500;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;

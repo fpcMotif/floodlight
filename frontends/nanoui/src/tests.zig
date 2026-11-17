@@ -3485,3 +3485,59 @@ test "hiding again within the retention window arms no second expiry timer" {
     try t.expect(!p.expire());
     try t.expect(p.armExpiry() != null);
 }
+
+test "a released surface draws the same frame again" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Calendar"));
+    try t.expect(tester.hasText("Calculator"));
+
+    mac.forgetContextStorage(&tester.ctx);
+    try t.expectEqual(@as(usize, 0), tester.ctx.nodes.capacity);
+    tester.frame();
+    try t.expect(tester.hasText("Calendar"));
+    try t.expect(tester.hasText("Calculator"));
+}
+
+test "scroll position survives a release" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(30);
+    try f.show();
+
+    const tester = &f.tester;
+    tester.scroll(150, 300, -180);
+    tester.settle(0.2);
+
+    var scroll_id: ?u64 = null;
+    var saved_offset: f32 = 0;
+    var it = tester.ctx.scroll.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.* > 0) {
+            scroll_id = e.key_ptr.*;
+            saved_offset = e.value_ptr.*;
+            break;
+        }
+    }
+    const id = scroll_id orelse return error.ExpectedScrollOffset;
+
+    mac.forgetContextStorage(&tester.ctx);
+    tester.frame();
+    try t.expectEqual(saved_offset, tester.ctx.scroll.get(id).?);
+}

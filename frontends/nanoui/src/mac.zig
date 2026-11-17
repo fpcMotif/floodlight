@@ -882,14 +882,17 @@ pub fn releaseFreedMemory() void {
 
 pub fn releaseSurface(window: *nanoui.Window) void {
     const s = window.surface orelse return;
-    if (s.released or s.is_visible) return;
+    if (s.is_visible) return;
+    if (!s.released) {
+        s.released = true;
+        s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
+    }
     s.pending = true;
-    s.released = true;
-    s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
     s.text.images.trimDecoded();
     s.renderer.waitIdle();
     forgetImageAtlas(s);
     forgetFrameBuffers(s);
+    forgetFrameStorage(s);
     _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
 }
 
@@ -900,6 +903,33 @@ fn forgetFrameBuffers(s: *nanoui.Surface) void {
         buffer.* = null;
         capacity.* = 0;
     }
+}
+
+pub fn forgetContextStorage(c: *nanoui.ui.Context) void {
+    c.nodes.clearAndFree(c.gpa);
+    c.stack.clearAndFree(c.gpa);
+    c.rects.clearAndFree(c.gpa);
+    c.prev_rects.clearAndFree(c.gpa);
+    c.hits.clearAndFree(c.gpa);
+    c.next_hits.clearAndFree(c.gpa);
+    c.a11y_items.clearAndFree(c.gpa);
+    c.helps.clearAndFree(c.gpa);
+    c.motion.entries.clearAndFree(c.gpa);
+    c.anims.clearAndFree(c.gpa);
+}
+
+fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
+    var it = map.valueIterator();
+    while (it.next()) |l| gpa.free(l.glyphs);
+    map.clearAndFree(gpa);
+}
+
+fn forgetFrameStorage(s: *nanoui.Surface) void {
+    forgetContextStorage(&s.ctx);
+    freeTextLayouts(s.text.gpa, &s.text.layouts);
+    freeTextLayouts(s.text.gpa, &s.text.previous);
+    s.text.wraps.deinit(s.text.gpa);
+    s.text.wraps = .{};
 }
 
 fn forgetImageAtlas(s: *nanoui.Surface) void {
