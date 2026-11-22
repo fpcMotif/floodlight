@@ -81,6 +81,7 @@ pub const app_bonus: i32 = 60;
 /// query, so "cal" opens Calendar, not a folder called cal.
 pub const app_prefix_bonus: i32 = core.match.bonus_exact_name - core.match.bonus_name_prefix;
 pub const max_rows = 80;
+pub const max_file_hits = 2 * max_rows;
 pub const max_suggestions = 4;
 /// Apps listed under Suggestions on an empty query: ⌘2 to ⌘6 plus the selected first row.
 pub const max_suggested_apps = 6;
@@ -104,14 +105,21 @@ pub const Catalog = struct {
 
     /// The best rows for `query`, best first, in `arena`'s memory.
     pub fn query(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
-        return cat.rank(arena, text, true);
+        const v = (if (cat.files) |fi| fi.view() else null) orelse return cat.queryApps(arena, text);
+        var hits: [max_file_hits]core.search.Hit = undefined;
+        const n = searchFiles(v, text, &hits);
+        return cat.rank(arena, text, v, hits[0..n]);
     }
 
     pub fn queryApps(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
-        return cat.rank(arena, text, false);
+        return cat.rank(arena, text, null, &.{});
     }
 
-    fn rank(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, include_files: bool) ![]Row {
+    pub fn queryWithHits(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, view: core.index.View, hits: []const core.search.Hit) ![]Row {
+        return cat.rank(arena, text, view, hits);
+    }
+
+    fn rank(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, file_view: ?core.index.View, hits: []const core.search.Hit) ![]Row {
         var rows: std.ArrayList(Row) = .empty;
         const trimmed = std.mem.trim(u8, text, " ");
         if (trimmed.len == 0) return rows.items;
@@ -125,12 +133,10 @@ pub const Catalog = struct {
             try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
         }
 
-        if (if (cat.files) |fi| if (include_files) fi.view() else null else null) |v| {
-            var hits: [2 * max_rows]core.search.Hit = undefined;
-            const n = core.search.search(v, trimmed, &hits);
+        if (file_view) |v| {
             const root = v.root;
             var file_rows: usize = 0;
-            for (hits[0..n]) |h| {
+            for (hits) |h| {
                 var buf: [4096]u8 = undefined;
                 const rel = v.relativePath(h.id, &buf) orelse continue;
                 // Bundles are apps, listed above from the catalog; their insides are no one's.
@@ -351,3 +357,166 @@ pub fn scanApps(cat: *Catalog, io: std.Io, folder: []const u8) !void {
         try cat.addApp(try std.fs.path.join(cat.gpa, &.{ folder, entry.name }));
     }
 }
+
+pub fn searchFiles(view: core.index.View, text: []const u8, out: []core.search.Hit) usize {
+    const trimmed = std.mem.trim(u8, text, " ");
+    if (trimmed.len == 0) return 0;
+    return core.search.search(view, trimmed, out);
+}
+
+pub const AdoptGate = struct {
+    pending: bool = false,
+
+    pub fn requestAdopt(g: *AdoptGate, worker_active: bool) bool {
+        if (worker_active) {
+            g.pending = true;
+            return false;
+        }
+        g.pending = false;
+        return true;
+    }
+
+    pub fn takeAfterSearch(g: *AdoptGate, worker_active: bool) bool {
+        if (!g.pending or worker_active) return false;
+        g.pending = false;
+        return true;
+    }
+};
+
+extern "c" fn pthread_set_qos_class_self_np(qos_class: c_uint, relative_priority: c_int) c_int;
+const qos_class_user_interactive: c_uint = 0x21;
+
+pub const FileSearcher = struct {
+    pub const max_query_bytes = 256;
+    pub const SearchFn = *const fn (?*anyopaque, core.index.View, []const u8, []core.search.Hit) usize;
+    pub const ReadyFn = *const fn (?*anyopaque) void;
+
+    pub const Result = struct {
+        seq: u64 = 0,
+        view: core.index.View = undefined,
+        hits: [max_file_hits]core.search.Hit = undefined,
+        len: usize = 0,
+
+        pub fn slice(r: *const Result) []const core.search.Hit {
+            return r.hits[0..r.len];
+        }
+    };
+
+    pub const Taken = struct {
+        result: ?Result,
+        active: bool,
+    };
+
+    io: std.Io,
+    mutex: std.Io.Mutex = .init,
+    cond: std.Io.Condition = .init,
+    thread: ?std.Thread = null,
+    stopped: bool = false,
+    busy: bool = false,
+    req_seq: u64 = 0,
+    served_seq: u64 = 0,
+    req_view: core.index.View = undefined,
+    req_buf: [max_query_bytes]u8 = undefined,
+    req_len: usize = 0,
+    has_result: bool = false,
+    result: Result = .{},
+    search_ctx: ?*anyopaque = null,
+    search_fn: SearchFn = defaultSearch,
+    ready_ctx: ?*anyopaque = null,
+    ready_fn: ReadyFn = noReady,
+
+    fn defaultSearch(_: ?*anyopaque, view: core.index.View, text: []const u8, out: []core.search.Hit) usize {
+        return searchFiles(view, text, out);
+    }
+
+    fn noReady(_: ?*anyopaque) void {}
+
+    fn truncateUtf8(text: []const u8, max_len: usize) usize {
+        var n = @min(text.len, max_len);
+        if (n == text.len) return n;
+        while (n > 0 and (text[n] & 0xC0) == 0x80) n -= 1;
+        return n;
+    }
+
+    pub fn start(fs: *FileSearcher) !void {
+        if (fs.thread != null) return;
+        fs.stopped = false;
+        fs.thread = try std.Thread.spawn(.{}, run, .{fs});
+    }
+
+    pub fn stop(fs: *FileSearcher) void {
+        const t = fs.thread orelse return;
+        fs.mutex.lockUncancelable(fs.io);
+        fs.stopped = true;
+        fs.cond.signal(fs.io);
+        fs.mutex.unlock(fs.io);
+        t.join();
+        fs.thread = null;
+    }
+
+    pub fn submit(fs: *FileSearcher, seq: u64, view: core.index.View, text: []const u8) void {
+        fs.mutex.lockUncancelable(fs.io);
+        defer fs.mutex.unlock(fs.io);
+        fs.req_seq = seq;
+        fs.req_view = view;
+        const n = truncateUtf8(text, max_query_bytes);
+        @memcpy(fs.req_buf[0..n], text[0..n]);
+        fs.req_len = n;
+        fs.cond.signal(fs.io);
+    }
+
+    pub fn isActive(fs: *FileSearcher) bool {
+        fs.mutex.lockUncancelable(fs.io);
+        defer fs.mutex.unlock(fs.io);
+        return fs.busy or fs.req_seq > fs.served_seq;
+    }
+
+    pub fn takeResult(fs: *FileSearcher) Taken {
+        fs.mutex.lockUncancelable(fs.io);
+        defer fs.mutex.unlock(fs.io);
+        const res: ?Result = if (fs.has_result) fs.result else null;
+        fs.has_result = false;
+        return .{ .result = res, .active = fs.busy or fs.req_seq > fs.served_seq };
+    }
+
+    fn run(fs: *FileSearcher) void {
+        _ = pthread_set_qos_class_self_np(qos_class_user_interactive, 0);
+        var query_buf: [max_query_bytes]u8 = undefined;
+        var hits_buf: [max_file_hits]core.search.Hit = undefined;
+        while (true) {
+            var seq: u64 = 0;
+            var view: core.index.View = undefined;
+            var query_len: usize = 0;
+            {
+                fs.mutex.lockUncancelable(fs.io);
+                defer fs.mutex.unlock(fs.io);
+                while (!fs.stopped and fs.req_seq <= fs.served_seq) {
+                    fs.cond.waitUncancelable(fs.io, &fs.mutex);
+                }
+                if (fs.stopped) return;
+                seq = fs.req_seq;
+                fs.served_seq = seq;
+                view = fs.req_view;
+                query_len = fs.req_len;
+                @memcpy(query_buf[0..query_len], fs.req_buf[0..query_len]);
+                fs.busy = true;
+            }
+            const n = @min(max_file_hits, fs.search_fn(fs.search_ctx, view, query_buf[0..query_len], &hits_buf));
+            var ready_fn: ReadyFn = undefined;
+            var ready_ctx: ?*anyopaque = undefined;
+            {
+                fs.mutex.lockUncancelable(fs.io);
+                defer fs.mutex.unlock(fs.io);
+                fs.result.seq = seq;
+                fs.result.view = view;
+                fs.result.len = n;
+                @memcpy(fs.result.hits[0..n], hits_buf[0..n]);
+                fs.has_result = true;
+                fs.busy = false;
+                ready_fn = fs.ready_fn;
+                ready_ctx = fs.ready_ctx;
+            }
+            ready_fn(ready_ctx);
+        }
+    }
+};

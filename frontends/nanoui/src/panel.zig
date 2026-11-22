@@ -3,6 +3,7 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
+const core = @import("floodlight_core");
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
@@ -104,15 +105,12 @@ pub const Hooks = struct {
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     suggest: *const fn (?*anyopaque, u64, []const u8) void = noSuggest,
-    search_files: *const fn (?*anyopaque) void = noSearchFiles,
+    search_files: *const fn (?*anyopaque, u64, []const u8) void = noSearchFiles,
 };
 
 fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
-fn noSearchFiles(_: ?*anyopaque) void {}
-
-pub const file_search_budget_s: f64 = 0.004;
-const calibration_query = "e";
+fn noSearchFiles(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
 pub const suggestion_cache_ttl: f64 = 5 * 60;
 
@@ -191,7 +189,8 @@ pub const Panel = struct {
     suggestion_cache: std.ArrayList(CachedSuggestions) = .empty,
     web_suggestions_enabled: bool = true,
     indexing: bool = false,
-    file_search_s: f64 = 0,
+    file_seq: u64 = 0,
+    async_files: bool = false,
     files_due: bool = false,
     suppressed_by_backspace: bool = false,
     caret_at_end: bool = true,
@@ -235,6 +234,7 @@ pub const Panel = struct {
         p.retained_search.clear();
         p.list.reset();
         p.files_due = false;
+        p.file_seq += 1;
         p.base_rows = &.{};
         p.suggestions = &.{};
         p.cancelPendingSuggest();
@@ -537,7 +537,7 @@ pub const Panel = struct {
             p.list.filter = .all;
             p.retained_search.clear();
         }
-        const need_fetch = p.answer(text, false) catch |err| return p.failSearch(err);
+        const need_fetch = p.answer(text) catch |err| return p.failSearch(err);
         const l = &p.list;
         if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
         p.completion = p.computeCompletion();
@@ -548,25 +548,22 @@ pub const Panel = struct {
             p.pending_suggest_query.appendSlice(p.list.arena.child_allocator, text) catch {};
             p.hooks.suggest(p.hooks.ctx, p.pending_suggest_seq, text);
         }
-        if (p.files_due) p.hooks.search_files(p.hooks.ctx);
+        if (p.files_due) p.hooks.search_files(p.hooks.ctx, p.file_seq, text);
     }
 
-    pub fn landFiles(p: *Panel) void {
-        if (!p.files_due) return;
+    pub fn landFiles(p: *Panel, seq: u64, file_view: core.index.View, hits: []const core.search.Hit) void {
+        if (!p.files_due or seq != p.file_seq) return;
         p.files_due = false;
         const text = p.field.text();
         if (p.mode != .search or !std.mem.eql(u8, text, p.list.answered())) return;
-        if (p.list.selected != 0) p.list.markStale();
-        _ = p.answer(text, true) catch |err| return p.failSearch(err);
+        p.base_rows = p.catalog.queryWithHits(p.list.allocator(), text, file_view, hits) catch |err| return p.failSearch(err);
+        const composed = p.composeRows();
+        if (p.list.selected != 0) {
+            p.list.replaceRows(composed);
+        } else {
+            p.list.setRows(text, composed) catch |err| return p.failSearch(err);
+        }
         p.completion = p.computeCompletion();
-    }
-
-    pub fn calibrateFileSearch(p: *Panel) void {
-        var arena: std.heap.ArenaAllocator = .init(p.list.arena.child_allocator);
-        defer arena.deinit();
-        const started = p.clock.now();
-        _ = p.catalog.query(arena.allocator(), calibration_query) catch return;
-        p.file_search_s = p.clock.now() - started;
     }
 
     fn failSearch(p: *Panel, err: anyerror) void {
@@ -579,20 +576,17 @@ pub const Panel = struct {
     }
 
     /// True when web suggestions for `text` must be fetched.
-    fn answer(p: *Panel, text: []const u8, force_files: bool) !bool {
+    fn answer(p: *Panel, text: []const u8) !bool {
         const a = p.list.beginQuery(text);
         p.files_due = false;
+        p.file_seq += 1;
         if (text.len == 0) {
             p.base_rows = try copyRows(a, p.frequentApps());
-        } else if (p.catalog.files == null) {
-            p.base_rows = try p.catalog.query(a, text);
-        } else if (force_files or p.file_search_s <= file_search_budget_s) {
-            const started = p.clock.now();
-            p.base_rows = try p.catalog.query(a, text);
-            p.file_search_s = p.clock.now() - started;
-        } else {
+        } else if (p.async_files and p.catalog.files != null) {
             p.base_rows = try p.catalog.queryApps(a, text);
             p.files_due = true;
+        } else {
+            p.base_rows = try p.catalog.query(a, text);
         }
         p.suggestions = &.{};
         var need_fetch = false;

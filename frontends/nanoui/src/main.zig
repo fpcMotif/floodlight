@@ -50,7 +50,8 @@ const Shell = struct {
     presence: Presence = undefined,
     submitting: bool = false,
     compacting: bool = false,
-    landing_files: bool = false,
+    searcher: search.FileSearcher,
+    adopt_gate: search.AdoptGate = .{},
     headless: bool = false,
     memory_step: u32 = 0,
 
@@ -144,18 +145,24 @@ const Shell = struct {
         return s.panel.lastFrameValid();
     }
 
-    fn searchFiles(ctx: ?*anyopaque) void {
+    fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.landing_files) return;
-        s.landing_files = true;
-        nanoui.App.after(0, s, landFiles);
+        const view = s.files.view() orelse return;
+        s.searcher.submit(seq, view, text);
     }
 
-    fn landFiles(ctx: ?*anyopaque) callconv(.c) void {
+    fn filesReady(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, filesLanded);
+    }
+
+    fn filesLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.landing_files = false;
-        s.panel.landFiles();
-        if (!s.presence.isHidden()) s.panel_window.redraw();
+        const taken = s.searcher.takeResult();
+        if (taken.result) |res| {
+            s.panel.landFiles(res.seq, res.view, res.slice());
+            if (!s.presence.isHidden()) s.panel_window.redraw();
+        }
+        if (s.adopt_gate.takeAfterSearch(taken.active)) s.finishAdopt();
     }
 
     fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
@@ -573,13 +580,19 @@ const Shell = struct {
     fn indexLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.panel.indexing = s.files.busy();
+        if (s.adopt_gate.requestAdopt(s.searcher.isActive())) s.finishAdopt();
+        if (!s.presence.isHidden()) s.panel_window.redraw();
+    }
+
+    fn finishAdopt(s: *Shell) void {
         if (s.files.adopt()) {
-            s.panel.calibrateFileSearch();
             // The rows answer the old index: ask again.
             s.panel.list.markStale();
-            if (!s.presence.isHidden()) s.panel.refresh();
+            if (!s.presence.isHidden()) {
+                s.panel.refresh();
+                s.panel_window.redraw();
+            }
         }
-        if (!s.presence.isHidden()) s.panel_window.redraw();
     }
 };
 
@@ -599,8 +612,11 @@ pub fn main(init: std.process.Init) !void {
     const memory_session = hasFlag(args, memory_session_flag);
     const memory_seed = hasFlag(args, memory_seed_flag);
 
-    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .headless = headless };
+    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .searcher = .{ .io = init.io }, .headless = headless };
     defer shell.files.close();
+    shell.searcher.ready_ctx = &shell;
+    shell.searcher.ready_fn = Shell.filesReady;
+    defer shell.searcher.stop();
     shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
@@ -633,7 +649,13 @@ pub fn main(init: std.process.Init) !void {
         .search_files = Shell.searchFiles,
     });
     defer shell.panel.deinit();
-    shell.panel.calibrateFileSearch();
+    if (!headless) {
+        if (shell.searcher.start()) |_| {
+            shell.panel.async_files = true;
+        } else |err| {
+            std.log.err("file search: no worker thread: {s}", .{@errorName(err)});
+        }
+    }
     if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
         defer gpa.free(v);
         if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {

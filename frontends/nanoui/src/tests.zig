@@ -322,14 +322,24 @@ const FakeClock = struct {
 const StubHooks = struct {
     requests: u32 = 0,
     file_searches: u32 = 0,
+    last_file_seq: u64 = 0,
+    last_file_buf: [256]u8 = undefined,
+    last_file_len: usize = 0,
     clock: FakeClock = .{},
     fn request(ctx: ?*anyopaque) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
     }
-    fn searchFiles(ctx: ?*anyopaque) void {
+    fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.file_searches += 1;
+        h.last_file_seq = seq;
+        const n = @min(text.len, h.last_file_buf.len);
+        @memcpy(h.last_file_buf[0..n], text[0..n]);
+        h.last_file_len = n;
+    }
+    fn lastFileQuery(h: *const StubHooks) []const u8 {
+        return h.last_file_buf[0..h.last_file_len];
     }
     fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
         return null;
@@ -2625,7 +2635,7 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     tester.settle(0.1);
 
     hooks.clock.step = 0.01;
-    p.calibrateFileSearch();
+    p.async_files = true;
     tester.typeText("a");
     tester.frame();
     try t.expectEqual(@as(u32, 1), hooks.file_searches);
@@ -2633,7 +2643,10 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
     try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
 
-    p.landFiles();
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
     tester.frame();
     try t.expect(countRows(p.list.visible, .file) > 0);
     try t.expect(tester.hasText("kind-of-blue.flac"));
@@ -3420,7 +3433,7 @@ test "a search action keeps the row it named when the file rows land before the 
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     // Over the budget: apps answer first, files land on the next turn.
-    p.file_search_s = 1;
+    p.async_files = true;
     tester.typeText("cal");
     tester.settle(0.2);
     try t.expect(p.files_due);
@@ -3429,7 +3442,10 @@ test "a search action keeps the row it named when the file rows land before the 
     const asked = (p.pending orelse return error.NoAction).open;
     const want = try t.allocator.dupe(u8, asked);
     defer t.allocator.free(want);
-    p.landFiles();
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
     try t.expectEqualStrings(want, asked);
 }
 
@@ -3688,11 +3704,14 @@ test "a late file row keeps its date" {
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
 
-    p.file_search_s = 1;
+    p.async_files = true;
     tester.typeText("return");
     tester.settle(0.1);
     try t.expect(p.files_due);
-    p.landFiles();
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
     tester.frame();
     try t.expect(tester.hasText("2025-return.pdf"));
     try t.expect(tester.hasText("Today at 9:41 AM"));
@@ -4344,4 +4363,215 @@ test "a picture that does not shrink is marked and kept" {
     var name: [128]u8 = undefined;
     try t.expect(hasFile(&ts.tmp, imageFileName(&name, png, "png")));
     try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "app rows show before file rows land" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("a");
+    tester.frame();
+    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    try t.expect(countRows(p.list.visible, .file) > 0);
+}
+
+test "a late answer for an old query is dropped" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("re");
+    tester.frame();
+    const old_seq = hooks.last_file_seq;
+    const view = files.view().?;
+    var old_hits: [search.max_file_hits]core.search.Hit = undefined;
+    const old_count = search.searchFiles(view, "re", &old_hits);
+    try t.expect(old_count > 0);
+
+    tester.typeText("z");
+    tester.frame();
+    try t.expect(hooks.last_file_seq != old_seq);
+    const before_len = p.list.visible.len;
+
+    p.landFiles(old_seq, view, old_hits[0..old_count]);
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+    try t.expectEqual(before_len, p.list.visible.len);
+    try t.expectEqualStrings("rez", p.list.answered());
+    try t.expect(p.files_due);
+}
+
+test "late file rows keep the selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("a");
+    tester.frame();
+    try t.expect(p.list.visible.len >= 3);
+    p.list.selected = 2;
+    const chosen_path = try t.allocator.dupe(u8, p.list.visible[2].path);
+    defer t.allocator.free(chosen_path);
+
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+
+    try t.expect(countRows(p.list.visible, .file) > 0);
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
+    try t.expect(p.list.selected > 2);
+}
+
+test "an index is not swapped while a search runs" {
+    var gate: search.AdoptGate = .{};
+    try t.expect(!gate.requestAdopt(true));
+    try t.expect(gate.pending);
+    try t.expect(!gate.takeAfterSearch(true));
+    try t.expect(gate.pending);
+    try t.expect(gate.takeAfterSearch(false));
+    try t.expect(!gate.pending);
+    try t.expect(!gate.takeAfterSearch(false));
+    try t.expect(gate.requestAdopt(false));
+    try t.expect(!gate.pending);
+}
+
+test "the worker searches only the newest waiting query" {
+    const Ctx = struct {
+        io: std.Io,
+        mutex: std.Io.Mutex = .init,
+        entered: std.Io.Semaphore = .{ .permits = 0 },
+        gate: std.Io.Semaphore = .{ .permits = 0 },
+        done: std.Io.Semaphore = .{ .permits = 0 },
+        seen: [8][64]u8 = undefined,
+        seen_lens: [8]usize = @splat(0),
+        seen_count: usize = 0,
+
+        fn searchFn(raw: ?*anyopaque, _: core.index.View, text: []const u8, _: []core.search.Hit) usize {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.mutex.lockUncancelable(c.io);
+            const idx = c.seen_count;
+            c.seen_count += 1;
+            const n = @min(text.len, 64);
+            @memcpy(c.seen[idx][0..n], text[0..n]);
+            c.seen_lens[idx] = n;
+            c.mutex.unlock(c.io);
+            if (idx == 0) {
+                c.entered.post(c.io);
+                c.gate.waitUncancelable(c.io);
+            }
+            return 0;
+        }
+
+        fn readyFn(raw: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.done.post(c.io);
+        }
+    };
+
+    var ctx: Ctx = .{ .io = t.io };
+    var searcher: search.FileSearcher = .{
+        .io = t.io,
+        .search_ctx = &ctx,
+        .search_fn = Ctx.searchFn,
+        .ready_ctx = &ctx,
+        .ready_fn = Ctx.readyFn,
+    };
+    try searcher.start();
+    defer searcher.stop();
+
+    const empty_view: core.index.View = .{
+        .path_mask = &.{},
+        .name_mask = &.{},
+        .parent = &.{},
+        .name_off = &.{},
+        .name_len = &.{},
+        .flags = &.{},
+        .depth = &.{},
+        .names = &.{},
+        .root = "",
+    };
+
+    searcher.submit(1, empty_view, "first");
+    ctx.entered.waitUncancelable(t.io);
+    searcher.submit(2, empty_view, "second");
+    searcher.submit(3, empty_view, "third");
+    ctx.gate.post(t.io);
+
+    ctx.done.waitUncancelable(t.io);
+    ctx.done.waitUncancelable(t.io);
+
+    ctx.mutex.lockUncancelable(t.io);
+    defer ctx.mutex.unlock(t.io);
+    try t.expectEqual(@as(usize, 2), ctx.seen_count);
+    try t.expectEqualStrings("first", ctx.seen[0][0..ctx.seen_lens[0]]);
+    try t.expectEqualStrings("third", ctx.seen[1][0..ctx.seen_lens[1]]);
+    try t.expectEqual(@as(u64, 3), searcher.takeResult().result.?.seq);
+}
+
+test "the synchronous path still returns file rows" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    try t.expect(!p.async_files);
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("return");
+    tester.frame();
+    try t.expect(!p.files_due);
+    try t.expectEqual(@as(u32, 0), hooks.file_searches);
+    try t.expect(countRows(p.list.visible, .file) > 0);
 }
