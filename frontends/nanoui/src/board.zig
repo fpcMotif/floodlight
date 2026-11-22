@@ -94,6 +94,7 @@ pub const Board = struct {
     facts_id: ?i64 = null,
     thumbnails: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
     thumb_arena: std.heap.ArenaAllocator,
+    truncated: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
         var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa) };
@@ -111,6 +112,7 @@ pub const Board = struct {
     pub fn forget(b: *Board) void {
         b.list.reset();
         b.list.markStale();
+        b.truncated = false;
         b.releaseDetail();
         b.thumbnails.clearAndFree(b.thumb_arena.child_allocator);
         _ = b.thumb_arena.reset(.free_all);
@@ -131,9 +133,32 @@ pub const Board = struct {
         };
     }
 
+    fn canNarrow(b: *const Board, query: []const u8) bool {
+        if (b.list.stale or b.list.failed or b.truncated or b.list.rows.len >= clipboard.search_limit) return false;
+        const prev = std.mem.trim(u8, b.list.answered(), " ");
+        const next = std.mem.trim(u8, query, " ");
+        return prev.len > 0 and std.mem.startsWith(u8, next, prev);
+    }
+
     fn answer(b: *Board, query: []const u8) !void {
+        if (b.canNarrow(query)) {
+            const gpa = b.list.arena.child_allocator;
+            var tmp: std.heap.ArenaAllocator = .init(gpa);
+            defer tmp.deinit();
+            const ta = tmp.allocator();
+            var kept: std.ArrayList(Entry) = .empty;
+            for (b.list.rows) |e| {
+                if (e.matches(query)) try kept.append(ta, try e.dupe(ta));
+            }
+            const a = b.list.beginQuery(query);
+            const rows = try a.alloc(Entry, kept.items.len);
+            for (kept.items, 0..) |e, i| rows[i] = try e.dupe(a);
+            try b.list.setRows(query, rows);
+            return;
+        }
         const a = b.list.beginQuery(query);
         const rows = if (b.store) |s| try s.list(a, query) else &.{};
+        b.truncated = rows.len >= clipboard.search_limit;
         try b.list.setRows(query, rows);
     }
 

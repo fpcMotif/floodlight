@@ -4014,3 +4014,150 @@ test "beginning again polls fast again" {
     f.begin();
     try t.expectEqual(permission.poll_ms, f.pollDelayMs());
 }
+
+test "in-memory matching agrees with the store" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    _ = try store.add(.{ .text = "Meet at noon" }, "x", "Notes", 10);
+    _ = try store.add(.{ .text = "SOME NOTE" }, "x", "Notes", 11);
+    _ = try store.add(.{ .text = "\u{00C9}lan vital" }, "x", "Notes", 12);
+    _ = try store.add(.{ .text = "caf\u{00E9} menu" }, "x", "Notes", 13);
+    _ = try store.add(.{ .file = "/tmp/meeting-notes.txt" }, "x", "Finder", 14);
+    _ = try store.add(.{ .image = .{ .name = "Screen Shot", .png = "pngdata", .thumbnail = "t", .width = 640, .height = 480 } }, "x", "Screenshot", 15);
+    var text_buf: [64]u8 = undefined;
+    for (0..24) |i| {
+        const s = try std.fmt.bufPrint(&text_buf, "Sample entry {d}", .{i});
+        _ = try store.add(.{ .text = s }, "x", "Notes", @floatFromInt(20 + i));
+    }
+
+    const all = try store.list(a, "");
+    try t.expectEqual(@as(usize, 30), all.len);
+
+    const queries = [_][]const u8{ "me", "ME", "\u{00E9}", "640", "640\u{00D7}480", "x48", "tmp" };
+    for (queries) |q| {
+        const got = try store.list(a, q);
+        var match_count: usize = 0;
+        for (all) |e| {
+            const m = e.matches(q);
+            if (m) match_count += 1;
+            const in_store = for (got) |g| {
+                if (g.id == e.id) break true;
+            } else false;
+            try t.expectEqual(in_store, m);
+        }
+        try t.expectEqual(got.len, match_count);
+    }
+}
+
+test "a longer query narrows without asking the store" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello world" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "help desk" }, "x", "Notes", 20);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 30);
+    _ = try f.store.add(.{ .text = "shell script" }, "x", "Notes", 40);
+    try f.show();
+
+    f.tester.typeText("he");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+
+    _ = try f.store.add(.{ .text = "helium balloon" }, "x", "Notes", 50);
+
+    f.tester.typeText("l");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 3), f.p.board.list.rows.len);
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const fresh = try f.store.list(arena.allocator(), "hel");
+    try t.expectEqual(@as(usize, 4), fresh.len);
+    var expected: [3]i64 = undefined;
+    var n: usize = 0;
+    for (fresh) |e| {
+        if (!std.mem.eql(u8, e.text, "helium balloon")) {
+            expected[n] = e.id;
+            n += 1;
+        }
+    }
+    try t.expectEqual(@as(usize, 3), n);
+    for (f.p.board.list.rows, 0..) |r, i| try t.expectEqual(expected[i], r.id);
+}
+
+test "a query that hit the limit asks the store again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var buf: [64]u8 = undefined;
+    for (0..10) |i| {
+        const s = try std.fmt.bufPrint(&buf, "entry en match {d}", .{i});
+        _ = try f.store.add(.{ .text = s }, "x", "Notes", @floatFromInt(10 + i));
+    }
+    for (0..clipboard.search_limit) |i| {
+        const s = try std.fmt.bufPrint(&buf, "alpha e item {d}", .{i});
+        _ = try f.store.add(.{ .text = s }, "x", "Notes", @floatFromInt(100 + i));
+    }
+    try f.show();
+
+    f.tester.typeText("e");
+    f.tester.frame();
+    try t.expectEqual(clipboard.search_limit, f.p.board.list.rows.len);
+
+    f.tester.typeText("n");
+    f.tester.frame();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const expected = try f.store.list(arena.allocator(), "en");
+    try t.expectEqual(expected.len, f.p.board.list.rows.len);
+    for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
+}
+
+test "history that changed is asked again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello one" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 20);
+    try f.show();
+
+    f.tester.typeText("he");
+    f.tester.frame();
+
+    _ = try f.store.add(.{ .text = "hello new" }, "x", "Notes", 30);
+    f.p.board.list.markStale();
+
+    f.tester.typeText("l");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 2), f.p.board.list.rows.len);
+    try t.expectEqualStrings("hello new", f.p.board.list.rows[0].text);
+}
+
+test "a shorter query asks the store again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello world" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 20);
+    try f.show();
+
+    f.tester.typeText("hel");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 1), f.p.board.list.rows.len);
+
+    f.tester.key(.backspace);
+    f.tester.frame();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const expected = try f.store.list(arena.allocator(), "he");
+    try t.expectEqual(expected.len, f.p.board.list.rows.len);
+    for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
+}

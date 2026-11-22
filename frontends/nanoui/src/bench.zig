@@ -8,6 +8,7 @@ const ui = nanoui.ui;
 const core = @import("floodlight_core");
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
+const board_mod = @import("board.zig");
 const panel_mod = @import("panel.zig");
 const mac = @import("mac.zig");
 const presence = @import("presence.zig");
@@ -467,6 +468,108 @@ pub fn measureHotKeyToBuiltFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
     return summarize(samples);
 }
 
+pub const board_entries: usize = 5000;
+pub const board_runs: usize = 40;
+
+const board_queries = [_][]const u8{ "m", "me", "mee", "meet" };
+
+const BoardBenchResult = struct {
+    all: Stats,
+    single_m: Stats,
+};
+
+fn seedBoardStore(gpa: std.mem.Allocator) !struct { root: []u8, store: clipboard.Store } {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try std.fmt.allocPrint(gpa, "/tmp/floodlight-board-bench-{d}", .{std.c.getpid()});
+    errdefer gpa.free(root);
+    std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    var dir = try std.Io.Dir.cwd().createDirPathOpen(io, root, .{});
+    dir.close(io);
+    errdefer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    var store = try clipboard.Store.open(":memory:", root);
+    errdefer store.close();
+    const filler = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo nebula oscar papa quebec router sierra tango upsilon victor whiskey xray yankee zulu ";
+    var buf: [600]u8 = undefined;
+    for (0..board_entries) |i| {
+        const prefix: []const u8 = if (i % 26 == 0) "meeting notes " else "";
+        const text = try std.fmt.bufPrint(&buf, "{s}{s}{s}{s} #{d}", .{ prefix, filler, filler, filler, i });
+        _ = try store.add(.{ .text = text }, "com.apple.Notes", "Notes", @floatFromInt(i + 1));
+    }
+    return .{ .root = root, .store = store };
+}
+
+fn freeBoardStore(gpa: std.mem.Allocator, root: []u8, store: *clipboard.Store) void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    store.close();
+    std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    gpa.free(root);
+}
+
+pub fn measureBoardKeystroke(gpa: std.mem.Allocator, runs: usize) !Stats {
+    var seeded = try seedBoardStore(gpa);
+    defer freeBoardStore(gpa, seeded.root, &seeded.store);
+
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    for (board_queries) |q| {
+        _ = arena.reset(.retain_capacity);
+        const rows = try seeded.store.list(arena.allocator(), q);
+        if (rows.len == 0) return error.EmptyPublication;
+    }
+
+    const samples = try gpa.alloc(u64, runs);
+    defer gpa.free(samples);
+    for (samples, 0..) |*s, i| {
+        const q = board_queries[i % board_queries.len];
+        _ = arena.reset(.retain_capacity);
+        const t0 = nowNs();
+        const rows = try seeded.store.list(arena.allocator(), q);
+        s.* = nowNs() - t0;
+        if (rows.len == 0) return error.EmptyPublication;
+    }
+    return summarize(samples);
+}
+
+fn measureBoardKeystrokes(gpa: std.mem.Allocator, runs: usize) !BoardBenchResult {
+    var seeded = try seedBoardStore(gpa);
+    defer freeBoardStore(gpa, seeded.root, &seeded.store);
+
+    var b: board_mod.Board = .init(gpa, &seeded.store, .wall_clock);
+    defer b.deinit();
+
+    for (board_queries) |q| {
+        b.refresh(q);
+        if (b.list.visible.len == 0) return error.EmptyPublication;
+    }
+
+    const samples = try gpa.alloc(u64, runs);
+    defer gpa.free(samples);
+    const single_samples = try gpa.alloc(u64, @max(1, runs / board_queries.len));
+    defer gpa.free(single_samples);
+    var single_n: usize = 0;
+    for (samples, 0..) |*s, i| {
+        const idx = i % board_queries.len;
+        const q = board_queries[idx];
+        const t0 = nowNs();
+        b.refresh(q);
+        s.* = nowNs() - t0;
+        if (b.list.visible.len == 0) return error.EmptyPublication;
+        if (idx == 0 and single_n < single_samples.len) {
+            single_samples[single_n] = s.*;
+            single_n += 1;
+        }
+    }
+    return .{
+        .all = summarize(samples),
+        .single_m = summarize(single_samples[0..single_n]),
+    };
+}
+
+pub fn measureBoardKeystrokeNarrowed(gpa: std.mem.Allocator, runs: usize) !Stats {
+    return (try measureBoardKeystrokes(gpa, runs)).all;
+}
+
 pub fn withinBudgets(keystroke: Stats, summon: Stats, submit: Stats) bool {
     return keystroke.p99Us() <= Budgets.keystroke_to_publication_p99_us and
         summon.p99Us() <= Budgets.hotkey_to_laid_out_frame_p99_us and
@@ -492,6 +595,8 @@ pub fn main(init: std.process.Init) !void {
     const built = try measureKeystrokeToBuiltFrame(gpa, frame_runs);
     const icons = try measureFirstFrameWithIcons(gpa, icon_runs);
     const built_summon = try measureHotKeyToBuiltFrame(gpa, default_runs);
+    const board_keystroke = try measureBoardKeystroke(gpa, board_runs);
+    const board_narrowed = try measureBoardKeystrokes(gpa, board_runs);
 
     try out.print(
         "FLOODLIGHT_BENCH metric=keystroke_to_publication apps={d} runs={d} p50_us={d:.2} p99_us={d:.2} budget_p99_us={d:.2}\n",
@@ -516,6 +621,14 @@ pub fn main(init: std.process.Init) !void {
     try out.print(
         "FLOODLIGHT_BENCH metric=hotkey_to_built_frame apps={d} runs={d} p50_us={d:.2} p99_us={d:.2} budget_p99_us={d:.2}\n",
         .{ catalog_app_count, built_summon.runs, built_summon.p50Us(), built_summon.p99Us(), Budgets.hotkey_to_built_frame_p99_us },
+    );
+    try out.print(
+        "FLOODLIGHT_BENCH metric=board_keystroke entries={d} runs={d} p50_us={d:.2} p99_us={d:.2}\n",
+        .{ board_entries, board_keystroke.runs, board_keystroke.p50Us(), board_keystroke.p99Us() },
+    );
+    try out.print(
+        "FLOODLIGHT_BENCH metric=board_keystroke_narrowed entries={d} runs={d} p50_us={d:.2} p99_us={d:.2} m_p50_us={d:.2}\n",
+        .{ board_entries, board_narrowed.all.runs, board_narrowed.all.p50Us(), board_narrowed.all.p99Us(), board_narrowed.single_m.p50Us() },
     );
     try out.flush();
 

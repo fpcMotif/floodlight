@@ -80,6 +80,36 @@ pub const Entry = struct {
         const d = detail orelse return head;
         return std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ head, d }) catch head;
     }
+
+    pub fn matches(e: Entry, query: []const u8) bool {
+        const q = std.mem.trim(u8, query, " ");
+        if (q.len == 0) return true;
+        if (e.kind != .image) return containsIgnoreCase(e.text, q);
+        var buf: [512]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "{s} {d}\u{00D7}{d}", .{ e.text, e.width, e.height })) |haystack| {
+            return containsIgnoreCase(haystack, q);
+        } else |_| {
+            if (containsIgnoreCase(e.text, q)) return true;
+            var dim: [64]u8 = undefined;
+            const d = std.fmt.bufPrint(&dim, " {d}\u{00D7}{d}", .{ e.width, e.height }) catch return false;
+            return containsIgnoreCase(d, q);
+        }
+    }
+
+    pub fn dupe(e: Entry, arena: std.mem.Allocator) !Entry {
+        var out = e;
+        out.text = try arena.dupe(u8, e.text);
+        out.source = try arena.dupe(u8, e.source);
+        out.source_name = try arena.dupe(u8, e.source_name);
+        out.thumbnail = try arena.dupe(u8, e.thumbnail);
+        out.content = switch (e.content) {
+            .plain, .color => e.content,
+            .link => |d| .{ .link = try arena.dupe(u8, d) },
+            .code => |lang| .{ .code = try arena.dupe(u8, lang) },
+            .path => |path| .{ .path = try arena.dupe(u8, path) },
+        };
+        return out;
+    }
 };
 
 const sensitive_source_markers = [_][]const u8{
@@ -472,7 +502,7 @@ pub const compact_after_days = 7;
 pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000, queries: u32 = 1000 };
 pub const Compactor = *const fn (arena: std.mem.Allocator, png: []const u8) ?[]const u8;
 const window = 1000;
-const search_limit = 200;
+pub const search_limit = 200;
 
 const lite = struct {
     const Db = opaque {};
