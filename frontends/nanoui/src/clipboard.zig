@@ -727,11 +727,15 @@ pub const Store = struct {
         }
     }
 
-    fn removeWhere(s: Store, comptime condition: []const u8, args: anytype) !void {
+    fn removeWhere(s: Store, comptime condition: []const u8, args: anytype, defer_release: bool) !void {
         try s.run("INSERT INTO released SELECT DISTINCT hash FROM entries WHERE (" ++ condition ++ ") AND hash IS NOT NULL AND image_format != ''", args);
         try s.run("DELETE FROM entries WHERE " ++ condition, args);
+        if (!defer_release) s.releaseFiles();
+    }
+
+    fn releaseFiles(s: Store) void {
         {
-            const stmt = try s.prepare("SELECT DISTINCT hash FROM released WHERE hash NOT IN (SELECT hash FROM entries WHERE hash IS NOT NULL AND image_format != '')");
+            const stmt = s.prepare("SELECT DISTINCT hash FROM released WHERE hash NOT IN (SELECT hash FROM entries WHERE hash IS NOT NULL AND image_format != '')") catch return;
             defer _ = lite.sqlite3_finalize(stmt);
             while (lite.sqlite3_step(stmt) == lite.row) {
                 const hash = columnBlob(stmt, 0);
@@ -739,17 +743,27 @@ pub const Store = struct {
                 s.unlinkImage(hash, "avif");
             }
         }
-        try s.run("DELETE FROM released", .{});
+        s.run("DELETE FROM released", .{}) catch {};
         _ = lite.sqlite3_exec(s.db, "PRAGMA incremental_vacuum", null, null, null);
     }
 
-    fn keepWithinBudget(s: Store) !void {
-        try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)});
+    fn keepWithinBudget(s: Store, defer_release: bool) !void {
+        if ((s.int("SELECT count(*) FROM entries WHERE pinned_at IS NULL", .{}) orelse 0) > @as(i64, s.budget.entries)) {
+            try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)}, defer_release);
+        }
         // The newest row is the copy `add` just reported stored: pinned bytes
         // alone can exceed the budget, and it must not go with the rest.
-        while ((s.int(stored_bytes_sql, .{}) orelse 0) > s.budget.bytes) {
+        var total = s.int(stored_bytes_sql, .{}) orelse 0;
+        var evicted: usize = 0;
+        while (total > @as(i64, @intCast(s.budget.bytes))) {
             const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL AND id != (SELECT max(id) FROM entries) ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
-            try s.removeWhere("id = ?", .{id});
+            const est = s.int("SELECT length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0) + stored_bytes FROM entries WHERE id = ?", .{id}) orelse 0;
+            try s.removeWhere("id = ?", .{id}, defer_release);
+            evicted += 1;
+            total -= est;
+            if (evicted % 16 == 0 or total <= @as(i64, @intCast(s.budget.bytes))) {
+                total = s.int(stored_bytes_sql, .{}) orelse 0;
+            }
         }
     }
 
@@ -794,6 +808,10 @@ pub const Store = struct {
 
     /// Stores `cap` unless it repeats the newest entry. True when stored.
     pub fn add(s: Store, cap: Capture, source: []const u8, source_name: []const u8, now: f64) !bool {
+        return s.addEntry(cap, source, source_name, now, false);
+    }
+
+    fn addEntry(s: Store, cap: Capture, source: []const u8, source_name: []const u8, now: f64, defer_release: bool) !bool {
         var hash: [32]u8 = undefined;
         const kind: Kind, const text: []const u8 = switch (cap) {
             .text => |t| .{ .text, t },
@@ -814,15 +832,21 @@ pub const Store = struct {
             @as(i64, img.width),              @as(i64, img.height),            @as(i64, @intCast(img.png.len)), Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
             if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               storedDetail(&detail_buf, content),                  sensitive,
         });
-        try s.keepWithinBudget();
+        try s.keepWithinBudget(defer_release);
         return true;
     }
 
     /// Records what `board` holds, as copied from `app`. True when any of it
     /// was stored; a repeat of the newest entry is not.
     pub fn capture(s: Store, arena: std.mem.Allocator, board: Pasteboard, app: App, now: f64) !bool {
+        const items = captures(arena, board, app.bundle_id);
+        if (items.len == 0) return false;
+        try s.run("BEGIN IMMEDIATE", .{});
+        errdefer s.run("ROLLBACK", .{}) catch {};
         var stored = false;
-        for (captures(arena, board, app.bundle_id)) |cap| stored = (try s.add(cap, app.bundle_id, app.name, now)) or stored;
+        for (items) |cap| stored = (try s.addEntry(cap, app.bundle_id, app.name, now, true)) or stored;
+        try s.run("COMMIT", .{});
+        if (stored) s.releaseFiles();
         return stored;
     }
 
@@ -841,13 +865,18 @@ pub const Store = struct {
         return .none;
     }
 
-    fn repeatsNewest(s: Store, kind: Kind, text: []const u8, hash: ?*const [32]u8) bool {
-        const stmt = s.prepare("SELECT kind, text, hash FROM entries ORDER BY pinned_at IS NOT NULL, created_at DESC LIMIT 1") catch return false;
+    fn repeatsQuery(s: Store, sql: []const u8, kind: Kind, text: []const u8, hash: ?*const [32]u8) ?bool {
+        const stmt = s.prepare(sql) catch return false;
         defer _ = lite.sqlite3_finalize(stmt);
-        if (lite.sqlite3_step(stmt) != lite.row) return false;
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
         if (!std.mem.eql(u8, columnText(stmt, 0), @tagName(kind))) return false;
         if (hash) |h| return std.mem.eql(u8, columnBlob(stmt, 2), h);
         return std.mem.eql(u8, columnText(stmt, 1), text);
+    }
+
+    fn repeatsNewest(s: Store, kind: Kind, text: []const u8, hash: ?*const [32]u8) bool {
+        return s.repeatsQuery("SELECT kind, text, hash FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT 1", kind, text, hash) orelse
+            s.repeatsQuery("SELECT kind, text, hash FROM entries ORDER BY created_at DESC LIMIT 1", kind, text, hash) orelse false;
     }
 
     /// Pinned first by pin time, then newest first. An empty query lists
@@ -902,13 +931,17 @@ pub const Store = struct {
     }
 
     pub fn delete(s: Store, id: i64) !void {
-        try s.removeWhere("id = ?", .{id});
+        try s.removeWhere("id = ?", .{id}, false);
     }
 
     /// Drops unpinned entries older than `days`; pinned ones stay.
     pub fn prune(s: Store, now: f64, days: u32) !void {
-        try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
-        try s.keepWithinBudget();
+        try s.run("BEGIN IMMEDIATE", .{});
+        errdefer s.run("ROLLBACK", .{}) catch {};
+        try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400}, true);
+        try s.keepWithinBudget(true);
+        try s.run("COMMIT", .{});
+        s.releaseFiles();
     }
 
     pub fn recordQuery(s: Store, scope: QueryScope, raw: []const u8, now: f64) !void {

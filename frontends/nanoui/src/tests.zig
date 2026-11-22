@@ -4161,3 +4161,117 @@ test "a shorter query asks the store again" {
     try t.expectEqual(expected.len, f.p.board.list.rows.len);
     for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
 }
+
+test "a repeat of the newest unpinned entry is not stored again" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try t.expect(try store.add(.{ .text = "old" }, "", "Notes", 10));
+    try t.expect(try store.add(.{ .text = "a" }, "", "Notes", 20));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try store.list(arena.allocator(), "");
+    try store.togglePin(rows[1].id, 25);
+    try t.expect(!try store.add(.{ .text = "a" }, "", "Notes", 30));
+}
+
+test "with only pinned entries, a repeat of the newest pinned one is not stored" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try t.expect(try store.add(.{ .text = "a" }, "", "Notes", 10));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try store.list(arena.allocator(), "");
+    try store.togglePin(rows[0].id, 20);
+    try t.expect(!try store.add(.{ .text = "a" }, "", "Notes", 30));
+}
+
+test "the entry count stays at the budget" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    store.budget = .{ .entries = 5 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for (0..8) |i| {
+        const txt = try std.fmt.allocPrint(a, "item-{d}", .{i});
+        _ = try store.add(.{ .text = txt }, "", "Notes", @floatFromInt(10 + i));
+    }
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expectEqualStrings("item-7", rows[0].text);
+    try t.expectEqualStrings("item-3", rows[4].text);
+}
+
+test "the byte budget evicts past sixteen rows and corrects shared picture estimates" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    store.budget = .{ .bytes = 500, .entries = 100 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var pad: [100]u8 = undefined;
+    for (0..22) |i| {
+        @memset(&pad, @intCast('a' + i % 26));
+        const txt = try std.fmt.allocPrint(a, "{d:0>2}-{s}", .{ i, pad[0..97] });
+        _ = try store.add(.{ .text = txt }, "", "Notes", @floatFromInt(10 + i));
+    }
+    const rows = try store.list(a, "");
+    try t.expect(rows.len <= 5);
+    try t.expectEqualStrings("21-", rows[0].text[0..3]);
+
+    var ts2 = try TmpStore.init();
+    defer ts2.deinit();
+    var store2 = try openMemory(&ts2);
+    defer store2.close();
+    store2.budget = .{ .bytes = 1200, .entries = 100 };
+    var small: [140]u8 = undefined;
+    @memset(&small, 's');
+    var big: [1000]u8 = undefined;
+    @memset(&big, 'p');
+    _ = try store2.add(picture(&big), "", "Preview", 10);
+    _ = try store2.add(.{ .text = &small }, "", "Notes", 20);
+    _ = try store2.add(picture(&big), "", "Preview", 30);
+    var huge: [1040]u8 = undefined;
+    @memset(&huge, 'q');
+    _ = try store2.add(.{ .text = &huge }, "", "Notes", 40);
+    const rows2 = try store2.list(a, "");
+    try t.expectEqual(@as(usize, 2), rows2.len);
+    try t.expectEqualStrings(&huge, rows2[0].text);
+    try t.expectEqualStrings(&small, rows2[1].text);
+}
+
+test "a shared picture file survives while one entry still uses it" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    store.budget = .{ .entries = 2 };
+    const png = "\x89PNG shared image bytes";
+    var name: [128]u8 = undefined;
+    const file = imageFileName(&name, png, "png");
+    _ = try store.add(picture(png), "", "Preview", 10);
+    _ = try store.add(.{ .text = "middle" }, "", "Notes", 20);
+    _ = try store.add(picture(png), "", "Preview", 30);
+    try t.expect(hasFile(&ts.tmp, file));
+}
+
+test "a failed capture stores nothing" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    try raw_sqlite.run(ts.db, "CREATE TRIGGER fail_boom BEFORE INSERT ON entries WHEN NEW.text = '/tmp/boom' BEGIN SELECT RAISE(ABORT, 'boom'); END;");
+    var fake: FakePasteboard = .{ .files = &.{ "/tmp/a", "/tmp/b", "/tmp/boom" } };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    try t.expectError(error.ClipboardStore, store.capture(arena.allocator(), fake.pasteboard(), notes_app, 10));
+    try t.expectEqual(@as(usize, 0), (try store.list(arena.allocator(), "")).len);
+}
