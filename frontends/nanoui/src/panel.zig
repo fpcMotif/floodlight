@@ -112,6 +112,7 @@ fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
 fn noSearchFiles(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
+pub const min_suggest_bytes = 2;
 pub const suggestion_cache_ttl: f64 = 5 * 60;
 
 const CachedSuggestions = struct {
@@ -619,7 +620,7 @@ pub const Panel = struct {
     fn shouldSuggest(p: *Panel, text: []const u8) bool {
         if (!p.web_suggestions_enabled or p.mode != .search) return false;
         const trimmed = std.mem.trim(u8, text, " \t\r\n");
-        if (trimmed.len == 0) return false;
+        if (trimmed.len < min_suggest_bytes) return false;
         if (isPathLike(text) or isPathLike(trimmed)) return false;
         return !hasLinkRow(p.base_rows);
     }

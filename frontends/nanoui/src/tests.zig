@@ -4575,3 +4575,30 @@ test "the synchronous path still returns file rows" {
     try t.expectEqual(@as(u32, 0), hooks.file_searches);
     try t.expect(countRows(p.list.visible, .file) > 0);
 }
+
+test "a one-byte query asks for no suggestions, a two-byte query and a single CJK character do" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("w");
+    try t.expectEqual(@as(usize, 0), spy.queries.items.len);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("we");
+    try t.expectEqualStrings("we", spy.queries.getLast());
+
+    p.reset();
+    tester.frame();
+    tester.typeText("\u{5929}");
+    try t.expectEqualStrings("\u{5929}", spy.queries.getLast());
+}

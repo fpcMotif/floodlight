@@ -18,6 +18,7 @@ const Presence = presence.Presence;
 const metrics = chrome.metrics;
 const gpa = std.heap.c_allocator;
 const clipboard_poll_ms = 500;
+const suggest_debounce_ms = 150;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;
 const entrance_alpha = 0.01;
@@ -424,15 +425,30 @@ const Shell = struct {
     fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (s.headless) return;
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, query, " \t\r\n")) catch return;
         const q_copy = gpa.dupe(u8, query) catch return;
         const req = gpa.create(SuggestRequest) catch {
             gpa.free(q_copy);
             return;
         };
         req.* = .{ .shell = s, .seq = seq, .query = q_copy };
+        nanoui.App.after(suggest_debounce_ms, req, sendSuggest);
+    }
+
+    fn sendSuggest(ctx: ?*anyopaque) callconv(.c) void {
+        const req: *SuggestRequest = @ptrCast(@alignCast(ctx));
+        const s = req.shell;
+        if (req.seq != s.panel.pending_suggest_seq) {
+            gpa.free(req.query);
+            gpa.destroy(req);
+            return;
+        }
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, req.query, " \t\r\n")) catch {
+            gpa.free(req.query);
+            gpa.destroy(req);
+            return;
+        };
         nanoui.http.fetch(gpa, .{ .url = url }, req, onSuggest);
     }
 
