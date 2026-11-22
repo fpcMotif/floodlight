@@ -323,7 +323,12 @@ private final class CountingPathResolver: PathResolving, @unchecked Sendable {
     private let underlying: FileSystemPathResolver
 
     init(fileManager: CountingFileManager, homeURL: URL) {
-        underlying = FileSystemPathResolver(fileManager: { fileManager }, homeURL: homeURL)
+        // The macOS 27 SDK marks `FileManager`'s Sendable conformance
+        // unavailable, so a subclass can no longer claim one. Every counter
+        // in `CountingFileManager` sits behind its lock, which is what makes
+        // sharing it with the resolver's background reads sound.
+        nonisolated(unsafe) let shared = fileManager
+        underlying = FileSystemPathResolver(fileManager: { shared }, homeURL: homeURL)
     }
 
     var resolvedQueries: [String] {

@@ -47,18 +47,14 @@ struct AssistantRunSessionTests {
     }
 
     @Test func startingTheSameRequestStillRejectsTheSupersededCompletion() async throws {
-        let runner = NonCooperativeAssistantRunner()
+        let runner = NonCooperativeAssistantRunner(calls: 2)
         let session = AssistantRunSession(runner: runner)
         let request = makeRequest()
 
         session.start(request)
-        try await waitUntil("first request starts") {
-            await runner.pendingCount == 1
-        }
+        try await runner.callStarted[0].wait()
         session.start(request)
-        try await waitUntil("replacement request starts") {
-            await runner.pendingCount == 2
-        }
+        try await runner.callStarted[1].wait()
 
         await runner.resolve(call: 0, with: "stale answer")
         await Task.yield()
@@ -177,8 +173,13 @@ private actor NonCooperativeAssistantRunner: AssistantProcessRunning {
     private var continuations: [Int: CheckedContinuation<String, Never>] = [:]
     private var nextCall = 0
 
-    var pendingCount: Int {
-        continuations.count
+    /// Gate `n` opens once call `n` is parked. A test waits on the call
+    /// itself: a count polled against a deadline timed out on a loaded
+    /// sanitizer runner that had simply not scheduled the main-actor task yet.
+    let callStarted: [PassGate]
+
+    init(calls: Int) {
+        callStarted = (0..<calls).map { _ in PassGate() }
     }
 
     func isAvailable(command: String) async -> Bool {
@@ -190,6 +191,7 @@ private actor NonCooperativeAssistantRunner: AssistantProcessRunning {
         nextCall += 1
         return await withCheckedContinuation { continuation in
             continuations[call] = continuation
+            if callStarted.indices.contains(call) { callStarted[call].open() }
         }
     }
 

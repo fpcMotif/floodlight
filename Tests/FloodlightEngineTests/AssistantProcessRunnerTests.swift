@@ -161,9 +161,11 @@ struct AssistantProcessRunnerTests {
             _ = try await runner.run(command: "sleep", arguments: ["30"])
             Issue.record("expected timedOut")
         } catch AssistantProcessError.timedOut {
-            // expected — and well under the process's own 30s sleep, so the
-            // watchdog (not the process exiting on its own) caused this.
-            #expect(start.duration(to: .now) < TestBudget.duration(.seconds(5)))
+            // Under the process's own 30s sleep, so the watchdog (not the
+            // process exiting on its own) caused this. The bound is half that
+            // sleep and deliberately unscaled: 5s lost to a runner that stalled
+            // every test for 5.5s, and a sanitizer-scaled bound would pass 30s.
+            #expect(start.duration(to: .now) < .seconds(15))
         } catch {
             Issue.record("expected timedOut, got \(error)")
         }
