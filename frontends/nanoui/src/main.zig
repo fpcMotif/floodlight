@@ -730,7 +730,7 @@ pub fn main(init: std.process.Init) !void {
         .visible = false,
         .content = .{ .view = .init(&shell.guidance, permission.Guidance.view) },
     });
-    if (mac.installSlab(shell.guide_window, 16, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
+    if (mac.installSlab(shell.guide_window, permission.metrics.radius, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
 
     shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence, .last_frame_valid = Shell.lastFrameValid } };
 

@@ -1,0 +1,278 @@
+/* Hallmark · shape: Workbench · genre: modern-minimal · theme: project tokens, preserved (deal download-floodlight-fast-native-e5e9·4d6d3fb1·2026-11-24·r0, Console 2/3 was nearest) · job: try · draw: manual
+ * hero: Stage · nav: the site's own · footer: the site's own · imagery: the product · signature: the panel answering "cal" and opening the clipboard board, live in the hero · console: none
+ * axes: dark/system-sans/chromatic-amber · posture: restrained · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 · weakest: S, a download page can be any app's; the hero runs the real panel instead of a badge and a button */
+
+/* Tokens this page adds. Everything else comes from tokens.css. */
+:root {
+  --dl-gap: clamp(2rem, 5vw, 4.5rem);
+  --dl-section-y: clamp(3.5rem, 8vw, 7rem);
+  --dl-light-mute: var(--fl-gray-deep);
+  --dl-step-fill: rgb(255 255 255 / 8%);
+  --dl-shot-edge: rgb(255 255 255 / 10%);
+  --dl-shot-edge-light: rgb(0 0 0 / 10%);
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+.dl {
+  background: var(--fl-black);
+  color: var(--fl-light);
+  --sec-mute: var(--fl-gray-on-dark);
+  --sec-line: var(--fl-hairline-dark);
+  --sec-fg: var(--fl-light);
+}
+
+.dl h1,
+.dl h2 {
+  min-width: 0;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+/* Hero ------------------------------------------------------------------- */
+
+.dl-hero {
+  padding-block: clamp(2rem, 6vh, 4.5rem) var(--dl-section-y);
+}
+
+.dl-hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: var(--dl-gap);
+}
+
+.dl-hero__copy {
+  display: grid;
+  justify-items: start;
+  gap: 1.125rem;
+}
+
+.dl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+/* The demo's stage switches to its phone design below 560px of width, so the
+   reserved box follows the same breakpoint and nothing moves when it mounts. */
+.dl-hero__stage {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.dl-demo {
+  aspect-ratio: 358 / 400;
+  overflow: hidden;
+  border-radius: var(--fl-r-card);
+}
+
+.dl-demo > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+@container (min-width: 560px) {
+  .dl-demo {
+    aspect-ratio: 760 / 440;
+  }
+}
+
+@media (min-width: 62rem) {
+  .dl-hero__grid {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+}
+
+/* Sections --------------------------------------------------------------- */
+
+.dl-sec {
+  padding-block: var(--dl-section-y);
+  border-top: 1px solid var(--sec-line);
+}
+
+.dl-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: var(--dl-gap);
+}
+
+.dl-copy {
+  display: grid;
+  justify-items: start;
+  gap: 1rem;
+}
+
+.dl-copy p {
+  max-width: 30rem;
+  color: var(--sec-mute);
+  font-size: var(--fl-t-lede);
+  line-height: 1.38;
+  letter-spacing: -0.012em;
+  text-wrap: pretty;
+}
+
+.dl-kbd {
+  padding: 0.05em 0.4em;
+  border: 1px solid var(--sec-line);
+  border-radius: 0.35em;
+  background: var(--dl-step-fill);
+  color: var(--sec-fg);
+  font-family: var(--fl-font);
+  font-size: 0.85em;
+}
+
+.dl-shot {
+  width: 100%;
+  height: auto;
+  border-radius: var(--fl-r-card);
+  outline: 1px solid var(--dl-shot-edge);
+  outline-offset: -1px;
+}
+
+.dl-sec--light .dl-shot {
+  outline-color: var(--dl-shot-edge-light);
+}
+
+@media (min-width: 62rem) {
+  .dl-split {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+
+  .dl-split--flip {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  .dl-split--flip .dl-copy {
+    order: 2;
+  }
+}
+
+/* Light band: the same panel in the light appearance */
+
+.dl-sec--light {
+  border-top: 0;
+  background: var(--fl-light);
+  color: var(--fl-ink);
+  --sec-mute: var(--dl-light-mute);
+  --sec-line: var(--fl-hairline);
+  --sec-fg: var(--fl-ink);
+}
+
+.dl-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1rem, 3vw, 2rem);
+  margin-top: clamp(2rem, 5vw, 3.5rem);
+}
+
+@media (min-width: 46rem) {
+  .dl-pair {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Install ---------------------------------------------------------------- */
+
+.dl-install {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dl-gap);
+}
+
+.dl-steps {
+  display: grid;
+  gap: 0.875rem;
+  margin-top: 1.75rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  font-size: var(--fl-t-lede);
+  letter-spacing: -0.012em;
+}
+
+.dl-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  counter-increment: step;
+}
+
+.dl-steps li::before {
+  content: counter(step);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--dl-step-fill);
+  color: var(--sec-fg);
+  font-size: var(--fl-t-small);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dl-needs {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 1.25rem;
+}
+
+.dl-needs h3 {
+  font-size: var(--fl-t-h3);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.018em;
+}
+
+.dl-needs ul {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+  color: var(--sec-mute);
+}
+
+.dl-link {
+  color: var(--fl-blue-dark);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color 150ms ease-out;
+}
+
+.dl-link:hover {
+  text-decoration-color: currentcolor;
+}
+
+.dl-link:active {
+  color: var(--fl-light);
+}
+
+.dl a:focus-visible {
+  outline: 2px solid var(--fl-amber);
+  outline-offset: 3px;
+}
+
+@media (min-width: 62rem) {
+  .dl-install {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-link {
+    transition: none;
+  }
+}

@@ -11,6 +11,9 @@ const list = @import("list.zig");
 const Entry = clipboard.Entry;
 const Filter = clipboard.Filter;
 const metrics = chrome.metrics;
+const space = chrome.space;
+const type_size = chrome.type_size;
+const fill = chrome.fill;
 
 fn entryKey(e: Entry) i64 {
     return e.id;
@@ -38,6 +41,16 @@ pub const board_metrics = struct {
     pub const content_height: f32 = metrics.well_height - metrics.filter_bar_height;
     pub const list_height: f32 = metrics.list_height;
     pub const info_label_width: f32 = 84;
+    pub const media_height: f32 = 180;
+    pub const swatch_height: f32 = 72;
+    pub const media_placeholder_size: f32 = 32;
+    pub const pin_size: f32 = 9;
+    /// A tile's symbol, as a share of the tile.
+    pub const tile_symbol_scale: f32 = 0.5;
+    /// The line number column, by how many digits the last number has.
+    pub const gutter_widths = [_]f32{ 10, 18, 26 };
+    /// The plain text preview's line, as a multiple of its size plus leading.
+    pub const body_line_height: f32 = type_size.body * 1.2 + space.text;
 };
 
 pub const summon_label = "⌥⇧ C";
@@ -260,7 +273,6 @@ pub const Board = struct {
 
     /// The well below the search row; returns what a click asked for.
     pub fn view(b: *Board, c: *ui.Context, host: Context) ?Action {
-        const th = c.theme;
         const m = board_metrics;
         const well = chrome.well(c);
         defer well.end();
@@ -274,7 +286,7 @@ pub const Board = struct {
             const columns = ui.div(c).row().wFull().h(m.list_height);
             defer columns.end();
             if (b.historyList(c, host)) |a| asked = a;
-            ui.div(c).w(1).hFull().bg(th.border.alpha(0.45)).end();
+            chrome.divider(c, .down);
             b.inspector(c, host);
         }
         if (b.footer(c)) |a| asked = a;
@@ -322,7 +334,7 @@ pub const Board = struct {
     }
 
     fn rowView(b: *Board, c: *ui.Context, host: Context, e: Entry, i: usize) ?Action {
-        const th = c.theme;
+        const quiet = chrome.tone(c.theme).secondary;
         ui.keyInt(c, @intCast(e.id));
         const selected = i == b.list.selected;
         const row_box = chrome.rowBox(c, selected, false);
@@ -331,14 +343,14 @@ pub const Board = struct {
         if (it.clicked) b.list.selected = i;
         b.iconView(c, host, e);
         {
-            const text = ui.div(c).column().grow().gap(3);
+            const text = ui.div(c).column().grow().gap(space.text);
             defer text.end();
-            ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .medium, .truncate = .ellipsis });
+            ui.text(c, e.title(c.arena.allocator()), .{ .size = type_size.row_title, .weight = .medium, .truncate = .ellipsis });
             {
-                const line = ui.div(c).row().gap(5).itemsCenter();
+                const line = ui.div(c).row().gap(space.snug).itemsCenter();
                 defer line.end();
-                if (e.pinned_at != null) ui.icon(c, "pin.fill", .{ .size = 9, .weight = .semibold, .color = th.muted });
-                ui.text(c, e.subtitle(c.arena.allocator(), b.clock.now()), .{ .size = 11.5, .weight = .medium, .color = th.muted, .truncate = .middle });
+                if (e.pinned_at != null) ui.icon(c, "pin.fill", .{ .size = board_metrics.pin_size, .weight = .semibold, .color = quiet });
+                ui.text(c, e.subtitle(c.arena.allocator(), b.clock.now()), .{ .size = type_size.chip, .weight = .medium, .color = quiet, .truncate = .middle });
             }
         }
         chrome.rowKey(c, if (selected) .enter else .none);
@@ -347,15 +359,20 @@ pub const Board = struct {
 
     fn iconView(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
         const size = metrics.icon_size;
+        const th = c.theme;
+        const blue = chrome.hue(th, .blue);
+        const purple = chrome.hue(th, .purple);
+        const cyan = chrome.hue(th, .cyan);
+        const gray = chrome.tone(th).secondary;
         if (e.kind == .image) {
             const thumb = b.thumbnailOf(e);
-            if (thumb.len > 0 and ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = thumb, .max_width = size, .max_height = size, .radius = 6 })) return;
+            if (thumb.len > 0 and ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = thumb, .max_width = size, .max_height = size, .radius = metrics.media_radius })) return;
         }
         const tile = struct {
             fn draw(cx: *ui.Context, symbol: []const u8, color: ui.Color) void {
-                const t = ui.div(cx).w(size).h(size).center().rounded(metrics.icon_tile_radius).bg(color.alpha(0.14));
+                const t = ui.div(cx).w(size).h(size).center().rounded(metrics.icon_tile_radius).bg(color.alpha(fill.tile));
                 defer t.end();
-                ui.icon(cx, symbol, .{ .size = size * 0.5, .color = color });
+                ui.icon(cx, symbol, .{ .size = size * board_metrics.tile_symbol_scale, .color = color });
             }
         }.draw;
         switch (e.kind) {
@@ -382,30 +399,32 @@ pub const Board = struct {
 
     fn inspector(b: *Board, c: *ui.Context, host: Context) void {
         const th = c.theme;
-        const pane = ui.div(c).column().grow().hFull().bg(th.text.alpha(0.03)).scrollY().p(14).gap(14);
+        const pane = ui.div(c).column().grow().hFull().bg(th.text.alpha(fill.inspector)).scrollY().p(space.edge).gap(space.edge);
         defer pane.end();
         chrome.boundOverscroll(c, pane.id());
         const e = b.list.selection() orelse {
-            ui.text(c, "Select an entry", .{ .size = 13.5, .weight = .medium, .color = th.muted.alpha(0.6) });
+            ui.text(c, "Select an entry", .{ .size = type_size.empty_state, .weight = .medium, .color = chrome.tone(th).tertiary });
             return;
         };
         b.loadDetail(c, e);
         b.preview(c, e);
-        ui.div(c).wFull().h(1).bg(th.border.alpha(0.4)).end();
+        chrome.divider(c, .across);
         b.information(c, host, e);
     }
 
     fn preview(b: *Board, c: *ui.Context, e: Entry) void {
         const th = c.theme;
-        const width = board_metrics.inspector_width - 28;
-        const col = ui.div(c).column().wFull().gap(8);
+        const quiet = chrome.tone(th).secondary;
+        const title_style: ui.TextStyle = .{ .size = type_size.row_title, .weight = .semibold, .wrap = true, .max_lines = 2 };
+        const width = board_metrics.inspector_width - 2 * space.edge;
+        const col = ui.div(c).column().wFull().gap(space.pad);
         defer col.end();
         if (e.kind == .image) {
             switch (b.payload) {
                 .picture => |full| mediaBox(c, c.print("clip.full.{d}", .{e.id}), full, width),
                 else => mediaBox(c, c.print("clip.{d}", .{e.id}), b.thumbnailOf(e), width),
             }
-            return ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .semibold, .wrap = true, .max_lines = 2 });
+            return ui.text(c, e.title(c.arena.allocator()), title_style);
         }
         if (e.filePath()) |path| {
             switch (b.payload) {
@@ -413,50 +432,49 @@ pub const Board = struct {
                 .text => |bytes| codeLines(c, bytes),
                 .none => {},
             }
-            return ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .semibold, .wrap = true, .max_lines = 2 });
+            return ui.text(c, e.title(c.arena.allocator()), title_style);
         }
         switch (e.content) {
             .link => |domain| {
                 {
-                    const head = ui.div(c).row().gap(6).itemsCenter();
+                    const head = ui.div(c).row().gap(space.snug).itemsCenter();
                     defer head.end();
-                    ui.icon(c, "link", .{ .size = 12, .weight = .semibold, .color = blue });
-                    ui.text(c, domain, .{ .size = 12, .weight = .semibold });
+                    ui.icon(c, "link", .{ .size = type_size.inspector_row, .weight = .semibold, .color = chrome.hue(th, .blue) });
+                    ui.text(c, domain, .{ .size = type_size.inspector_row, .weight = .semibold });
                 }
-                const box = ui.div(c).wFull().p(8).rounded(6).bg(th.muted.alpha(0.08));
+                const box = ui.div(c).wFull().p(space.pad).rounded(metrics.media_radius).bg(th.muted.alpha(fill.code));
                 defer box.end();
-                ui.text(c, shownHead(e.text, max_link_lines), .{ .size = 12, .mono = true, .color = th.muted, .wrap = true, .max_lines = max_link_lines });
+                ui.text(c, shownHead(e.text, max_link_lines), .{ .size = type_size.inspector_row, .mono = true, .color = quiet, .wrap = true, .max_lines = max_link_lines });
             },
             .color => |rgba| {
                 const swatch: ui.Color = .{ .r = @as(f32, @floatFromInt(rgba.r)) / 255, .g = @as(f32, @floatFromInt(rgba.g)) / 255, .b = @as(f32, @floatFromInt(rgba.b)) / 255, .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1 };
-                ui.div(c).wFull().h(72).rounded(metrics.row_radius).bg(swatch).border(ui.Color.hex(0xffffff).alpha(0.15)).borderW(1).end();
-                const line = ui.div(c).row().gap(10).itemsCenter();
+                ui.div(c).wFull().h(board_metrics.swatch_height).rounded(metrics.row_radius).bg(swatch).border(chrome.outline(th)).borderW(metrics.hairline).end();
+                const line = ui.div(c).row().gap(space.gap).itemsCenter();
                 defer line.end();
-                ui.text(c, std.mem.trim(u8, e.text, " \t\r\n"), .{ .size = 13, .weight = .medium, .mono = true });
-                ui.text(c, clipboard.rgbDescription(c.arena.allocator(), rgba), .{ .size = 12, .mono = true, .color = th.muted });
+                ui.text(c, std.mem.trim(u8, e.text, " \t\r\n"), .{ .size = type_size.value, .weight = .medium, .mono = true });
+                ui.text(c, clipboard.rgbDescription(c.arena.allocator(), rgba), .{ .size = type_size.inspector_row, .mono = true, .color = quiet });
             },
             .code => |lang| {
                 {
-                    const tag = ui.div(c).px(6).py(2).roundedFull().bg(th.muted.alpha(0.12));
+                    const tag = ui.div(c).px(space.snug).py(space.tight).roundedFull().bg(th.muted.alpha(fill.card));
                     defer tag.end();
-                    ui.text(c, lang, .{ .size = 10, .weight = .bold, .color = th.muted });
+                    ui.text(c, lang, .{ .size = type_size.micro, .weight = .bold, .color = quiet });
                 }
                 codeLines(c, e.text);
             },
-            .plain => ui.text(c, shownHead(e.text, max_plain_lines), .{ .size = 12.5, .wrap = true, .line_height = 12.5 * 1.2 + 3, .max_lines = max_plain_lines }),
+            .plain => ui.text(c, shownHead(e.text, max_plain_lines), .{ .size = type_size.body, .wrap = true, .line_height = board_metrics.body_line_height, .max_lines = max_plain_lines }),
             .path => unreachable,
         }
     }
 
     fn information(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
-        const th = c.theme;
         const a = c.arena.allocator();
-        const col = ui.div(c).column().wFull().gap(7);
+        const col = ui.div(c).column().wFull().gap(space.pad);
         defer col.end();
         {
-            const label = ui.div(c).pb(2);
+            const label = ui.div(c).pb(space.tight);
             defer label.end();
-            ui.text(c, "Information", .{ .size = 11.5, .weight = .semibold, .color = th.muted });
+            ui.text(c, "Information", .{ .size = type_size.chip, .weight = .semibold, .color = chrome.tone(c.theme).secondary });
         }
         infoRow(c, "Source", e.source_name);
         if (e.kind == .image) {
@@ -505,56 +523,54 @@ pub const Board = struct {
     }
 };
 
-const blue: ui.Color = .hex(0x0a84ff);
-const purple: ui.Color = .hex(0xbf5af2);
-const cyan: ui.Color = .hex(0x32ade6);
-const gray: ui.Color = .hex(0x8e8e93);
-
 const max_code_lines = 40;
 
 const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
 
 fn infoRow(c: *ui.Context, label: []const u8, value: []const u8) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsStart();
+    const row = ui.div(c).row().wFull().gap(space.gap).itemsStart();
     defer row.end();
     {
         const l = ui.div(c).w(board_metrics.info_label_width).row().justifyEnd();
         defer l.end();
-        ui.text(c, label, .{ .size = 12, .color = c.theme.muted });
+        ui.text(c, label, .{ .size = type_size.inspector_row, .color = chrome.tone(c.theme).secondary });
     }
     const v = ui.div(c).grow();
     defer v.end();
-    ui.text(c, value, .{ .size = 12, .wrap = true });
+    ui.text(c, value, .{ .size = type_size.inspector_row, .wrap = true });
 }
 
 fn mediaBox(c: *ui.Context, key: []const u8, bytes: []const u8, width: f32) void {
-    const box = ui.div(c).wFull().h(180).center().rounded(metrics.row_radius).bg(c.theme.muted.alpha(0.06)).clip();
+    const th = c.theme;
+    const h = board_metrics.media_height;
+    const box = ui.div(c).wFull().h(h).center().rounded(metrics.row_radius).bg(th.muted.alpha(fill.badge)).border(chrome.outline(th)).borderW(metrics.hairline).clip();
     defer box.end();
-    if (bytes.len == 0 or !ui.image(c, .{ .key = key, .bytes = bytes, .max_width = width, .max_height = 180, .radius = 0 }))
-        ui.icon(c, "photo", .{ .size = 32, .color = c.theme.muted });
+    if (bytes.len == 0 or !ui.image(c, .{ .key = key, .bytes = bytes, .max_width = width, .max_height = h, .radius = 0 }))
+        ui.icon(c, "photo", .{ .size = board_metrics.media_placeholder_size, .color = chrome.tone(th).tertiary });
 }
 
 /// Numbered lines, as the Swift board's code block.
 fn codeLines(c: *ui.Context, text: []const u8) void {
     const th = c.theme;
+    const quiet = chrome.tone(th).secondary;
     const total = std.mem.count(u8, text, "\n") + 1;
     const shown = @min(total, max_code_lines);
-    const gutter: f32 = if (shown >= 100) 26 else if (shown >= 10) 18 else 10;
-    const box = ui.div(c).column().wFull().p(8).gap(3).rounded(6).bg(th.muted.alpha(0.08));
+    const gutter = board_metrics.gutter_widths[std.math.log10_int(shown)];
+    const box = ui.div(c).column().wFull().p(space.pad).gap(space.text).rounded(metrics.media_radius).bg(th.muted.alpha(fill.code));
     defer box.end();
     var it = std.mem.splitScalar(u8, text, '\n');
     var i: usize = 0;
     while (it.next()) |line| : (i += 1) {
         if (i == shown) break;
         ui.keyInt(c, i);
-        const row = ui.div(c).row().gap(8).itemsStart();
+        const row = ui.div(c).row().gap(space.pad).itemsStart();
         defer row.end();
         {
             const g = ui.div(c).w(gutter).row().justifyEnd();
             defer g.end();
-            ui.text(c, c.print("{d}", .{i + 1}), .{ .size = 10.5, .mono = true, .color = th.muted.alpha(0.6) });
+            ui.text(c, c.print("{d}", .{i + 1}), .{ .size = type_size.caption, .mono = true, .color = quiet });
         }
-        ui.text(c, if (line.len == 0) " " else std.mem.trimEnd(u8, shownHead(line, 1), "\r"), .{ .size = 11.5, .mono = true, .truncate = .ellipsis });
+        ui.text(c, if (line.len == 0) " " else std.mem.trimEnd(u8, shownHead(line, 1), "\r"), .{ .size = type_size.chip, .mono = true, .truncate = .ellipsis });
     }
-    if (total > shown) ui.text(c, "Preview truncated", .{ .size = 10.5, .weight = .medium, .color = th.muted.alpha(0.6) });
+    if (total > shown) ui.text(c, "Preview truncated", .{ .size = type_size.caption, .weight = .medium, .color = quiet });
 }

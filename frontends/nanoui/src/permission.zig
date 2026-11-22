@@ -5,6 +5,9 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
+const chrome = @import("chrome.zig");
+const space = chrome.space;
+const type_size = chrome.type_size;
 
 pub const Phase = enum { idle, guiding, granted, dismissed };
 
@@ -130,50 +133,77 @@ pub const Guidance = struct {
         defer if (g.request) |r| if (!std.meta.eql(before, g.card) or g.dismissed != was_dismissed) r(g.ctx);
         if (g.phase.* != .guiding) g.card = null;
         // The window's glass slab is the material; this only draws its rim.
-        const root = ui.div(c).column().sizeFull().px(14).py(12).gap(8).rounded(16).border(th.text.alpha(0.1));
+        const root = ui.div(c).column().sizeFull().px(space.edge).py(space.gap).gap(space.pad).rounded(metrics.radius).border(chrome.outline(th));
         defer root.end();
+        // Seen once per install, so it may move: the grant eases in. A phase
+        // that flips back mid-way turns the same value around.
+        const settled = ui.tween(c, root.id(), 0, if (g.phase.* == .granted) 1 else 0, metrics.settle_seconds, .ease_out);
         switch (g.phase.*) {
             .guiding => g.guidingView(c),
-            .granted => grantedView(c),
+            .granted => grantedView(c, settled),
             .idle, .dismissed => {},
         }
     }
 
     fn guidingView(g: *Guidance, c: *ui.Context) void {
         const th = c.theme;
+        const tone = chrome.tone(th);
+        const blue = chrome.hue(th, .blue);
         {
-            const head = ui.div(c).row().wFull().gap(6).itemsCenter();
+            const head = ui.div(c).row().wFull().gap(space.snug).itemsCenter();
             defer head.end();
-            ui.icon(c, "arrow.up", .{ .size = 11.5, .weight = .semibold, .color = th.accent });
-            ui.text(c, c.print("Drag {s} into the Full Disk Access list", .{g.app_name}), .{ .size = 12.5, .weight = .medium, .truncate = .ellipsis });
+            ui.icon(c, "arrow.up", .{ .size = type_size.chip, .weight = .semibold, .color = blue });
+            ui.text(c, c.print("Drag {s} into the Full Disk Access list", .{g.app_name}), .{ .size = type_size.body, .weight = .medium, .truncate = .ellipsis });
             ui.spacer(c);
-            const close = ui.div(c).w(16).h(16).center().control();
-            ui.icon(c, "xmark", .{ .size = 10, .weight = .bold, .color = th.muted });
+            const close = ui.div(c).w(metrics.close_hit_size).h(metrics.close_hit_size).center().roundedFull().control();
+            const it = c.interact(close.index, .{});
+            _ = close.bg(th.muted.alpha(chrome.pointerAlpha(0, it)));
+            ui.icon(c, "xmark", .{ .size = type_size.micro, .weight = .bold, .color = tone.secondary });
             if (close.clicked()) g.dismissed = true;
             close.end();
         }
         {
-            const card = ui.div(c).row().wFull().h(34).px(10).gap(8).itemsCenter().rounded(8).bg(th.muted.alpha(0.12));
+            const card = ui.div(c).row().wFull().h(metrics.card_height).px(space.gap).gap(space.pad).itemsCenter().rounded(metrics.card_radius).bg(th.muted.alpha(chrome.fill.card));
             defer card.end();
             g.card = card.interaction().rect;
             if (g.icon_png) |png| {
-                _ = ui.image(c, .{ .key = "app-icon", .bytes = png, .max_width = 22, .max_height = 22, .radius = 5 });
-            } else ui.icon(c, "app.fill", .{ .size = 18, .color = th.accent });
-            ui.text(c, g.app_name, .{ .size = 12, .weight = .medium });
+                _ = ui.image(c, .{ .key = "app-icon", .bytes = png, .max_width = metrics.app_icon_size, .max_height = metrics.app_icon_size, .radius = space.snug });
+            } else ui.icon(c, "app.fill", .{ .size = metrics.app_symbol_size, .color = blue });
+            ui.text(c, g.app_name, .{ .size = type_size.inspector_row, .weight = .medium });
             ui.spacer(c);
-            ui.icon(c, "line.3.horizontal", .{ .size = 11, .color = th.muted.alpha(0.6) });
+            ui.icon(c, "line.3.horizontal", .{ .size = type_size.key_chip, .color = tone.tertiary });
         }
-        ui.text(c, c.print("Or click + in System Settings and choose {s}", .{g.app_name}), .{ .size = 10.5, .color = th.muted.alpha(0.6) });
+        ui.text(c, c.print("Or click + in System Settings and choose {s}", .{g.app_name}), .{ .size = type_size.key_chip, .color = tone.secondary });
     }
 
-    fn grantedView(c: *ui.Context) void {
+    fn grantedView(c: *ui.Context, settled: f32) void {
         const th = c.theme;
-        const row = ui.div(c).row().sizeFull().px(8).gap(10).itemsCenter();
+        const row = ui.div(c).row().sizeFull().px(space.pad).gap(space.gap).itemsCenter().opacity(settled);
         defer row.end();
-        ui.icon(c, "checkmark.circle.fill", .{ .size = 24, .color = th.success });
-        const col = ui.div(c).column().gap(2);
+        {
+            const mark = ui.div(c).scale(metrics.settle_from_scale + (1 - metrics.settle_from_scale) * settled);
+            defer mark.end();
+            ui.icon(c, "checkmark.circle.fill", .{ .size = metrics.check_size, .color = chrome.hue(th, .green) });
+        }
+        const col = ui.div(c).column().gap(space.tight);
         defer col.end();
-        ui.text(c, "Full Disk Access Granted", .{ .size = 13.5, .weight = .semibold });
-        ui.text(c, "You're ready to search everywhere.", .{ .size = 11, .color = th.muted });
+        ui.text(c, "Full Disk Access Granted", .{ .size = type_size.empty_state, .weight = .semibold });
+        ui.text(c, "You're ready to search everywhere.", .{ .size = type_size.chip, .color = chrome.tone(th).secondary });
     }
+};
+
+/// The guidance panel's own sizes; the rest are `chrome`'s.
+pub const metrics = struct {
+    pub const radius: f32 = 16;
+    pub const card_height: f32 = 34;
+    /// Inside a 16 point panel 12 from its edge, 4 would be concentric; 8
+    /// reads as the row it is.
+    pub const card_radius: f32 = 8;
+    pub const close_hit_size: f32 = 24;
+    pub const app_icon_size: f32 = 22;
+    pub const app_symbol_size: f32 = 18;
+    pub const check_size: f32 = 24;
+    /// Short enough to finish before the eye lands, long enough to read as arriving.
+    pub const settle_seconds: f32 = 0.18;
+    pub const settle_from_scale: f32 = 0.95;
 };

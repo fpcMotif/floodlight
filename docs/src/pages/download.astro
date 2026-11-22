@@ -1,0 +1,139 @@
+---
+import { Image } from "astro:assets";
+import Landing from "../layouts/Landing.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import listDark from "../assets/screenshots/panel-list-dark.png";
+import listLight from "../assets/screenshots/panel-list-light.png";
+import boardDark from "../assets/screenshots/panel-board-dark.png";
+import boardLight from "../assets/screenshots/panel-board-light.png";
+import "../styles/download.css";
+
+const base = import.meta.env.BASE_URL;
+const root = `${base.replace(/\/$/, "")}/`;
+const docs = (slug: string) => `${root}${slug}/`;
+---
+
+<Landing
+  title="Download Floodlight for Mac"
+  description="Download Floodlight.dmg, the fast, native, open-source Spotlight alternative for macOS. Search apps, files, and your clipboard history from one panel."
+>
+  <div class="dl">
+    <header class="dl-hero">
+      <div class="wrap wrap--wide dl-hero__grid">
+        <div class="dl-hero__copy">
+          <h1 class="h1">Download Floodlight</h1>
+          <p class="lede">Find apps, files, and everything you copied from one panel.</p>
+          <div class="dl-actions">
+            <DownloadButton label="Download Floodlight.dmg" />
+            <a class="btn btn--ghost" href={docs("development/building")}>Build from source</a>
+          </div>
+          <p class="fine">Requires macOS 14 or later on an Apple-silicon Mac.</p>
+        </div>
+
+        <div class="dl-hero__stage" data-ss-fill>
+          <div
+            class="dl-demo"
+            data-floodlight-demo
+            role="img"
+            aria-label="Floodlight answering the query cal, then opening the clipboard board."
+          >
+            <Image
+              src={listDark}
+              alt=""
+              widths={[760, 1520]}
+              sizes="(min-width: 62rem) 55vw, 100vw"
+              loading="eager"
+            />
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="dl-sec" aria-labelledby="dl-search">
+      <div class="wrap wrap--wide dl-split">
+        <div class="dl-copy">
+          <h2 class="h2" id="dl-search">Results while you type</h2>
+          <p>Apps, files, folders, and settings rank in one list. Return opens the top hit.</p>
+        </div>
+        <Image
+          class="dl-shot"
+          src={listDark}
+          alt="The Floodlight panel showing results for the query cal, with Calendar as the top hit."
+          widths={[760, 1520]}
+          sizes="(min-width: 62rem) 55vw, 100vw"
+        />
+      </div>
+    </section>
+
+    <section class="dl-sec" aria-labelledby="dl-board">
+      <div class="wrap wrap--wide dl-split dl-split--flip">
+        <div class="dl-copy">
+          <h2 class="h2" id="dl-board">Your clipboard, kept on your Mac</h2>
+          <p>
+            <kbd class="dl-kbd">⌥⇧C</kbd> opens the board. Type to find text, links, colors, code,
+            and files.
+          </p>
+        </div>
+        <Image
+          class="dl-shot"
+          src={boardDark}
+          alt="The Floodlight clipboard board: copied entries on the left and a preview of the selected entry on the right."
+          widths={[760, 1520]}
+          sizes="(min-width: 62rem) 55vw, 100vw"
+        />
+      </div>
+    </section>
+
+    <section class="dl-sec dl-sec--light" aria-labelledby="dl-light">
+      <div class="wrap wrap--wide">
+        <div class="dl-copy">
+          <h2 class="h2" id="dl-light">Light when your Mac is</h2>
+          <p>The panel follows the macOS appearance.</p>
+        </div>
+        <div class="dl-pair">
+          <Image
+            class="dl-shot"
+            src={listLight}
+            alt="The search panel in the light appearance."
+            widths={[600, 1200, 1520]}
+            sizes="(min-width: 46rem) 45vw, 100vw"
+          />
+          <Image
+            class="dl-shot"
+            src={boardLight}
+            alt="The clipboard board in the light appearance."
+            widths={[600, 1200, 1520]}
+            sizes="(min-width: 46rem) 45vw, 100vw"
+          />
+        </div>
+      </div>
+    </section>
+
+    <section class="dl-sec" aria-labelledby="dl-install">
+      <div class="wrap wrap--wide dl-install">
+        <div>
+          <h2 class="h2" id="dl-install">Install in four steps</h2>
+          <ol class="dl-steps">
+            <li>Open Floodlight.dmg.</li>
+            <li>Drag Floodlight to Applications.</li>
+            <li>Eject the Floodlight disk image.</li>
+            <li>Open Floodlight from Applications.</li>
+          </ol>
+        </div>
+        <div class="dl-needs">
+          <h3>What you need</h3>
+          <ul>
+            <li>An Apple-silicon Mac</li>
+            <li>macOS 14 Sonoma or later</li>
+            <li>10 MB of free disk space</li>
+          </ul>
+          <DownloadButton label="Download Floodlight.dmg" />
+          <a class="dl-link" href={docs("getting-started/install")}>Install and permissions guide</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <link rel="stylesheet" href={`${root}demo/demo.css`} />
+  <script is:inline type="module" src={`${root}demo/demo.js`}></script>
+</Landing>

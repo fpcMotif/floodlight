@@ -75,6 +75,17 @@ pub fn build(b: *std.Build) void {
     bench_module.linkSystemLibrary("sqlite3", .{});
     const bench = b.addExecutable(.{ .name = "floodlight-nanoui-bench", .root_module = bench_module });
     b.step("bench", "Run the in-process latency benchmark").dependOn(&b.addRunArtifact(bench).step);
+
+    const screens_module = b.createModule(.{
+        .root_source_file = b.path("src/screens.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = imports,
+    });
+    linkSystem(screens_module);
+    const screens = b.addRunArtifact(b.addExecutable(.{ .name = "floodlight-nanoui-screens", .root_module = screens_module }));
+    screens.addPassthruArgs();
+    b.step("screens", "Draw every view to PNG: zig build screens -- DIR").dependOn(&screens.step);
 }
 
 /// What the app and its tests both link from macOS.

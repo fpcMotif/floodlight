@@ -12,6 +12,8 @@ const list = @import("list.zig");
 const mac = @import("mac.zig");
 
 const metrics = chrome.metrics;
+const space = chrome.space;
+const type_size = chrome.type_size;
 
 pub const summon_label = "⌥ Space";
 
@@ -1010,7 +1012,7 @@ pub const Panel = struct {
             } else {
                 const bar = chrome.filterBar(c);
                 defer bar.end();
-                ui.text(c, "Suggestions", .{ .size = 12, .weight = .semibold, .color = c.theme.muted });
+                ui.text(c, "Suggestions", .{ .size = type_size.chip, .weight = .semibold, .color = chrome.tone(c.theme).secondary });
             }
             p.resultList(c);
             p.footer(c);
@@ -1039,14 +1041,15 @@ pub const Panel = struct {
 
     fn searchBar(p: *Panel, c: *ui.Context) void {
         const th = c.theme;
-        const bar = ui.div(c).row().wFull().h(metrics.search_height).px(20).gap(12).itemsCenter();
+        const tone = chrome.tone(th);
+        const bar = ui.div(c).row().wFull().h(metrics.search_height).px(space.bar).gap(space.gap).itemsCenter();
         defer bar.end();
-        ui.icon(c, "magnifyingglass", .{ .size = metrics.search_icon_size, .weight = .medium, .color = th.muted, .frame = metrics.search_icon_size });
+        ui.icon(c, "magnifyingglass", .{ .size = metrics.search_icon_size, .weight = .medium, .color = tone.secondary, .frame = metrics.search_icon_size });
         if (p.field.text().len == 0) p.field.focus();
         const board = p.mode == .clipboard;
         p.observeInput(c);
         const suggestion = if (p.completion) |comp| comp.suffix else "";
-        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Nanospot", .size = 24, .width = .fill, .bare = true, .suggestion = suggestion });
+        const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Nanospot", .size = type_size.input, .width = .fill, .bare = true, .suggestion = suggestion, .placeholder_color = tone.tertiary });
         if (r.accepted) p.suppressed_by_backspace = false;
         if (board) {
             p.boardField(r);
@@ -1056,10 +1059,10 @@ pub const Panel = struct {
         }
         p.syncFieldState(c, r.caret);
         if (p.field.text().len > 0) {
-            const clear = ui.div(c).w(24).h(24).center().control();
+            const clear = ui.div(c).w(metrics.clear_hit_size).h(metrics.clear_hit_size).center().control();
             defer clear.end();
             const it = c.interact(clear.index, .{});
-            const color = if (it.pressed) th.text.alpha(0.7) else if (it.hovered) th.text else th.muted;
+            const color = if (it.hovered and !it.pressed) th.text else tone.secondary;
             ui.icon(c, "xmark.circle.fill", .{ .size = metrics.clear_button_size, .color = color });
             if (clear.clicked()) p.clearField();
         } else chrome.keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
@@ -1163,22 +1166,22 @@ pub const Panel = struct {
         if (it.double_clicked) p.ask(.{ .open = row.path });
         p.iconView(c, row, if (top_hit) metrics.top_hit_icon_size else metrics.icon_size);
         {
-            const text = ui.div(c).column().grow().gap(3);
+            const text = ui.div(c).column().grow().gap(space.text);
             defer text.end();
             {
-                const head = ui.div(c).row().gap(7).itemsCenter();
+                const head = ui.div(c).row().gap(space.pad).itemsCenter();
                 defer head.end();
                 if (top_hit) {
-                    ui.text(c, row.title, .{ .size = 19, .weight = .semibold, .truncate = .ellipsis });
+                    ui.text(c, row.title, .{ .size = type_size.top_hit_title, .weight = .semibold, .truncate = .ellipsis });
                 } else {
                     if (row.suggestion) {
                         p.suggestionTitle(c, row.title);
                     } else {
-                        ui.text(c, row.title, .{ .size = 15, .weight = .medium, .truncate = .ellipsis });
+                        ui.text(c, row.title, .{ .size = type_size.row_title, .weight = .medium, .truncate = .ellipsis });
                     }
-                    const badge = ui.div(c).px(5).py(2).roundedFull().bg(th.muted.alpha(0.07));
+                    const badge = ui.div(c).px(space.snug).py(space.hair).roundedFull().bg(th.muted.alpha(chrome.fill.badge));
                     defer badge.end();
-                    ui.text(c, row.kind.label(), .{ .size = 8.5, .weight = .bold, .color = th.muted });
+                    ui.text(c, row.kind.label(), .{ .size = type_size.micro, .weight = .semibold, .color = chrome.tone(th).secondary });
                 }
             }
             subtitleLine(c, row, top_hit);
@@ -1201,7 +1204,7 @@ pub const Panel = struct {
             trimmed.len
         else
             0;
-        const style: ui.TextStyle = .{ .size = 15, .weight = .regular, .truncate = .ellipsis };
+        const style: ui.TextStyle = .{ .size = type_size.row_title, .weight = .regular, .truncate = .ellipsis };
         if (prefix_len >= title.len) return ui.text(c, title, style);
         const spans = c.arena.allocator().dupe(ui.Span, &.{
             .{ .start = @intCast(prefix_len), .end = @intCast(title.len), .weight = .bold },
@@ -1210,8 +1213,8 @@ pub const Panel = struct {
     }
 
     fn subtitleLine(c: *ui.Context, row: search.Row, top_hit: bool) void {
-        const style: ui.TextStyle = .{ .size = 11.5, .weight = .medium, .color = c.theme.muted };
-        const line = ui.div(c).row().gap(6).itemsCenter();
+        const style: ui.TextStyle = .{ .size = type_size.chip, .weight = .medium, .color = chrome.tone(c.theme).secondary };
+        const line = ui.div(c).row().gap(space.snug).itemsCenter();
         defer line.end();
         ui.text(c, row.subtitle, .{ .size = style.size, .weight = style.weight, .color = style.color, .truncate = .ellipsis });
         if (row.size) |size| if (size > 0) {
@@ -1233,9 +1236,10 @@ pub const Panel = struct {
             _ = ui.image(c, .{ .key = row.path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
             return;
         };
-        const tile = ui.div(c).w(size).h(size).center().rounded(metrics.icon_tile_radius).bg(c.theme.accent.alpha(0.14));
+        const blue = chrome.hue(c.theme, .blue);
+        const tile = ui.div(c).w(size).h(size).center().rounded(metrics.icon_tile_radius).bg(blue.alpha(chrome.fill.tile));
         defer tile.end();
-        ui.icon(c, row.kind.symbol(), .{ .size = size * 0.58, .color = c.theme.accent });
+        ui.icon(c, row.kind.symbol(), .{ .size = size * metrics.tile_symbol_scale, .color = blue });
     }
 };
 
