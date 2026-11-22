@@ -572,23 +572,18 @@ pub const Panel = struct {
     fn answer(p: *Panel, text: []const u8, force_files: bool) !bool {
         const a = p.list.beginQuery(text);
         p.files_due = false;
-        const base: []search.Row = if (text.len == 0)
-            try copyRows(a, p.frequentApps())
-        else if (p.catalog.files == null)
-            try p.catalog.query(a, text)
-        else if (force_files or p.file_search_s <= file_search_budget_s) blk: {
+        if (text.len == 0) {
+            p.base_rows = try copyRows(a, p.frequentApps());
+        } else if (p.catalog.files == null) {
+            p.base_rows = try p.catalog.query(a, text);
+        } else if (force_files or p.file_search_s <= file_search_budget_s) {
             const started = p.clock.now();
-            const rows = try p.catalog.query(a, text);
+            p.base_rows = try p.catalog.query(a, text);
             p.file_search_s = p.clock.now() - started;
-            break :blk rows;
-        } else blk: {
+        } else {
+            p.base_rows = try p.catalog.queryApps(a, text);
             p.files_due = true;
-            break :blk try p.catalog.queryApps(a, text);
-        };
-        for (base) |*r| if (r.modified) |secs| {
-            r.modified_label = p.hooks.describe_date(p.hooks.ctx, secs, a);
-        };
-        p.base_rows = base;
+        }
         p.suggestions = &.{};
         var need_fetch = false;
         if (p.shouldSuggest(text)) {
@@ -1099,7 +1094,7 @@ pub const Panel = struct {
         const visible = p.list.visible;
         const shown = list.rowsInView(c.scroll.get(box.id()) orelse 0, visible.len, metrics.row_height, view_h, 2);
         spacer(c, "above", shown.first);
-        for (visible[shown.first..shown.end], shown.first..) |row, i| p.rowView(c, row, i);
+        for (shown.first..shown.end) |i| p.rowView(c, i);
         spacer(c, "below", visible.len - shown.end);
     }
 
@@ -1120,7 +1115,14 @@ pub const Panel = struct {
         if (chrome.footerChip(c, "Copy", "⌘C", row != null)) p.ask(.{ .copy = row.? });
     }
 
-    fn rowView(p: *Panel, c: *ui.Context, row: search.Row, i: usize) void {
+    fn rowView(p: *Panel, c: *ui.Context, i: usize) void {
+        const r = &p.list.visible[i];
+        if ((r.kind == .file or r.kind == .folder) and !r.stamped) {
+            const a = p.list.allocator();
+            search.stamp(a, r);
+            if (r.modified) |secs| r.modified_label = p.hooks.describe_date(p.hooks.ctx, secs, a);
+        }
+        const row = r.*;
         const th = c.theme;
         ui.keyInt(c, i);
         const selected = i == p.list.selected;

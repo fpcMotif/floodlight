@@ -40,6 +40,7 @@ pub const Row = struct {
     size: ?u64 = null,
     modified: ?i64 = null,
     modified_label: []const u8 = "",
+    stamped: bool = false,
     suggestion: bool = false,
     /// One of `web_engines`, listed under Google; never a Link Row.
     engine: bool = false,
@@ -125,15 +126,16 @@ pub const Catalog = struct {
         }
 
         if (if (cat.files) |fi| if (include_files) fi.view() else null else null) |v| {
-            var hits: [max_rows]core.search.Hit = undefined;
+            var hits: [2 * max_rows]core.search.Hit = undefined;
             const n = core.search.search(v, trimmed, &hits);
             const root = v.root;
+            var file_rows: usize = 0;
             for (hits[0..n]) |h| {
                 var buf: [4096]u8 = undefined;
                 const rel = v.relativePath(h.id, &buf) orelse continue;
-                const path = try std.fs.path.join(arena, &.{ root, rel });
                 // Bundles are apps, listed above from the catalog; their insides are no one's.
                 if (std.mem.endsWith(u8, rel, ".app") or std.mem.indexOf(u8, rel, ".app/") != null) continue;
+                const path = try std.fs.path.join(arena, &.{ root, rel });
                 try rows.append(arena, .{
                     .kind = if (v.flags[h.id].dir) .folder else .file,
                     .title = std.fs.path.basename(path),
@@ -141,12 +143,13 @@ pub const Catalog = struct {
                     .path = path,
                     .score = h.score,
                 });
+                file_rows += 1;
+                if (file_rows == max_rows) break;
             }
         }
         const link = try detectLink(arena, trimmed);
         const extra: usize = if (link != null) 2 else 1;
         const ranked = try best(arena, rows.items, max_rows - extra);
-        for (ranked) |*r| if (r.kind != .app) stamp(arena, r);
         var out = try arena.alloc(Row, ranked.len + extra);
         if (link) |url| {
             const link_row: Row = .{
@@ -186,7 +189,8 @@ fn exactMatchIndex(rows: []const Row, query: []const u8) ?usize {
     return null;
 }
 
-fn stamp(arena: std.mem.Allocator, r: *Row) void {
+pub fn stamp(arena: std.mem.Allocator, r: *Row) void {
+    r.stamped = true;
     const z = arena.dupeSentinel(u8, r.path, 0) catch return;
     var st: std.c.Stat = undefined;
     if (std.c.stat(z, &st) != 0) return;

@@ -223,6 +223,9 @@ test "a query finds apps and files, apps first" {
     try t.expect(tax.len >= 2);
     try t.expectEqualStrings("2025-return.pdf", tax[0].title);
     try t.expectEqualStrings("Documents/tax/2025-return.pdf", tax[0].subtitle);
+    try t.expect(!tax[0].stamped);
+    search.stamp(arena.allocator(), &tax[0]);
+    try t.expect(tax[0].stamped);
     try t.expectEqual(@as(?u64, 0), tax[0].size);
     try t.expect(tax[0].modified != null);
 
@@ -3693,4 +3696,104 @@ test "a late file row keeps its date" {
     tester.frame();
     try t.expect(tester.hasText("2025-return.pdf"));
     try t.expect(tester.hasText("Today at 9:41 AM"));
+}
+
+fn manyFilesCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *core.file_index.FileIndex, count: usize) !search.Catalog {
+    var name: [32]u8 = undefined;
+    for (0..count) |i| {
+        const sub = try std.fmt.bufPrint(&name, "item-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "hello" });
+    }
+    const root = buf[0..try tmp.dir.realPath(t.io, buf)];
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    files.* = try .open(t.allocator, idx, root, .{});
+    errdefer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    cat.files = files;
+    return cat;
+}
+
+test "a keystroke stats only the rows in view" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("item");
+    var stamped_count: usize = 0;
+    for (p.list.visible) |r| stamped_count += @intFromBool(r.stamped);
+    try t.expect(stamped_count > 0);
+    try t.expect(stamped_count <= 12);
+}
+
+test "a row scrolled into view shows its size and date" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("item");
+    try t.expect(!p.list.visible[30].stamped);
+    for (0..30) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expect(p.list.visible[30].stamped);
+    try t.expect(p.list.visible[30].modified != null);
+    try t.expect(p.list.visible[30].modified_label.len > 0);
+    try t.expectEqual(@as(?u64, 5), p.list.visible[30].size);
+    try t.expect(tester.hasText("Today at 9:41 AM"));
+}
+
+test "bundle contents do not use result slots" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Fake.app/Contents");
+    var name: [64]u8 = undefined;
+    for (0..100) |i| {
+        const sub = try std.fmt.bufPrint(&name, "Fake.app/Contents/match-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "" });
+    }
+    for (0..5) |i| {
+        const sub = try std.fmt.bufPrint(&name, "match-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "" });
+    }
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    var files = try core.file_index.FileIndex.open(t.allocator, idx, root, .{});
+    defer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    var cat: search.Catalog = .{ .gpa = t.allocator, .files = &files };
+    defer cat.deinit();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try cat.query(arena.allocator(), "match");
+    var file_count: usize = 0;
+    for (rows) |r| file_count += @intFromBool(r.kind == .file);
+    try t.expectEqual(@as(usize, 5), file_count);
 }
