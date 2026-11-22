@@ -3881,3 +3881,136 @@ test "deleting does not ask the store for the list again" {
     try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
     try t.expect(f.p.board.thumbnails.get(pic_id) == null);
 }
+
+test "history completion is asked once per query" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
+    tester.frame();
+    tester.frame();
+    tester.frame();
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+}
+
+test "a recorded query refreshes the completion" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
+    tester.key(.enter);
+    p.pending = null;
+    tester.frame();
+    try t.expectEqualStrings("culator", p.completion.?.suffix);
+}
+
+test "a query with no history is asked once" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("zzz");
+    try t.expect(p.completion == null);
+    try store.recordQuery(.search, "zzzz", 1000);
+    tester.frame();
+    try t.expect(p.completion == null);
+
+    p.clearField();
+    tester.typeText("zzz");
+    try t.expectEqualStrings("z", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+}
+
+test "clearing history clears the completion" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    p.clearQueryHistory();
+    try t.expect(p.completion == null);
+    p.clearField();
+    tester.typeText("cal");
+    try t.expect(p.completion == null);
+}
+
+test "the poll slows after a minute of guiding" {
+    var spy: Spy = .{};
+    var f = spy.flow();
+    f.begin();
+    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
+    for (0..permission.fast_polls) |_| f.poll();
+    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
+}
+
+test "beginning again polls fast again" {
+    var spy: Spy = .{};
+    var f = spy.flow();
+    f.begin();
+    for (0..permission.fast_polls) |_| f.poll();
+    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
+    f.dismiss();
+    f.begin();
+    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
+}

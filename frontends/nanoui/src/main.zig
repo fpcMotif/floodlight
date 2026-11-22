@@ -475,7 +475,7 @@ const Shell = struct {
         s.guide_window.redraw();
         if (!s.polling) {
             s.polling = true;
-            nanoui.App.after(permission.poll_ms, s, pollTick);
+            nanoui.App.after(s.flow.pollDelayMs(), s, pollTick);
         }
     }
 

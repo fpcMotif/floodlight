@@ -198,6 +198,11 @@ pub const Panel = struct {
     composing: bool = false,
     completion: ?Completion = null,
     completion_buf: [512]u8 = undefined,
+    history_query: std.ArrayList(u8) = .empty,
+    history_scope: clipboard.QueryScope = .search,
+    history_buf: [512]u8 = undefined,
+    history_len: ?usize = null,
+    history_valid: bool = false,
     /// Its bytes live in `action_arena`, not the rows': the shell runs it on
     /// a later turn, after a capture or an index swap may have queried again.
     pending: ?Action = null,
@@ -221,6 +226,7 @@ pub const Panel = struct {
         p.board.deinit();
         p.field.deinit();
         p.pending_suggest_query.deinit(gpa);
+        p.history_query.deinit(gpa);
         p.freeAllCachedSuggestions();
         p.list.deinit();
     }
@@ -232,6 +238,7 @@ pub const Panel = struct {
         p.base_rows = &.{};
         p.suggestions = &.{};
         p.cancelPendingSuggest();
+        p.invalidateHistoryCache();
         p.resetCompletion();
         if (p.mode == .search) {
             p.field.clear();
@@ -243,6 +250,7 @@ pub const Panel = struct {
     fn forgetBoard(p: *Panel) void {
         p.retained_board.clear();
         p.board.forget();
+        p.invalidateHistoryCache();
         if (p.mode == .clipboard) {
             p.field.clear();
             p.height = p.panelHeight();
@@ -323,6 +331,7 @@ pub const Panel = struct {
     /// neither surface remains retained.
     pub fn expire(p: *Panel) bool {
         p.expireAt(p.clock.now());
+        p.invalidateHistoryCache();
         return p.retained_search.hidden_at == null and p.retained_board.hidden_at == null;
     }
 
@@ -359,6 +368,7 @@ pub const Panel = struct {
     /// forgets at once when retention is off or the field was cleared.
     pub fn hide(p: *Panel) void {
         p.pending = null;
+        p.invalidateHistoryCache();
         const now = p.clock.now();
         p.expireAt(now);
         // Rebuilt while hidden, so the next summon only copies it.
@@ -777,21 +787,43 @@ pub const Panel = struct {
         p.field.focus();
     }
 
+    fn invalidateHistoryCache(p: *Panel) void {
+        p.history_valid = false;
+        if (p.completion) |comp| if (comp.source == .history) {
+            p.completion = null;
+        };
+    }
+
+    fn historyCompletion(p: *Panel, scope: clipboard.QueryScope, query: []const u8) ?[]const u8 {
+        if (p.history_valid and p.history_scope == scope and std.mem.eql(u8, p.history_query.items, query)) {
+            return if (p.history_len) |n| p.history_buf[0..n] else null;
+        }
+        const store = p.store orelse return null;
+        const match = store.completeQuery(&p.history_buf, scope, query, p.clock.now());
+        const gpa = p.list.arena.child_allocator;
+        p.history_query.clearRetainingCapacity();
+        p.history_query.appendSlice(gpa, query) catch {
+            p.history_valid = false;
+            return match;
+        };
+        p.history_scope = scope;
+        p.history_len = if (match) |m| m.len else null;
+        p.history_valid = true;
+        return match;
+    }
+
     /// Query history first, then the top hit's title, then the first web suggestion.
     fn computeCompletion(p: *Panel) ?Completion {
         if (p.suppressed_by_backspace or !p.caret_at_end or p.composing) return null;
         const query = p.field.text();
         if (query.len == 0) return null;
         if (p.mode == .clipboard) {
-            const store = p.store orelse return null;
-            const match = store.completeQuery(&p.completion_buf, .clipboard, query, p.clock.now()) orelse return null;
+            const match = p.historyCompletion(.clipboard, query) orelse return null;
             return .{ .suffix = match[query.len..], .source = .history };
         }
         if (hasLinkRow(p.list.rows)) return null;
-        if (p.store) |store| {
-            if (store.completeQuery(&p.completion_buf, .search, query, p.clock.now())) |match| {
-                return .{ .suffix = match[query.len..], .source = .history };
-            }
+        if (p.historyCompletion(.search, query)) |match| {
+            return .{ .suffix = match[query.len..], .source = .history };
         }
         if (p.isTopHit(0)) {
             const top = p.list.visible[0];
@@ -863,6 +895,7 @@ pub const Panel = struct {
 
     pub fn clearQueryHistory(p: *Panel) void {
         if (p.store) |store| store.clearQueries() catch |err| std.log.err("query history: {s}", .{@errorName(err)});
+        p.invalidateHistoryCache();
         p.completion = p.computeCompletion();
     }
 
@@ -907,6 +940,7 @@ pub const Panel = struct {
             .hide, .show_search => return,
         };
         store.recordQuery(scope, p.field.text(), p.clock.now()) catch |err| std.log.err("query history: {s}", .{@errorName(err)});
+        p.invalidateHistoryCache();
     }
 
     /// A query that matched a password manager's copy is never remembered.
