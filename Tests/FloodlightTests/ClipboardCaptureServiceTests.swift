@@ -485,6 +485,44 @@ struct ClipboardCaptureServiceTests {
         #expect(harness.store.count == 1)
         #expect(harness.store.mostRecentEntry?.text == "Keep me")
     }
+
+    @Test func pruneIfDueRunsOnceThenWaitsForTheInterval() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let first = harness.service.pruneIfDue(now: base)
+        #expect(first != nil)
+        await first?.value
+
+        #expect(harness.service.pruneIfDue(now: base.addingTimeInterval(10)) == nil)
+
+        let later = harness.service.pruneIfDue(now: base.addingTimeInterval(3_601))
+        #expect(later != nil)
+        await later?.value
+    }
+
+    @Test func aRetentionChangedAfterLaunchIsEnforcedAtTheNextPrune() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        harness.store.record(text: "Ten days old", date: base.addingTimeInterval(-10 * 86_400))
+
+        await harness.service.pruneIfDue(now: base)?.value
+        #expect(harness.store.count == 1)
+
+        harness.service.retention = .days(7)
+        await harness.service.pruneIfDue(now: base.addingTimeInterval(3_601))?.value
+        #expect(harness.store.isEmpty)
+    }
+
+    @Test func pruneIfDueRunsWhileCaptureIsDisabled() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        harness.store.record(text: "Forty days old", date: base.addingTimeInterval(-40 * 86_400))
+        harness.service.isEnabled = false
+
+        await harness.service.pruneIfDue(now: base)?.value
+        #expect(harness.store.isEmpty)
+    }
 }
 
 private enum ClipboardCaptureImageFixtures {

@@ -147,6 +147,9 @@ final class OnboardingSession {
     func clearClipboardHistory() {
         guard clipboardStore.clear() else { return }
         clipboardVersion += 1
+        Task.detached(priority: .utility) { [clipboardStore] in
+            clipboardStore.compact()
+        }
     }
 
     func complete() {

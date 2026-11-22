@@ -114,8 +114,10 @@ final class ClipboardCaptureService {
     let exclusions: ClipboardExclusionStore
     private let defaults: UserDefaults
     private let pollInterval: TimeInterval
+    private let pruneInterval: TimeInterval
 
     private var lastChangeCount: Int
+    private var lastPruneAt: Date?
     private var isPaused = false
     private var timer: Timer?
     private var resignActiveObserver: NSObjectProtocol?
@@ -126,13 +128,15 @@ final class ClipboardCaptureService {
         observer: any PasteboardObserving = AppKitPasteboardObserver(),
         exclusions: ClipboardExclusionStore = ClipboardExclusionStore(),
         defaults: UserDefaults = .standard,
-        pollInterval: TimeInterval = 0.5
+        pollInterval: TimeInterval = 0.5,
+        pruneInterval: TimeInterval = 3_600
     ) {
         self.store = store
         self.observer = observer
         self.exclusions = exclusions
         self.defaults = defaults
         self.pollInterval = pollInterval
+        self.pruneInterval = pruneInterval
         lastChangeCount = observer.changeCount
     }
 
@@ -163,11 +167,12 @@ final class ClipboardCaptureService {
         guard timer == nil else { return }
         lastChangeCount = observer.changeCount
 
-        pruneOnSchedule()
+        pruneIfDue()
 
         let timer = Timer
             .scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    self?.pruneIfDue()
                     self?.poll()
                 }
             }
@@ -274,10 +279,16 @@ final class ClipboardCaptureService {
         store.record(text: text, sourceAppBundleID: bundleID)
     }
 
-    private func pruneOnSchedule() {
+    @discardableResult
+    func pruneIfDue(now: Date = .now) -> Task<Void, Never>? {
+        if let lastPruneAt, now.timeIntervalSince(lastPruneAt) < pruneInterval {
+            return nil
+        }
+        lastPruneAt = now
         let retention = retention
-        Task.detached(priority: .utility) { [store] in
-            store.prune(retention: retention)
+        return Task.detached(priority: .utility) { [store] in
+            store.prune(retention: retention, now: now)
+            store.compact()
         }
     }
 }

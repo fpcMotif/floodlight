@@ -573,4 +573,18 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
         guard let cutoff = retention.cutoffDate(from: now) else { return true }
         return prune(olderThan: cutoff)
     }
+
+    @discardableResult
+    package func compact() -> Bool {
+        stateLock.withLock { state in
+            guard let db = state.db else { return false }
+            do {
+                try ClipboardHistorySQLite.compact(db: db)
+                return true
+            } catch {
+                Self.logFailure(operation: "compact", message: "\(error)")
+                return false
+            }
+        }
+    }
 }
