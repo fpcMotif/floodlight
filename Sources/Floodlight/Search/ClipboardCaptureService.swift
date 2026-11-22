@@ -226,12 +226,12 @@ final class ClipboardCaptureService {
     }
 
     func poll() {
-        guard isEnabled, !isPaused else { return }
-
         // Rule 1: changeCount unchanged -> zero work
         let currentChangeCount = observer.changeCount
         guard currentChangeCount != lastChangeCount else { return }
         lastChangeCount = currentChangeCount
+
+        guard isEnabled, !isPaused else { return }
 
         // Rule 2: Own-write marker -> skip
         guard let types = observer.pasteboardTypes else { return }

@@ -62,6 +62,7 @@ struct ClipboardCaptureServiceTests {
         let store: ClipboardHistoryStore
         let observer: ScriptedPasteboardObserver
         let exclusions: ClipboardExclusionStore
+        let defaults: UserDefaults
     }
 
     private func makeHarness(
@@ -88,7 +89,8 @@ struct ClipboardCaptureServiceTests {
             service: service,
             store: store,
             observer: observer,
-            exclusions: exclusions
+            exclusions: exclusions,
+            defaults: defaults
         )
     }
 
@@ -552,6 +554,34 @@ struct ClipboardCaptureServiceTests {
         harness.service.poll()
 
         #expect(harness.store.count == ClipboardCaptureService.maxFileCountPerCopy)
+    }
+
+    @Test func aCopyMadeWhileCaptureIsDisabledIsNotRecordedWhenItIsReenabled() {
+        let harness = makeHarness()
+        harness.service.isEnabled = false
+
+        harness.observer.setContents(string: "copied while off")
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
+
+        harness.defaults.set(true, forKey: ClipboardCaptureService.enabledDefaultsKey)
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
+
+        harness.observer.setContents(string: "copied after")
+        harness.service.poll()
+        #expect(harness.store.count == 1)
+        #expect(harness.store.mostRecentEntry?.text == "copied after")
+    }
+
+    @Test func disablingCaptureStopsRecording() {
+        let harness = makeHarness()
+        harness.defaults.set(false, forKey: ClipboardCaptureService.enabledDefaultsKey)
+
+        harness.observer.setContents(string: "copied while off")
+        harness.service.poll()
+
+        #expect(harness.store.isEmpty)
     }
 }
 
