@@ -524,6 +524,7 @@ const lite = struct {
     extern "c" fn sqlite3_column_int64(stmt: *Stmt, i: c_int) i64;
     extern "c" fn sqlite3_column_type(stmt: *Stmt, i: c_int) c_int;
     extern "c" fn sqlite3_busy_timeout(db: *Db, ms: c_int) c_int;
+    extern "c" fn sqlite3_changes(db: *Db) c_int;
     const ok = 0;
     const row = 100;
     const done = 101;
@@ -592,6 +593,55 @@ const stored_bytes_sql =
 const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, content_kind, content_detail, sensitive";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
+pub const Compaction = struct {
+    hash: [32]u8,
+    size: usize,
+};
+
+fn imagePathIn(images: []const u8, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
+    if (hash.len != 32) return null;
+    return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ images, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
+}
+
+fn writeImageIn(images: []const u8, hash: []const u8, format: []const u8, bytes: []const u8) !void {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const path = imagePathIn(images, &buf, hash, format) orelse return error.ClipboardStore;
+    if (std.c.access(path, 0) == 0) return;
+    var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}.tmp", .{path}, 0) catch return error.ClipboardStore;
+    const fd = std.c.open(tmp, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
+    if (fd < 0) return error.ClipboardStore;
+    var written: usize = 0;
+    while (written < bytes.len) {
+        const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
+        if (n <= 0) break;
+        written += @intCast(n);
+    }
+    const synced = std.c.fsync(fd) == 0;
+    _ = std.c.close(fd);
+    if (written < bytes.len or !synced or std.c.rename(tmp, path) != 0) {
+        _ = std.c.unlink(tmp);
+        return error.ClipboardStore;
+    }
+}
+
+fn readImageIn(images: []const u8, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    return readFile(arena, imagePathIn(images, &buf, hash, format) orelse return null, size);
+}
+
+fn unlinkImageIn(images: []const u8, hash: []const u8, format: []const u8) void {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    if (imagePathIn(images, &buf, hash, format)) |path| _ = std.c.unlink(path);
+}
+
+pub fn recompress(images: []const u8, arena: std.mem.Allocator, job: Compaction, compact: Compactor) ?usize {
+    const png = readImageIn(images, arena, &job.hash, "png", job.size) orelse return null;
+    const bytes = compact(arena, png) orelse return null;
+    writeImageIn(images, &job.hash, "avif", bytes) catch return null;
+    return bytes.len;
+}
+
 pub const Store = struct {
     db: *lite.Db,
     /// The folder that holds full pictures, one file per picture.
@@ -654,41 +704,16 @@ pub const Store = struct {
         return lite.sqlite3_column_int64(stmt, 0);
     }
 
-    fn imagePath(s: Store, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
-        if (hash.len != 32) return null;
-        return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ s.images, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
-    }
-
     fn writeImage(s: Store, hash: []const u8, format: []const u8, bytes: []const u8) !void {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        const path = s.imagePath(&buf, hash, format) orelse return error.ClipboardStore;
-        if (std.c.access(path, 0) == 0) return;
-        var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
-        const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}.tmp", .{path}, 0) catch return error.ClipboardStore;
-        const fd = std.c.open(tmp, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
-        if (fd < 0) return error.ClipboardStore;
-        var written: usize = 0;
-        while (written < bytes.len) {
-            const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
-            if (n <= 0) break;
-            written += @intCast(n);
-        }
-        const synced = std.c.fsync(fd) == 0;
-        _ = std.c.close(fd);
-        if (written < bytes.len or !synced or std.c.rename(tmp, path) != 0) {
-            _ = std.c.unlink(tmp);
-            return error.ClipboardStore;
-        }
+        return writeImageIn(s.images, hash, format, bytes);
     }
 
     fn readImage(s: Store, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        return readFile(arena, s.imagePath(&buf, hash, format) orelse return null, size);
+        return readImageIn(s.images, arena, hash, format, size);
     }
 
     fn unlinkImage(s: Store, hash: []const u8, format: []const u8) void {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        if (s.imagePath(&buf, hash, format)) |path| _ = std.c.unlink(path);
+        unlinkImageIn(s.images, hash, format);
     }
 
     fn moveInlineImagesOut(s: Store) !bool {
@@ -767,25 +792,37 @@ pub const Store = struct {
         }
     }
 
-    pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
+    pub fn nextCompaction(s: Store, now: f64) ?Compaction {
+        const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return null;
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{now - compact_after_days * 86400});
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
         var hash: [32]u8 = undefined;
-        var size: usize = 0;
-        {
-            const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return false;
-            defer _ = lite.sqlite3_finalize(stmt);
-            bindAll(stmt, .{now - compact_after_days * 86400});
-            if (lite.sqlite3_step(stmt) != lite.row) return false;
-            @memcpy(&hash, columnBlob(stmt, 0));
-            size = @intCast(lite.sqlite3_column_int64(stmt, 1));
+        @memcpy(&hash, columnBlob(stmt, 0));
+        return .{ .hash = hash, .size = @intCast(lite.sqlite3_column_int64(stmt, 1)) };
+    }
+
+    pub fn finishCompaction(s: Store, job: Compaction, avif_bytes: ?usize) void {
+        if (avif_bytes) |len| {
+            if (s.run("UPDATE entries SET image_format = 'avif', stored_bytes = ?, compacted = 1 WHERE hash = ? AND image_format = 'png'", .{ @as(i64, @intCast(len)), Blob{ .bytes = &job.hash } })) |_| {
+                if (lite.sqlite3_changes(s.db) > 0) {
+                    s.unlinkImage(&job.hash, "png");
+                } else if (s.int("SELECT 1 FROM entries WHERE hash = ? AND image_format = 'avif' LIMIT 1", .{Blob{ .bytes = &job.hash }}) == null) {
+                    s.unlinkImage(&job.hash, "avif");
+                }
+                return;
+            } else |_| {
+                if (s.int("SELECT 1 FROM entries WHERE hash = ? AND image_format = 'avif' LIMIT 1", .{Blob{ .bytes = &job.hash }}) == null) {
+                    s.unlinkImage(&job.hash, "avif");
+                }
+            }
         }
-        const smaller = if (s.readImage(arena, &hash, "png", size)) |png| compact(arena, png) else null;
-        const done = if (smaller) |bytes| blk: {
-            s.writeImage(&hash, "avif", bytes) catch break :blk false;
-            s.run("UPDATE entries SET image_format = 'avif', stored_bytes = ?, compacted = 1 WHERE hash = ? AND image_format = 'png'", .{ @as(i64, @intCast(bytes.len)), Blob{ .bytes = &hash } }) catch break :blk false;
-            s.unlinkImage(&hash, "png");
-            break :blk true;
-        } else false;
-        if (!done) s.run("UPDATE entries SET compacted = 1 WHERE hash = ? AND image_format = 'png'", .{Blob{ .bytes = &hash }}) catch {};
+        s.run("UPDATE entries SET compacted = 1 WHERE hash = ? AND image_format = 'png'", .{Blob{ .bytes = &job.hash }}) catch {};
+    }
+
+    pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
+        const job = s.nextCompaction(now) orelse return false;
+        s.finishCompaction(job, recompress(s.images, arena, job, compact));
         return true;
     }
 

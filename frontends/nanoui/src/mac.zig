@@ -394,7 +394,7 @@ pub const PasteboardReader = struct {
         const png_data = if (r.picture_is_png) data else pngRepresentation(rep) orelse return null;
         return .{
             .png = arena.dupe(u8, dataBytes(png_data)) catch return null,
-            .thumbnail = thumbnailPng(arena, png_data) orelse "",
+            .thumbnail = thumbnailPng(arena, data) orelse "",
             .width = @intCast(w),
             .height = @intCast(h),
             .format = if (r.picture_is_png) .png else .tiff,

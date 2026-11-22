@@ -4275,3 +4275,73 @@ test "a failed capture stores nothing" {
     try t.expectError(error.ClipboardStore, store.capture(arena.allocator(), fake.pasteboard(), notes_app, 10));
     try t.expectEqual(@as(usize, 0), (try store.list(arena.allocator(), "")).len);
 }
+
+test "recompression in three parts gives the same result as in one" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG three part screenshot";
+    _ = try store.add(picture(png), "", "Preview", 0);
+
+    try t.expect(store.nextCompaction(6 * day) == null);
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    const avif_bytes = clipboard.recompress(store.images, a, job, halve);
+    store.finishCompaction(job, avif_bytes);
+
+    try t.expect(store.nextCompaction(8 * day) == null);
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings(png[0 .. png.len / 2], store.image(a, rows[0].id).?);
+    var name: [128]u8 = undefined;
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "an entry deleted during recompression leaves no file behind" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG deleted while compacting";
+    _ = try store.add(picture(png), "", "Preview", 0);
+    const id = (try store.list(a, ""))[0].id;
+
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    try store.delete(id);
+    const avif_bytes = clipboard.recompress(store.images, a, job, halve);
+    store.finishCompaction(job, avif_bytes);
+
+    var name: [128]u8 = undefined;
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "a picture that does not shrink is marked and kept" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG kept as png";
+    _ = try store.add(picture(png), "", "Preview", 0);
+
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    const avif_bytes = clipboard.recompress(store.images, a, job, keepAll);
+    try t.expect(avif_bytes == null);
+    store.finishCompaction(job, avif_bytes);
+
+    try t.expect(store.nextCompaction(8 * day) == null);
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings(png, store.image(a, rows[0].id).?);
+    var name: [128]u8 = undefined;
+    try t.expect(hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}

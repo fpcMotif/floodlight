@@ -49,6 +49,7 @@ const Shell = struct {
     paste_target: mac.RunningApp = .{},
     presence: Presence = undefined,
     submitting: bool = false,
+    compacting: bool = false,
     landing_files: bool = false,
     headless: bool = false,
     memory_step: u32 = 0,
@@ -345,13 +346,48 @@ const Shell = struct {
         s.panel_window.redraw();
     }
 
+    const CompactJob = struct {
+        shell: *Shell,
+        images: []const u8,
+        job: clipboard.Compaction,
+        avif_bytes: ?usize = null,
+    };
+
     fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.presence.isHidden()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        if (!s.presence.isHidden() or s.compacting) return nanoui.App.after(compact_next_ms, s, compactTick);
+        const job = s.store.nextCompaction(clipboard.wallClock()) orelse return nanoui.App.after(compact_idle_ms, s, compactTick);
+        const state = gpa.create(CompactJob) catch {
+            std.log.err("clipboard compaction: out of memory", .{});
+            return nanoui.App.after(compact_idle_ms, s, compactTick);
+        };
+        state.* = .{ .shell = s, .images = s.store.images, .job = job };
+        s.compacting = true;
+        const t = std.Thread.spawn(.{}, compactWorker, .{state}) catch |err| {
+            s.compacting = false;
+            gpa.destroy(state);
+            std.log.err("clipboard compaction: no worker thread: {s}", .{@errorName(err)});
+            return nanoui.App.after(compact_idle_ms, s, compactTick);
+        };
+        t.detach();
+    }
+
+    fn compactWorker(state: *CompactJob) void {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
-        nanoui.App.after(if (more) compact_next_ms else compact_idle_ms, s, compactTick);
+        state.avif_bytes = clipboard.recompress(state.images, arena.allocator(), state.job, mac.compactImage);
+        objc.dispatchMain(state, compactionLanded);
+    }
+
+    fn compactionLanded(ctx: ?*anyopaque) callconv(.c) void {
+        const state: *CompactJob = @ptrCast(@alignCast(ctx));
+        const s = state.shell;
+        const job = state.job;
+        const avif_bytes = state.avif_bytes;
+        gpa.destroy(state);
+        s.compacting = false;
+        s.store.finishCompaction(job, avif_bytes);
+        nanoui.App.after(compact_next_ms, s, compactTick);
     }
 
     fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
