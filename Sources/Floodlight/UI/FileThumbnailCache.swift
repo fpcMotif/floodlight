@@ -186,6 +186,16 @@ final class FileThumbnailCache {
         return image
     }
 
+    /// Drops everything, probes included. This is the heaviest cache by far:
+    /// a thumbnail decodes at twice its 320-point box, about 1.6 MB of
+    /// pixels, so a full cache can pass 200 MB. Only the
+    /// selected file's thumbnail is ever drawn, a hide clears the selection,
+    /// and a miss reloads off the main actor behind a correctly sized box.
+    func purgeForHide() {
+        cache.removeAllObjects()
+        pixelSizeCache.removeAllObjects()
+    }
+
     @concurrent
     private nonisolated static func generate(
         for url: URL,

@@ -1,6 +1,7 @@
 import AppKit
 import FloodlightEngine
 import Observation
+import os
 import SwiftUI
 
 final class FloodlightPanel: NSPanel {
@@ -29,6 +30,7 @@ final class FloodlightPanelController {
     private let quickLook = QuickLookController()
     private let boardContext = ClipboardBoardContext()
     private let pasteDelivery: PasteTargetDelivery
+    private let rowAssets: RowAssetCaches
 
     var isVisible: Bool {
         panel.isVisible
@@ -37,11 +39,22 @@ final class FloodlightPanelController {
     private var localKeyMonitor: Any?
     private var resignActiveObservation: NSObjectProtocol?
     private var accessibilityDisplayObservation: NSObjectProtocol?
+    private var becomeKeyObservation: NSObjectProtocol?
     private var appliedGlassSlabState: Bool?
+    /// The open `Summon` interval: begun when the hotkey fires, ended once the
+    /// panel is key and front. Key status can land a run-loop turn after
+    /// `makeKeyAndOrderFront`, because activation is cooperative, so the end
+    /// waits for `didBecomeKey` rather than for `show()` to return.
+    private var summonSignpost: OSSignpostID?
 
-    init(model: SearchCoordinator, pasteDelivery: PasteTargetDelivery = PasteTargetDelivery()) {
+    init(
+        model: SearchCoordinator,
+        pasteDelivery: PasteTargetDelivery = PasteTargetDelivery(),
+        rowAssets: RowAssetCaches = .shared
+    ) {
         self.model = model
         self.pasteDelivery = pasteDelivery
+        self.rowAssets = rowAssets
         panel = FloodlightPanel(
             contentRect: NSRect(
                 x: 0,
@@ -108,6 +121,16 @@ final class FloodlightPanelController {
                 self?.applyGlassSlabState()
             }
         }
+        becomeKeyObservation = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            // queue: .main is untyped; AppKit delivers this on the main thread.
+            MainActor.assumeIsolated {
+                self?.endSummonIfPresented()
+            }
+        }
     }
 
     isolated deinit {
@@ -119,6 +142,9 @@ final class FloodlightPanelController {
         }
         if let accessibilityDisplayObservation {
             NSWorkspace.shared.notificationCenter.removeObserver(accessibilityDisplayObservation)
+        }
+        if let becomeKeyObservation {
+            NotificationCenter.default.removeObserver(becomeKeyObservation)
         }
     }
 
@@ -225,15 +251,42 @@ final class FloodlightPanelController {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeKey()
+        endSummonIfPresented()
     }
 
+    /// Opens the `Summon` interval for a hotkey press that will bring the
+    /// panel up. A press that hides it is not a summon, and timing it would
+    /// put a hide into the summon numbers.
+    func beginSummon() {
+        guard !Self.shouldHideOnToggle(
+            panelIsVisible: panel.isVisible,
+            panelIsKeyWindow: panel.isKeyWindow,
+            applicationIsActive: NSApp.isActive
+        ) else { return }
+        summonSignpost = FloodlightPerformance.begin("Summon")
+    }
+
+    private func endSummonIfPresented() {
+        guard let summonSignpost, panel.isVisible, panel.isKeyWindow else { return }
+        self.summonSignpost = nil
+        FloodlightPerformance.end("Summon", id: summonSignpost)
+    }
+
+    /// The panel itself stays built, so the next summon only orders it
+    /// front. What goes is everything a hidden panel would otherwise hold
+    /// for nothing: the session's query and rows, and the row-asset caches
+    /// down to what the next summon draws.
     func hide() {
         let signpost = FloodlightPerformance.begin("HidePanel")
         defer { FloodlightPerformance.end("HidePanel", id: signpost) }
+        // A summon that never reached key has no honest end. Left open, the
+        // next time the panel goes key by another route (the menu bar item)
+        // would end it, and record the whole gap as one summon.
+        summonSignpost = nil
         quickLook.close()
         panel.orderOut(nil)
         model.reset()
-        ClipboardImageCache.shared.removeFullImages()
+        rowAssets.purgeForHide()
     }
 
     private func positionOnActiveScreen() {

@@ -187,4 +187,11 @@ final class FileTextPreviewCache {
         cache[key] = .some(preview)
         return preview
     }
+
+    /// Drops everything. A preview is only ever for the selected file, a
+    /// hide clears the selection, and the 128 entries this can hold are up
+    /// to 64 KB of decoded text each — megabytes kept for nothing on screen.
+    func purgeForHide() {
+        cache.removeAll()
+    }
 }

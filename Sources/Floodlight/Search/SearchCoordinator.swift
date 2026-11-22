@@ -287,6 +287,7 @@ final class SearchCoordinator {
         isResetting = false
         pathCache = pathCache.cleared()
         publication = idleLocalPublication()
+        clipboardSearch.endSession()
     }
 
     // MARK: - Web mode (Tab ↔ Esc)

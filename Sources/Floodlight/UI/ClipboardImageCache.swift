@@ -13,12 +13,20 @@ import Foundation
 final class ClipboardImageCache {
     static let shared = ClipboardImageCache()
 
+    /// Thumbnails kept warm across a hide: two boards' worth of rows. Row
+    /// thumbnails decode synchronously in the view body, so the rows the
+    /// board reopens on must not all miss at once; the board reopens at the
+    /// newest entries, which are the ones drawn last.
+    static let warmThumbnailCount = FloodlightMetrics.maximumVisibleResults * 2
+
     private let thumbnails = NSCache<NSString, NSImage>()
     private let fullImages = NSCache<NSString, NSImage>()
+    private var recentThumbnails: RecentKeys
 
-    init() {
+    init(warmThumbnailCount: Int = ClipboardImageCache.warmThumbnailCount) {
         thumbnails.countLimit = 256
         fullImages.countLimit = 8
+        recentThumbnails = RecentKeys(capacity: warmThumbnailCount)
     }
 
     /// The decoded thumbnail for an entry. `NSImage(data:)` in a view body
@@ -26,9 +34,13 @@ final class ClipboardImageCache {
     /// entry is all the list and the inspector between them ever need.
     func thumbnail(entryID: String, data: Data) -> NSImage? {
         let key = entryID as NSString
-        if let cached = thumbnails.object(forKey: key) { return cached }
+        if let cached = thumbnails.object(forKey: key) {
+            recentThumbnails.touch(entryID)
+            return cached
+        }
         guard let image = NSImage(data: data) else { return nil }
         thumbnails.setObject(image, forKey: key)
+        recentThumbnails.touch(entryID)
         return image
     }
 
@@ -53,11 +65,13 @@ final class ClipboardImageCache {
         return image
     }
 
-    /// Dropped when the panel hides: a 15 MB screenshot has no reason to
-    /// outlive the board that showed it. Thumbnails are small and stay, so
+    /// Full images go entirely: a 15 MB screenshot has no reason to outlive
+    /// the board that showed it, and the inspector loads one only after the
+    /// selection settles anyway. Thumbnails shrink to the warm set, so
     /// reopening the board is not a fresh round of decodes.
-    func removeFullImages() {
+    func purgeForHide() {
         fullImages.removeAllObjects()
+        recentThumbnails.keepOnly(in: thumbnails)
     }
 
     /// Both halves are cancellable, and both checks earn their place:

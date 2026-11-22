@@ -97,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func globalHotKeyDidFire(_ action: GlobalHotKeyAction) {
+        // Here and not in `show()`: the summon budget is measured from the
+        // keypress, so the presentation routing in between is inside it.
+        panelController.beginSummon()
         switch action {
         case .summonSearch: presentation.toggleSearch()
         case .showClipboard: presentation.showClipboardHistory()

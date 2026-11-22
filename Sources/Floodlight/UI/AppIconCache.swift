@@ -5,16 +5,25 @@ import Foundation
 final class AppIconCache {
     static let shared = AppIconCache()
 
-    private let cache = NSCache<NSString, NSImage>()
+    /// Kept warm across a hide. The inspector shows one source-app icon at a
+    /// time, the board reopens on the newest entries, and those come from
+    /// the apps used last; a 16-point icon costs little to keep, while a
+    /// miss costs a Launch Services lookup on the main actor.
+    static let warmCount = 8
 
-    private init() {
+    private let cache = NSCache<NSString, NSImage>()
+    private var recent: RecentKeys
+
+    init(warmCount: Int = AppIconCache.warmCount) {
         cache.countLimit = 64
+        recent = RecentKeys(capacity: warmCount)
     }
 
     func icon(for bundleID: String?) -> NSImage? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
         let key = bundleID as NSString
         if let cached = cache.object(forKey: key) {
+            recent.touch(bundleID)
             return cached
         }
 
@@ -27,6 +36,12 @@ final class AppIconCache {
         let image = NSWorkspace.shared.icon(forFile: appURL.path)
         image.size = NSSize(width: 16, height: 16)
         cache.setObject(image, forKey: key)
+        recent.touch(bundleID)
         return image
+    }
+
+    /// Keeps the most recently drawn icons and drops the rest.
+    func purgeForHide() {
+        recent.keepOnly(in: cache)
     }
 }
