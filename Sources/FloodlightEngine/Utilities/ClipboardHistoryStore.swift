@@ -365,7 +365,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 return state.pinnedEntries + state.recentEntries
             }
 
-            if trimmed.utf8.count < 3 {
+            if trimmed.unicodeScalars.count < 3 {
                 return Self.windowMatches(in: state, query: trimmed)
             }
 

@@ -39,6 +39,20 @@ struct ClipboardHistoryStoreMaintenanceTests {
         #expect(try readAutoVacuumMode(at: dbURL) == 2)
     }
 
+    @Test func shortQueriesAreMeasuredInCharactersNotBytes() {
+        let store = ClipboardHistoryStore.inMemory()
+        _ = store.record(text: "日本語のテキスト")
+        _ = store.record(text: "hello 😀 world")
+        _ = store.record(text: "café menu")
+        _ = store.record(text: "plain ascii")
+
+        #expect(store.search(query: "日").map(\.text) == ["日本語のテキスト"])
+        #expect(store.search(query: "日本").map(\.text) == ["日本語のテキスト"])
+        #expect(store.search(query: "😀").map(\.text) == ["hello 😀 world"])
+        #expect(store.search(query: "é ").map(\.text) == ["café menu"])
+        #expect(store.search(query: "日本語").map(\.text) == ["日本語のテキスト"])
+    }
+
     private func fileSize(at url: URL) throws -> UInt64 {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.uint64Value ?? 0
