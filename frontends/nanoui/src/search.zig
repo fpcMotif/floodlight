@@ -39,6 +39,7 @@ pub const Row = struct {
     score: i32,
     size: ?u64 = null,
     modified: ?i64 = null,
+    modified_label: []const u8 = "",
     suggestion: bool = false,
     /// One of `web_engines`, listed under Google; never a Link Row.
     engine: bool = false,

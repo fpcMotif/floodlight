@@ -572,18 +572,23 @@ pub const Panel = struct {
     fn answer(p: *Panel, text: []const u8, force_files: bool) !bool {
         const a = p.list.beginQuery(text);
         p.files_due = false;
-        if (text.len == 0) {
-            p.base_rows = try copyRows(a, p.frequentApps());
-        } else if (p.catalog.files == null) {
-            p.base_rows = try p.catalog.query(a, text);
-        } else if (force_files or p.file_search_s <= file_search_budget_s) {
+        const base: []search.Row = if (text.len == 0)
+            try copyRows(a, p.frequentApps())
+        else if (p.catalog.files == null)
+            try p.catalog.query(a, text)
+        else if (force_files or p.file_search_s <= file_search_budget_s) blk: {
             const started = p.clock.now();
-            p.base_rows = try p.catalog.query(a, text);
+            const rows = try p.catalog.query(a, text);
             p.file_search_s = p.clock.now() - started;
-        } else {
-            p.base_rows = try p.catalog.queryApps(a, text);
+            break :blk rows;
+        } else blk: {
             p.files_due = true;
-        }
+            break :blk try p.catalog.queryApps(a, text);
+        };
+        for (base) |*r| if (r.modified) |secs| {
+            r.modified_label = p.hooks.describe_date(p.hooks.ctx, secs, a);
+        };
+        p.base_rows = base;
         p.suggestions = &.{};
         var need_fetch = false;
         if (p.shouldSuggest(text)) {
@@ -1089,8 +1094,19 @@ pub const Panel = struct {
         const box = ui.div(c).column().wFull().h(metrics.list_height).scrollY().p(metrics.row_padding);
         defer box.end();
         chrome.boundOverscroll(c, box.id());
-        chrome.revealSelection(c, &p.list, box.id(), metrics.list_height - 2 * metrics.row_padding);
-        for (p.list.visible, 0..) |row, i| p.rowView(c, row, i);
+        const view_h = metrics.list_height - 2 * metrics.row_padding;
+        chrome.revealSelection(c, &p.list, box.id(), view_h);
+        const visible = p.list.visible;
+        const shown = list.rowsInView(c.scroll.get(box.id()) orelse 0, visible.len, metrics.row_height, view_h, 2);
+        spacer(c, "above", shown.first);
+        for (visible[shown.first..shown.end], shown.first..) |row, i| p.rowView(c, row, i);
+        spacer(c, "below", visible.len - shown.end);
+    }
+
+    fn spacer(c: *ui.Context, name: []const u8, rows: usize) void {
+        if (rows == 0) return;
+        ui.key(c, name);
+        ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
     }
 
     fn footer(p: *Panel, c: *ui.Context) void {
@@ -1134,7 +1150,7 @@ pub const Panel = struct {
                     ui.text(c, row.kind.label(), .{ .size = 8.5, .weight = .bold, .color = th.muted });
                 }
             }
-            p.subtitleLine(c, row, top_hit);
+            subtitleLine(c, row, top_hit);
         }
         chrome.rowKey(c, if (selected)
             .enter
@@ -1162,7 +1178,7 @@ pub const Panel = struct {
         ui.richText(c, title, spans, style);
     }
 
-    fn subtitleLine(p: *Panel, c: *ui.Context, row: search.Row, top_hit: bool) void {
+    fn subtitleLine(c: *ui.Context, row: search.Row, top_hit: bool) void {
         const style: ui.TextStyle = .{ .size = 11.5, .weight = .medium, .color = c.theme.muted };
         const line = ui.div(c).row().gap(6).itemsCenter();
         defer line.end();
@@ -1171,9 +1187,9 @@ pub const Panel = struct {
             ui.text(c, "·", style);
             ui.text(c, chrome.formatSize(c, size), style);
         };
-        if (row.modified) |secs| {
+        if (row.modified_label.len > 0) {
             ui.text(c, "·", style);
-            ui.text(c, p.hooks.describe_date(p.hooks.ctx, secs, c.arena.allocator()), style);
+            ui.text(c, row.modified_label, style);
         }
         if (top_hit) {
             ui.text(c, "·", style);
@@ -1269,7 +1285,7 @@ fn hashBytes(h: *std.hash.Wyhash, s: []const u8) void {
 }
 
 /// The list outlives the frequent-apps cache's rebuilds, so it owns its rows.
-fn copyRows(a: std.mem.Allocator, rows: []const search.Row) ![]const search.Row {
+fn copyRows(a: std.mem.Allocator, rows: []const search.Row) ![]search.Row {
     const out = try a.dupe(search.Row, rows);
     for (out) |*r| {
         r.subtitle = try a.dupe(u8, r.subtitle);

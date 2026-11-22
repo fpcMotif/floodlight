@@ -52,8 +52,8 @@ pub const Budgets = struct {
     pub const keystroke_to_publication_p99_us: f64 = 10.0;
     pub const hotkey_to_laid_out_frame_p99_us: f64 = 10.0;
     pub const return_to_action_p99_us: f64 = 10.0;
-    pub const keystroke_to_built_frame_p99_us: f64 = 6200.0;
-    pub const first_frame_with_icons_p99_us: f64 = 560000.0;
+    pub const keystroke_to_built_frame_p99_us: f64 = 4300.0;
+    pub const first_frame_with_icons_p99_us: f64 = 46000.0;
     pub const hotkey_to_built_frame_p99_us: f64 = 1500.0;
 };
 

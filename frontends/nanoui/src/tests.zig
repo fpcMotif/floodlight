@@ -2268,13 +2268,13 @@ test "the 200-app latency benchmark measures keystroke publication, summon layou
     try t.expect(built_summon.p99_ns >= built_summon.p50_ns);
 
     try t.expect(bench.withinFrameBudgets(
-        .{ .p50_ns = 1_000, .p99_ns = 6_000_000, .runs = 4 },
-        .{ .p50_ns = 1_000, .p99_ns = 500_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 4_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 40_000_000, .runs = 4 },
         .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
     ));
     try t.expect(!bench.withinFrameBudgets(
-        .{ .p50_ns = 1_000, .p99_ns = 6_000_000, .runs = 4 },
-        .{ .p50_ns = 1_000, .p99_ns = 600_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 4_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 50_000_000, .runs = 4 },
         .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
     ));
 
@@ -3540,4 +3540,157 @@ test "scroll position survives a release" {
     mac.forgetContextStorage(&tester.ctx);
     tester.frame();
     try t.expectEqual(saved_offset, tester.ctx.scroll.get(id).?);
+}
+
+const CountingHooks = struct {
+    icon_calls: u32 = 0,
+    date_calls: u32 = 0,
+
+    fn request(_: ?*anyopaque) void {}
+
+    fn icon(ctx: ?*anyopaque, _: []const u8) ?[]const u8 {
+        const h: *CountingHooks = @ptrCast(@alignCast(ctx));
+        h.icon_calls += 1;
+        return null;
+    }
+
+    fn describeDate(ctx: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
+        const h: *CountingHooks = @ptrCast(@alignCast(ctx));
+        h.date_calls += 1;
+        return "Today at 9:41 AM";
+    }
+
+    fn detailedDate(_: ?*anyopaque, _: f64, _: std.mem.Allocator) []const u8 {
+        return "Today at 9:41 AM";
+    }
+
+    fn hooks(h: *CountingHooks) panel_mod.Hooks {
+        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = describeDate, .detailed_date = detailedDate };
+    }
+};
+
+fn addNumberedApps(cat: *search.Catalog, count: usize) !void {
+    for (0..count) |i| {
+        try cat.addApp(try std.fmt.allocPrint(t.allocator, "/Applications/App {d:0>2}.app", .{i}));
+    }
+}
+
+test "rows out of view ask for no icon" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var ch: CountingHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, ch.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.field.set("app");
+    p.refresh();
+    ch.icon_calls = 0;
+    tester.frame();
+    try t.expect(ch.icon_calls > 0);
+    try t.expect(ch.icon_calls <= 12);
+}
+
+test "a date is described once per result set" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var ch: CountingHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, ch.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.field.set("t");
+    p.refresh();
+    const expected = countRows(p.list.visible, .file) + countRows(p.list.visible, .folder);
+    try t.expect(expected > 0);
+    tester.frame();
+    tester.frame();
+    tester.frame();
+    try t.expectEqual(@as(u32, @intCast(expected)), ch.date_calls);
+}
+
+test "the selection scrolls into view from far below" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("app");
+    tester.settle(0.1);
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expectEqual(@as(usize, 40), p.list.selected);
+    try t.expect(tester.hasText(p.list.visible[40].title));
+}
+
+test "the top hit stays the first row after scrolling back" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("app");
+    tester.settle(0.1);
+    const top_title = try t.allocator.dupe(u8, p.list.visible[0].title);
+    defer t.allocator.free(top_title);
+
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expect(!tester.hasText("Top Hit"));
+
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.up });
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+    try t.expect(tester.hasText(top_title));
+    try t.expect(tester.hasText("Top Hit"));
+}
+
+test "a late file row keeps its date" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.file_search_s = 1;
+    tester.typeText("return");
+    tester.settle(0.1);
+    try t.expect(p.files_due);
+    p.landFiles();
+    tester.frame();
+    try t.expect(tester.hasText("2025-return.pdf"));
+    try t.expect(tester.hasText("Today at 9:41 AM"));
 }
