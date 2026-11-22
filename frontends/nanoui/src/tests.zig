@@ -3797,3 +3797,87 @@ test "bundle contents do not use result slots" {
     for (rows) |r| file_count += @intFromBool(r.kind == .file);
     try t.expectEqual(@as(usize, 5), file_count);
 }
+
+test "the list carries no thumbnails" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    _ = try store.add(picture("png-0"), "", "Preview", 10);
+    _ = try store.add(picture("png-1"), "", "Preview", 20);
+    _ = try store.add(picture("png-2"), "", "Preview", 30);
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 3), rows.len);
+    for (rows) |r| {
+        try t.expectEqual(@as(usize, 0), r.thumbnail.len);
+        try t.expectEqualStrings("thumb", store.thumbnail(a, r.id));
+    }
+}
+
+test "a picture row in view shows its thumbnail" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(picture("png-one"), "", "Preview", 100);
+    try f.show();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const id = f.p.board.list.visible[0].id;
+    try t.expectEqualStrings("thumb", f.store.thumbnail(arena.allocator(), id));
+    try t.expectEqual(@as(usize, 1), f.p.board.thumbnails.count());
+    try t.expectEqualStrings("thumb", f.p.board.thumbnails.get(id).?);
+}
+
+test "rows out of view fetch no thumbnail" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var buf: [32]u8 = undefined;
+    for (0..60) |i| {
+        const bytes = try std.fmt.bufPrint(&buf, "png-{d}", .{i});
+        _ = try f.store.add(picture(bytes), "", "Preview", @floatFromInt(100 + i));
+    }
+    try f.show();
+    try t.expect(f.p.board.thumbnails.count() > 0);
+    try t.expect(f.p.board.thumbnails.count() < 20);
+}
+
+test "deleting keeps the other rows and the selection's place" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(5);
+    try f.show();
+
+    _ = f.tester.shortcut(.{ .key = ui.Shortcut.down });
+    _ = f.tester.shortcut(.{ .key = ui.Shortcut.down });
+    try t.expectEqual(@as(usize, 2), f.p.board.list.selected);
+    try t.expectEqualStrings("entry number 2", f.p.board.list.selection().?.text);
+
+    f.p.board.delete();
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+    try t.expectEqual(@as(usize, 2), f.p.board.list.selected);
+    try t.expectEqualStrings("entry number 1", f.p.board.list.selection().?.text);
+    for (f.p.board.list.rows) |r| try t.expect(!std.mem.eql(u8, r.text, "entry number 2"));
+}
+
+test "deleting does not ask the store for the list again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(4);
+    _ = try f.store.add(picture("png-del"), "", "Preview", 2000);
+    try f.show();
+
+    const pic_id = f.p.board.list.rows[0].id;
+    try t.expect(f.p.board.thumbnails.get(pic_id) != null);
+    f.p.board.delete();
+    try t.expect(!f.p.board.list.stale);
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+    try t.expect(f.p.board.thumbnails.get(pic_id) == null);
+}

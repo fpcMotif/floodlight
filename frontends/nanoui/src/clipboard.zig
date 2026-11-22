@@ -559,7 +559,7 @@ const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail, sensitive";
+const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, content_kind, content_detail, sensitive";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Store = struct {
@@ -843,9 +843,8 @@ pub const Store = struct {
                 .width = @intCast(lite.sqlite3_column_int64(stmt, 7)),
                 .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
                 .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
-                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
-                .content = storedContent(columnText(stmt, 11), try arena.dupe(u8, columnText(stmt, 12))),
-                .sensitive = lite.sqlite3_column_int64(stmt, 13) != 0,
+                .content = storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
+                .sensitive = lite.sqlite3_column_int64(stmt, 12) != 0,
             });
         }
         return out.items;
@@ -858,6 +857,14 @@ pub const Store = struct {
         bindAll(stmt, .{id});
         if (lite.sqlite3_step(stmt) != lite.row) return null;
         return s.readImage(arena, columnBlob(stmt, 0), columnText(stmt, 1), @intCast(lite.sqlite3_column_int64(stmt, 2)));
+    }
+
+    pub fn thumbnail(s: Store, arena: std.mem.Allocator, id: i64) []const u8 {
+        const stmt = s.prepare("SELECT thumbnail FROM entries WHERE id = ?") catch return "";
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{id});
+        if (lite.sqlite3_step(stmt) != lite.row) return "";
+        return arena.dupe(u8, columnBlob(stmt, 0)) catch "";
     }
 
     pub fn togglePin(s: Store, id: i64, now: f64) !void {

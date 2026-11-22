@@ -50,6 +50,7 @@ const detail_kept_bytes = 1 << 20;
 pub const max_line_bytes = 200;
 const max_plain_lines = 40;
 const max_link_lines = 6;
+const max_thumbnails = 256;
 
 pub fn shownHead(text: []const u8, lines: usize) []const u8 {
     var end = lines * max_line_bytes;
@@ -91,9 +92,11 @@ pub const Board = struct {
     /// What the inspector found for the entry `facts_id` names.
     facts: clipboard.Facts = .{},
     facts_id: ?i64 = null,
+    thumbnails: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
+    thumb_arena: std.heap.ArenaAllocator,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
-        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa) };
+        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa) };
         b.list.markStale();
         return b;
     }
@@ -101,12 +104,16 @@ pub const Board = struct {
     pub fn deinit(b: *Board) void {
         b.list.deinit();
         b.detail_arena.deinit();
+        b.thumbnails.deinit(b.thumb_arena.child_allocator);
+        b.thumb_arena.deinit();
     }
 
     pub fn forget(b: *Board) void {
         b.list.reset();
         b.list.markStale();
         b.releaseDetail();
+        b.thumbnails.clearAndFree(b.thumb_arena.child_allocator);
+        _ = b.thumb_arena.reset(.free_all);
     }
 
     pub fn releaseDetail(b: *Board) void {
@@ -152,10 +159,33 @@ pub const Board = struct {
         const e = b.list.selection() orelse return;
         const store = b.store orelse return;
         store.delete(e.id) catch return;
+        _ = b.thumbnails.remove(e.id);
         const at = b.list.selected;
-        b.list.markStale();
-        b.refresh(b.list.answered());
+        const next = b.list.allocator().alloc(Entry, b.list.rows.len -| 1) catch {
+            b.list.markStale();
+            b.refresh(b.list.answered());
+            b.list.clampSelection(at);
+            return;
+        };
+        var n: usize = 0;
+        for (b.list.rows) |r| if (r.id != e.id) {
+            next[n] = r;
+            n += 1;
+        };
+        b.list.replaceRows(next[0..n]);
         b.list.clampSelection(at);
+    }
+
+    fn thumbnailOf(b: *Board, e: Entry) []const u8 {
+        if (b.thumbnails.get(e.id)) |bytes| return bytes;
+        const gpa = b.thumb_arena.child_allocator;
+        if (b.thumbnails.count() >= max_thumbnails) {
+            b.thumbnails.clearRetainingCapacity();
+            _ = b.thumb_arena.reset(.free_all);
+        }
+        const bytes = if (b.store) |s| s.thumbnail(b.thumb_arena.allocator(), e.id) else "";
+        b.thumbnails.put(gpa, e.id, bytes) catch {};
+        return bytes;
     }
 
     /// Loads what the inspector shows for the selection, once per entry.
@@ -274,7 +304,7 @@ pub const Board = struct {
         defer row_box.box.end();
         const it = row_box.it;
         if (it.clicked) b.list.selected = i;
-        iconView(c, host, e);
+        b.iconView(c, host, e);
         {
             const text = ui.div(c).column().grow().gap(3);
             defer text.end();
@@ -290,10 +320,11 @@ pub const Board = struct {
         return if (it.double_clicked) .{ .paste = e } else null;
     }
 
-    fn iconView(c: *ui.Context, host: Context, e: Entry) void {
+    fn iconView(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
         const size = metrics.icon_size;
-        if (e.kind == .image and e.thumbnail.len > 0) {
-            if (ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = e.thumbnail, .max_width = size, .max_height = size, .radius = 6 })) return;
+        if (e.kind == .image) {
+            const thumb = b.thumbnailOf(e);
+            if (thumb.len > 0 and ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = thumb, .max_width = size, .max_height = size, .radius = 6 })) return;
         }
         const tile = struct {
             fn draw(cx: *ui.Context, symbol: []const u8, color: ui.Color) void {
@@ -345,11 +376,10 @@ pub const Board = struct {
         const col = ui.div(c).column().wFull().gap(8);
         defer col.end();
         if (e.kind == .image) {
-            const bytes = switch (b.payload) {
-                .picture => |full| full,
-                else => e.thumbnail,
-            };
-            mediaBox(c, c.print("clip.full.{d}", .{e.id}), bytes, width);
+            switch (b.payload) {
+                .picture => |full| mediaBox(c, c.print("clip.full.{d}", .{e.id}), full, width),
+                else => mediaBox(c, c.print("clip.{d}", .{e.id}), b.thumbnailOf(e), width),
+            }
             return ui.text(c, e.title(c.arena.allocator()), .{ .size = 15, .weight = .semibold, .wrap = true, .max_lines = 2 });
         }
         if (e.filePath()) |path| {

@@ -286,8 +286,8 @@ const Shell = struct {
         if (e.filePath()) |path| return mac.togglePreview(path);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const stored = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
-        const png = mac.pngBytes(arena.allocator(), stored) orelse e.thumbnail;
+        const stored = s.store.image(arena.allocator(), e.id) orelse s.store.thumbnail(arena.allocator(), e.id);
+        const png = mac.pngBytes(arena.allocator(), stored) orelse s.store.thumbnail(arena.allocator(), e.id);
         const path = mac.previewFile(gpa, e.id, png) orelse return;
         defer gpa.free(path);
         mac.togglePreview(path);
