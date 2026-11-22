@@ -425,6 +425,7 @@ fn captures(arena: std.mem.Allocator, board: Pasteboard, source: []const u8) []c
         } else false;
         if (path.len > 0 and !seen) out.append(arena, .{ .file = path }) catch {};
     }
+    if (out.items.len > max_file_count) return &.{};
     if (out.items.len > 0) return out.items;
     if (board.image_byte_count(board.ctx)) |n| if (n <= max_image_bytes) if (board.image(board.ctx, arena)) |img| {
         const screenshot = std.mem.eql(u8, source, "com.apple.screencapture") or std.mem.eql(u8, source, "com.apple.screencaptureui");
@@ -495,6 +496,7 @@ fn readFile(a: std.mem.Allocator, path: [:0]const u8, len: usize) ?[]const u8 {
 
 /// Text past this is dropped whole, as the Swift store does.
 pub const max_text_bytes = 32_000;
+pub const max_file_count = 100;
 /// Image representations past this are not read.
 pub const max_image_bytes = 15 * 1024 * 1024;
 pub const retention_days = 30;

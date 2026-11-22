@@ -523,6 +523,36 @@ struct ClipboardCaptureServiceTests {
         await harness.service.pruneIfDue(now: base)?.value
         #expect(harness.store.isEmpty)
     }
+
+    @Test func pollSkipsACopyOfMoreFilesThanTheCap() {
+        let harness = makeHarness()
+        let paths = (0...ClipboardCaptureService.maxFileCountPerCopy)
+            .map { "/Users/f/bulk/\($0).txt" }
+
+        harness.observer.setContents(
+            string: nil,
+            types: [NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: paths
+        )
+        harness.service.poll()
+
+        #expect(harness.store.isEmpty)
+    }
+
+    @Test func pollRecordsACopyOfExactlyTheCap() {
+        let harness = makeHarness()
+        let paths = (0..<ClipboardCaptureService.maxFileCountPerCopy)
+            .map { "/Users/f/bulk/\($0).txt" }
+
+        harness.observer.setContents(
+            string: nil,
+            types: [NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: paths
+        )
+        harness.service.poll()
+
+        #expect(harness.store.count == ClipboardCaptureService.maxFileCountPerCopy)
+    }
 }
 
 private enum ClipboardCaptureImageFixtures {

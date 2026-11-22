@@ -4602,3 +4602,45 @@ test "a one-byte query asks for no suggestions, a two-byte query and a single CJ
     tester.typeText("\u{5929}");
     try t.expectEqualStrings("\u{5929}", spy.queries.getLast());
 }
+
+test "a copy of more files than the cap records nothing and keeps the history it found" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    _ = try store.add(.{ .text = "kept" }, "", "Notes", 1);
+    const paths = try a.alloc([]const u8, clipboard.max_file_count + 1);
+    for (paths, 0..) |*slot, i| {
+        slot.* = try std.fmt.allocPrint(a, "/bulk/{d}.txt", .{i});
+    }
+    var fake: FakePasteboard = .{ .files = paths, .string = "bulk fallback" };
+    try t.expect(!try store.capture(a, fake.pasteboard(), .{ .bundle_id = "com.apple.finder", .name = "Finder" }, 2));
+
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 1), rows.len);
+    try t.expectEqualStrings("kept", rows[0].text);
+}
+
+test "a copy of exactly the cap records every file" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const paths = try a.alloc([]const u8, clipboard.max_file_count);
+    for (paths, 0..) |*slot, i| {
+        slot.* = try std.fmt.allocPrint(a, "/bulk/{d}.txt", .{i});
+    }
+    var fake: FakePasteboard = .{ .files = paths };
+    try t.expect(try store.capture(a, fake.pasteboard(), .{ .bundle_id = "com.apple.finder", .name = "Finder" }, 2));
+
+    const rows = try store.list(a, "");
+    try t.expectEqual(clipboard.max_file_count, rows.len);
+}

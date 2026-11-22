@@ -24,6 +24,7 @@ const entrance_timeout_ms = 250;
 const entrance_alpha = 0.01;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
+const prune_ms = 60 * 60 * 1000;
 const memory_session_flag = "--floodlight-memory-session";
 const memory_seed_flag = "--floodlight-memory-seed";
 const memory_cycles = 3;
@@ -398,6 +399,13 @@ const Shell = struct {
         nanoui.App.after(compact_next_ms, s, compactTick);
     }
 
+    fn pruneTick(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        defer nanoui.App.after(prune_ms, s, pruneTick);
+        s.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
+        if (s.panel.mode == .clipboard) s.panel.board.list.markStale();
+    }
+
     fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
         return mac.detailedDate(secs, arena);
     }
@@ -731,6 +739,7 @@ pub fn main(init: std.process.Init) !void {
         shell.change_count = mac.pasteboardChangeCount();
         nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
         nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
+        nanoui.App.after(prune_ms, &shell, Shell.pruneTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
         nanoui.App.after(0, &shell, if (memory_session) Shell.memoryLaunched else Shell.launched);

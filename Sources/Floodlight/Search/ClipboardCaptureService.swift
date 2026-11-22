@@ -104,6 +104,7 @@ enum ClipboardFileReference {
 final class ClipboardCaptureService {
     static let enabledDefaultsKey = "clipboard-history-enabled"
     static let retentionDaysDefaultsKey = "clipboard-history-retention-days"
+    static let maxFileCountPerCopy = 100
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
@@ -252,9 +253,7 @@ final class ClipboardCaptureService {
 
         let filePaths = observer.filePaths().compactMap(ClipboardFileReference.canonicalize)
         if !filePaths.isEmpty {
-            for path in filePaths {
-                store.recordFile(path: path, sourceAppBundleID: bundleID)
-            }
+            recordFiles(filePaths, bundleID: bundleID)
             return
         }
 
@@ -277,6 +276,13 @@ final class ClipboardCaptureService {
 
         // Rules 6 & 7: Dedup consecutive duplicates and record
         store.record(text: text, sourceAppBundleID: bundleID)
+    }
+
+    private func recordFiles(_ filePaths: [String], bundleID: String?) {
+        guard filePaths.count <= Self.maxFileCountPerCopy else { return }
+        for path in filePaths {
+            store.recordFile(path: path, sourceAppBundleID: bundleID)
+        }
     }
 
     @discardableResult
