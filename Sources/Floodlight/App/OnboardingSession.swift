@@ -33,7 +33,10 @@ final class OnboardingSession {
     var clipboardShortcutMessage: String?
     var launchesAtLogin: Bool
     var launchAtLoginMessage: String?
-    var rootURL: URL
+    var rootURL: URL {
+        readRootURL()
+    }
+
     private(set) var hasFullDiskAccess: Bool
     var blocklistVersion = 0
 
@@ -79,6 +82,7 @@ final class OnboardingSession {
         activeShortcut != .commandSpace
     }
 
+    private let readRootURL: () -> URL
     @ObservationIgnored
     private let defaults: UserDefaults
     @ObservationIgnored
@@ -92,7 +96,7 @@ final class OnboardingSession {
     init(
         activeShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
-        rootURL: URL,
+        rootURL: @escaping () -> URL,
         defaults: UserDefaults = .standard,
         blocklistStore: BlocklistStore = BlocklistStore(),
         clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
@@ -106,7 +110,7 @@ final class OnboardingSession {
         self.activeShortcut = activeShortcut
         self.activeClipboardShortcut = activeClipboardShortcut
         self.launchesAtLogin = launchesAtLogin
-        self.rootURL = rootURL
+        readRootURL = rootURL
         self.defaults = defaults
         self.blocklistStore = blocklistStore
         self.clipboardExclusionStore = clipboardExclusionStore

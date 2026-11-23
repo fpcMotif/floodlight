@@ -1,11 +1,9 @@
 #!/bin/sh
-# UI end-to-end: drive Floodlight's search panel with path queries via
-# AppleScript, capture screenshots, and assert the expected top hits.
+# Captures Floodlight's search panel for manual review; it does not assert
+# result contents. A successful capture is not evidence of a correct top hit.
 #
-# Queries exercised:
-#   Downloads/  — trailing-slash directory path, Top Hit is Downloads/
-#   Projects/   — trailing-slash directory path, Top Hit is Projects/
-#   Security    — System Settings pane, results include Privacy & Security
+# Queries exercised: Downloads/ (directory), Takeout (file search), and
+# Security (System Settings).
 #
 # Usage:
 #   ./scripts/test-e2e-applescript.sh
@@ -66,8 +64,7 @@ launch_floodlight() {
 
 run_query() {
     query_text=$1
-    expected_token=$2
-    shot_path=$3
+    shot_path=$2
 
     log "running query: $query_text"
     open -a "$APP"
@@ -96,9 +93,9 @@ APP=$(resolve_app)
 mark_onboarding_complete
 launch_floodlight "$APP"
 
-run_query "Downloads/" "Downloads" "$SHOT_DIR/downloads.png"
-run_query "Takeout" "Takeout" "$SHOT_DIR/takeout.png"
-run_query "Security" "Security" "$SHOT_DIR/security.png"
+run_query "Downloads/" "$SHOT_DIR/downloads.png"
+run_query "Takeout" "$SHOT_DIR/takeout.png"
+run_query "Security" "$SHOT_DIR/security.png"
 
-log "all path-query UI cases completed successfully"
+log "captures complete; inspect screenshots to verify results"
 log "screenshots: $SHOT_DIR"

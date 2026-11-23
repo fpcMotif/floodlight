@@ -378,7 +378,7 @@ extension AppDelegate: ApplicationPresentationEffects {
             activeShortcut: globalHotKeyRegistration.activeShortcut(for: .summonSearch),
             activeClipboardShortcut: globalHotKeyRegistration.activeShortcut(for: .showClipboard),
             launchesAtLogin: LaunchAtLogin.launchesAtLogin,
-            rootURL: model.rootURL,
+            rootURL: { [model] in model.rootURL },
             blocklistStore: model.blocklistStore,
             clipboardExclusionStore: clipboardCapture.exclusions,
             clipboardStore: clipboardStore,
@@ -394,8 +394,8 @@ extension AppDelegate: ApplicationPresentationEffects {
                 }
             },
             chooseScope: { [weak self] in
-                guard let self else { return nil }
-                return RootPicker.chooseAndApply(to: model)
+                guard let self else { return }
+                RootPicker.chooseAndApply(to: model)
             },
             onFinished: onFinished,
             onDismissed: onDismissed

@@ -146,7 +146,7 @@ will not reproduce.
 Build the Astro documentation site:
 
 ```sh
-npm --prefix docs install
+cd docs && bun install && cd ..
 make docs
 ```
 

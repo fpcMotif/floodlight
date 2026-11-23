@@ -5,6 +5,43 @@ import SwiftUI
 import Testing
 @testable import Floodlight
 
+private final class GrantNotificationCenterSpy: NotificationCenter, @unchecked Sendable {
+    private let lock = NSLock()
+    private var registeredObservers: Set<ObjectIdentifier> = []
+    private var removalCount = 0
+    private var foreignRemovalCount = 0
+
+    override func addObserver(
+        forName name: Notification.Name?,
+        object obj: Any?,
+        queue: OperationQueue?,
+        using block: @escaping @Sendable (Notification) -> Void
+    ) -> NSObjectProtocol {
+        let observer = super.addObserver(forName: name, object: obj, queue: queue, using: block)
+        lock.lock()
+        registeredObservers.insert(ObjectIdentifier(observer as AnyObject))
+        lock.unlock()
+        return observer
+    }
+
+    override func removeObserver(_ observer: Any) {
+        lock.lock()
+        if registeredObservers.remove(ObjectIdentifier(observer as AnyObject)) != nil {
+            removalCount += 1
+        } else {
+            foreignRemovalCount += 1
+        }
+        lock.unlock()
+        super.removeObserver(observer)
+    }
+
+    var counts: (active: Int, removed: Int, foreign: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (registeredObservers.count, removalCount, foreignRemovalCount)
+    }
+}
+
 @MainActor
 @Suite(.serialized)
 struct FullDiskAccessGrantTests {
@@ -133,6 +170,106 @@ struct FullDiskAccessGrantTests {
         #expect(spy.onDismissedCallCount == 1)
     }
 
+    @Test(arguments: ["dismiss", "grant", "deinit"])
+    func observersAreRemovedFromTheirRegisteringCenters(cleanup: String) {
+        let spy = Spy()
+        let appCenter = GrantNotificationCenterSpy()
+        let workspaceCenter = GrantNotificationCenterSpy()
+        var coordinator: FullDiskAccessGrantCoordinator? = FullDiskAccessGrantCoordinator(
+            openSettings: {},
+            fullDiskAccessProvider: spy.fullDiskAccessProvider,
+            autoPresentPanel: false,
+            appNotificationCenter: appCenter,
+            workspaceNotificationCenter: workspaceCenter
+        )
+        weak let weakCoordinator = coordinator
+        coordinator?.beginGrantFlow()
+        #expect(appCenter.counts.active == 1)
+        #expect(workspaceCenter.counts.active == 1)
+
+        switch cleanup {
+        case "dismiss":
+            coordinator?.dismiss()
+        case "grant":
+            spy.fullDiskAccessGranted = true
+            coordinator?.poll()
+        default:
+            coordinator = nil
+            #expect(weakCoordinator == nil)
+        }
+
+        #expect(appCenter.counts.active == 0)
+        #expect(appCenter.counts.removed == 1)
+        #expect(appCenter.counts.foreign == 0)
+        #expect(workspaceCenter.counts.active == 0)
+        #expect(workspaceCenter.counts.removed == 1)
+        #expect(workspaceCenter.counts.foreign == 0)
+    }
+
+    @Test func cancelledGrantDismissalDoesNotCloseRestartedGuidance() async throws {
+        let spy = Spy()
+        let coordinator = FullDiskAccessGrantCoordinator(
+            openSettings: {},
+            fullDiskAccessProvider: spy.fullDiskAccessProvider,
+            targetWindowLocator: { nil },
+            onGranted: spy.onGranted,
+            onDismissed: spy.onDismissed,
+            autoPresentPanel: true,
+            appNotificationCenter: NotificationCenter(),
+            workspaceNotificationCenter: NotificationCenter()
+        )
+        defer { coordinator.dismiss() }
+
+        coordinator.beginGrantFlow()
+        spy.fullDiskAccessGranted = true
+        coordinator.poll()
+        #expect(coordinator.phase == .granted)
+        #expect(spy.onGrantedCallCount == 1)
+
+        coordinator.dismiss()
+        spy.fullDiskAccessGranted = false
+        coordinator.beginGrantFlow()
+        #expect(spy.onDismissedCallCount == 1)
+
+        try await Task.sleep(for: .milliseconds(1_800))
+
+        guard case let .presentingGuidance(_, isPolling) = coordinator.phase else {
+            Issue.record("cancelled dismissal closed the restarted guidance")
+            #expect(spy.onDismissedCallCount == 1)
+            return
+        }
+        #expect(isPolling)
+        #expect(coordinator.activeGuidancePanel != nil)
+        #expect(spy.onDismissedCallCount == 1)
+        #expect(spy.onGrantedCallCount == 1)
+    }
+
+    @Test func grantNormallyDismissesGuidanceAfterDelay() async throws {
+        let spy = Spy()
+        let coordinator = FullDiskAccessGrantCoordinator(
+            openSettings: {},
+            fullDiskAccessProvider: spy.fullDiskAccessProvider,
+            targetWindowLocator: { nil },
+            onDismissed: spy.onDismissed,
+            autoPresentPanel: true,
+            appNotificationCenter: NotificationCenter(),
+            workspaceNotificationCenter: NotificationCenter()
+        )
+        defer { coordinator.dismiss() }
+
+        coordinator.beginGrantFlow()
+        spy.fullDiskAccessGranted = true
+        coordinator.poll()
+        #expect(coordinator.phase == .granted)
+        #expect(spy.onDismissedCallCount == 0)
+
+        try await Task.sleep(for: .milliseconds(1_800))
+
+        #expect(coordinator.phase == .dismissed)
+        #expect(coordinator.activeGuidancePanel == nil)
+        #expect(spy.onDismissedCallCount == 1)
+    }
+
     @Test func guidanceViewRendersInLightAndDarkMode() throws {
         let bundleURL = URL(fileURLWithPath: "/Applications/Floodlight.app")
         let view = FullDiskAccessGuidanceView(
@@ -176,7 +313,7 @@ struct FullDiskAccessGrantTests {
         session = OnboardingSession(
             activeShortcut: .commandSpace,
             launchesAtLogin: false,
-            rootURL: URL(fileURLWithPath: "/Users/example"),
+            rootURL: { URL(fileURLWithPath: "/Users/example") },
             fullDiskAccessProvider: spy.fullDiskAccessProvider
         )
         let flow = OnboardingFlowState(

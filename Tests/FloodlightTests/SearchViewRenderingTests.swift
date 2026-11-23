@@ -633,7 +633,6 @@ struct SearchViewRenderingTests {
             .web,
         ] {
             #expect(!kind.label.isEmpty, "\(kind.rawValue)")
-            #expect(!"Select \(kind.label). Double-click or press Return to open.".isEmpty)
         }
     }
 

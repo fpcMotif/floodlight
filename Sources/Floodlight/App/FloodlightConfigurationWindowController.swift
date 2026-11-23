@@ -29,7 +29,6 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     private let session: OnboardingSession
     private let flow: OnboardingFlowState
     private let setLaunchAtLogin: (Bool) -> String?
-    private let chooseScope: () -> URL?
     private let onFinished: () -> Void
     private let onDismissed: () -> Void
 
@@ -38,7 +37,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         activeShortcut: FloodlightShortcut?,
         activeClipboardShortcut: FloodlightShortcut?,
         launchesAtLogin: Bool,
-        rootURL: URL,
+        rootURL: @escaping () -> URL,
         blocklistStore: BlocklistStore = BlocklistStore(),
         clipboardExclusionStore: ClipboardExclusionStore = ClipboardExclusionStore(),
         clipboardStore: ClipboardHistoryStore = (try? ClipboardHistoryStore()) ??
@@ -46,7 +45,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         selectShortcut: @escaping (GlobalHotKeyAction, FloodlightShortcut)
             -> GlobalHotKeyReplacementOutcome,
         setLaunchAtLogin: @escaping (Bool) -> String?,
-        chooseScope: @escaping () -> URL?,
+        chooseScope: @escaping @MainActor @Sendable () -> Void,
         onFinished: @escaping () -> Void,
         onDismissed: @escaping () -> Void
     ) {
@@ -67,7 +66,6 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
             openSpotlightSettings: FloodlightConfigurationWindowController.openSpotlightSettings
         )
         self.setLaunchAtLogin = setLaunchAtLogin
-        self.chooseScope = chooseScope
         self.onFinished = onFinished
         self.onDismissed = onDismissed
 
@@ -101,7 +99,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
                 self?.flow.handleClipboardShortcutSelection($0)
             },
             onSetLaunchAtLogin: { [weak self] in self?.handleLaunchAtLogin($0) },
-            onChooseScope: { [weak self] in self?.handleChooseScope() },
+            onChooseScope: chooseScope,
             onOpenSpotlightSettings: { [weak self] in
                 self?.flow.beginSpotlightReplacement()
             },
@@ -130,8 +128,8 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
     }
 
     func windowWillClose(_ notification: Notification) {
-        flow.fullDiskAccessCoordinator.dismiss()
         guard !flow.didFinish else { return }
+        flow.fullDiskAccessCoordinator.dismiss()
         onDismissed()
     }
 
@@ -150,13 +148,7 @@ final class FloodlightConfigurationWindowController: NSWindowController, NSWindo
         }
     }
 
-    private func handleChooseScope() {
-        guard let selectedURL = chooseScope() else { return }
-        session.rootURL = selectedURL.standardizedFileURL
-    }
-
     func finish() {
-        flow.fullDiskAccessCoordinator.dismiss()
         if presentation == .onboarding {
             session.complete()
         }

@@ -384,16 +384,12 @@ private struct SearchFilterBar: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            chips
+            chipRow
                 .padding(.horizontal, 14)
         }
         .scrollClipDisabled()
         .frame(height: FloodlightMetrics.filterBarHeight)
         .accessibilityLabel("Search filters")
-    }
-
-    private var chips: some View {
-        chipRow
     }
 
     private var chipRow: some View {

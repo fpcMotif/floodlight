@@ -71,6 +71,8 @@ final class SearchCoordinator {
     }
 
     @ObservationIgnored
+    private let defaults: UserDefaults
+    @ObservationIgnored
     private let sourceSearch: any SourceSearching
     @ObservationIgnored
     package let blocklistStore: BlocklistStore
@@ -119,6 +121,7 @@ final class SearchCoordinator {
         blocklistStore: BlocklistStore = BlocklistStore(),
         clipboardSearch: ClipboardSearch = ClipboardSearch(store: ClipboardHistoryStore.inMemory()),
         rootURL: URL,
+        defaults: UserDefaults = .standard,
         assistantRunner: any AssistantProcessRunning = AssistantProcessRunner(),
         runningApplicationActivator: any RunningApplicationActivating =
             WorkspaceRunningApplicationActivator(),
@@ -126,6 +129,7 @@ final class SearchCoordinator {
         pathResolver: any PathResolving = FileSystemPathResolver(),
         onDismiss: @escaping @MainActor () -> Void
     ) {
+        self.defaults = defaults
         self.sourceSearch = sourceSearch
         self.blocklistStore = blocklistStore
         self.clipboardSearch = clipboardSearch
@@ -377,7 +381,7 @@ final class SearchCoordinator {
     func activate(_ item: SearchItem) {
         select(item)
         guard webModeReturnIsArmed else { return }
-        performAction(for: item)
+        actionPerformer.activate(item, query: query)
     }
 
     func select(_ item: SearchItem) {
@@ -408,7 +412,7 @@ final class SearchCoordinator {
 
     func openSelection() {
         guard webModeReturnIsArmed, let item = selectedItem else { return }
-        performAction(for: item)
+        actionPerformer.activate(item, query: query)
     }
 
     /// Web mode's Return has exactly one meaning — open the engine's results
@@ -417,10 +421,6 @@ final class SearchCoordinator {
     private var webModeReturnIsArmed: Bool {
         guard case .web = mode else { return true }
         return !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func performAction(for item: SearchItem) {
-        actionPerformer.activate(item, query: query)
     }
 
     /// Adds the rule, then republishes so the row leaves without re-running
@@ -499,12 +499,13 @@ final class SearchCoordinator {
         return results.first { $0.id == selectedID }
     }
 
-    func changeRoot(to url: URL) {
+    @discardableResult
+    func changeRoot(to url: URL) -> Task<Void, Never> {
         Task {
             do {
                 try await sourceSearch.changeScope(to: url)
                 rootURL = url.standardizedFileURL
-                UserDefaults.standard.set(rootURL.path, forKey: "index-root")
+                defaults.set(rootURL.path, forKey: "index-root")
                 await reresolvePathForCommittedScope()
             } catch {
                 NSLog("Floodlight search-scope update failed: %@", error.localizedDescription)

@@ -951,9 +951,4 @@ body {
   .stage__flare {
     transition: none;
   }
-
-  .btn,
-  .link::after {
-    transition: none;
-  }
 }

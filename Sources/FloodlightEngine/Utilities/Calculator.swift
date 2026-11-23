@@ -9,7 +9,9 @@ package enum Calculator {
             .replacingOccurrences(of: "÷", with: "/")
             .replacingOccurrences(of: "−", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard looksLikeExpression(normalized) else { return nil }
+        guard normalized.allSatisfy({
+            $0.isNumber || $0.isWhitespace || ".,+-*/%^()".contains($0)
+        }) else { return nil }
         var parser = Parser(normalized)
         guard let value = parser.parseExpression(), parser.isAtEnd, value.isFinite else {
             return nil
@@ -24,11 +26,6 @@ package enum Calculator {
         formatter.minimumFractionDigits = 0
         formatter.usesGroupingSeparator = true
         return formatter.string(from: NSNumber(value: value)) ?? String(value)
-    }
-
-    private static func looksLikeExpression(_ source: String) -> Bool {
-        guard source.contains(where: { "+-*/%^()".contains($0) }) else { return false }
-        return source.allSatisfy { $0.isNumber || $0.isWhitespace || ".,+-*/%^()".contains($0) }
     }
 }
 

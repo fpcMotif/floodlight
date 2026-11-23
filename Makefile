@@ -73,7 +73,7 @@ dmg: bundle
 	./scripts/create-dmg.sh
 
 docs:
-	npm --prefix docs run build
+	cd docs && bun run build
 
 install: bundle
 	./scripts/install.sh

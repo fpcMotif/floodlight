@@ -419,7 +419,7 @@ enum SearchResultProjection {
         now: Date,
         detail: String?
     ) -> String {
-        let app = appDisplayName(for: entry.sourceAppBundleID)
+        let app = ClipboardSourceApp.displayName(for: entry.sourceAppBundleID)
         let time = formattedRelativeTime(since: entry.createdAt, now: now)
         guard let detail, !detail.isEmpty else { return "\(app) · \(time)" }
         return "\(app) · \(time) · \(detail)"
@@ -503,10 +503,6 @@ enum SearchResultProjection {
         default:
             0
         }
-    }
-
-    private static func appDisplayName(for bundleID: String?) -> String {
-        ClipboardSourceApp.displayName(for: bundleID)
     }
 
     private static func formattedRelativeTime(since date: Date, now: Date) -> String {

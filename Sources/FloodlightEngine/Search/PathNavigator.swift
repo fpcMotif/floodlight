@@ -67,7 +67,7 @@ package enum PathNavigator {
     /// the two are not the same test, and " ~Projects" depends on the
     /// difference.
     package static func hasPathSyntax(_ query: String) -> Bool {
-        query.contains("/") || query.hasPrefix("~") || query.hasPrefix("/")
+        query.contains("/") || query.hasPrefix("~")
     }
 
     package static func resolve(
@@ -80,8 +80,7 @@ package enum PathNavigator {
         guard hasPathSyntax(query) else { return nil }
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        let isPathSyntax = trimmed.hasPrefix("~") || trimmed.hasPrefix("/") || trimmed.contains("/")
-        guard isPathSyntax else { return nil }
+        guard hasPathSyntax(trimmed) else { return nil }
 
         let home = homeURL?.standardizedFileURL ?? fileManager.homeDirectoryForCurrentUser
             .standardizedFileURL

@@ -31,16 +31,70 @@ final class PasteTargetDelivery {
     /// Electron shells lag AppKit ones by a frame or two here.
     private static let keyWindowSettleMilliseconds = 80
 
+    /// Retain the resolved application across waits, rather than looking up a
+    /// potentially reused process identifier immediately before posting.
+    @MainActor
+    struct Application {
+        var isRunning: () -> Bool
+        var activate: () -> Void
+    }
+
+    @MainActor
+    struct Effects {
+        var isTrusted: () -> Bool
+        var isSecureInputEnabled: () -> Bool
+        var application: (Target) -> Application?
+        var isFrontmost: (Target) -> Bool
+        var sleep: @MainActor (Int) async throws -> Void
+        var postCommandV: () -> Bool
+        var promptForAccessibility: () -> Void
+
+        static var live: Self {
+            Self(
+                isTrusted: { AXIsProcessTrusted() },
+                isSecureInputEnabled: { IsSecureEventInputEnabled() },
+                application: { target in
+                    guard let application = NSRunningApplication(processIdentifier: target
+                        .processIdentifier)
+                    else {
+                        return nil
+                    }
+                    return Application(
+                        isRunning: { !application.isTerminated },
+                        activate: {
+                            NSApp.yieldActivation(to: application)
+                            application.activate()
+                        }
+                    )
+                },
+                isFrontmost: {
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier == $0
+                        .processIdentifier
+                },
+                sleep: { try await Task.sleep(for: .milliseconds($0)) },
+                postCommandV: { PasteTargetDelivery.postCommandV() },
+                promptForAccessibility: {
+                    // The C global kAXTrustedCheckOptionPrompt is not actor-safe.
+                    let options = ["AXTrustedCheckOptionPrompt": true]
+                    _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+                }
+            )
+        }
+    }
+
     private(set) var target: Target?
     private let defaults: UserDefaults
+    private let effects: Effects
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, effects: Effects = .live, target: Target? = nil) {
         self.defaults = defaults
+        self.effects = effects
+        self.target = target
     }
 
     /// Whether macOS lets Floodlight post the keystroke at all.
     var isAvailable: Bool {
-        AXIsProcessTrusted()
+        effects.isTrusted()
     }
 
     /// Remembers who was frontmost when the panel was summoned.
@@ -81,46 +135,54 @@ final class PasteTargetDelivery {
     /// whether the target honoured the keystroke, so this only logs the
     /// reasons it never posted one.
     func deliver() async {
-        guard let target else { return }
+        guard !Task.isCancelled, let target else { return }
         guard isAvailable else {
             promptForAccessibilityOnce()
             return
         }
-        guard let application = NSRunningApplication(processIdentifier: target.processIdentifier),
-              !application.isTerminated
+        guard let application = effects.application(target), application.isRunning()
         else {
             NSLog("Floodlight could not paste: %@ is no longer running.", target.name)
             return
         }
 
-        if !isFrontmost(target) {
-            NSApp.yieldActivation(to: application)
+        guard canDeliver(to: application) else { return }
+        if !effects.isFrontmost(target) {
             application.activate()
         }
-        guard await waitUntilFrontmost(target) else {
+        guard await waitUntilFrontmost(target, application: application) else {
             NSLog("Floodlight could not paste: %@ did not come to the front.", target.name)
             return
         }
-        guard !IsSecureEventInputEnabled() else {
-            NSLog("Floodlight did not paste into %@: secure input is on.", target.name)
+        do {
+            try await effects.sleep(Self.keyWindowSettleMilliseconds)
+        } catch {
             return
         }
-        try? await Task.sleep(for: .milliseconds(Self.keyWindowSettleMilliseconds))
-        if !Self.postCommandV() {
+        // The keystroke is global: every safety condition must still hold
+        // after the final suspension, with no further await before posting.
+        guard canDeliver(to: application), effects.isFrontmost(target) else { return }
+        if !effects.postCommandV() {
             NSLog("Floodlight could not synthesize ⌘V for %@.", target.name)
         }
     }
 
-    private func isFrontmost(_ target: Target) -> Bool {
-        NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+    private func canDeliver(to application: Application) -> Bool {
+        !Task.isCancelled && application.isRunning() && isAvailable && !effects
+            .isSecureInputEnabled()
     }
 
-    private func waitUntilFrontmost(_ target: Target) async -> Bool {
+    private func waitUntilFrontmost(_ target: Target, application: Application) async -> Bool {
         for _ in 0..<Self.frontmostPollLimit {
-            if isFrontmost(target) { return true }
-            try? await Task.sleep(for: .milliseconds(Self.frontmostPollMilliseconds))
+            guard canDeliver(to: application) else { return false }
+            if effects.isFrontmost(target) { return true }
+            do {
+                try await effects.sleep(Self.frontmostPollMilliseconds)
+            } catch {
+                return false
+            }
         }
-        return isFrontmost(target)
+        return canDeliver(to: application) && effects.isFrontmost(target)
     }
 
     /// The system's own dialog, which adds Floodlight to the Accessibility
@@ -128,10 +190,7 @@ final class PasteTargetDelivery {
     private func promptForAccessibilityOnce() {
         guard !defaults.bool(forKey: Self.accessibilityPromptedDefaultsKey) else { return }
         defaults.set(true, forKey: Self.accessibilityPromptedDefaultsKey)
-        // `kAXTrustedCheckOptionPrompt` is a C global Swift 6 will not touch
-        // from an actor; its value is this string.
-        let options = ["AXTrustedCheckOptionPrompt": true]
-        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        effects.promptForAccessibility()
     }
 
     private static func postCommandV() -> Bool {

@@ -20,12 +20,10 @@ enum RootPicker {
         return panel.url
     }
 
-    /// Presents the chooser and, if the user picks a folder, re-roots `model`
-    /// to it. The one call both of the shell's picker sites want.
-    @discardableResult
-    static func chooseAndApply(to model: SearchCoordinator) -> URL? {
-        guard let selectedURL = choose(currentRoot: model.rootURL) else { return nil }
+    /// Requests a scope change; only `model.rootURL` represents a committed
+    /// scope, so callers cannot publish the picker's unconfirmed candidate.
+    static func chooseAndApply(to model: SearchCoordinator) {
+        guard let selectedURL = choose(currentRoot: model.rootURL) else { return }
         model.changeRoot(to: selectedURL)
-        return selectedURL
     }
 }

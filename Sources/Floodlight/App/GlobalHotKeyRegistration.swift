@@ -218,7 +218,7 @@ final class GlobalHotKeyRegistration {
             }
             return .previousShortcutActive(previous.shortcut)
         }
-        activate(action, requested)
+        activeRegistrations[action] = requested
         action.save(shortcut, in: defaults)
         return .requestedShortcutActive(shortcut)
     }
@@ -234,7 +234,7 @@ final class GlobalHotKeyRegistration {
         }
         activeRegistrations[action] = nil
         if let requested = makeRegistration(shortcut) {
-            activate(action, requested)
+            activeRegistrations[action] = requested
             action.save(shortcut, in: defaults)
             return .requestedShortcutActive(shortcut)
         }
@@ -243,7 +243,7 @@ final class GlobalHotKeyRegistration {
         else {
             return .noShortcutActive
         }
-        activate(action, restored)
+        activeRegistrations[action] = restored
         return .previousShortcutActive(previousShortcut)
     }
 
@@ -266,12 +266,8 @@ final class GlobalHotKeyRegistration {
         _ shortcut: FloodlightShortcut
     ) -> Bool {
         guard let registration = makeRegistration(shortcut) else { return false }
-        activate(action, registration)
-        return true
-    }
-
-    private func activate(_ action: GlobalHotKeyAction, _ registration: ActiveRegistration) {
         activeRegistrations[action] = registration
+        return true
     }
 
     private func makeRegistration(_ shortcut: FloodlightShortcut) -> ActiveRegistration? {

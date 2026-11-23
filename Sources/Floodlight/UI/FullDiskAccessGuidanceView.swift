@@ -145,11 +145,7 @@ package final class FullDiskAccessGuidancePanel: NSPanel {
         isMovableByWindowBackground = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        updateContent(phase: .presentingGuidance(appURL: appURL, isPolling: true))
-    }
-
-    package func updatePhase(_ phase: FullDiskAccessGrantPhase) {
-        updateContent(phase: phase)
+        updatePhase(.presentingGuidance(appURL: appURL, isPolling: true))
     }
 
     package func show(targetRect: NSRect? = nil, parentRect: NSRect? = nil) {
@@ -179,7 +175,7 @@ package final class FullDiskAccessGuidancePanel: NSPanel {
         }
     }
 
-    private func updateContent(phase: FullDiskAccessGrantPhase) {
+    package func updatePhase(_ phase: FullDiskAccessGrantPhase) {
         let view = FullDiskAccessGuidanceView(
             phase: phase,
             appName: "Floodlight",
