@@ -16,13 +16,20 @@ const presence = @import("presence.zig");
 const Presence = presence.Presence;
 
 const metrics = chrome.metrics;
-const gpa = std.heap.smp_allocator;
+const gpa = std.heap.c_allocator;
 const clipboard_poll_ms = 500;
+const suggest_debounce_ms = 150;
 const resize_redraw_ms = 50;
 const entrance_timeout_ms = 250;
 const entrance_alpha = 0.01;
 const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
+const prune_ms = 60 * 60 * 1000;
+const memory_session_flag = "--floodlight-memory-session";
+const memory_seed_flag = "--floodlight-memory-seed";
+const memory_cycles = 3;
+const memory_step_ms = 400;
+const memory_settle_ms = 1500;
 
 /// Icons drawn per session at most; all go when the session is forgotten.
 const max_icons = 64;
@@ -44,8 +51,11 @@ const Shell = struct {
     paste_target: mac.RunningApp = .{},
     presence: Presence = undefined,
     submitting: bool = false,
-    landing_files: bool = false,
+    compacting: bool = false,
+    searcher: search.FileSearcher,
+    adopt_gate: search.AdoptGate = .{},
     headless: bool = false,
+    memory_step: u32 = 0,
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
@@ -137,18 +147,24 @@ const Shell = struct {
         return s.panel.lastFrameValid();
     }
 
-    fn searchFiles(ctx: ?*anyopaque) void {
+    fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.landing_files) return;
-        s.landing_files = true;
-        nanoui.App.after(0, s, landFiles);
+        const view = s.files.view() orelse return;
+        s.searcher.submit(seq, view, text);
     }
 
-    fn landFiles(ctx: ?*anyopaque) callconv(.c) void {
+    fn filesReady(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, filesLanded);
+    }
+
+    fn filesLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.landing_files = false;
-        s.panel.landFiles();
-        if (!s.presence.isHidden()) s.panel_window.redraw();
+        const taken = s.searcher.takeResult();
+        if (taken.result) |res| {
+            s.panel.landFiles(res.seq, res.view, res.slice());
+            if (!s.presence.isHidden()) s.panel_window.redraw();
+        }
+        if (s.adopt_gate.takeAfterSearch(taken.active)) s.finishAdopt();
     }
 
     fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
@@ -160,7 +176,7 @@ const Shell = struct {
         const screen = mac.pointerScreenVisibleFrame();
         s.panel_window.setSize(s.panel.panelWidth(), s.panel.panelHeight());
         const f = mac.frameOf(s.panel_window);
-        mac.setFrameOrigin(s.panel_window, .{ .x = screen.x + (screen.w - f.w) / 2, .y = screen.y + screen.h * 0.68 - f.h / 2, .w = f.w, .h = f.h });
+        mac.setFrameOrigin(s.panel_window, presence.panelFrame(screen, f.w, f.h));
     }
 
     /// Keeps the top edge and the horizontal centre where they are.
@@ -183,16 +199,17 @@ const Shell = struct {
         s.endSubmit();
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         s.panel.hide();
-        if (s.panel.nextExpiryMs()) |ms| return nanoui.App.after(ms, s, expireRetention);
-        s.releaseIdleMemory();
+        if (s.panel.nextExpiryMs() == null) return s.releaseIdleMemory();
+        if (s.panel.armExpiry()) |ms| nanoui.App.after(ms, s, expireRetention);
     }
 
     fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
+        s.panel.disarmExpiry();
         s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
         if (s.panel.expire()) {
             if (s.presence.isHidden()) s.releaseIdleMemory();
-        } else if (s.panel.nextExpiryMs()) |ms| {
+        } else if (s.panel.armExpiry()) |ms| {
             nanoui.App.after(ms, s, expireRetention);
         }
     }
@@ -200,6 +217,7 @@ const Shell = struct {
     fn releaseIdleMemory(s: *Shell) void {
         s.panel.forgetPresented();
         mac.releaseSurface(s.panel_window);
+        if (!s.guide_window.isVisible()) mac.releaseSurface(s.guide_window);
         var it = s.icons.iterator();
         while (it.next()) |e| gpa.free(e.value_ptr.*);
         s.icons.clearRetainingCapacity();
@@ -220,10 +238,10 @@ const Shell = struct {
     fn panelRequest(ctx: ?*anyopaque) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (s.panel.pending) |a| {
-            if (a != .hide and !s.submitting) {
+            if (a != .hide and a != .show_search and !s.submitting) {
                 s.submitting = true;
                 mac.signpostBegin(.submit);
-            } else if (a == .hide) {
+            } else if (a == .hide or a == .show_search) {
                 s.endSubmit();
             }
         }
@@ -238,7 +256,7 @@ const Shell = struct {
                 .open => |path| mac.open(path),
                 .reveal => |path| mac.reveal(path),
                 .copy => |row| mac.copy(row.path),
-                .hide => {},
+                .hide, .show_search => {},
                 .clipboard => |b| s.applyBoard(b),
             }
             s.endSubmit();
@@ -278,8 +296,8 @@ const Shell = struct {
         if (e.filePath()) |path| return mac.togglePreview(path);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const stored = s.store.image(arena.allocator(), e.id) orelse e.thumbnail;
-        const png = mac.pngBytes(arena.allocator(), stored) orelse e.thumbnail;
+        const stored = s.store.image(arena.allocator(), e.id) orelse s.store.thumbnail(arena.allocator(), e.id);
+        const png = mac.pngBytes(arena.allocator(), stored) orelse s.store.thumbnail(arena.allocator(), e.id);
         const path = mac.previewFile(gpa, e.id, png) orelse return;
         defer gpa.free(path);
         mac.togglePreview(path);
@@ -298,7 +316,7 @@ const Shell = struct {
             .{ .title = "Delete", .key = "d", .modifiers = cmd },
         };
         const f = mac.frameOf(s.panel_window);
-        const at = [2]f64{ f.w - board_mod.board_metrics.well_inset - 110, f.h - board_mod.board_metrics.well_inset - board_mod.board_metrics.footer_height };
+        const at = [2]f64{ f.w - metrics.well_inset - 110, f.h - metrics.well_inset - metrics.footer_height };
         const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
         switch (choice) {
             0 => s.applyAndSettle(.{ .paste = e }),
@@ -337,13 +355,55 @@ const Shell = struct {
         s.panel_window.redraw();
     }
 
+    const CompactJob = struct {
+        shell: *Shell,
+        images: []const u8,
+        job: clipboard.Compaction,
+        avif_bytes: ?usize = null,
+    };
+
     fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.presence.isHidden()) return nanoui.App.after(compact_next_ms, s, compactTick);
+        if (!s.presence.isHidden() or s.compacting) return nanoui.App.after(compact_next_ms, s, compactTick);
+        const job = s.store.nextCompaction(clipboard.wallClock()) orelse return nanoui.App.after(compact_idle_ms, s, compactTick);
+        const state = gpa.create(CompactJob) catch {
+            std.log.err("clipboard compaction: out of memory", .{});
+            return nanoui.App.after(compact_idle_ms, s, compactTick);
+        };
+        state.* = .{ .shell = s, .images = s.store.images, .job = job };
+        s.compacting = true;
+        const t = std.Thread.spawn(.{}, compactWorker, .{state}) catch |err| {
+            s.compacting = false;
+            gpa.destroy(state);
+            std.log.err("clipboard compaction: no worker thread: {s}", .{@errorName(err)});
+            return nanoui.App.after(compact_idle_ms, s, compactTick);
+        };
+        t.detach();
+    }
+
+    fn compactWorker(state: *CompactJob) void {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const more = s.store.compactOne(arena.allocator(), clipboard.wallClock(), mac.compactImage);
-        nanoui.App.after(if (more) compact_next_ms else compact_idle_ms, s, compactTick);
+        state.avif_bytes = clipboard.recompress(state.images, arena.allocator(), state.job, mac.compactImage);
+        objc.dispatchMain(state, compactionLanded);
+    }
+
+    fn compactionLanded(ctx: ?*anyopaque) callconv(.c) void {
+        const state: *CompactJob = @ptrCast(@alignCast(ctx));
+        const s = state.shell;
+        const job = state.job;
+        const avif_bytes = state.avif_bytes;
+        gpa.destroy(state);
+        s.compacting = false;
+        s.store.finishCompaction(job, avif_bytes);
+        nanoui.App.after(compact_next_ms, s, compactTick);
+    }
+
+    fn pruneTick(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        defer nanoui.App.after(prune_ms, s, pruneTick);
+        s.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
+        if (s.panel.mode == .clipboard) s.panel.board.list.markStale();
     }
 
     fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
@@ -373,15 +433,30 @@ const Shell = struct {
     fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         if (s.headless) return;
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, query, " \t\r\n")) catch return;
         const q_copy = gpa.dupe(u8, query) catch return;
         const req = gpa.create(SuggestRequest) catch {
             gpa.free(q_copy);
             return;
         };
         req.* = .{ .shell = s, .seq = seq, .query = q_copy };
+        nanoui.App.after(suggest_debounce_ms, req, sendSuggest);
+    }
+
+    fn sendSuggest(ctx: ?*anyopaque) callconv(.c) void {
+        const req: *SuggestRequest = @ptrCast(@alignCast(ctx));
+        const s = req.shell;
+        if (req.seq != s.panel.pending_suggest_seq) {
+            gpa.free(req.query);
+            gpa.destroy(req);
+            return;
+        }
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const url = search.webSuggestUrl(arena.allocator(), std.mem.trim(u8, req.query, " \t\r\n")) catch {
+            gpa.free(req.query);
+            gpa.destroy(req);
+            return;
+        };
         nanoui.http.fetch(gpa, .{ .url = url }, req, onSuggest);
     }
 
@@ -396,6 +471,55 @@ const Shell = struct {
         defer arena.deinit();
         const items = search.parseSuggestions(arena.allocator(), res.body);
         if (s.panel.receiveSuggestionsFor(req.seq, req.query, items)) s.panel_window.redraw();
+    }
+
+    fn memoryLaunched(ctx: ?*anyopaque) callconv(.c) void {
+        markMemory("launched", 0);
+        nanoui.App.after(memory_settle_ms, ctx, memoryStep);
+    }
+
+    fn memoryStep(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const cycle = s.memory_step / memory_steps + 1;
+        const step = s.memory_step % memory_steps;
+        s.memory_step += 1;
+        switch (step) {
+            0 => s.presence.search(false, s.panel.mode == .clipboard),
+            1 => {
+                s.panel.field.set("cal");
+                s.panel.refresh();
+            },
+            2 => s.presence.board(false, s.panel.mode == .clipboard),
+            3 => {
+                s.panel.field.set("meeting");
+                s.panel.refresh();
+            },
+            4 => for (0..memory_board_moves) |_| s.panel.board.list.move(true),
+            5 => {
+                markMemory("open", cycle);
+                return nanoui.App.after(memory_settle_ms, s, memoryStep);
+            },
+            else => {
+                s.presence.settle(.hide);
+                return nanoui.App.after(memory_settle_ms, s, memoryIdle);
+            },
+        }
+        s.panel_window.redraw();
+        nanoui.App.after(memory_step_ms, s, memoryStep);
+    }
+
+    const memory_steps = 7;
+    const memory_board_moves = 20;
+
+    fn memoryIdle(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const cycle = s.memory_step / memory_steps;
+        markMemory("idle", cycle);
+        if (cycle < memory_cycles) nanoui.App.after(memory_settle_ms, s, memoryStep);
+    }
+
+    fn markMemory(phase: []const u8, cycle: u32) void {
+        std.debug.print("FLOODLIGHT_MEMORY phase={s} cycle={d}\n", .{ phase, cycle });
     }
 
     // The grant flow's effects.
@@ -418,7 +542,7 @@ const Shell = struct {
         s.guide_window.redraw();
         if (!s.polling) {
             s.polling = true;
-            nanoui.App.after(permission.poll_ms, s, pollTick);
+            nanoui.App.after(s.flow.pollDelayMs(), s, pollTick);
         }
     }
 
@@ -480,13 +604,19 @@ const Shell = struct {
     fn indexLanded(ctx: ?*anyopaque) callconv(.c) void {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         s.panel.indexing = s.files.busy();
+        if (s.adopt_gate.requestAdopt(s.searcher.isActive())) s.finishAdopt();
+        if (!s.presence.isHidden()) s.panel_window.redraw();
+    }
+
+    fn finishAdopt(s: *Shell) void {
         if (s.files.adopt()) {
-            s.panel.calibrateFileSearch();
             // The rows answer the old index: ask again.
             s.panel.list.markStale();
-            if (!s.presence.isHidden()) s.panel.refresh();
+            if (!s.presence.isHidden()) {
+                s.panel.refresh();
+                s.panel_window.redraw();
+            }
         }
-        if (!s.presence.isHidden()) s.panel_window.redraw();
     }
 };
 
@@ -496,15 +626,21 @@ pub fn main(init: std.process.Init) !void {
     try std.Io.Dir.cwd().createDirPath(init.io, support);
     const index_path = try std.fs.path.joinZ(gpa, &.{ support, "names.flix" });
 
-    const app = try nanoui.App.create(init, .{ .name = "Floodlight", .quit_on_last_window_closed = false });
+    const app = try nanoui.App.create(init, .{ .name = "Nanospot", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
     // Snapshots and hidden runs draw the panel and touch nothing else: no
     // hotkey, no System Settings, no scan of the home folder, no history on disk.
     const headless = app.flags.hidden or app.flags.snapshot != null;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const memory_session = hasFlag(args, memory_session_flag);
+    const memory_seed = hasFlag(args, memory_seed_flag);
 
-    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .headless = headless };
+    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .searcher = .{ .io = init.io }, .headless = headless };
     defer shell.files.close();
+    shell.searcher.ready_ctx = &shell;
+    shell.searcher.ready_fn = Shell.filesReady;
+    defer shell.searcher.stop();
     shell.catalog.files = &shell.files;
     defer shell.catalog.deinit();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
@@ -524,6 +660,7 @@ pub fn main(init: std.process.Init) !void {
         };
     defer shell.store.close();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
+    if (memory_seed) return seedMemoryHistory(shell.store);
 
     shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
         .ctx = &shell,
@@ -536,7 +673,13 @@ pub fn main(init: std.process.Init) !void {
         .search_files = Shell.searchFiles,
     });
     defer shell.panel.deinit();
-    shell.panel.calibrateFileSearch();
+    if (!headless) {
+        if (shell.searcher.start()) |_| {
+            shell.panel.async_files = true;
+        } else |err| {
+            std.log.err("file search: no worker thread: {s}", .{@errorName(err)});
+        }
+    }
     if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
         defer gpa.free(v);
         if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {
@@ -544,7 +687,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     shell.panel_window = try app.newWindow(.{
-        .title = "Floodlight",
+        .title = "Nanospot",
         .width = metrics.width,
         .height = metrics.search_height,
         .min_height = metrics.search_height,
@@ -572,7 +715,7 @@ pub fn main(init: std.process.Init) !void {
         .close = Shell.close,
         .on_granted = Shell.granted,
     } };
-    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Floodlight Nano", .request = Shell.guidanceRequest, .ctx = &shell };
+    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Nanospot", .request = Shell.guidanceRequest, .ctx = &shell };
     shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
     shell.guide_window = try app.newWindow(.{
         .title = "Full Disk Access",
@@ -596,9 +739,70 @@ pub fn main(init: std.process.Init) !void {
         shell.change_count = mac.pasteboardChangeCount();
         nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
         nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
+        nanoui.App.after(prune_ms, &shell, Shell.pruneTick);
         // First launch without access: start where the Swift onboarding does.
         if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
-        nanoui.App.after(0, &shell, Shell.launched);
+        nanoui.App.after(0, &shell, if (memory_session) Shell.memoryLaunched else Shell.launched);
     }
     try app.run();
+}
+
+fn hasFlag(args: []const [:0]const u8, flag: []const u8) bool {
+    for (args) |arg| if (std.mem.eql(u8, arg, flag)) return true;
+    return false;
+}
+
+fn seedMemoryHistory(store: clipboard.Store) void {
+    const texts = [_][]const u8{
+        "Meeting moved to 3pm, room 4B. Bring the Q3 numbers and the draft plan.",
+        "https://developer.apple.com/documentation/metal/mtldevice",
+        "const index = try FileIndex.open(gpa, path, home, .{});",
+        "#3478f6",
+        "/Users/shared/Projects/floodlight/README.md",
+    };
+    const pictures = [_][]const u8{ "/System/Applications/Calendar.app", "/System/Applications/Notes.app", "/System/Applications/Maps.app", "/System/Applications/Photos.app" };
+    const now = clipboard.wallClock();
+    const text_count = 5000;
+    const long_text_every = 50;
+    const long_text_bytes = 30_000;
+    const picture_repeats = 50;
+    const sentence = "The quarterly review covers roadmap, hiring, and the migration plan. ";
+    const long_buf = gpa.alloc(u8, long_text_bytes) catch return;
+    defer gpa.free(long_buf);
+    for (long_buf, 0..) |*c, i| c.* = sentence[i % sentence.len];
+    var buf: [160]u8 = undefined;
+    for (0..text_count) |i| {
+        const age = now - @as(f64, @floatFromInt(text_count - i)) * 72;
+        if (i % long_text_every == 0) {
+            _ = store.add(.{ .text = long_buf }, "com.apple.Safari", "Safari", age) catch {};
+            continue;
+        }
+        const text = std.fmt.bufPrint(&buf, "{s} ({d})", .{ texts[i % texts.len], i }) catch continue;
+        _ = store.add(.{ .text = text }, "com.apple.Safari", "Safari", age) catch {};
+    }
+    var pngs: [pictures.len][]u8 = undefined;
+    var thumbnails: [pictures.len][]u8 = undefined;
+    var loaded: usize = 0;
+    defer for (0..loaded) |i| {
+        gpa.free(pngs[i]);
+        gpa.free(thumbnails[i]);
+    };
+    for (pictures) |path| {
+        const png = mac.iconPng(gpa, path, 1024) orelse continue;
+        const thumbnail = mac.iconPng(gpa, path, 128) orelse {
+            gpa.free(png);
+            continue;
+        };
+        pngs[loaded] = png;
+        thumbnails[loaded] = thumbnail;
+        loaded += 1;
+    }
+    if (loaded == 0) return;
+    var name: [32]u8 = undefined;
+    for (0..loaded * picture_repeats) |j| {
+        const k = j % loaded;
+        const label = std.fmt.bufPrint(&name, "Screenshot {d}", .{j}) catch continue;
+        const image: clipboard.Capture.Image = .{ .name = label, .png = pngs[k], .thumbnail = thumbnails[k], .width = 1024, .height = 1024 };
+        _ = store.add(.{ .image = image }, "com.apple.screencaptureui", "Screenshot", now - @as(f64, @floatFromInt(loaded * picture_repeats - j))) catch {};
+    }
 }

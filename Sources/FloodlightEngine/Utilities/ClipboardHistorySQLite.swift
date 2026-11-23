@@ -27,6 +27,7 @@ enum ClipboardHistorySQLite {
     """
 
     private static let schemaSQL = """
+    PRAGMA auto_vacuum = INCREMENTAL;
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
 
@@ -54,6 +55,27 @@ enum ClipboardHistorySQLite {
         try exec(db, schemaSQL)
         try migrateAddedColumns(db: db)
         try recreateFTSTriggers(db: db)
+    }
+
+    static func compact(db: OpaquePointer) throws {
+        try exec(db, "INSERT INTO clipboard_fts(clipboard_fts) VALUES('optimize');")
+        if try autoVacuumMode(db: db) != 2 {
+            try exec(db, "PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")
+        } else {
+            try exec(db, "PRAGMA incremental_vacuum;")
+        }
+        try exec(db, "PRAGMA wal_checkpoint(TRUNCATE);")
+    }
+
+    private static func autoVacuumMode(db: OpaquePointer) throws -> Int32 {
+        var stmt: OpaquePointer?
+        let result = sqlite3_prepare_v2(db, "PRAGMA auto_vacuum;", -1, &stmt, nil)
+        guard result == SQLITE_OK else {
+            throw Failure(code: result, message: String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return sqlite3_column_int(stmt, 0)
     }
 
     /// Runs `sql`, throwing the message SQLite reported instead of discarding it.

@@ -104,6 +104,7 @@ enum ClipboardFileReference {
 final class ClipboardCaptureService {
     static let enabledDefaultsKey = "clipboard-history-enabled"
     static let retentionDaysDefaultsKey = "clipboard-history-retention-days"
+    static let maxFileCountPerCopy = 100
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
@@ -114,8 +115,10 @@ final class ClipboardCaptureService {
     let exclusions: ClipboardExclusionStore
     private let defaults: UserDefaults
     private let pollInterval: TimeInterval
+    private let pruneInterval: TimeInterval
 
     private var lastChangeCount: Int
+    private var lastPruneAt: Date?
     private var isPaused = false
     private var timer: Timer?
     private var resignActiveObserver: NSObjectProtocol?
@@ -126,13 +129,15 @@ final class ClipboardCaptureService {
         observer: any PasteboardObserving = AppKitPasteboardObserver(),
         exclusions: ClipboardExclusionStore = ClipboardExclusionStore(),
         defaults: UserDefaults = .standard,
-        pollInterval: TimeInterval = 0.5
+        pollInterval: TimeInterval = 0.5,
+        pruneInterval: TimeInterval = 3_600
     ) {
         self.store = store
         self.observer = observer
         self.exclusions = exclusions
         self.defaults = defaults
         self.pollInterval = pollInterval
+        self.pruneInterval = pruneInterval
         lastChangeCount = observer.changeCount
     }
 
@@ -163,11 +168,12 @@ final class ClipboardCaptureService {
         guard timer == nil else { return }
         lastChangeCount = observer.changeCount
 
-        pruneOnSchedule()
+        pruneIfDue()
 
         let timer = Timer
             .scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    self?.pruneIfDue()
                     self?.poll()
                 }
             }
@@ -220,12 +226,12 @@ final class ClipboardCaptureService {
     }
 
     func poll() {
-        guard isEnabled, !isPaused else { return }
-
         // Rule 1: changeCount unchanged -> zero work
         let currentChangeCount = observer.changeCount
         guard currentChangeCount != lastChangeCount else { return }
         lastChangeCount = currentChangeCount
+
+        guard isEnabled, !isPaused else { return }
 
         // Rule 2: Own-write marker -> skip
         guard let types = observer.pasteboardTypes else { return }
@@ -247,9 +253,7 @@ final class ClipboardCaptureService {
 
         let filePaths = observer.filePaths().compactMap(ClipboardFileReference.canonicalize)
         if !filePaths.isEmpty {
-            for path in filePaths {
-                store.recordFile(path: path, sourceAppBundleID: bundleID)
-            }
+            recordFiles(filePaths, bundleID: bundleID)
             return
         }
 
@@ -274,10 +278,23 @@ final class ClipboardCaptureService {
         store.record(text: text, sourceAppBundleID: bundleID)
     }
 
-    private func pruneOnSchedule() {
+    private func recordFiles(_ filePaths: [String], bundleID: String?) {
+        guard filePaths.count <= Self.maxFileCountPerCopy else { return }
+        for path in filePaths {
+            store.recordFile(path: path, sourceAppBundleID: bundleID)
+        }
+    }
+
+    @discardableResult
+    func pruneIfDue(now: Date = .now) -> Task<Void, Never>? {
+        if let lastPruneAt, now.timeIntervalSince(lastPruneAt) < pruneInterval {
+            return nil
+        }
+        lastPruneAt = now
         let retention = retention
-        Task.detached(priority: .utility) { [store] in
-            store.prune(retention: retention)
+        return Task.detached(priority: .utility) { [store] in
+            store.prune(retention: retention, now: now)
+            store.compact()
         }
     }
 }

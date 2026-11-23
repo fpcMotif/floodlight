@@ -62,6 +62,7 @@ struct ClipboardCaptureServiceTests {
         let store: ClipboardHistoryStore
         let observer: ScriptedPasteboardObserver
         let exclusions: ClipboardExclusionStore
+        let defaults: UserDefaults
     }
 
     private func makeHarness(
@@ -88,7 +89,8 @@ struct ClipboardCaptureServiceTests {
             service: service,
             store: store,
             observer: observer,
-            exclusions: exclusions
+            exclusions: exclusions,
+            defaults: defaults
         )
     }
 
@@ -484,6 +486,102 @@ struct ClipboardCaptureServiceTests {
 
         #expect(harness.store.count == 1)
         #expect(harness.store.mostRecentEntry?.text == "Keep me")
+    }
+
+    @Test func pruneIfDueRunsOnceThenWaitsForTheInterval() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let first = harness.service.pruneIfDue(now: base)
+        #expect(first != nil)
+        await first?.value
+
+        #expect(harness.service.pruneIfDue(now: base.addingTimeInterval(10)) == nil)
+
+        let later = harness.service.pruneIfDue(now: base.addingTimeInterval(3_601))
+        #expect(later != nil)
+        await later?.value
+    }
+
+    @Test func aRetentionChangedAfterLaunchIsEnforcedAtTheNextPrune() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        harness.store.record(text: "Ten days old", date: base.addingTimeInterval(-10 * 86_400))
+
+        await harness.service.pruneIfDue(now: base)?.value
+        #expect(harness.store.count == 1)
+
+        harness.service.retention = .days(7)
+        await harness.service.pruneIfDue(now: base.addingTimeInterval(3_601))?.value
+        #expect(harness.store.isEmpty)
+    }
+
+    @Test func pruneIfDueRunsWhileCaptureIsDisabled() async {
+        let harness = makeHarness()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        harness.store.record(text: "Forty days old", date: base.addingTimeInterval(-40 * 86_400))
+        harness.service.isEnabled = false
+
+        await harness.service.pruneIfDue(now: base)?.value
+        #expect(harness.store.isEmpty)
+    }
+
+    @Test func pollSkipsACopyOfMoreFilesThanTheCap() {
+        let harness = makeHarness()
+        let paths = (0...ClipboardCaptureService.maxFileCountPerCopy)
+            .map { "/Users/f/bulk/\($0).txt" }
+
+        harness.observer.setContents(
+            string: nil,
+            types: [NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: paths
+        )
+        harness.service.poll()
+
+        #expect(harness.store.isEmpty)
+    }
+
+    @Test func pollRecordsACopyOfExactlyTheCap() {
+        let harness = makeHarness()
+        let paths = (0..<ClipboardCaptureService.maxFileCountPerCopy)
+            .map { "/Users/f/bulk/\($0).txt" }
+
+        harness.observer.setContents(
+            string: nil,
+            types: [NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+            filePaths: paths
+        )
+        harness.service.poll()
+
+        #expect(harness.store.count == ClipboardCaptureService.maxFileCountPerCopy)
+    }
+
+    @Test func aCopyMadeWhileCaptureIsDisabledIsNotRecordedWhenItIsReenabled() {
+        let harness = makeHarness()
+        harness.service.isEnabled = false
+
+        harness.observer.setContents(string: "copied while off")
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
+
+        harness.defaults.set(true, forKey: ClipboardCaptureService.enabledDefaultsKey)
+        harness.service.poll()
+        #expect(harness.store.isEmpty)
+
+        harness.observer.setContents(string: "copied after")
+        harness.service.poll()
+        #expect(harness.store.count == 1)
+        #expect(harness.store.mostRecentEntry?.text == "copied after")
+    }
+
+    @Test func disablingCaptureStopsRecording() {
+        let harness = makeHarness()
+        harness.defaults.set(false, forKey: ClipboardCaptureService.enabledDefaultsKey)
+
+        harness.observer.setContents(string: "copied while off")
+        harness.service.poll()
+
+        #expect(harness.store.isEmpty)
     }
 }
 

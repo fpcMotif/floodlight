@@ -1,0 +1,17 @@
+{
+  "bombadil": {
+    "version": "0.7.4",
+    "path": "/Users/martinfan/devv/floodlight/testing/fff-exploration/.tools/bombadil-aarch64-darwin",
+    "sha256": "81dc1d90712ad31500d9cef11767b26e8f1f6c29be44f409cf4c226e87e12357"
+  },
+  "harness": {
+    "path": "/Users/martinfan/devv/floodlight/.build/fff-contracts/source/Vendor/fff/target/release/fff-terminal-harness",
+    "sha256": "3f99614a451da39a02744e8a2954670c26be1f96465597da5823a13e77f8c31f"
+  },
+  "options": {
+    "columns": 300,
+    "rows": 16,
+    "scrollbackLinesMax": 5,
+    "quiescenceTimeoutMs": 20
+  }
+}

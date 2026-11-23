@@ -394,7 +394,7 @@ pub const PasteboardReader = struct {
         const png_data = if (r.picture_is_png) data else pngRepresentation(rep) orelse return null;
         return .{
             .png = arena.dupe(u8, dataBytes(png_data)) catch return null,
-            .thumbnail = thumbnailPng(arena, png_data) orelse "",
+            .thumbnail = thumbnailPng(arena, data) orelse "",
             .width = @intCast(w),
             .height = @intCast(h),
             .format = if (r.picture_is_png) .png else .tiff,
@@ -882,12 +882,67 @@ pub fn releaseFreedMemory() void {
 
 pub fn releaseSurface(window: *nanoui.Window) void {
     const s = window.surface orelse return;
-    if (s.released or s.is_visible) return;
+    if (s.is_visible) return;
+    if (!s.released) {
+        s.released = true;
+        s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
+    }
     s.pending = true;
-    s.released = true;
-    s.renderer.resize(.{ .w = 1, .h = 1 }, s.scale);
     s.text.images.trimDecoded();
+    s.renderer.waitIdle();
+    forgetImageAtlas(s);
+    forgetFrameBuffers(s);
+    forgetFrameStorage(s);
     _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+}
+
+fn forgetFrameBuffers(s: *nanoui.Surface) void {
+    s.instances.clearAndFree(s.gpa);
+    for (&s.renderer.buffers, &s.renderer.capacities) |*buffer, *capacity| {
+        if (buffer.*) |b| objc.release(b);
+        buffer.* = null;
+        capacity.* = 0;
+    }
+}
+
+pub fn forgetContextStorage(c: *nanoui.ui.Context) void {
+    c.nodes.clearAndFree(c.gpa);
+    c.stack.clearAndFree(c.gpa);
+    c.rects.clearAndFree(c.gpa);
+    c.prev_rects.clearAndFree(c.gpa);
+    c.hits.clearAndFree(c.gpa);
+    c.next_hits.clearAndFree(c.gpa);
+    c.a11y_items.clearAndFree(c.gpa);
+    c.helps.clearAndFree(c.gpa);
+    c.motion.entries.clearAndFree(c.gpa);
+    c.anims.clearAndFree(c.gpa);
+}
+
+fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
+    var it = map.valueIterator();
+    while (it.next()) |l| gpa.free(l.glyphs);
+    map.clearAndFree(gpa);
+}
+
+fn forgetFrameStorage(s: *nanoui.Surface) void {
+    forgetContextStorage(&s.ctx);
+    freeTextLayouts(s.text.gpa, &s.text.layouts);
+    freeTextLayouts(s.text.gpa, &s.text.previous);
+    s.text.wraps.deinit(s.text.gpa);
+    s.text.wraps = .{};
+}
+
+fn forgetImageAtlas(s: *nanoui.Surface) void {
+    const texture = s.renderer.images_texture orelse return;
+    objc.release(texture);
+    s.renderer.images_texture = null;
+    s.renderer.images_generation = std.math.maxInt(u64);
+    const im = &s.text.images;
+    im.entries.clearAndFree(im.gpa);
+    im.shelf_x = 0;
+    im.shelf_y = 0;
+    im.shelf_h = 0;
+    im.resets +%= 1;
 }
 
 pub fn drawBeforeOcclusionUpdate(window: *nanoui.Window) void {

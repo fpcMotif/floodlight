@@ -29,8 +29,13 @@ pub fn build(b: *std.Build) void {
 
     // A bundle, so Full Disk Access has an app to list and the drag has one to carry.
     const bundle = b.addWriteFiles();
-    _ = bundle.addCopyFile(exe.getEmittedBin(), "Floodlight Nano.app/Contents/MacOS/floodlight-nanoui");
-    _ = bundle.addCopyFile(b.path("Info.plist"), "Floodlight Nano.app/Contents/Info.plist");
+    _ = bundle.addCopyFile(exe.getEmittedBin(), "Nanospot.app/Contents/MacOS/floodlight-nanoui");
+    _ = bundle.addCopyFile(b.path("Info.plist"), "Nanospot.app/Contents/Info.plist");
+    const icon = b.addSystemCommand(&.{"sh"});
+    icon.setCwd(b.path("../.."));
+    icon.addFileArg(b.path("../../scripts/build-app-icon.sh"));
+    icon.addFileArg(b.path("icon/Nanospot.png"));
+    _ = bundle.addCopyFile(icon.addOutputFileArg("Nanospot.icns"), "Nanospot.app/Contents/Resources/Nanospot.icns");
     const install_bundle = b.addInstallDirectory(.{ .source_dir = bundle.getDirectory(), .install_dir = .prefix, .install_subdir = "" });
     // TCC keys Full Disk Access to the signature: the linker's ad-hoc one
     // names the binary, not the bundle, and binds no Info.plist.
@@ -38,10 +43,10 @@ pub fn build(b: *std.Build) void {
     const sign = b.addSystemCommand(&.{ "codesign", "--force", "--sign", identity, "--identifier", "com.floodlight.nano" });
     const ad_hoc_requirement_naming_bundle_not_cdhash: []const []const u8 = &.{ "--requirements", "=designated => identifier \"com.floodlight.nano\"" };
     if (std.mem.eql(u8, identity, "-")) sign.addArgs(ad_hoc_requirement_naming_bundle_not_cdhash);
-    sign.addDirectoryArg(b.graph.path(.install_prefix, "Floodlight Nano.app"));
+    sign.addDirectoryArg(b.graph.path(.install_prefix, "Nanospot.app"));
     sign.step.dependOn(&install_bundle.step);
     sign.has_side_effects = true;
-    b.step("bundle", "Build and sign zig-out/Floodlight Nano.app").dependOn(&sign.step);
+    b.step("bundle", "Build and sign zig-out/Nanospot.app").dependOn(&sign.step);
 
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();

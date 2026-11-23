@@ -24,10 +24,13 @@ pub const Effects = struct {
 /// How long the granted state stays on screen before the panel goes.
 pub const granted_linger_ms = 1500;
 pub const poll_ms = 500;
+pub const slow_poll_ms = 5000;
+pub const fast_polls = 120;
 
 pub const Flow = struct {
     phase: Phase = .idle,
     effects: Effects,
+    polls: u32 = 0,
 
     pub fn begin(f: *Flow) void {
         if (f.effects.is_granted(f.effects.ctx)) {
@@ -36,6 +39,7 @@ pub const Flow = struct {
             return;
         }
         if (f.phase == .guiding) return f.effects.present(f.effects.ctx);
+        f.polls = 0;
         f.phase = .guiding;
         f.effects.open_settings(f.effects.ctx);
         f.effects.present(f.effects.ctx);
@@ -44,12 +48,17 @@ pub const Flow = struct {
     /// While guiding: the grant, or the panel presented again. Else nothing.
     pub fn poll(f: *Flow) void {
         if (f.phase != .guiding) return;
+        f.polls +|= 1;
         if (f.effects.is_granted(f.effects.ctx)) {
             f.phase = .granted;
             f.effects.on_granted(f.effects.ctx);
             return;
         }
         f.effects.present(f.effects.ctx);
+    }
+
+    pub fn pollDelayMs(f: *const Flow) u32 {
+        return if (f.polls < fast_polls) poll_ms else slow_poll_ms;
     }
 
     pub fn dismiss(f: *Flow) void {
@@ -105,7 +114,7 @@ pub fn shouldMove(from: Rect, to: Rect) bool {
 pub const Guidance = struct {
     /// The flow's phase, which this view only reads.
     phase: *const Phase,
-    app_name: []const u8 = "Floodlight",
+    app_name: []const u8 = "Nanospot",
     /// The app's icon as PNG, when the shell has one.
     icon_png: ?[]const u8 = null,
     dismissed: bool = false,

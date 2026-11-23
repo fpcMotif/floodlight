@@ -73,10 +73,42 @@ pub const Entry = struct {
 
     /// "{App} · {age}", then the parent folder or the image's size.
     pub fn subtitle(e: Entry, arena: std.mem.Allocator, now: f64) []const u8 {
-        const head = std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ e.source_name, age(arena, now - e.created_at) }) catch return "";
+        const when = age(arena, now - e.created_at);
+        const source_is_title = std.mem.eql(u8, e.source_name, e.title(arena));
+        const head = if (source_is_title) when else std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ e.source_name, when }) catch return "";
         const detail: ?[]const u8 = if (e.filePath()) |p| parentName(p) else if (e.kind == .image) std.fmt.allocPrint(arena, "{d}\u{00D7}{d}", .{ e.width, e.height }) catch null else null;
         const d = detail orelse return head;
         return std.fmt.allocPrint(arena, "{s} \u{00B7} {s}", .{ head, d }) catch head;
+    }
+
+    pub fn matches(e: Entry, query: []const u8) bool {
+        const q = std.mem.trim(u8, query, " ");
+        if (q.len == 0) return true;
+        if (e.kind != .image) return containsIgnoreCase(e.text, q);
+        var buf: [512]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "{s} {d}\u{00D7}{d}", .{ e.text, e.width, e.height })) |haystack| {
+            return containsIgnoreCase(haystack, q);
+        } else |_| {
+            if (containsIgnoreCase(e.text, q)) return true;
+            var dim: [64]u8 = undefined;
+            const d = std.fmt.bufPrint(&dim, " {d}\u{00D7}{d}", .{ e.width, e.height }) catch return false;
+            return containsIgnoreCase(d, q);
+        }
+    }
+
+    pub fn dupe(e: Entry, arena: std.mem.Allocator) !Entry {
+        var out = e;
+        out.text = try arena.dupe(u8, e.text);
+        out.source = try arena.dupe(u8, e.source);
+        out.source_name = try arena.dupe(u8, e.source_name);
+        out.thumbnail = try arena.dupe(u8, e.thumbnail);
+        out.content = switch (e.content) {
+            .plain, .color => e.content,
+            .link => |d| .{ .link = try arena.dupe(u8, d) },
+            .code => |lang| .{ .code = try arena.dupe(u8, lang) },
+            .path => |path| .{ .path = try arena.dupe(u8, path) },
+        };
+        return out;
     }
 };
 
@@ -280,8 +312,8 @@ pub const Filter = enum {
 
 /// The inspector's Type for a file, from its extension.
 pub fn fileType(arena: std.mem.Allocator, path: []const u8, is_dir: bool) []const u8 {
-    if (is_dir) return "Folder";
     const ext = extension(path);
+    if (is_dir) return if (std.ascii.eqlIgnoreCase(ext, "app")) "Application" else "Folder";
     // Source Code before Video: `.ts` is TypeScript here, as in the Swift inspector.
     const table = [_]struct { []const u8, []const []const u8 }{
         .{ "Source Code", &.{ "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh" } },
@@ -393,6 +425,7 @@ fn captures(arena: std.mem.Allocator, board: Pasteboard, source: []const u8) []c
         } else false;
         if (path.len > 0 and !seen) out.append(arena, .{ .file = path }) catch {};
     }
+    if (out.items.len > max_file_count) return &.{};
     if (out.items.len > 0) return out.items;
     if (board.image_byte_count(board.ctx)) |n| if (n <= max_image_bytes) if (board.image(board.ctx, arena)) |img| {
         const screenshot = std.mem.eql(u8, source, "com.apple.screencapture") or std.mem.eql(u8, source, "com.apple.screencaptureui");
@@ -463,6 +496,7 @@ fn readFile(a: std.mem.Allocator, path: [:0]const u8, len: usize) ?[]const u8 {
 
 /// Text past this is dropped whole, as the Swift store does.
 pub const max_text_bytes = 32_000;
+pub const max_file_count = 100;
 /// Image representations past this are not read.
 pub const max_image_bytes = 15 * 1024 * 1024;
 pub const retention_days = 30;
@@ -470,7 +504,7 @@ pub const compact_after_days = 7;
 pub const Budget = struct { bytes: u64 = 150 * 1024 * 1024, entries: u32 = 5000, queries: u32 = 1000 };
 pub const Compactor = *const fn (arena: std.mem.Allocator, png: []const u8) ?[]const u8;
 const window = 1000;
-const search_limit = 200;
+pub const search_limit = 200;
 
 const lite = struct {
     const Db = opaque {};
@@ -492,6 +526,7 @@ const lite = struct {
     extern "c" fn sqlite3_column_int64(stmt: *Stmt, i: c_int) i64;
     extern "c" fn sqlite3_column_type(stmt: *Stmt, i: c_int) c_int;
     extern "c" fn sqlite3_busy_timeout(db: *Db, ms: c_int) c_int;
+    extern "c" fn sqlite3_changes(db: *Db) c_int;
     const ok = 0;
     const row = 100;
     const done = 101;
@@ -557,8 +592,57 @@ const stored_bytes_sql =
     "SELECT coalesce((SELECT sum(length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0)) FROM entries), 0)" ++
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
-const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, thumbnail, content_kind, content_detail, sensitive";
+const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, content_kind, content_detail, sensitive";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
+
+pub const Compaction = struct {
+    hash: [32]u8,
+    size: usize,
+};
+
+fn imagePathIn(images: []const u8, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
+    if (hash.len != 32) return null;
+    return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ images, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
+}
+
+fn writeImageIn(images: []const u8, hash: []const u8, format: []const u8, bytes: []const u8) !void {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const path = imagePathIn(images, &buf, hash, format) orelse return error.ClipboardStore;
+    if (std.c.access(path, 0) == 0) return;
+    var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}.tmp", .{path}, 0) catch return error.ClipboardStore;
+    const fd = std.c.open(tmp, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
+    if (fd < 0) return error.ClipboardStore;
+    var written: usize = 0;
+    while (written < bytes.len) {
+        const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
+        if (n <= 0) break;
+        written += @intCast(n);
+    }
+    const synced = std.c.fsync(fd) == 0;
+    _ = std.c.close(fd);
+    if (written < bytes.len or !synced or std.c.rename(tmp, path) != 0) {
+        _ = std.c.unlink(tmp);
+        return error.ClipboardStore;
+    }
+}
+
+fn readImageIn(images: []const u8, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    return readFile(arena, imagePathIn(images, &buf, hash, format) orelse return null, size);
+}
+
+fn unlinkImageIn(images: []const u8, hash: []const u8, format: []const u8) void {
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    if (imagePathIn(images, &buf, hash, format)) |path| _ = std.c.unlink(path);
+}
+
+pub fn recompress(images: []const u8, arena: std.mem.Allocator, job: Compaction, compact: Compactor) ?usize {
+    const png = readImageIn(images, arena, &job.hash, "png", job.size) orelse return null;
+    const bytes = compact(arena, png) orelse return null;
+    writeImageIn(images, &job.hash, "avif", bytes) catch return null;
+    return bytes.len;
+}
 
 pub const Store = struct {
     db: *lite.Db,
@@ -622,41 +706,16 @@ pub const Store = struct {
         return lite.sqlite3_column_int64(stmt, 0);
     }
 
-    fn imagePath(s: Store, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
-        if (hash.len != 32) return null;
-        return std.fmt.bufPrintSentinel(buf, "{s}/{s}.{s}", .{ s.images, &std.fmt.bytesToHex(hash[0..32].*, .lower), format }, 0) catch null;
-    }
-
     fn writeImage(s: Store, hash: []const u8, format: []const u8, bytes: []const u8) !void {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        const path = s.imagePath(&buf, hash, format) orelse return error.ClipboardStore;
-        if (std.c.access(path, 0) == 0) return;
-        var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
-        const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}.tmp", .{path}, 0) catch return error.ClipboardStore;
-        const fd = std.c.open(tmp, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
-        if (fd < 0) return error.ClipboardStore;
-        var written: usize = 0;
-        while (written < bytes.len) {
-            const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
-            if (n <= 0) break;
-            written += @intCast(n);
-        }
-        const synced = std.c.fsync(fd) == 0;
-        _ = std.c.close(fd);
-        if (written < bytes.len or !synced or std.c.rename(tmp, path) != 0) {
-            _ = std.c.unlink(tmp);
-            return error.ClipboardStore;
-        }
+        return writeImageIn(s.images, hash, format, bytes);
     }
 
     fn readImage(s: Store, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        return readFile(arena, s.imagePath(&buf, hash, format) orelse return null, size);
+        return readImageIn(s.images, arena, hash, format, size);
     }
 
     fn unlinkImage(s: Store, hash: []const u8, format: []const u8) void {
-        var buf: [std.posix.PATH_MAX]u8 = undefined;
-        if (s.imagePath(&buf, hash, format)) |path| _ = std.c.unlink(path);
+        unlinkImageIn(s.images, hash, format);
     }
 
     fn moveInlineImagesOut(s: Store) !bool {
@@ -695,11 +754,15 @@ pub const Store = struct {
         }
     }
 
-    fn removeWhere(s: Store, comptime condition: []const u8, args: anytype) !void {
+    fn removeWhere(s: Store, comptime condition: []const u8, args: anytype, defer_release: bool) !void {
         try s.run("INSERT INTO released SELECT DISTINCT hash FROM entries WHERE (" ++ condition ++ ") AND hash IS NOT NULL AND image_format != ''", args);
         try s.run("DELETE FROM entries WHERE " ++ condition, args);
+        if (!defer_release) s.releaseFiles();
+    }
+
+    fn releaseFiles(s: Store) void {
         {
-            const stmt = try s.prepare("SELECT DISTINCT hash FROM released WHERE hash NOT IN (SELECT hash FROM entries WHERE hash IS NOT NULL AND image_format != '')");
+            const stmt = s.prepare("SELECT DISTINCT hash FROM released WHERE hash NOT IN (SELECT hash FROM entries WHERE hash IS NOT NULL AND image_format != '')") catch return;
             defer _ = lite.sqlite3_finalize(stmt);
             while (lite.sqlite3_step(stmt) == lite.row) {
                 const hash = columnBlob(stmt, 0);
@@ -707,37 +770,61 @@ pub const Store = struct {
                 s.unlinkImage(hash, "avif");
             }
         }
-        try s.run("DELETE FROM released", .{});
+        s.run("DELETE FROM released", .{}) catch {};
         _ = lite.sqlite3_exec(s.db, "PRAGMA incremental_vacuum", null, null, null);
     }
 
-    fn keepWithinBudget(s: Store) !void {
-        try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)});
-        while ((s.int(stored_bytes_sql, .{}) orelse 0) > s.budget.bytes) {
-            const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
-            try s.removeWhere("id = ?", .{id});
+    fn keepWithinBudget(s: Store, defer_release: bool) !void {
+        if ((s.int("SELECT count(*) FROM entries WHERE pinned_at IS NULL", .{}) orelse 0) > @as(i64, s.budget.entries)) {
+            try s.removeWhere("pinned_at IS NULL AND id NOT IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT ?)", .{@as(i64, s.budget.entries)}, defer_release);
+        }
+        // The newest row is the copy `add` just reported stored: pinned bytes
+        // alone can exceed the budget, and it must not go with the rest.
+        var total = s.int(stored_bytes_sql, .{}) orelse 0;
+        var evicted: usize = 0;
+        while (total > @as(i64, @intCast(s.budget.bytes))) {
+            const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL AND id != (SELECT max(id) FROM entries) ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;
+            const est = s.int("SELECT length(CAST(text AS BLOB)) + coalesce(length(thumbnail), 0) + coalesce(length(png), 0) + stored_bytes FROM entries WHERE id = ?", .{id}) orelse 0;
+            try s.removeWhere("id = ?", .{id}, defer_release);
+            evicted += 1;
+            total -= est;
+            if (evicted % 16 == 0 or total <= @as(i64, @intCast(s.budget.bytes))) {
+                total = s.int(stored_bytes_sql, .{}) orelse 0;
+            }
         }
     }
 
-    pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
+    pub fn nextCompaction(s: Store, now: f64) ?Compaction {
+        const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return null;
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{now - compact_after_days * 86400});
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
         var hash: [32]u8 = undefined;
-        var size: usize = 0;
-        {
-            const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return false;
-            defer _ = lite.sqlite3_finalize(stmt);
-            bindAll(stmt, .{now - compact_after_days * 86400});
-            if (lite.sqlite3_step(stmt) != lite.row) return false;
-            @memcpy(&hash, columnBlob(stmt, 0));
-            size = @intCast(lite.sqlite3_column_int64(stmt, 1));
+        @memcpy(&hash, columnBlob(stmt, 0));
+        return .{ .hash = hash, .size = @intCast(lite.sqlite3_column_int64(stmt, 1)) };
+    }
+
+    pub fn finishCompaction(s: Store, job: Compaction, avif_bytes: ?usize) void {
+        if (avif_bytes) |len| {
+            if (s.run("UPDATE entries SET image_format = 'avif', stored_bytes = ?, compacted = 1 WHERE hash = ? AND image_format = 'png'", .{ @as(i64, @intCast(len)), Blob{ .bytes = &job.hash } })) |_| {
+                if (lite.sqlite3_changes(s.db) > 0) {
+                    s.unlinkImage(&job.hash, "png");
+                } else if (s.int("SELECT 1 FROM entries WHERE hash = ? AND image_format = 'avif' LIMIT 1", .{Blob{ .bytes = &job.hash }}) == null) {
+                    s.unlinkImage(&job.hash, "avif");
+                }
+                return;
+            } else |_| {
+                if (s.int("SELECT 1 FROM entries WHERE hash = ? AND image_format = 'avif' LIMIT 1", .{Blob{ .bytes = &job.hash }}) == null) {
+                    s.unlinkImage(&job.hash, "avif");
+                }
+            }
         }
-        const smaller = if (s.readImage(arena, &hash, "png", size)) |png| compact(arena, png) else null;
-        const done = if (smaller) |bytes| blk: {
-            s.writeImage(&hash, "avif", bytes) catch break :blk false;
-            s.run("UPDATE entries SET image_format = 'avif', stored_bytes = ?, compacted = 1 WHERE hash = ? AND image_format = 'png'", .{ @as(i64, @intCast(bytes.len)), Blob{ .bytes = &hash } }) catch break :blk false;
-            s.unlinkImage(&hash, "png");
-            break :blk true;
-        } else false;
-        if (!done) s.run("UPDATE entries SET compacted = 1 WHERE hash = ? AND image_format = 'png'", .{Blob{ .bytes = &hash }}) catch {};
+        s.run("UPDATE entries SET compacted = 1 WHERE hash = ? AND image_format = 'png'", .{Blob{ .bytes = &job.hash }}) catch {};
+    }
+
+    pub fn compactOne(s: Store, arena: std.mem.Allocator, now: f64, compact: Compactor) bool {
+        const job = s.nextCompaction(now) orelse return false;
+        s.finishCompaction(job, recompress(s.images, arena, job, compact));
         return true;
     }
 
@@ -760,6 +847,10 @@ pub const Store = struct {
 
     /// Stores `cap` unless it repeats the newest entry. True when stored.
     pub fn add(s: Store, cap: Capture, source: []const u8, source_name: []const u8, now: f64) !bool {
+        return s.addEntry(cap, source, source_name, now, false);
+    }
+
+    fn addEntry(s: Store, cap: Capture, source: []const u8, source_name: []const u8, now: f64, defer_release: bool) !bool {
         var hash: [32]u8 = undefined;
         const kind: Kind, const text: []const u8 = switch (cap) {
             .text => |t| .{ .text, t },
@@ -780,15 +871,21 @@ pub const Store = struct {
             @as(i64, img.width),              @as(i64, img.height),            @as(i64, @intCast(img.png.len)), Blob{ .bytes = if (cap == .image) &hash else null }, Blob{ .bytes = img.thumbnail },
             if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               storedDetail(&detail_buf, content),                  sensitive,
         });
-        try s.keepWithinBudget();
+        try s.keepWithinBudget(defer_release);
         return true;
     }
 
     /// Records what `board` holds, as copied from `app`. True when any of it
     /// was stored; a repeat of the newest entry is not.
     pub fn capture(s: Store, arena: std.mem.Allocator, board: Pasteboard, app: App, now: f64) !bool {
+        const items = captures(arena, board, app.bundle_id);
+        if (items.len == 0) return false;
+        try s.run("BEGIN IMMEDIATE", .{});
+        errdefer s.run("ROLLBACK", .{}) catch {};
         var stored = false;
-        for (captures(arena, board, app.bundle_id)) |cap| stored = (try s.add(cap, app.bundle_id, app.name, now)) or stored;
+        for (items) |cap| stored = (try s.addEntry(cap, app.bundle_id, app.name, now, true)) or stored;
+        try s.run("COMMIT", .{});
+        if (stored) s.releaseFiles();
         return stored;
     }
 
@@ -807,13 +904,18 @@ pub const Store = struct {
         return .none;
     }
 
-    fn repeatsNewest(s: Store, kind: Kind, text: []const u8, hash: ?*const [32]u8) bool {
-        const stmt = s.prepare("SELECT kind, text, hash FROM entries ORDER BY pinned_at IS NOT NULL, created_at DESC LIMIT 1") catch return false;
+    fn repeatsQuery(s: Store, sql: []const u8, kind: Kind, text: []const u8, hash: ?*const [32]u8) ?bool {
+        const stmt = s.prepare(sql) catch return false;
         defer _ = lite.sqlite3_finalize(stmt);
-        if (lite.sqlite3_step(stmt) != lite.row) return false;
+        if (lite.sqlite3_step(stmt) != lite.row) return null;
         if (!std.mem.eql(u8, columnText(stmt, 0), @tagName(kind))) return false;
         if (hash) |h| return std.mem.eql(u8, columnBlob(stmt, 2), h);
         return std.mem.eql(u8, columnText(stmt, 1), text);
+    }
+
+    fn repeatsNewest(s: Store, kind: Kind, text: []const u8, hash: ?*const [32]u8) bool {
+        return s.repeatsQuery("SELECT kind, text, hash FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT 1", kind, text, hash) orelse
+            s.repeatsQuery("SELECT kind, text, hash FROM entries ORDER BY created_at DESC LIMIT 1", kind, text, hash) orelse false;
     }
 
     /// Pinned first by pin time, then newest first. An empty query lists
@@ -839,9 +941,8 @@ pub const Store = struct {
                 .width = @intCast(lite.sqlite3_column_int64(stmt, 7)),
                 .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
                 .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
-                .thumbnail = try arena.dupe(u8, columnBlob(stmt, 10)),
-                .content = storedContent(columnText(stmt, 11), try arena.dupe(u8, columnText(stmt, 12))),
-                .sensitive = lite.sqlite3_column_int64(stmt, 13) != 0,
+                .content = storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
+                .sensitive = lite.sqlite3_column_int64(stmt, 12) != 0,
             });
         }
         return out.items;
@@ -856,18 +957,30 @@ pub const Store = struct {
         return s.readImage(arena, columnBlob(stmt, 0), columnText(stmt, 1), @intCast(lite.sqlite3_column_int64(stmt, 2)));
     }
 
+    pub fn thumbnail(s: Store, arena: std.mem.Allocator, id: i64) []const u8 {
+        const stmt = s.prepare("SELECT thumbnail FROM entries WHERE id = ?") catch return "";
+        defer _ = lite.sqlite3_finalize(stmt);
+        bindAll(stmt, .{id});
+        if (lite.sqlite3_step(stmt) != lite.row) return "";
+        return arena.dupe(u8, columnBlob(stmt, 0)) catch "";
+    }
+
     pub fn togglePin(s: Store, id: i64, now: f64) !void {
         try s.run("UPDATE entries SET pinned_at = CASE WHEN pinned_at IS NULL THEN ? ELSE NULL END WHERE id = ?", .{ now, id });
     }
 
     pub fn delete(s: Store, id: i64) !void {
-        try s.removeWhere("id = ?", .{id});
+        try s.removeWhere("id = ?", .{id}, false);
     }
 
     /// Drops unpinned entries older than `days`; pinned ones stay.
     pub fn prune(s: Store, now: f64, days: u32) !void {
-        try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400});
-        try s.keepWithinBudget();
+        try s.run("BEGIN IMMEDIATE", .{});
+        errdefer s.run("ROLLBACK", .{}) catch {};
+        try s.removeWhere("pinned_at IS NULL AND created_at < ?", .{now - @as(f64, @floatFromInt(days)) * 86400}, true);
+        try s.keepWithinBudget(true);
+        try s.run("COMMIT", .{});
+        s.releaseFiles();
     }
 
     pub fn recordQuery(s: Store, scope: QueryScope, raw: []const u8, now: f64) !void {

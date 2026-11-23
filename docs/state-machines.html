@@ -1,0 +1,588 @@
+<title>Floodlight State Machines</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: a sticky index of the eleven machines beside one reading column; each machine is a plate with diagram, context, code, and drill-downs. */
+:root {
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --ink: #16202c;
+  --muted: #4c5967;
+  --line: #d9e0e8;
+  --accent: #1f6feb;
+  --accent-soft: #e6effd;
+  --code-bg: #eef2f6;
+  --ok: #1a7f4b;
+  --ok-soft: #e3f4ea;
+  --warn: #7d4f00;
+  --warn-soft: #fbf0d9;
+  --bad: #b42318;
+  --bad-soft: #fde7e5;
+  --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141b; --panel: #151d27; --ink: #e4eaf1; --muted: #93a2b3; --line: #273342;
+    --accent: #6ea8ff; --accent-soft: #1a2a42; --code-bg: #101820;
+    --ok: #5ccf8f; --ok-soft: #13291e; --warn: #e9b44c; --warn-soft: #2c2412; --bad: #ff8a80; --bad-soft: #321716;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141b; --panel: #151d27; --ink: #e4eaf1; --muted: #93a2b3; --line: #273342;
+  --accent: #6ea8ff; --accent-soft: #1a2a42; --code-bg: #101820;
+  --ok: #5ccf8f; --ok-soft: #13291e; --warn: #e9b44c; --warn-soft: #2c2412; --bad: #ff8a80; --bad-soft: #321716;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px; }
+nav { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+nav .label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+nav a { color: var(--ink); text-decoration: none; padding: 4px 8px; border-radius: 6px; display: flex; gap: 8px; align-items: baseline; }
+nav a:hover, nav a:focus-visible { background: var(--accent-soft); outline: none; }
+nav a span { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 1.6em; }
+main { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+h1 { font-family: var(--display); font-size: 34px; line-height: 1.15; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font-family: var(--display); font-size: 22px; margin: 0; text-wrap: balance; }
+h3 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.lede { display: flex; flex-direction: column; gap: 12px; }
+.lede p { color: var(--muted); font-size: 16px; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+:not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+.plate { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 24px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.num { font-family: var(--mono); color: var(--accent); font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.explicit { color: var(--accent); border-color: var(--accent); }
+.chip.fixed { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.chip.open { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.chip.clean { color: var(--muted); }
+a.chip { text-decoration: none; }
+.biz { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--ink); }
+.diagram { overflow-x: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram pre.mermaid { margin: 0; background: transparent; display: flex; justify-content: center; font-family: var(--body); }
+.code { overflow-x: auto; background: var(--code-bg); border-radius: 8px; padding: 12px 14px; margin: 0; line-height: 1.5; }
+.code .file { display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
+.code .hl { background: var(--warn-soft); display: inline-block; width: 100%; }
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 500; font-size: 14px; color: var(--accent); list-style: none; display: flex; gap: 6px; align-items: center; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "▸"; font-size: 11px; transition: transform .15s; }
+details[open] summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details > .inner { padding-top: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+ul.inv { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 72ch; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td code { white-space: nowrap; }
+.deeper { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.deeper div { background: var(--bg); border-radius: 8px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.deeper b { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.finding { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.finding:first-of-type { border-top: 0; }
+.finding .id { font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 2px; }
+.finding p { font-size: 14px; }
+.finding .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.sev { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 4px; }
+.sev.high { color: var(--bad); background: var(--bad-soft); }
+.sev.med { color: var(--warn); background: var(--warn-soft); }
+.sev.low { color: var(--muted); background: var(--code-bg); }
+@media (max-width: 860px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  nav .label { width: 100%; margin: 4px 0 0; }
+  nav a { border: 1px solid var(--line); }
+  h1 { font-size: 27px; }
+  .plate { padding: 18px; }
+}
+</style>
+
+<div class="wrap">
+<nav aria-label="Machines">
+  <div class="label">Overview</div>
+  <a href="#turns"><span>↻</span>How turns interleave</a>
+  <a href="#findings"><span>!</span>Findings</a>
+  <div class="label">Machines</div>
+  <a href="#presence"><span>1</span>Panel Presence</a>
+  <a href="#handoff"><span>2</span>Action handoff</a>
+  <a href="#retention"><span>3</span>Session retention</a>
+  <a href="#list"><span>4</span>Result list</a>
+  <a href="#files"><span>5</span>Staged file search</a>
+  <a href="#suggest"><span>6</span>Web suggestions</a>
+  <a href="#detail"><span>7</span>Board detail</a>
+  <a href="#capture"><span>8</span>Capture &amp; history</a>
+  <a href="#grant"><span>9</span>Grant flow</a>
+  <a href="#index"><span>10</span>File index rebuild</a>
+  <a href="#entrance"><span>11</span>Entrance timers</a>
+</nav>
+
+<main>
+<header class="lede">
+  <h3>Nanospot · frontends/nanoui + core</h3>
+  <h1>Floodlight state machines</h1>
+  <p>Nanospot is the Zig rewrite of Floodlight: a Spotlight-style search panel on ⌥Space and a clipboard board on ⌥⇧C, over a Zig file index. Eleven state machines decide what the panel shows, what it remembers, and what Return does. Two are explicit enums. Nine live in flags, arenas and timers.</p>
+  <p>Each plate shows the machine, why the product needs it, the code that holds the state, and drill-downs for invariants, the full transition table, and where to read next. The written source of truth is <code>docs/state-machines.md</code>.</p>
+</header>
+
+<!-- Turns -->
+<section class="plate" id="turns">
+  <div class="head"><h2>How turns interleave</h2></div>
+  <p class="biz">The panel never acts in the frame where you press Return. It records the action and the shell runs it on a later main-queue turn. Anything else queued in between (a clipboard capture, an index swap, the file-rows timer) can change state first. The ⌘K menu runs a nested loop that drains all of them while it is open.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant F as Frame (key or click)
+  participant P as Panel
+  participant Q as Main queue
+  participant S as Scan thread
+  F->>P: Return
+  P->>P: ask() sets pending
+  P->>Q: dispatch applyPanel
+  Q->>P: captureTick refreshes the board
+  S->>Q: indexReady
+  Q->>P: indexLanded refreshes the list
+  Q->>P: applyPanel runs pending, then settle
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/main.zig:228</span>fn panelRequest(ctx: ?*anyopaque) void {
+    ...
+    objc.dispatchMain(ctx, applyPanel);
+}</pre>
+</section>
+
+<!-- 1 Presence -->
+<section class="plate" id="presence">
+  <div class="head"><span class="num">01</span><h2>Panel Presence</h2>
+    <div class="chips"><span class="chip explicit">explicit enum</span><span class="chip">main thread</span><a class="chip fixed" href="#f2">finding 2 fixed</a></div></div>
+  <p class="biz">Business context: the panel must appear instantly on the hot key, never flash an old frame, and vanish the moment you click elsewhere, like Spotlight. A paste must hide the panel first, so ⌘V reaches the app you came from.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> hidden
+  hidden --> shown : summon, last frame valid
+  hidden --> entering : summon, last frame stale
+  entering --> shown : own frame presented
+  entering --> shown : fallback timer of this entrance
+  entering --> hidden : hot key on focused surface, focus lost, settle
+  shown --> hidden : hot key on focused surface, focus lost, settle
+  shown --> shown : switch surface in place
+  hidden --> hidden : late settle does nothing
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/presence.zig:97</span>pub fn settle(p: *Presence, a: panel.Action) void {
+<span class="hl">    if (p.phase == .hidden) return;</span>
+    switch (a) {
+        .open, .reveal, .copy, .hide => p.hide(),
+        .show_search => p.search(true, true),
+        .clipboard => |b| switch (b) {
+            .paste => {
+                // ⌘V goes to the frontmost app: the panel must be gone.
+                p.hide();
+                p.run(.deliver_paste);
+            },
+            ...</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li><code>timers_fired &lt;= entrances</code>: the nth fallback timer belongs to the nth entrance.</li>
+    <li><code>summon_open</code> brackets one signpost, from a show from hidden to the reveal or hide.</li>
+    <li>Each session emits <code>hide_window</code> and <code>end_session</code> once.</li>
+    <li>A settled action never changes a hidden panel.</li>
+  </ul></div></details>
+  <details><summary>Transition table</summary><div class="inner"><div class="tablewrap"><table>
+    <tr><th>From</th><th>Event</th><th>Guard</th><th>To</th><th>Effects</th></tr>
+    <tr><td>hidden</td><td>search, board, launched, reopened</td><td>frame valid</td><td>shown</td><td>note target, open, place, order_in_seen</td></tr>
+    <tr><td>hidden</td><td>same</td><td>frame stale</td><td>entering</td><td>note target, open, place, order_in_unseen, timer</td></tr>
+    <tr><td>entering, shown</td><td>hot key</td><td>focused, same surface</td><td>hidden</td><td>hide_window, end_session</td></tr>
+    <tr><td>entering, shown</td><td>hot key</td><td>otherwise</td><td>same</td><td>open, place, order_front</td></tr>
+    <tr><td>entering</td><td>framePresented(true)</td><td></td><td>shown</td><td>reveal</td></tr>
+    <tr><td>entering</td><td>entranceTimedOut</td><td><code>timers_fired == entrances</code></td><td>shown</td><td>reveal</td></tr>
+    <tr><td>entering, shown</td><td>focusLost</td><td>no Quick Look</td><td>hidden</td><td>hide_window, end_session</td></tr>
+    <tr><td>entering, shown</td><td>settle hiding action</td><td></td><td>hidden</td><td>hide effects, + deliver_paste for paste</td></tr>
+    <tr><td>hidden</td><td>settle(any)</td><td></td><td>hidden</td><td>none</td></tr>
+  </table></div></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>presence.zig</code> show, hide, settle<br><code>main.zig:71</code> runPresence carries out effects</div>
+    <div><b>Tests</b>"an action settled after the panel already hid repeats no exit, sends no ⌘V, and summons nothing" and the PresenceSpy tests near <code>tests.zig:2046</code></div>
+    <div><b>Run</b><code>cd frontends/nanoui &amp;&amp; zig build test</code></div>
+  </div></details>
+</section>
+
+<!-- 2 Handoff -->
+<section class="plate" id="handoff">
+  <div class="head"><span class="num">02</span><h2>Action handoff</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">two turns</span><a class="chip fixed" href="#f1">finding 1 fixed</a></div></div>
+  <p class="biz">Business context: Return, ⌘C and a double click name one result or clipboard entry. Whatever the user saw selected must be what gets opened or pasted, even if a new copy arrives or the index swaps before the shell acts.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> none
+  none --> asked : ask copies the action into action_arena
+  asked --> asked : a second ask replaces it
+  asked --> none : Panel.hide clears pending
+  asked --> applying : applyPanel on a later turn
+  applying --> none : action run, then settle
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/panel.zig:888</span>fn ask(p: *Panel, a: Action) void {
+    p.recordActionQuery(a);
+<span class="hl">    _ = p.action_arena.reset(.retain_capacity);
+    p.pending = ownedAction(p.action_arena.allocator(), a) catch |err| {</span>
+        std.log.err("action: {s}", .{@errorName(err)});
+        return;
+    };
+    p.hooks.request(p.hooks.ctx);
+}</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li>The bytes an action names stay valid from <code>ask</code> to the end of its apply.</li>
+    <li>One slot: a second ask before the apply replaces the first. The second apply only resizes.</li>
+    <li><code>Panel.hide</code> clears <code>pending</code>. An apply that finds nothing only resizes.</li>
+  </ul></div></details>
+  <details><summary>What went wrong before</summary><div class="inner">
+    <p>The action held slices into the result list's arena. A refresh between the ask and the apply reset that arena and reused it. The regression test found the paste would write <code>a copy from another app,</code> instead of <code>the entry the user chose</code>.</p>
+  </div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>panel.zig:1282</code> ownedAction, ownedRow, ownedEntry<br><code>main.zig:241</code> applyPanel<br><code>main.zig:296</code> actionsMenu (nested run loop)</div>
+    <div><b>Tests</b>"a board action keeps the entry it named when a copy lands before the shell runs it" and "a search action keeps the row it named when the file rows land before the shell runs it"</div>
+  </div></details>
+</section>
+
+<!-- 3 Retention -->
+<section class="plate" id="retention">
+  <div class="head"><span class="num">03</span><h2>Session retention</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">ADR 0015</span><a class="chip fixed" href="#f4">finding 4 fixed</a></div></div>
+  <p class="biz">Business context: reopen the panel within five minutes and your query, filter and selection come back. After that, or with retention off, it starts clean and its memory is released. Search and the board keep separate sessions.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> fresh
+  fresh --> shown : showSearch or showClipboard
+  shown --> retained : hide, retention on, something typed or selected
+  shown --> fresh : hide, empty or retention off
+  shown --> retained : switch surface in place, the other surface kept
+  retained --> shown : show within the window, restored
+  retained --> fresh : expiry timer, window passed
+  fresh --> released : hidden and nothing retained
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/panel.zig:346</span>pub fn armExpiry(p: *Panel) ?u32 {
+<span class="hl">    if (p.expiry_armed) return null;</span>
+    const ms = p.nextExpiryMs() orelse return null;
+    p.expiry_armed = true;
+    return ms;
+}
+
+<span class="file">frontends/nanoui/src/main.zig:188</span>fn endSession(s: *Shell) void {
+    ...
+    s.panel.hide();
+    if (s.panel.nextExpiryMs() == null) return s.releaseIdleMemory();
+    if (s.panel.armExpiry()) |ms| nanoui.App.after(ms, s, expireRetention);
+}</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li>While shown, the active surface's <code>hidden_at</code> is null: show consumes it.</li>
+    <li>After hide with retention on, a non-empty active surface has <code>hidden_at</code>.</li>
+    <li><code>nextExpiryMs</code> is null exactly when nothing is retained.</li>
+    <li>At most one expiry timer is pending.</li>
+  </ul></div></details>
+  <details><summary>Transition table</summary><div class="inner"><div class="tablewrap"><table>
+    <tr><th>From</th><th>Event</th><th>To</th></tr>
+    <tr><td>shown(m)</td><td>hide, retention on, non-empty</td><td>hidden, m retained at now</td></tr>
+    <tr><td>shown(m)</td><td>hide, empty</td><td>hidden, m forgotten</td></tr>
+    <tr><td>shown(m)</td><td>hide, retention off</td><td>hidden, both forgotten, mode search</td></tr>
+    <tr><td>shown(search)</td><td>showClipboard</td><td>shown(board), search retained</td></tr>
+    <tr><td>any</td><td>show, surface retained and fresh</td><td>shown, restored</td></tr>
+    <tr><td>any</td><td>expiry timer</td><td>expired surfaces forgotten, rearm if any remain</td></tr>
+  </table></div></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>panel.zig:360</code> hide, <code>:377</code> showSearch, <code>:406</code> showClipboard<br><code>docs/adr/0015-session-retention.md</code></div>
+    <div><b>Tests</b>"hiding again within the retention window arms no second expiry timer" and "search and clipboard board sessions expire separately…"</div>
+  </div></details>
+</section>
+
+<!-- 4 List -->
+<section class="plate" id="list">
+  <div class="head"><span class="num">04</span><h2>Result list</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">shared by search and board</span><span class="chip clean">no bug</span></div></div>
+  <p class="biz">Business context: the list answers the query in the field. When the source changes under the same query (a new copy, a new index), it asks again and keeps your selected row selected.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> answered
+  answered --> stale : markStale
+  answered --> fetching : beginQuery, new text
+  stale --> fetching : beginQuery, kept = selected key
+  fetching --> answered : setRows, selection found again
+  fetching --> failed : fail, query unchanged
+  failed --> fetching : next refresh asks again
+  answered --> answered : replaceRows, late rows
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/list.zig:66</span>pub fn beginQuery(l: *Self, query: []const u8) std.mem.Allocator {
+    const same = l.stale and std.mem.eql(u8, query, l.query.items);
+    l.kept = if (same) if (l.selection()) |x| keyOf(x) else null else null;
+<span class="hl">    _ = l.arena.reset(.retain_capacity);</span>
+    l.rows = &amp;.{};
+    l.visible = &amp;.{};
+    return l.arena.allocator();
+}</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li>Rows live in <code>arena</code> until the next <code>beginQuery</code>. Nothing outside may keep a slice across a query.</li>
+    <li><code>needsQuery(q)</code> is true when stale or <code>q</code> differs from the answered query.</li>
+    <li><code>kept</code> is set only by a stale refresh of the same query.</li>
+  </ul></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>list.zig</code>, 185 lines, generic over row, filter and key</div>
+    <div><b>Why it matters</b>The highlighted reset is what turned the handoff's borrowed slices into the wrong paste.</div>
+  </div></details>
+</section>
+
+<!-- 5 Files -->
+<section class="plate" id="files">
+  <div class="head"><span class="num">05</span><h2>Staged file search</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">0 ms timer</span><a class="chip open" href="#f7">finding 7 open</a></div></div>
+  <p class="biz">Business context: each keystroke must publish within 10 µs. When the file search is slower than 4 ms, apps answer at once and file rows land on the next turn, so typing never stalls.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> idle
+  idle --> due : answer over budget, timer queued once
+  due --> due : more keystrokes, no second timer
+  due --> idle : timer, still search and same text, rows with files
+  due --> idle : timer, board mode or text changed, files dropped
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/panel.zig:544</span>pub fn landFiles(p: *Panel) void {
+    if (!p.files_due) return;
+<span class="hl">    p.files_due = false;
+    const text = p.field.text();
+    if (p.mode != .search or !std.mem.eql(u8, text, p.list.answered())) return;</span>
+    if (p.list.selected != 0) p.list.markStale();
+    _ = p.answer(text, true) catch |err| return p.failSearch(err);
+    p.completion = p.computeCompletion();
+}</pre>
+  <details><summary>Open finding</summary><div class="inner">
+    <p>The flag clears before the mode check. If the timer runs after a switch to the board, the retained search restores later without file rows, and refresh sees an unchanged query. Narrow, because the timer is 0 ms.</p>
+  </div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>panel.zig</code> answer, <code>main.zig:146</code> searchFiles, <code>:153</code> landFiles</div>
+    <div><b>Budget</b><code>file_search_budget_s = 0.004</code>, calibrated after each index swap</div>
+  </div></details>
+</section>
+
+<!-- 6 Suggest -->
+<section class="plate" id="suggest">
+  <div class="head"><span class="num">06</span><h2>Web suggestions</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">network replies</span><span class="chip clean">no bug</span></div></div>
+  <p class="biz">Business context: Google suggestions add rows under the results without moving your selection. A reply for an older query, or one that lands after you switch to the board, must be dropped. Replies are cached for five minutes.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> idle
+  idle --> waiting : query needs fetch, seq + 1
+  idle --> idle : cached within 5 minutes
+  waiting --> waiting : new query, newer seq
+  waiting --> idle : matching reply, rows and cache updated
+  waiting --> waiting : late or mismatched reply dropped
+  waiting --> idle : board, setting off, forget
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/panel.zig:634</span>pub fn receiveSuggestionsFor(p: *Panel, seq: u64, query: []const u8, items: []const []const u8) bool {
+    if (!p.web_suggestions_enabled or p.mode != .search) return false;
+<span class="hl">    if (p.pending_suggest_seq == 0 or seq != p.pending_suggest_seq) return false;</span>
+    if (!std.mem.eql(u8, query, p.pending_suggest_query.items)) return false;
+    if (!std.mem.eql(u8, query, p.field.text())) return false;
+    ...</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li><code>pending_suggest_seq == 0</code> means no reply is wanted.</li>
+    <li>A failed fetch is not retried. The next new query asks again.</li>
+  </ul></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>main.zig</code> suggest, onSuggest<br><code>plans/002</code> proposes a typing-pause debounce</div>
+    <div><b>Tests</b>"a cached query reuses suggestions within five minutes…"</div>
+  </div></details>
+</section>
+
+<!-- 7 Detail -->
+<section class="plate" id="detail">
+  <div class="head"><span class="num">07</span><h2>Board detail</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">per frame</span><span class="chip clean">no bug</span></div></div>
+  <p class="biz">Business context: the inspector previews the selected copy: a full image, or a file's first 16 KB. Holding an arrow key skims entries, so a passing selection waits 0.15 s before it reads anything from disk.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> empty
+  empty --> waiting : selection lands while keys pass quickly
+  empty --> loaded : selection lands, settled
+  waiting --> loaded : 0.15 s passed
+  waiting --> waiting : selection moves on
+  loaded --> waiting : selection moves on
+  loaded --> empty : releaseDetail on hide
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/board.zig:162</span>fn loadDetail(b: *Board, c: *ui.Context, e: Entry) void {
+    if (b.detail_id != e.id) {
+        b.detail_passing = b.detail_id != null and c.time - b.detail_at &lt; held_key_gap_seconds;
+        ...
+<span class="hl">        b.payload = .none;</span>
+    }
+    if (b.detail_loaded) return;
+    const wait = held_key_gap_seconds - (c.time - b.detail_at);
+    if (b.detail_passing and wait &gt; 0) return c.frameIn(@floatCast(wait));
+    ...</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li><code>payload</code> is read only after <code>loadDetail</code> for the same <code>detail_id</code>.</li>
+    <li><code>releaseDetail</code> clears <code>detail_id</code>, so the next load resets <code>payload</code> before preview reads it.</li>
+  </ul></div></details>
+</section>
+
+<!-- 8 Capture -->
+<section class="plate" id="capture">
+  <div class="head"><span class="num">08</span><h2>Capture &amp; history</h2>
+    <div class="chips"><span class="chip">implicit</span><span class="chip">SQLite + image files</span><a class="chip fixed" href="#f3">finding 3 fixed</a><a class="chip open" href="#f6">6, 9 open</a></div></div>
+  <p class="biz">Business context: every copy in any app lands on the board, except Floodlight's own writes and password-manager copies. History stays under 150 MB and 5000 entries. Pinned entries are kept, and images older than a week are recompressed to AVIF.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> none
+  none --> png : add image, file written, row inserted
+  png --> avif : compactOne after 7 days, AVIF smaller
+  png --> png_final : compactOne, not smaller or not opaque
+  png --> none : last row naming the hash removed
+  avif --> none : last row naming the hash removed
+  png_final --> none : last row naming the hash removed
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/clipboard.zig:716</span>fn keepWithinBudget(s: Store) !void {
+    try s.removeWhere("pinned_at IS NULL AND id NOT IN (...)", .{@as(i64, s.budget.entries)});
+    while ((s.int(stored_bytes_sql, .{}) orelse 0) &gt; s.budget.bytes) {
+<span class="hl">        const id = s.int("SELECT id FROM entries WHERE pinned_at IS NULL AND id != (SELECT max(id) FROM entries) ORDER BY kind != 'image', created_at LIMIT 1", .{}) orelse return;</span>
+        try s.removeWhere("id = ?", .{id});
+    }
+}
+
+<span class="file">frontends/nanoui/src/main.zig:325</span>fn captureTick(ctx: ?*anyopaque) callconv(.c) void {
+    ...
+    const count = mac.pasteboardChangeCount();
+    if (count == s.change_count) return;
+<span class="hl">    s.change_count = count;</span>   // advanced before the capture: a failure is not retried</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li>Own writes carry <code>own_write_type</code>, and <code>writeEntry</code> updates <code>change_count</code>.</li>
+    <li>An image file exists while any row names its hash and format.</li>
+    <li><code>add</code> returning true means the entry is in history.</li>
+    <li>Pinned entries are outside the entry-count budget, but count toward the byte budget.</li>
+  </ul></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>clipboard.zig:766</code> add, <code>:700</code> removeWhere, <code>:726</code> compactOne<br><code>docs/adr/0011-nano-clipboard-history.md</code></div>
+    <div><b>Tests</b>"a copy stored while pinned entries alone fill the byte budget stays in history" and "history keeps within its byte budget…"</div>
+    <div><b>Decision pending</b>Should pinned bytes leave the byte budget? See finding 9.</div>
+  </div></details>
+</section>
+
+<!-- 9 Grant -->
+<section class="plate" id="grant">
+  <div class="head"><span class="num">09</span><h2>Full Disk Access grant flow</h2>
+    <div class="chips"><span class="chip explicit">explicit enum</span><span class="chip">port of Swift</span><a class="chip open" href="#f5">5, 8 open</a></div></div>
+  <p class="biz">Business context: without Full Disk Access, the index misses protected folders. The flow opens System Settings at the list, floats a card with the app to drag in, polls every 500 ms, and rebuilds the index the moment access is granted.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> idle
+  idle --> granted : begin, already granted
+  idle --> guiding : begin, open Settings, present
+  guiding --> guiding : poll, not yet, present again
+  guiding --> granted : poll, granted, rebuild index
+  granted --> dismissed : linger 1.5 s ends
+  guiding --> dismissed : close button, polling stops
+  dismissed --> guiding : begin again
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/permission.zig:45</span>pub fn poll(f: *Flow) void {
+    if (f.phase != .guiding) return;
+    if (f.effects.is_granted(f.effects.ctx)) {
+        f.phase = .granted;
+        f.effects.on_granted(f.effects.ctx);
+        return;
+    }
+    f.effects.present(f.effects.ctx);
+}
+
+<span class="file">frontends/nanoui/src/main.zig:462</span>fn present(ctx: ?*anyopaque) void {
+    const s: *Shell = @ptrCast(@alignCast(ctx));
+<span class="hl">    s.guidance.dismissed = false;</span>   // a poll tick here undoes a close click not yet applied</pre>
+  <details><summary>Open findings</summary><div class="inner">
+    <p>5. A poll tick queued before <code>applyGuidance</code> clears the close click. Estimated about 1 in 100 clicks by timing, not measured.</p>
+    <p>8. After the close button, polling stops, so a later grant is seen only at the next launch. The Swift coordinator does the same.</p>
+  </div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Read</b><code>permission.zig</code> Flow and Guidance<br><code>Sources/Floodlight/App/FullDiskAccessGrantCoordinator.swift</code></div>
+    <div><b>Tests</b>"polling keeps guiding until the grant, then stops" near <code>tests.zig:128</code></div>
+  </div></details>
+</section>
+
+<!-- 10 Index -->
+<section class="plate" id="index">
+  <div class="head"><span class="num">10</span><h2>File index rebuild</h2>
+    <div class="chips"><span class="chip explicit">explicit protocol</span><span class="chip">real threads, atomics</span><span class="chip clean">no bug</span></div></div>
+  <p class="biz">Business context: the last index opens at launch, so search works at once. A fresh scan of the home folder runs on its own thread and swaps in when it finishes. Requests during a scan cost one more scan, never a lost one.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> idle
+  idle --> scanning : rebuild, requested + 1, wins running
+  scanning --> scanning : another rebuild, requested + 1, returns at once
+  scanning --> ready : scan done, running false, notify
+  ready --> scanning : requested above 0
+  ready --> idle : requested is 0
+  ready --> adopted : main thread adopt swaps the index
+  </pre></div>
+  <pre class="code"><span class="file">core/src/file_index.zig:97</span>pub fn rebuild(fi: *FileIndex, notify: Notify) void {
+<span class="hl">    _ = fi.requested.fetchAdd(1, .seq_cst);
+    while (fi.running.cmpxchgStrong(false, true, .seq_cst, .seq_cst) == null) {</span>
+        _ = fi.requested.swap(0, .seq_cst);
+        const outcome = fi.buildOnce();
+        fi.running.store(false, .seq_cst);
+        notify.ready(notify.ctx, outcome);
+        if (fi.requested.load(.seq_cst) == 0) return;
+    }
+}</pre>
+  <details><summary>Invariants</summary><div class="inner"><ul class="inv">
+    <li>At most one scan runs at a time.</li>
+    <li>No request is lost: each caller adds before it tries to run, and the runner reads after it clears <code>running</code>.</li>
+    <li><code>ready</code> holds at most one finished index. A newer one closes the older.</li>
+    <li><code>busy()</code> is true from a request until the last scan notifies.</li>
+  </ul></div></details>
+  <details><summary>Go deeper</summary><div class="inner deeper">
+    <div><b>Tests</b>Eight threads at once, a burst during a scan, a failed scan, <code>busy</code> timing: <code>core/src/file_index.zig:216</code></div>
+    <div><b>Run</b><code>make test-core</code></div>
+    <div><b>Read</b><code>docs/adr/0010-zig-file-index-core.md</code></div>
+  </div></details>
+</section>
+
+<!-- 11 Entrance -->
+<section class="plate" id="entrance">
+  <div class="head"><span class="num">11</span><h2>Entrance timers</h2>
+    <div class="chips"><span class="chip">counters</span><span class="chip">part of Presence</span><span class="chip clean">no bug</span></div></div>
+  <p class="biz">Business context: a stale frame must never show. If the new frame is slow, a 250 ms fallback reveals the panel anyway, but only for the entrance that started that timer.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant U as User
+  participant P as Presence
+  participant T as Timers
+  U->>P: summon 1, entrances = 1
+  P->>T: timer A
+  U->>P: hide
+  U->>P: summon 2, entrances = 2
+  P->>T: timer B
+  T->>P: A fires, fired = 1, not 2, ignored
+  T->>P: B fires, fired = 2, reveal
+  </pre></div>
+  <pre class="code"><span class="file">frontends/nanoui/src/presence.zig:124</span>pub fn entranceTimedOut(p: *Presence) void {
+    p.timers_fired += 1;
+<span class="hl">    if (p.phase == .entering and p.timers_fired == p.entrances) p.reveal();</span>
+}</pre>
+</section>
+
+<!-- Findings -->
+<section class="plate" id="findings">
+  <div class="head"><h2>Findings</h2><div class="chips"><span class="chip fixed">4 fixed with tests</span><span class="chip open">5 open</span></div></div>
+  <p>Ranked by impact. Each fixed finding has a test in <code>frontends/nanoui/src/tests.zig</code> that failed before its fix. Issues group them by cause: A covers 1 and 2, B covers 3 and 9, C covers 4, D covers 5 to 7, E covers 8.</p>
+  <div>
+    <div class="finding" id="f1"><span class="id">1</span><div><div class="meta"><span class="sev high">high</span><span class="chip fixed">fixed</span><span class="chip">confirmed</span><a class="chip" href="#handoff">handoff</a></div><p>Actions pointed into the result list's memory. A capture, index swap or file-rows landing between the ask and the apply made Return paste or open a different item.</p></div></div>
+    <div class="finding" id="f2"><span class="id">2</span><div><div class="meta"><span class="sev med">medium</span><span class="chip fixed">fixed</span><span class="chip">plausible</span><a class="chip" href="#presence">presence</a></div><p>A late settle acted on a hidden panel: ⌘V into whatever app was in front, a dismissed panel summoned again, exit steps run twice.</p></div></div>
+    <div class="finding" id="f3"><span class="id">3</span><div><div class="meta"><span class="sev med">medium</span><span class="chip fixed">fixed</span><span class="chip">confirmed</span><a class="chip" href="#capture">capture</a></div><p>With pins over the byte budget, the budget deleted the copy <code>add</code> had just reported stored.</p></div></div>
+    <div class="finding" id="f4"><span class="id">4</span><div><div class="meta"><span class="sev low">low</span><span class="chip fixed">fixed</span><span class="chip">confirmed</span><a class="chip" href="#retention">retention</a></div><p>Each hide armed another expiry timer. Extra wakeups only.</p></div></div>
+    <div class="finding" id="f5"><span class="id">5</span><div><div class="meta"><span class="sev low">low</span><span class="chip open">open</span><span class="chip">plausible</span><a class="chip" href="#grant">grant</a></div><p>A poll tick can undo the guide's close click. No test seam in the shell.</p></div></div>
+    <div class="finding" id="f6"><span class="id">6</span><div><div class="meta"><span class="sev low">low</span><span class="chip open">open</span><span class="chip">by reading</span><a class="chip" href="#capture">capture</a></div><p>A failed capture is not retried. A partial capture is stored but not shown until the next refresh.</p></div></div>
+    <div class="finding" id="f7"><span class="id">7</span><div><div class="meta"><span class="sev low">low</span><span class="chip open">open</span><span class="chip">plausible, narrow</span><a class="chip" href="#files">files</a></div><p>File rows dropped when their timer lands in board mode.</p></div></div>
+    <div class="finding" id="f8"><span class="id">8</span><div><div class="meta"><span class="sev low">low</span><span class="chip open">open</span><span class="chip">by design</span><a class="chip" href="#grant">grant</a></div><p>A grant after closing the guide is seen only at the next launch, as in the Swift app.</p></div></div>
+    <div class="finding" id="f9"><span class="id">9</span><div><div class="meta"><span class="sev med">medium</span><span class="chip open">decision</span><span class="chip">confirmed</span><a class="chip" href="#capture">capture</a></div><p>Pins over the byte budget still evict all other history on each copy. Whether pins count is a product decision.</p></div></div>
+  </div>
+</section>
+</main>
+</div>

@@ -365,7 +365,7 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
                 return state.pinnedEntries + state.recentEntries
             }
 
-            if trimmed.utf8.count < 3 {
+            if trimmed.unicodeScalars.count < 3 {
                 return Self.windowMatches(in: state, query: trimmed)
             }
 
@@ -572,5 +572,19 @@ package final class ClipboardHistoryStore: @unchecked Sendable {
     package func prune(retention: ClipboardRetention, now: Date = .now) -> Bool {
         guard let cutoff = retention.cutoffDate(from: now) else { return true }
         return prune(olderThan: cutoff)
+    }
+
+    @discardableResult
+    package func compact() -> Bool {
+        stateLock.withLock { state in
+            guard let db = state.db else { return false }
+            do {
+                try ClipboardHistorySQLite.compact(db: db)
+                return true
+            } catch {
+                Self.logFailure(operation: "compact", message: "\(error)")
+                return false
+            }
+        }
     }
 }

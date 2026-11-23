@@ -22,6 +22,27 @@ const t = std.testing;
 
 const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
 
+test "the search field sits at the same height whatever the panel's size" {
+    const compact = presence.panelFrame(screen, chrome.metrics.width, chrome.metrics.search_height);
+    const expanded = presence.panelFrame(screen, chrome.metrics.width, chrome.metrics.expanded_height);
+    const board = presence.panelFrame(screen, board_mod.board_metrics.width, board_mod.board_metrics.height);
+    try t.expectEqual(compact.y + compact.h, expanded.y + expanded.h);
+    try t.expectEqual(compact.y + compact.h, board.y + board.h);
+    try t.expectEqual(@as(f64, 642), compact.y + compact.h);
+    try t.expectEqual((screen.w - board.w) / 2, board.x);
+}
+
+test "search and the clipboard board share one size" {
+    try t.expectEqual(chrome.metrics.width, board_mod.board_metrics.width);
+    try t.expectEqual(chrome.metrics.expanded_height, board_mod.board_metrics.height);
+}
+
+test "a panel taller than the room under the field stays on screen" {
+    const short: permission.Rect = .{ .x = 0, .y = 25, .w = 1280, .h = 500 };
+    const f = presence.panelFrame(short, board_mod.board_metrics.width, 480);
+    try t.expectEqual(@as(f64, 25), f.y);
+}
+
 test "the guidance panel sits under System Settings, overlapping it" {
     const f = permission.anchorFrame(.{ .x = 400, .y = 300, .w = 640, .h = 480 }, null, screen);
     try t.expectEqual(permission.Rect{ .x = 530, .y = 210, .w = 380, .h = 110 }, f);
@@ -134,13 +155,13 @@ test "dismissing closes the panel and stops polling" {
 
 test "the guidance view offers the app card, then shows the grant" {
     var phase: permission.Phase = .guiding;
-    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Floodlight Nano" };
+    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Nanospot" };
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&g, permission.Guidance.view), .{ .width = 380, .height = 110 });
     defer tester.deinit();
     tester.settle(0.2);
-    try t.expect(tester.hasText("Drag Floodlight Nano into the Full Disk Access list"));
-    try t.expect(tester.hasText("Floodlight Nano"));
+    try t.expect(tester.hasText("Drag Nanospot into the Full Disk Access list"));
+    try t.expect(tester.hasText("Nanospot"));
     const card = g.card orelse return error.NoCard;
     try t.expect(card.w > 300 and card.h >= 30);
     phase = .granted;
@@ -202,6 +223,9 @@ test "a query finds apps and files, apps first" {
     try t.expect(tax.len >= 2);
     try t.expectEqualStrings("2025-return.pdf", tax[0].title);
     try t.expectEqualStrings("Documents/tax/2025-return.pdf", tax[0].subtitle);
+    try t.expect(!tax[0].stamped);
+    search.stamp(arena.allocator(), &tax[0]);
+    try t.expect(tax[0].stamped);
     try t.expectEqual(@as(?u64, 0), tax[0].size);
     try t.expect(tax[0].modified != null);
 
@@ -213,6 +237,47 @@ test "a query finds apps and files, apps first" {
     try t.expectEqualStrings("https://www.google.com/search?q=tax%20return", spaced[spaced.len - 1].path);
 
     try t.expectEqual(@as(usize, 0), (try cat.query(arena.allocator(), "  ")).len);
+}
+
+test "an app linked into the apps folder is listed, as Safari is" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Cryptex/Safari.app/Contents");
+    try tmp.dir.createDirPath(t.io, "Apps");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Cryptex/notes.txt", .data = "" });
+    try tmp.dir.symLink(t.io, "../Cryptex/Safari.app", "Apps/Safari.app", .{});
+    try tmp.dir.symLink(t.io, "../Cryptex/notes.txt", "Apps/Notes.app", .{});
+    try tmp.dir.symLink(t.io, "../Cryptex/Gone.app", "Apps/Gone.app", .{});
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const apps = try std.fs.path.join(t.allocator, &.{ root, "Apps" });
+    defer t.allocator.free(apps);
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try search.scanApps(&cat, t.io, apps);
+
+    try t.expectEqual(@as(usize, 1), cat.apps.items.len);
+    try t.expectEqualStrings("Safari", cat.apps.items[0].name);
+    try t.expectStringEndsWith(cat.apps.items[0].path, "/Apps/Safari.app");
+}
+
+test "an app whose name starts with the query outranks a folder named exactly the query" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Projects/cal");
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+
+    const rows = try cat.query(arena.allocator(), "cal");
+    try t.expectEqual(search.Kind.app, rows[0].kind);
+    try t.expectEqual(search.Kind.app, rows[1].kind);
+    try t.expectEqualStrings("cal", rows[2].title);
+    try t.expectEqual(search.Kind.folder, rows[2].kind);
 }
 
 fn appTitles(arena: std.mem.Allocator, cat: *const search.Catalog, text: []const u8) ![]const []const u8 {
@@ -257,14 +322,24 @@ const FakeClock = struct {
 const StubHooks = struct {
     requests: u32 = 0,
     file_searches: u32 = 0,
+    last_file_seq: u64 = 0,
+    last_file_buf: [256]u8 = undefined,
+    last_file_len: usize = 0,
     clock: FakeClock = .{},
     fn request(ctx: ?*anyopaque) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
     }
-    fn searchFiles(ctx: ?*anyopaque) void {
+    fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.file_searches += 1;
+        h.last_file_seq = seq;
+        const n = @min(text.len, h.last_file_buf.len);
+        @memcpy(h.last_file_buf[0..n], text[0..n]);
+        h.last_file_len = n;
+    }
+    fn lastFileQuery(h: *const StubHooks) []const u8 {
+        return h.last_file_buf[0..h.last_file_len];
     }
     fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
         return null;
@@ -281,6 +356,41 @@ const StubHooks = struct {
         return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64), .search_files = searchFiles };
     }
 };
+
+fn clickText(tester: *ui.Tester, s: []const u8) !void {
+    const r = tester.findText(s) orelse return error.TextNotDrawn;
+    tester.click(r.x + r.w / 2, r.y + r.h / 2);
+    tester.settle(0.1);
+}
+
+test "the search footer counts the rows and opens, reveals or copies the selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    tester.typeText("cal");
+    tester.settle(0.2);
+
+    try t.expect(tester.hasText(tester.ctx.print("{d} results", .{p.list.visible.len})));
+    const path = p.list.selection().?.path;
+    try clickText(&tester, "Show in Finder");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).reveal);
+    p.pending = null;
+    try clickText(&tester, "Copy");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).copy.path);
+    p.pending = null;
+    try clickText(&tester, "Open");
+    try t.expectEqualStrings(path, (p.pending orelse return error.NoAction).open);
+}
 
 fn countRows(rows: []const search.Row, kind: search.Kind) usize {
     var n: usize = 0;
@@ -301,11 +411,11 @@ test "typing shows rows; Return opens the selected one; hiding keeps the session
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.2);
     try t.expectEqual(chrome.metrics.search_height, p.panelHeight());
-    try t.expect(tester.hasText("Floodlight"));
+    try t.expect(tester.hasText("Nanospot"));
     try t.expect(tester.hasText(panel_mod.summon_label));
 
     tester.typeText("cal");
@@ -317,7 +427,7 @@ test "typing shows rows; Return opens the selected one; hiding keeps the session
     try t.expect(tester.hasText("Application"));
     try t.expect(tester.hasText("Google"));
     try t.expect(!tester.hasText(panel_mod.summon_label));
-    try t.expectEqual(@as(f32, 521), p.panelHeight());
+    try t.expectEqual(chrome.metrics.expanded_height, p.panelHeight());
     try t.expect(hooks.requests > 0);
 
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.up }));
@@ -424,7 +534,7 @@ test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and a
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -470,7 +580,7 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -489,7 +599,10 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
     try t.expect(tester.shortcut(.{ .key = '2', .cmd = true }));
     tester.settle(0.1);
     try t.expectEqual(@as(usize, 0), p.list.visible.len);
-    try t.expect(tester.hasText("No apps results for \u{201C}return\u{201D}"));
+    try t.expect(tester.hasText("No apps match \u{201C}return\u{201D}"));
+    try t.expect(tester.hasText("Press \u{2318}1 to search everything."));
+    try t.expectEqualStrings("PDFs", chrome.sentenceNoun(&tester.ctx, panel_mod.Filter.pdfs));
+    try t.expectEqualStrings("apps", chrome.sentenceNoun(&tester.ctx, panel_mod.Filter.apps));
 }
 
 test "Escape asks to hide" {
@@ -666,7 +779,7 @@ const CompletionFixture = struct {
         f.hooks = .{};
         f.p = panel_mod.Panel.init(t.allocator, &f.cat, null, f.hooks.hooks());
         errdefer f.p.deinit();
-        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         f.tester.settle(0.1);
     }
 
@@ -822,7 +935,7 @@ test "running a Selected-Result Action records its query across store restarts a
         var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
         defer p.deinit();
         var tester: ui.Tester = undefined;
-        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         defer tester.deinit();
         tester.settle(0.1);
 
@@ -845,7 +958,7 @@ test "running a Selected-Result Action records its query across store restarts a
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -962,7 +1075,7 @@ test "the board field completes from past board queries and skips queries matchi
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -1091,6 +1204,8 @@ test "rows name an entry's age, source and place" {
     try t.expectEqualStrings("Finder \u{00B7} 2m \u{00B7} Docs", file.subtitle(a, 1120));
     const img: clipboard.Entry = .{ .id = 2, .kind = .image, .text = "PNG Image", .created_at = 1000, .width = 3, .height = 4 };
     try t.expectEqualStrings("Clipboard \u{00B7} just now \u{00B7} 3\u{00D7}4", img.subtitle(a, 1001));
+    const shot: clipboard.Entry = .{ .id = 5, .kind = .image, .text = "Screenshot", .created_at = 1000, .source_name = "Screenshot", .width = 3, .height = 4 };
+    try t.expectEqualStrings("just now \u{00B7} 3\u{00D7}4", shot.subtitle(a, 1001));
     const text: clipboard.Entry = .{ .id = 3, .kind = .text, .text = "a\n\nb\u{2028}c ", .created_at = 0 };
     try t.expectEqualStrings("a b c", text.title(a));
     const blank: clipboard.Entry = .{ .id = 4, .kind = .text, .text = "\n\n", .created_at = 0 };
@@ -1671,7 +1786,7 @@ test "the board lists history, inspects the selection, and filters" {
     try t.expect(tester.hasText("2 entries"));
     _ = tester.shortcut(.{ .key = '4', .cmd = true });
     tester.settle(1);
-    try t.expect(tester.hasText("No images clipboard entries"));
+    try t.expect(tester.hasText("No images copied yet"));
     _ = tester.shortcut(.{ .key = '1', .cmd = true });
     tester.settle(1);
 
@@ -1694,17 +1809,118 @@ test "the board lists history, inspects the selection, and filters" {
     _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("2 entries"));
-    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
+    _ = tester.shortcut(.{ .key = 'd', .cmd = true });
     tester.settle(1);
     try t.expect(tester.hasText("1 entry"));
 
     tester.typeText("zzz");
     tester.settle(1);
-    try t.expect(tester.hasText("No matching clipboard all for \u{201C}zzz\u{201D}"));
-    // ⌫ on the board deletes entries only, never the filter's text.
-    try t.expect(tester.shortcut(.{ .key = board_mod.backspace }));
+    try t.expect(tester.hasText("No entries match \u{201C}zzz\u{201D}"));
+}
+
+test "⌫ on an empty board filter switches to search, and with text it edits the filter, never deleting an entry" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(3);
+    try f.show();
+    const p = &f.p;
+    const tester = &f.tester;
+
+    tester.typeText("entry");
     tester.settle(1);
+    tester.textOps(&.{.{ .command = .delete_backward }});
+    tester.settle(1);
+    try t.expectEqualStrings("entr", p.field.text());
+    try t.expect(tester.hasText("3 entries"));
+    try t.expect(p.pending == null);
+
+    for (0..4) |_| tester.textOps(&.{.{ .command = .delete_backward }});
+    tester.settle(1);
+    try t.expectEqualStrings("", p.field.text());
+    try t.expect(p.pending == null);
+
+    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .alt = true }));
+    tester.textOps(&.{.{ .command = .delete_word_backward }});
+    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .cmd = true }));
+    tester.textOps(&.{.{ .command = .delete_to_line_start }});
+    try t.expect(p.pending == null);
+    // Unfocused, AppKit hands ⌥⌫ and ⌘⌫ over as the bare key, modifiers held.
+    tester.setMods(.{ .alt = true });
+    tester.key(.backspace);
+    tester.setMods(.{ .cmd = true });
+    tester.key(.backspace);
+    tester.setMods(.{});
+    try t.expect(p.pending == null);
+
+    _ = tester.shortcut(.{ .key = '2', .cmd = true });
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.settle(1);
+    tester.textOps(&.{.{ .command = .delete_backward }});
+    try t.expect(p.pending.? == .show_search);
+    try t.expect(tester.hasText("3 entries"));
+
+    p.pending = null;
+    p.showSearch();
+    tester.settle(1);
+    try t.expectEqual(panel_mod.Mode.search, p.mode);
+    try t.expect(tester.hasText("Nanospot"));
+    try t.expect(!tester.hasText("Filter clipboard"));
+    try t.expectEqual(board_mod.board_metrics.width, p.panelWidth());
+
+    // The board's session went with it: ⌥⇧C opens a fresh board.
+    p.showClipboard();
+    tester.settle(1);
+    try t.expectEqual(clipboard.Filter.all, p.board.list.filter);
+    try t.expectEqual(@as(usize, 0), p.board.list.selected);
+}
+
+test "⌫ during IME composition on the board edits the composition and stays on the board" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(1);
+    try f.show();
+    f.tester.textOps(&.{.{ .set_marked = .{ .text = "z", .sel_start = 1, .sel_len = 0 } }});
+    f.tester.key(.backspace);
+    try t.expect(f.p.pending == null);
+    try t.expectEqual(panel_mod.Mode.clipboard, f.p.mode);
+}
+
+test "search → board → ⌫ brings the retained search query back, fully selected" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(1);
+    try f.show();
+    const p = &f.p;
+    p.showSearch();
+    f.tester.settle(1);
+    f.tester.typeText("zzz");
+    f.tester.settle(1);
+
+    p.showClipboard();
+    f.tester.settle(1);
+    f.tester.key(.backspace);
+    try t.expect(p.pending.? == .show_search);
+    p.pending = null;
+    p.showSearch();
+    f.tester.settle(1);
     try t.expectEqualStrings("zzz", p.field.text());
+    f.tester.typeText("a");
+    try t.expectEqualStrings("a", p.field.text());
+}
+
+test "⌫ on an empty search field changes nothing" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.show();
+    f.p.showSearch();
+    f.tester.settle(1);
+    f.tester.key(.backspace);
+    try t.expect(f.p.pending == null);
+    try t.expectEqual(panel_mod.Mode.search, f.p.mode);
 }
 
 test "a copied path keeps what the inspector found until the selection moves" {
@@ -1881,6 +2097,16 @@ test "an entrance asks for a presented frame until one reveals it" {
     try t.expect(!p.wantsPresentedFrame());
 }
 
+test "leaving the board by ⌫ switches to search in place, exactly as ⌥Space over a focused board" {
+    var spy: PresenceSpy = .{};
+    var p = shownPresence(&spy);
+    p.board(true, false);
+    _ = spy.take();
+    p.settle(.show_search);
+    try t.expectEqualSlices(presence.Effect, &.{ .open_search, .place, .order_front }, spy.take());
+    try t.expect(!p.isHidden());
+}
+
 test "a retained panel whose last frame is still valid shows at once, with no entrance wait" {
     var spy: PresenceSpy = .{ .frame_valid = true };
     var p = spy.presence_();
@@ -2042,6 +2268,29 @@ test "the 200-app latency benchmark measures keystroke publication, summon layou
     try t.expect(submit.p50_ns > 0);
     try t.expect(submit.p99_ns >= submit.p50_ns);
 
+    const built = try bench.measureKeystrokeToBuiltFrame(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), built.runs);
+    try t.expect(built.p99_ns >= built.p50_ns);
+
+    const icons = try bench.measureFirstFrameWithIcons(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), icons.runs);
+    try t.expect(icons.p99_ns >= icons.p50_ns);
+
+    const built_summon = try bench.measureHotKeyToBuiltFrame(t.allocator, 4);
+    try t.expectEqual(@as(usize, 4), built_summon.runs);
+    try t.expect(built_summon.p99_ns >= built_summon.p50_ns);
+
+    try t.expect(bench.withinFrameBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 4_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 40_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
+    ));
+    try t.expect(!bench.withinFrameBudgets(
+        .{ .p50_ns = 1_000, .p99_ns = 4_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 50_000_000, .runs = 4 },
+        .{ .p50_ns = 1_000, .p99_ns = 1_400_000, .runs = 4 },
+    ));
+
     try t.expect(bench.withinBudgets(
         .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
         .{ .p50_ns = 1_000, .p99_ns = 9_000, .runs = 16 },
@@ -2128,7 +2377,8 @@ test "an empty history says so" {
     try f.init();
     defer f.deinit();
     try f.show();
-    try t.expect(f.tester.hasText("Clipboard history is empty. Copied text, files, and images will appear here."));
+    try t.expect(f.tester.hasText("Nothing copied yet"));
+    try t.expect(f.tester.hasText("Text, files and images you copy appear here."));
 }
 
 test "⌘. pins the selected entry, and the board shows it pinned at once" {
@@ -2182,7 +2432,7 @@ test "the injected clock advances board ages and pins, and forget clears both su
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -2242,7 +2492,7 @@ test "search retention selects the top row when the remembered path is gone, and
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2286,7 +2536,7 @@ test "a retained reopen keeps the last presented frame valid until what it shows
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
     try t.expect(!p.lastFrameValid());
@@ -2345,7 +2595,7 @@ test "a retained board's last frame stays valid within the minute its ages were 
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.down }));
@@ -2380,12 +2630,12 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
     hooks.clock.step = 0.01;
-    p.calibrateFileSearch();
+    p.async_files = true;
     tester.typeText("a");
     tester.frame();
     try t.expectEqual(@as(u32, 1), hooks.file_searches);
@@ -2393,7 +2643,10 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
     try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
 
-    p.landFiles();
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
     tester.frame();
     try t.expect(countRows(p.list.visible, .file) > 0);
     try t.expect(tester.hasText("kind-of-blue.flac"));
@@ -2424,7 +2677,7 @@ test "board retention restores query, kind filter, and selection or selects the 
     p.showClipboard();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.2);
 
@@ -2487,7 +2740,7 @@ test "search and clipboard board sessions expire separately, and zero retention 
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = 840, .height = 560 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2589,7 +2842,7 @@ test "the first frame after a keystroke does not wait for suggestions, and arriv
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2651,7 +2904,7 @@ test "YouTube, X and Grok rows follow Google and its suggestions and open that e
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2715,7 +2968,7 @@ test "Return on X and Grok opens their searches, and an engine row stays selecte
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2761,7 +3014,7 @@ test "an empty panel lists the apps opened most, recent ones first on a tie, and
     var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2809,7 +3062,7 @@ test "typing replaces the suggestions and clearing brings them back, the board s
         var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
         defer p.deinit();
         var tester: ui.Tester = undefined;
-        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+        try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
         defer tester.deinit();
         tester.settle(0.1);
         openByQuery(&p, &tester, "alpha");
@@ -2827,7 +3080,7 @@ test "typing replaces the suggestions and clearing brings them back, the board s
     var p = panel_mod.Panel.init(t.allocator, &gone, &store, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2867,7 +3120,7 @@ test "a late reply for an old query or superseded request is ignored, and an emp
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2909,7 +3162,7 @@ test "with the setting off, or for a Link Row, a path-like query, or Clipboard m
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -2961,7 +3214,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3007,7 +3260,7 @@ test "the first web suggestion becomes the completion only when neither query hi
     defer p.deinit();
 
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = 521 });
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
     tester.settle(0.1);
 
@@ -3070,4 +3323,1324 @@ test "Google suggestion URL encoding and Firefox JSON response parsing cap at fo
 
 test {
     _ = core;
+}
+
+fn fillAlphaBehind(tester: *ui.Tester, label: []const u8) ?f32 {
+    const nodes = tester.ctx.nodes.items;
+    for (nodes) |n| switch (n.content) {
+        .text => |tx| if (std.mem.eql(u8, tx.str, label)) {
+            var at = n.parent;
+            while (at < nodes.len) : (at = nodes[at].parent) {
+                if (nodes[at].style.background) |fill| return fill.a;
+            }
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn pointAt(tester: *ui.Tester, label: []const u8) !void {
+    const at = tester.findText(label) orelse return error.TextNotDrawn;
+    tester.moveTo(at.x + at.w / 2, at.y + at.h / 2);
+}
+
+test "a chip's fill deepens under the pointer and again while held, and a disabled chip's stays" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(2);
+    try f.show();
+    const tester = &f.tester;
+    inline for (.{ "Files", "Actions" }) |label| {
+        const rest = fillAlphaBehind(tester, label) orelse return error.TextNotDrawn;
+        try pointAt(tester, label);
+        const hovered = fillAlphaBehind(tester, label).?;
+        try t.expect(hovered > rest);
+        tester.ctx.pointerDown();
+        tester.frame();
+        try t.expect(fillAlphaBehind(tester, label).? > hovered);
+        tester.moveTo(1, 1);
+        tester.ctx.pointerUp();
+        tester.frame();
+        tester.frame();
+        try t.expectEqual(rest, fillAlphaBehind(tester, label).?);
+    }
+    const disabled = fillAlphaBehind(tester, "Preview") orelse return error.TextNotDrawn;
+    try pointAt(tester, "Preview");
+    try t.expectEqual(disabled, fillAlphaBehind(tester, "Preview").?);
+}
+
+test "a row's title is as wide selected as not, so moving the selection never cuts it anew" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const long = "a title long enough that the history list has to cut it short";
+    _ = try f.store.add(.{ .text = long ++ " one" }, "x", "Notes", 1000);
+    _ = try f.store.add(.{ .text = long ++ " two" }, "x", "Notes", 1001);
+    try f.show();
+    var widths: [2]f32 = undefined;
+    var n: usize = 0;
+    for (f.tester.ctx.nodes.items) |node| switch (node.content) {
+        .text => |tx| if (n < widths.len and tx.style.size == 15 and std.mem.startsWith(u8, tx.str, "a title")) {
+            widths[n] = node.rect.w;
+            n += 1;
+        },
+        else => {},
+    };
+    try t.expectEqual(widths.len, n);
+    try t.expectEqual(@as(usize, 0), f.p.board.list.selected);
+    try t.expectEqual(widths[0], widths[1]);
+}
+
+test "a copied app is an Application, and any other folder a Folder" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("Application", clipboard.fileType(a, "/System/Applications/Calendar.app", true));
+    try t.expectEqualStrings("Folder", clipboard.fileType(a, "/Users/me/Projects", true));
+}
+
+// The state machines' invariants, docs/state-machines.md. Each test names the
+// invalid state it once reached.
+
+test "a board action keeps the entry it named when a copy lands before the shell runs it" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "the entry the user chose" }, "x", "Notes", 1000);
+    try f.show();
+    f.tester.key(.enter);
+    const asked = (f.p.pending orelse return error.NoAction).clipboard.paste;
+    // The shell's capture tick, run before the shell's turn: an ⌘K menu's own run loop allows it.
+    _ = try f.store.add(.{ .text = "a copy from another app, longer than the first" }, "x", "Notes", 1001);
+    f.p.board.list.markStale();
+    f.p.refresh();
+    try t.expectEqualStrings("the entry the user chose", asked.text);
+}
+
+test "a search action keeps the row it named when the file rows land before the shell runs it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    // Over the budget: apps answer first, files land on the next turn.
+    p.async_files = true;
+    tester.typeText("cal");
+    tester.settle(0.2);
+    try t.expect(p.files_due);
+    p.list.selected = p.list.visible.len - 1;
+    tester.key(.enter);
+    const asked = (p.pending orelse return error.NoAction).open;
+    const want = try t.allocator.dupe(u8, asked);
+    defer t.allocator.free(want);
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    try t.expectEqualStrings(want, asked);
+}
+
+test "an action settled after the panel already hid repeats no exit, sends no ⌘V, and summons nothing" {
+    const e: clipboard.Entry = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 };
+    const late = [_]panel_mod.Action{ .hide, .{ .open = "/a" }, .{ .clipboard = .{ .paste = e } }, .show_search };
+    for (late) |a| {
+        var spy: PresenceSpy = .{};
+        var p = shownPresence(&spy);
+        p.focusLost(false);
+        try t.expectEqualSlices(presence.Effect, &hiding, spy.take());
+        p.settle(a);
+        try t.expectEqualSlices(presence.Effect, &.{}, spy.take());
+        try t.expect(p.isHidden());
+    }
+}
+
+test "a copy stored while pinned entries alone fill the byte budget stays in history" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    store.budget = .{ .bytes = 3100, .entries = 100 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var pngs: [4][1000]u8 = undefined;
+    for (&pngs, 0..) |*png, i| {
+        @memset(png, @intCast('a' + i));
+        _ = try store.add(picture(png), "", "Preview", @floatFromInt(10 + i));
+        for (try store.list(a, "")) |e| if (e.pinned_at == null) try store.togglePin(e.id, @floatFromInt(20 + i));
+    }
+
+    try t.expect(try store.add(.{ .text = "just copied" }, "", "Notes", 100));
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expectEqualStrings("just copied", rows[4].text);
+}
+
+test "hiding again within the retention window arms no second expiry timer" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.showSearch();
+    p.field.set("notes");
+    p.hide();
+    try t.expect(p.armExpiry() != null);
+    hooks.clock.advance(60);
+    p.showSearch();
+    p.hide();
+    try t.expect(p.armExpiry() == null);
+    // The pending timer fires: its turn arms the next one.
+    p.disarmExpiry();
+    try t.expect(!p.expire());
+    try t.expect(p.armExpiry() != null);
+}
+
+test "a released surface draws the same frame again" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    tester.settle(0.2);
+    try t.expect(tester.hasText("Calendar"));
+    try t.expect(tester.hasText("Calculator"));
+
+    mac.forgetContextStorage(&tester.ctx);
+    try t.expectEqual(@as(usize, 0), tester.ctx.nodes.capacity);
+    tester.frame();
+    try t.expect(tester.hasText("Calendar"));
+    try t.expect(tester.hasText("Calculator"));
+}
+
+test "scroll position survives a release" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(30);
+    try f.show();
+
+    const tester = &f.tester;
+    tester.scroll(150, 300, -180);
+    tester.settle(0.2);
+
+    var scroll_id: ?u64 = null;
+    var saved_offset: f32 = 0;
+    var it = tester.ctx.scroll.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.* > 0) {
+            scroll_id = e.key_ptr.*;
+            saved_offset = e.value_ptr.*;
+            break;
+        }
+    }
+    const id = scroll_id orelse return error.ExpectedScrollOffset;
+
+    mac.forgetContextStorage(&tester.ctx);
+    tester.frame();
+    try t.expectEqual(saved_offset, tester.ctx.scroll.get(id).?);
+}
+
+const CountingHooks = struct {
+    icon_calls: u32 = 0,
+    date_calls: u32 = 0,
+
+    fn request(_: ?*anyopaque) void {}
+
+    fn icon(ctx: ?*anyopaque, _: []const u8) ?[]const u8 {
+        const h: *CountingHooks = @ptrCast(@alignCast(ctx));
+        h.icon_calls += 1;
+        return null;
+    }
+
+    fn describeDate(ctx: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
+        const h: *CountingHooks = @ptrCast(@alignCast(ctx));
+        h.date_calls += 1;
+        return "Today at 9:41 AM";
+    }
+
+    fn detailedDate(_: ?*anyopaque, _: f64, _: std.mem.Allocator) []const u8 {
+        return "Today at 9:41 AM";
+    }
+
+    fn hooks(h: *CountingHooks) panel_mod.Hooks {
+        return .{ .ctx = h, .request = request, .app_icon = icon, .describe_date = describeDate, .detailed_date = detailedDate };
+    }
+};
+
+fn addNumberedApps(cat: *search.Catalog, count: usize) !void {
+    for (0..count) |i| {
+        try cat.addApp(try std.fmt.allocPrint(t.allocator, "/Applications/App {d:0>2}.app", .{i}));
+    }
+}
+
+test "rows out of view ask for no icon" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var ch: CountingHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, ch.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.field.set("app");
+    p.refresh();
+    ch.icon_calls = 0;
+    tester.frame();
+    try t.expect(ch.icon_calls > 0);
+    try t.expect(ch.icon_calls <= 12);
+}
+
+test "a date is described once per result set" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var ch: CountingHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, ch.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.field.set("t");
+    p.refresh();
+    const expected = countRows(p.list.visible, .file) + countRows(p.list.visible, .folder);
+    try t.expect(expected > 0);
+    tester.frame();
+    tester.frame();
+    tester.frame();
+    try t.expectEqual(@as(u32, @intCast(expected)), ch.date_calls);
+}
+
+test "the selection scrolls into view from far below" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("app");
+    tester.settle(0.1);
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expectEqual(@as(usize, 40), p.list.selected);
+    try t.expect(tester.hasText(p.list.visible[40].title));
+}
+
+test "the top hit stays the first row after scrolling back" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try addNumberedApps(&cat, 60);
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("app");
+    tester.settle(0.1);
+    const top_title = try t.allocator.dupe(u8, p.list.visible[0].title);
+    defer t.allocator.free(top_title);
+
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expect(!tester.hasText("Top Hit"));
+
+    for (0..40) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.up });
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), p.list.selected);
+    try t.expect(tester.hasText(top_title));
+    try t.expect(tester.hasText("Top Hit"));
+}
+
+test "a late file row keeps its date" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    p.async_files = true;
+    tester.typeText("return");
+    tester.settle(0.1);
+    try t.expect(p.files_due);
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    tester.frame();
+    try t.expect(tester.hasText("2025-return.pdf"));
+    try t.expect(tester.hasText("Today at 9:41 AM"));
+}
+
+fn manyFilesCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *core.file_index.FileIndex, count: usize) !search.Catalog {
+    var name: [32]u8 = undefined;
+    for (0..count) |i| {
+        const sub = try std.fmt.bufPrint(&name, "item-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "hello" });
+    }
+    const root = buf[0..try tmp.dir.realPath(t.io, buf)];
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    files.* = try .open(t.allocator, idx, root, .{});
+    errdefer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    cat.files = files;
+    return cat;
+}
+
+test "a keystroke stats only the rows in view" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("item");
+    var stamped_count: usize = 0;
+    for (p.list.visible) |r| stamped_count += @intFromBool(r.stamped);
+    try t.expect(stamped_count > 0);
+    try t.expect(stamped_count <= 12);
+}
+
+test "a row scrolled into view shows its size and date" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("item");
+    try t.expect(!p.list.visible[30].stamped);
+    for (0..30) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    tester.frame();
+    try t.expect(p.list.visible[30].stamped);
+    try t.expect(p.list.visible[30].modified != null);
+    try t.expect(p.list.visible[30].modified_label.len > 0);
+    try t.expectEqual(@as(?u64, 5), p.list.visible[30].size);
+    try t.expect(tester.hasText("Today at 9:41 AM"));
+}
+
+test "bundle contents do not use result slots" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "Fake.app/Contents");
+    var name: [64]u8 = undefined;
+    for (0..100) |i| {
+        const sub = try std.fmt.bufPrint(&name, "Fake.app/Contents/match-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "" });
+    }
+    for (0..5) |i| {
+        const sub = try std.fmt.bufPrint(&name, "match-{d:0>2}.txt", .{i});
+        try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "" });
+    }
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    var files = try core.file_index.FileIndex.open(t.allocator, idx, root, .{});
+    defer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    var cat: search.Catalog = .{ .gpa = t.allocator, .files = &files };
+    defer cat.deinit();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try cat.query(arena.allocator(), "match");
+    var file_count: usize = 0;
+    for (rows) |r| file_count += @intFromBool(r.kind == .file);
+    try t.expectEqual(@as(usize, 5), file_count);
+}
+
+test "the list carries no thumbnails" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    _ = try store.add(picture("png-0"), "", "Preview", 10);
+    _ = try store.add(picture("png-1"), "", "Preview", 20);
+    _ = try store.add(picture("png-2"), "", "Preview", 30);
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 3), rows.len);
+    for (rows) |r| {
+        try t.expectEqual(@as(usize, 0), r.thumbnail.len);
+        try t.expectEqualStrings("thumb", store.thumbnail(a, r.id));
+    }
+}
+
+test "a picture row in view shows its thumbnail" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(picture("png-one"), "", "Preview", 100);
+    try f.show();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const id = f.p.board.list.visible[0].id;
+    try t.expectEqualStrings("thumb", f.store.thumbnail(arena.allocator(), id));
+    try t.expectEqual(@as(usize, 1), f.p.board.thumbnails.count());
+    try t.expectEqualStrings("thumb", f.p.board.thumbnails.get(id).?);
+}
+
+test "rows out of view fetch no thumbnail" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var buf: [32]u8 = undefined;
+    for (0..60) |i| {
+        const bytes = try std.fmt.bufPrint(&buf, "png-{d}", .{i});
+        _ = try f.store.add(picture(bytes), "", "Preview", @floatFromInt(100 + i));
+    }
+    try f.show();
+    try t.expect(f.p.board.thumbnails.count() > 0);
+    try t.expect(f.p.board.thumbnails.count() < 20);
+}
+
+test "deleting keeps the other rows and the selection's place" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(5);
+    try f.show();
+
+    _ = f.tester.shortcut(.{ .key = ui.Shortcut.down });
+    _ = f.tester.shortcut(.{ .key = ui.Shortcut.down });
+    try t.expectEqual(@as(usize, 2), f.p.board.list.selected);
+    try t.expectEqualStrings("entry number 2", f.p.board.list.selection().?.text);
+
+    f.p.board.delete();
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+    try t.expectEqual(@as(usize, 2), f.p.board.list.selected);
+    try t.expectEqualStrings("entry number 1", f.p.board.list.selection().?.text);
+    for (f.p.board.list.rows) |r| try t.expect(!std.mem.eql(u8, r.text, "entry number 2"));
+}
+
+test "deleting does not ask the store for the list again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(4);
+    _ = try f.store.add(picture("png-del"), "", "Preview", 2000);
+    try f.show();
+
+    const pic_id = f.p.board.list.rows[0].id;
+    try t.expect(f.p.board.thumbnails.get(pic_id) != null);
+    f.p.board.delete();
+    try t.expect(!f.p.board.list.stale);
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+    try t.expect(f.p.board.thumbnails.get(pic_id) == null);
+}
+
+test "history completion is asked once per query" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
+    tester.frame();
+    tester.frame();
+    tester.frame();
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+}
+
+test "a recorded query refreshes the completion" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
+    tester.key(.enter);
+    p.pending = null;
+    tester.frame();
+    try t.expectEqualStrings("culator", p.completion.?.suffix);
+}
+
+test "a query with no history is asked once" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("zzz");
+    try t.expect(p.completion == null);
+    try store.recordQuery(.search, "zzzz", 1000);
+    tester.frame();
+    try t.expect(p.completion == null);
+
+    p.clearField();
+    tester.typeText("zzz");
+    try t.expectEqualStrings("z", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+}
+
+test "clearing history clears the completion" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try store.recordQuery(.search, "calendar", 1000);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(1000);
+    var p = panel_mod.Panel.init(t.allocator, &cat, &store, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("cal");
+    try t.expectEqualStrings("endar", p.completion.?.suffix);
+
+    p.clearQueryHistory();
+    try t.expect(p.completion == null);
+    p.clearField();
+    tester.typeText("cal");
+    try t.expect(p.completion == null);
+}
+
+test "the poll slows after a minute of guiding" {
+    var spy: Spy = .{};
+    var f = spy.flow();
+    f.begin();
+    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
+    for (0..permission.fast_polls) |_| f.poll();
+    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
+}
+
+test "beginning again polls fast again" {
+    var spy: Spy = .{};
+    var f = spy.flow();
+    f.begin();
+    for (0..permission.fast_polls) |_| f.poll();
+    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
+    f.dismiss();
+    f.begin();
+    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
+}
+
+test "in-memory matching agrees with the store" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    _ = try store.add(.{ .text = "Meet at noon" }, "x", "Notes", 10);
+    _ = try store.add(.{ .text = "SOME NOTE" }, "x", "Notes", 11);
+    _ = try store.add(.{ .text = "\u{00C9}lan vital" }, "x", "Notes", 12);
+    _ = try store.add(.{ .text = "caf\u{00E9} menu" }, "x", "Notes", 13);
+    _ = try store.add(.{ .file = "/tmp/meeting-notes.txt" }, "x", "Finder", 14);
+    _ = try store.add(.{ .image = .{ .name = "Screen Shot", .png = "pngdata", .thumbnail = "t", .width = 640, .height = 480 } }, "x", "Screenshot", 15);
+    var text_buf: [64]u8 = undefined;
+    for (0..24) |i| {
+        const s = try std.fmt.bufPrint(&text_buf, "Sample entry {d}", .{i});
+        _ = try store.add(.{ .text = s }, "x", "Notes", @floatFromInt(20 + i));
+    }
+
+    const all = try store.list(a, "");
+    try t.expectEqual(@as(usize, 30), all.len);
+
+    const queries = [_][]const u8{ "me", "ME", "\u{00E9}", "640", "640\u{00D7}480", "x48", "tmp" };
+    for (queries) |q| {
+        const got = try store.list(a, q);
+        var match_count: usize = 0;
+        for (all) |e| {
+            const m = e.matches(q);
+            if (m) match_count += 1;
+            const in_store = for (got) |g| {
+                if (g.id == e.id) break true;
+            } else false;
+            try t.expectEqual(in_store, m);
+        }
+        try t.expectEqual(got.len, match_count);
+    }
+}
+
+test "a longer query narrows without asking the store" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello world" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "help desk" }, "x", "Notes", 20);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 30);
+    _ = try f.store.add(.{ .text = "shell script" }, "x", "Notes", 40);
+    try f.show();
+
+    f.tester.typeText("he");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 4), f.p.board.list.rows.len);
+
+    _ = try f.store.add(.{ .text = "helium balloon" }, "x", "Notes", 50);
+
+    f.tester.typeText("l");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 3), f.p.board.list.rows.len);
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const fresh = try f.store.list(arena.allocator(), "hel");
+    try t.expectEqual(@as(usize, 4), fresh.len);
+    var expected: [3]i64 = undefined;
+    var n: usize = 0;
+    for (fresh) |e| {
+        if (!std.mem.eql(u8, e.text, "helium balloon")) {
+            expected[n] = e.id;
+            n += 1;
+        }
+    }
+    try t.expectEqual(@as(usize, 3), n);
+    for (f.p.board.list.rows, 0..) |r, i| try t.expectEqual(expected[i], r.id);
+}
+
+test "a query that hit the limit asks the store again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var buf: [64]u8 = undefined;
+    for (0..10) |i| {
+        const s = try std.fmt.bufPrint(&buf, "entry en match {d}", .{i});
+        _ = try f.store.add(.{ .text = s }, "x", "Notes", @floatFromInt(10 + i));
+    }
+    for (0..clipboard.search_limit) |i| {
+        const s = try std.fmt.bufPrint(&buf, "alpha e item {d}", .{i});
+        _ = try f.store.add(.{ .text = s }, "x", "Notes", @floatFromInt(100 + i));
+    }
+    try f.show();
+
+    f.tester.typeText("e");
+    f.tester.frame();
+    try t.expectEqual(clipboard.search_limit, f.p.board.list.rows.len);
+
+    f.tester.typeText("n");
+    f.tester.frame();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const expected = try f.store.list(arena.allocator(), "en");
+    try t.expectEqual(expected.len, f.p.board.list.rows.len);
+    for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
+}
+
+test "history that changed is asked again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello one" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 20);
+    try f.show();
+
+    f.tester.typeText("he");
+    f.tester.frame();
+
+    _ = try f.store.add(.{ .text = "hello new" }, "x", "Notes", 30);
+    f.p.board.list.markStale();
+
+    f.tester.typeText("l");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 2), f.p.board.list.rows.len);
+    try t.expectEqualStrings("hello new", f.p.board.list.rows[0].text);
+}
+
+test "a shorter query asks the store again" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "hello world" }, "x", "Notes", 10);
+    _ = try f.store.add(.{ .text = "heavy rain" }, "x", "Notes", 20);
+    try f.show();
+
+    f.tester.typeText("hel");
+    f.tester.frame();
+    try t.expectEqual(@as(usize, 1), f.p.board.list.rows.len);
+
+    f.tester.key(.backspace);
+    f.tester.frame();
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const expected = try f.store.list(arena.allocator(), "he");
+    try t.expectEqual(expected.len, f.p.board.list.rows.len);
+    for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
+}
+
+test "a repeat of the newest unpinned entry is not stored again" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try t.expect(try store.add(.{ .text = "old" }, "", "Notes", 10));
+    try t.expect(try store.add(.{ .text = "a" }, "", "Notes", 20));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try store.list(arena.allocator(), "");
+    try store.togglePin(rows[1].id, 25);
+    try t.expect(!try store.add(.{ .text = "a" }, "", "Notes", 30));
+}
+
+test "with only pinned entries, a repeat of the newest pinned one is not stored" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    try t.expect(try store.add(.{ .text = "a" }, "", "Notes", 10));
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const rows = try store.list(arena.allocator(), "");
+    try store.togglePin(rows[0].id, 20);
+    try t.expect(!try store.add(.{ .text = "a" }, "", "Notes", 30));
+}
+
+test "the entry count stays at the budget" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    store.budget = .{ .entries = 5 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for (0..8) |i| {
+        const txt = try std.fmt.allocPrint(a, "item-{d}", .{i});
+        _ = try store.add(.{ .text = txt }, "", "Notes", @floatFromInt(10 + i));
+    }
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expectEqualStrings("item-7", rows[0].text);
+    try t.expectEqualStrings("item-3", rows[4].text);
+}
+
+test "the byte budget evicts past sixteen rows and corrects shared picture estimates" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    store.budget = .{ .bytes = 500, .entries = 100 };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var pad: [100]u8 = undefined;
+    for (0..22) |i| {
+        @memset(&pad, @intCast('a' + i % 26));
+        const txt = try std.fmt.allocPrint(a, "{d:0>2}-{s}", .{ i, pad[0..97] });
+        _ = try store.add(.{ .text = txt }, "", "Notes", @floatFromInt(10 + i));
+    }
+    const rows = try store.list(a, "");
+    try t.expect(rows.len <= 5);
+    try t.expectEqualStrings("21-", rows[0].text[0..3]);
+
+    var ts2 = try TmpStore.init();
+    defer ts2.deinit();
+    var store2 = try openMemory(&ts2);
+    defer store2.close();
+    store2.budget = .{ .bytes = 1200, .entries = 100 };
+    var small: [140]u8 = undefined;
+    @memset(&small, 's');
+    var big: [1000]u8 = undefined;
+    @memset(&big, 'p');
+    _ = try store2.add(picture(&big), "", "Preview", 10);
+    _ = try store2.add(.{ .text = &small }, "", "Notes", 20);
+    _ = try store2.add(picture(&big), "", "Preview", 30);
+    var huge: [1040]u8 = undefined;
+    @memset(&huge, 'q');
+    _ = try store2.add(.{ .text = &huge }, "", "Notes", 40);
+    const rows2 = try store2.list(a, "");
+    try t.expectEqual(@as(usize, 2), rows2.len);
+    try t.expectEqualStrings(&huge, rows2[0].text);
+    try t.expectEqualStrings(&small, rows2[1].text);
+}
+
+test "a shared picture file survives while one entry still uses it" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    store.budget = .{ .entries = 2 };
+    const png = "\x89PNG shared image bytes";
+    var name: [128]u8 = undefined;
+    const file = imageFileName(&name, png, "png");
+    _ = try store.add(picture(png), "", "Preview", 10);
+    _ = try store.add(.{ .text = "middle" }, "", "Notes", 20);
+    _ = try store.add(picture(png), "", "Preview", 30);
+    try t.expect(hasFile(&ts.tmp, file));
+}
+
+test "a failed capture stores nothing" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    try raw_sqlite.run(ts.db, "CREATE TRIGGER fail_boom BEFORE INSERT ON entries WHEN NEW.text = '/tmp/boom' BEGIN SELECT RAISE(ABORT, 'boom'); END;");
+    var fake: FakePasteboard = .{ .files = &.{ "/tmp/a", "/tmp/b", "/tmp/boom" } };
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    try t.expectError(error.ClipboardStore, store.capture(arena.allocator(), fake.pasteboard(), notes_app, 10));
+    try t.expectEqual(@as(usize, 0), (try store.list(arena.allocator(), "")).len);
+}
+
+test "recompression in three parts gives the same result as in one" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG three part screenshot";
+    _ = try store.add(picture(png), "", "Preview", 0);
+
+    try t.expect(store.nextCompaction(6 * day) == null);
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    const avif_bytes = clipboard.recompress(store.images, a, job, halve);
+    store.finishCompaction(job, avif_bytes);
+
+    try t.expect(store.nextCompaction(8 * day) == null);
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings(png[0 .. png.len / 2], store.image(a, rows[0].id).?);
+    var name: [128]u8 = undefined;
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "an entry deleted during recompression leaves no file behind" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG deleted while compacting";
+    _ = try store.add(picture(png), "", "Preview", 0);
+    const id = (try store.list(a, ""))[0].id;
+
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    try store.delete(id);
+    const avif_bytes = clipboard.recompress(store.images, a, job, halve);
+    store.finishCompaction(job, avif_bytes);
+
+    var name: [128]u8 = undefined;
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "a picture that does not shrink is marked and kept" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const png = "\x89PNG kept as png";
+    _ = try store.add(picture(png), "", "Preview", 0);
+
+    const job = store.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    const avif_bytes = clipboard.recompress(store.images, a, job, keepAll);
+    try t.expect(avif_bytes == null);
+    store.finishCompaction(job, avif_bytes);
+
+    try t.expect(store.nextCompaction(8 * day) == null);
+    const rows = try store.list(a, "");
+    try t.expectEqualStrings(png, store.image(a, rows[0].id).?);
+    var name: [128]u8 = undefined;
+    try t.expect(hasFile(&ts.tmp, imageFileName(&name, png, "png")));
+    try t.expect(!hasFile(&ts.tmp, imageFileName(&name, png, "avif")));
+}
+
+test "app rows show before file rows land" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("a");
+    tester.frame();
+    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    try t.expect(countRows(p.list.visible, .file) > 0);
+}
+
+test "a late answer for an old query is dropped" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("re");
+    tester.frame();
+    const old_seq = hooks.last_file_seq;
+    const view = files.view().?;
+    var old_hits: [search.max_file_hits]core.search.Hit = undefined;
+    const old_count = search.searchFiles(view, "re", &old_hits);
+    try t.expect(old_count > 0);
+
+    tester.typeText("z");
+    tester.frame();
+    try t.expect(hooks.last_file_seq != old_seq);
+    const before_len = p.list.visible.len;
+
+    p.landFiles(old_seq, view, old_hits[0..old_count]);
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+    try t.expectEqual(before_len, p.list.visible.len);
+    try t.expectEqualStrings("rez", p.list.answered());
+    try t.expect(p.files_due);
+}
+
+test "late file rows keep the selection" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.async_files = true;
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("a");
+    tester.frame();
+    try t.expect(p.list.visible.len >= 3);
+    p.list.selected = 2;
+    const chosen_path = try t.allocator.dupe(u8, p.list.visible[2].path);
+    defer t.allocator.free(chosen_path);
+
+    const view = files.view().?;
+    var hits: [search.max_file_hits]core.search.Hit = undefined;
+    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
+    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+
+    try t.expect(countRows(p.list.visible, .file) > 0);
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
+    try t.expect(p.list.selected > 2);
+}
+
+test "an index is not swapped while a search runs" {
+    var gate: search.AdoptGate = .{};
+    try t.expect(!gate.requestAdopt(true));
+    try t.expect(gate.pending);
+    try t.expect(!gate.takeAfterSearch(true));
+    try t.expect(gate.pending);
+    try t.expect(gate.takeAfterSearch(false));
+    try t.expect(!gate.pending);
+    try t.expect(!gate.takeAfterSearch(false));
+    try t.expect(gate.requestAdopt(false));
+    try t.expect(!gate.pending);
+}
+
+test "the worker searches only the newest waiting query" {
+    const Ctx = struct {
+        io: std.Io,
+        mutex: std.Io.Mutex = .init,
+        entered: std.Io.Semaphore = .{ .permits = 0 },
+        gate: std.Io.Semaphore = .{ .permits = 0 },
+        done: std.Io.Semaphore = .{ .permits = 0 },
+        seen: [8][64]u8 = undefined,
+        seen_lens: [8]usize = @splat(0),
+        seen_count: usize = 0,
+
+        fn searchFn(raw: ?*anyopaque, _: core.index.View, text: []const u8, _: []core.search.Hit) usize {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.mutex.lockUncancelable(c.io);
+            const idx = c.seen_count;
+            c.seen_count += 1;
+            const n = @min(text.len, 64);
+            @memcpy(c.seen[idx][0..n], text[0..n]);
+            c.seen_lens[idx] = n;
+            c.mutex.unlock(c.io);
+            if (idx == 0) {
+                c.entered.post(c.io);
+                c.gate.waitUncancelable(c.io);
+            }
+            return 0;
+        }
+
+        fn readyFn(raw: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.done.post(c.io);
+        }
+    };
+
+    var ctx: Ctx = .{ .io = t.io };
+    var searcher: search.FileSearcher = .{
+        .io = t.io,
+        .search_ctx = &ctx,
+        .search_fn = Ctx.searchFn,
+        .ready_ctx = &ctx,
+        .ready_fn = Ctx.readyFn,
+    };
+    try searcher.start();
+    defer searcher.stop();
+
+    const empty_view: core.index.View = .{
+        .path_mask = &.{},
+        .name_mask = &.{},
+        .parent = &.{},
+        .name_off = &.{},
+        .name_len = &.{},
+        .flags = &.{},
+        .depth = &.{},
+        .names = &.{},
+        .root = "",
+    };
+
+    searcher.submit(1, empty_view, "first");
+    ctx.entered.waitUncancelable(t.io);
+    searcher.submit(2, empty_view, "second");
+    searcher.submit(3, empty_view, "third");
+    ctx.gate.post(t.io);
+
+    ctx.done.waitUncancelable(t.io);
+    ctx.done.waitUncancelable(t.io);
+
+    ctx.mutex.lockUncancelable(t.io);
+    defer ctx.mutex.unlock(t.io);
+    try t.expectEqual(@as(usize, 2), ctx.seen_count);
+    try t.expectEqualStrings("first", ctx.seen[0][0..ctx.seen_lens[0]]);
+    try t.expectEqualStrings("third", ctx.seen[1][0..ctx.seen_lens[1]]);
+    try t.expectEqual(@as(u64, 3), searcher.takeResult().result.?.seq);
+}
+
+test "the synchronous path still returns file rows" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    var files: core.file_index.FileIndex = undefined;
+    var cat = try tmpCatalog(&tmp, &buf, &files);
+    defer files.close();
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    try t.expect(!p.async_files);
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    tester.typeText("return");
+    tester.frame();
+    try t.expect(!p.files_due);
+    try t.expectEqual(@as(u32, 0), hooks.file_searches);
+    try t.expect(countRows(p.list.visible, .file) > 0);
+}
+
+test "a one-byte query asks for no suggestions, a two-byte query and a single CJK character do" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: SuggestSpy = .{};
+    defer spy.deinit();
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, spy.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("w");
+    try t.expectEqual(@as(usize, 0), spy.queries.items.len);
+
+    p.reset();
+    tester.frame();
+    tester.typeText("we");
+    try t.expectEqualStrings("we", spy.queries.getLast());
+
+    p.reset();
+    tester.frame();
+    tester.typeText("\u{5929}");
+    try t.expectEqualStrings("\u{5929}", spy.queries.getLast());
+}
+
+test "a copy of more files than the cap records nothing and keeps the history it found" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    _ = try store.add(.{ .text = "kept" }, "", "Notes", 1);
+    const paths = try a.alloc([]const u8, clipboard.max_file_count + 1);
+    for (paths, 0..) |*slot, i| {
+        slot.* = try std.fmt.allocPrint(a, "/bulk/{d}.txt", .{i});
+    }
+    var fake: FakePasteboard = .{ .files = paths, .string = "bulk fallback" };
+    try t.expect(!try store.capture(a, fake.pasteboard(), .{ .bundle_id = "com.apple.finder", .name = "Finder" }, 2));
+
+    const rows = try store.list(a, "");
+    try t.expectEqual(@as(usize, 1), rows.len);
+    try t.expectEqualStrings("kept", rows[0].text);
+}
+
+test "a copy of exactly the cap records every file" {
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try openMemory(&ts);
+    defer store.close();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const paths = try a.alloc([]const u8, clipboard.max_file_count);
+    for (paths, 0..) |*slot, i| {
+        slot.* = try std.fmt.allocPrint(a, "/bulk/{d}.txt", .{i});
+    }
+    var fake: FakePasteboard = .{ .files = paths };
+    try t.expect(try store.capture(a, fake.pasteboard(), .{ .bundle_id = "com.apple.finder", .name = "Finder" }, 2));
+
+    const rows = try store.list(a, "");
+    try t.expectEqual(clipboard.max_file_count, rows.len);
 }

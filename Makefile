@@ -1,7 +1,7 @@
 .PHONY: build bundle check check-architecture check-build check-dead-code check-format \
 	check-lint check-rules clean debug dmg docs format icons install install-tools run \
 	test test-address-sanitizer test-performance test-sanitizers test-thread-sanitizer \
-	install-zig test-core test-nanoui
+	install-zig test-core test-nanoui bench-nanoui-memory
 
 debug:
 	swift build
@@ -95,3 +95,6 @@ test-core:
 
 test-nanoui:
 	./scripts/test-nanoui.sh
+
+bench-nanoui-memory:
+	./scripts/bench-nanoui-memory.sh

@@ -39,6 +39,8 @@
   /* macOS panel vibrancy */
   --fl-panel-bg: rgb(30 30 34 / 72%);
   --fl-panel-line: rgb(255 255 255 / 10%);
+  --fl-well: #1c1c1e;
+  --fl-well-inset: 0.4375rem;
 
   /* Radii — Apple's pill button plus panel and card corners */
   --fl-r-pill: 980px;
