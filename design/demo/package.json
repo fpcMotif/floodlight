@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/main.tsx --outdir ../../docs/public/demo --entry-naming 'demo.[ext]' --asset-naming '[name].[ext]' --minify --target browser",
+    "build": "bun build src/main.tsx --outdir ../../docs/public/demo --entry-naming 'demo.[ext]' --asset-naming '[name].[ext]' --production --target browser",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,5 +1,9 @@
 import { Braces, Calculator, Calendar, CornerDownLeft, FileText, Folder, Image, Link, Map, Music, NotebookText, Palette, Search, type LucideIcon } from 'lucide-react'
-import { Bar, Collapse, Stage, Text, type Act, type Layout } from '../kit'
+import type { Act } from '../kit/act'
+import type { Layout } from '../kit/looks'
+import { Collapse } from '../kit/motion/Collapse'
+import { Stage } from '../kit/stage'
+import { Bar, Text } from '../kit/window'
 import './floodlight.css'
 
 // Floodlight's panel under its own light. Type "cal": Calendar is the top

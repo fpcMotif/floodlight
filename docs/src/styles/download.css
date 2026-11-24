@@ -9,8 +9,6 @@
   --dl-section-y: clamp(3.5rem, 8vw, 7rem);
   --dl-light-mute: var(--fl-gray-deep);
   --dl-step-fill: rgb(255 255 255 / 8%);
-  --dl-shot-edge: rgb(255 255 255 / 10%);
-  --dl-shot-edge-light: rgb(0 0 0 / 10%);
 }
 
 html,
@@ -86,7 +84,8 @@ body {
   }
 }
 
-@media (min-width: 62rem) {
+/* Two columns only once the demo's column can hold its 560px desktop design. */
+@media (min-width: 72rem) {
   .dl-hero__grid {
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   }
@@ -131,16 +130,12 @@ body {
   font-size: 0.85em;
 }
 
+/* The panel's own 30px corner on its 760 by 560 capture, as percentages so
+   the clip stays on that corner at every display size. */
 .dl-shot {
   width: 100%;
   height: auto;
-  border-radius: var(--fl-r-card);
-  outline: 1px solid var(--dl-shot-edge);
-  outline-offset: -1px;
-}
-
-.dl-sec--light .dl-shot {
-  outline-color: var(--dl-shot-edge-light);
+  border-radius: 3.95% / 5.36%;
 }
 
 @media (min-width: 62rem) {
@@ -245,6 +240,9 @@ body {
 }
 
 .dl-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
   color: var(--fl-blue-dark);
   text-decoration: underline;
   text-decoration-color: transparent;

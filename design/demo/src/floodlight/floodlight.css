@@ -107,7 +107,12 @@
 
 .fl-ghost[data-show] {
   opacity: 1;
-  transition: opacity 0.12s ease 0.1s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-caret {
+    animation: none;
+  }
 }
 
 .fl-placeholders {
@@ -209,12 +214,10 @@
   padding: 0 6px;
 }
 
-.fl-filter.ss-collapse {
-  transition: grid-template-rows 0.2s cubic-bezier(0.3, 0.75, 0.1, 1), opacity 0.1s ease;
-}
-
+/* The app replaces the list in one frame, so the rows do not ease. */
+.fl-filter.ss-collapse,
 .fl-filter.ss-collapse[data-open] {
-  transition: grid-template-rows 0.2s cubic-bezier(0.3, 0.75, 0.1, 1), opacity 0.16s ease 0.04s;
+  transition: none;
 }
 
 .fl-row {

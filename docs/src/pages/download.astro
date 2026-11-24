@@ -41,7 +41,7 @@ const docs = (slug: string) => `${root}${slug}/`;
               src={listDark}
               alt=""
               widths={[760, 1520]}
-              sizes="(min-width: 62rem) 55vw, 100vw"
+              sizes="(min-width: 72rem) 55vw, 100vw"
               loading="eager"
             />
           </div>
@@ -70,7 +70,7 @@ const docs = (slug: string) => `${root}${slug}/`;
         <div class="dl-copy">
           <h2 class="h2" id="dl-board">Your clipboard, kept on your Mac</h2>
           <p>
-            <kbd class="dl-kbd">⌥⇧C</kbd> opens the board. Type to find text, links, colors, code,
+            <kbd class="dl-kbd" aria-hidden="true">⌥⇧C</kbd><span class="sr-only">Option Shift C</span> opens the board. Type to find text, links, colors, code,
             and files.
           </p>
         </div>
@@ -113,7 +113,7 @@ const docs = (slug: string) => `${root}${slug}/`;
       <div class="wrap wrap--wide dl-install">
         <div>
           <h2 class="h2" id="dl-install">Install in four steps</h2>
-          <ol class="dl-steps">
+          <ol class="dl-steps" role="list">
             <li>Open Floodlight.dmg.</li>
             <li>Drag Floodlight to Applications.</li>
             <li>Eject the Floodlight disk image.</li>
