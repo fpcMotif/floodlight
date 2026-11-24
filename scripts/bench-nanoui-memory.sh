@@ -10,7 +10,7 @@ cycles=3
 expiry_wait_s=4
 
 zig=$(resolve_tool zig "$FLOODLIGHT_ZIG_VERSION" version)
-cd "$PROJECT_DIR/frontends/nanoui"
+cd "$PROJECT_DIR/app"
 "$zig" build bundle --release
 
 bin="$PWD/zig-out/Nanospot.app/Contents/MacOS/floodlight-nanoui"

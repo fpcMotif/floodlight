@@ -34,20 +34,19 @@
   text-decoration: none;
   white-space: nowrap;
   transition:
-    scale 200ms var(--fl-ease),
-    box-shadow 200ms var(--fl-ease),
-    background 200ms var(--fl-ease);
+    scale 150ms var(--fl-ease),
+    box-shadow 150ms var(--fl-ease),
+    background 150ms var(--fl-ease);
 }
 
 .btn:hover {
   background: #ffc352;
   box-shadow: 0 0 3.5rem rgb(255 176 32 / 45%);
   color: var(--fl-amber-ink);
-  scale: 1.018;
 }
 
 .btn:active {
-  scale: 0.99;
+  scale: 0.97;
 }
 
 .btn--ghost {

@@ -1,0 +1,188 @@
+//! Shared fixtures and stubs for nanoui frontend tests.
+const std = @import("std");
+const nanoui = @import("nanoui");
+const ui = nanoui.ui;
+const core = @import("floodlight_core");
+const search = @import("../search.zig");
+const panel_mod = @import("../panel.zig");
+const permission = @import("../permission.zig");
+const clipboard = @import("../clipboard.zig");
+const board_mod = @import("../board.zig");
+const chrome = @import("../chrome.zig");
+const t = std.testing;
+
+pub const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
+pub const day = 86400;
+
+pub const tmp_home_files = [_][]const u8{ "Documents/tax/2025-return.pdf", "Documents/notes.txt", "Music/kind-of-blue.flac" };
+
+pub fn tmpCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *core.file_index.FileIndex) !search.Catalog {
+    for (tmp_home_files) |p| {
+        try tmp.dir.createDirPath(t.io, std.fs.path.dirname(p).?);
+        try tmp.dir.writeFile(t.io, .{ .sub_path = p, .data = "" });
+    }
+    try tmp.dir.createDirPath(t.io, "Apps/Calculator.app/Contents");
+    try tmp.dir.createDirPath(t.io, "Apps/Calendar.app/Contents");
+    const root = buf[0..try tmp.dir.realPath(t.io, buf)];
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    const apps = try std.fs.path.join(t.allocator, &.{ root, "Apps" });
+    defer t.allocator.free(apps);
+    try search.scanApps(&cat, t.io, apps);
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    files.* = try .open(t.allocator, idx, root, .{});
+    errdefer files.close();
+    files.rebuild(.{ .ready = ignoreOutcome });
+    try t.expect(files.adopt());
+    cat.files = files;
+    return cat;
+}
+
+pub fn ignoreOutcome(_: ?*anyopaque, _: core.file_index.Outcome) void {}
+
+pub const FakeClock = struct {
+    now: f64 = 0,
+    step: f64 = 0,
+    pub fn read(ctx: ?*anyopaque) f64 {
+        const c: *FakeClock = @ptrCast(@alignCast(ctx));
+        defer c.now += c.step;
+        return c.now;
+    }
+    pub fn advance(c: *FakeClock, seconds: f64) void {
+        c.now += seconds;
+    }
+    pub fn binding(c: *FakeClock) panel_mod.Clock {
+        return .{ .ctx = c, .read = read };
+    }
+};
+
+pub const StubHooks = struct {
+    requests: u32 = 0,
+    file_searches: u32 = 0,
+    last_file_seq: u64 = 0,
+    last_file_buf: [256]u8 = undefined,
+    last_file_len: usize = 0,
+    clock: FakeClock = .{},
+    pub fn request(ctx: ?*anyopaque) void {
+        const h: *StubHooks = @ptrCast(@alignCast(ctx));
+        h.requests += 1;
+    }
+    pub fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
+        const h: *StubHooks = @ptrCast(@alignCast(ctx));
+        h.file_searches += 1;
+        h.last_file_seq = seq;
+        const n = @min(text.len, h.last_file_buf.len);
+        @memcpy(h.last_file_buf[0..n], text[0..n]);
+        h.last_file_len = n;
+    }
+    pub fn lastFileQuery(h: *const StubHooks) []const u8 {
+        return h.last_file_buf[0..h.last_file_len];
+    }
+    pub fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
+        return null;
+    }
+    /// Every date, whatever its seconds' type, as the same one.
+    pub fn date(comptime Seconds: type) fn (?*anyopaque, Seconds, std.mem.Allocator) []const u8 {
+        return struct {
+            fn at(_: ?*anyopaque, _: Seconds, _: std.mem.Allocator) []const u8 {
+                return "Today at 9:41 AM";
+            }
+        }.at;
+    }
+    pub fn hooks(h: *StubHooks) panel_mod.Hooks {
+        return .{ .ctx = h, .clock = h.clock.binding(), .request = request, .app_icon = icon, .describe_date = date(i64), .detailed_date = date(f64), .search_files = searchFiles };
+    }
+};
+
+pub fn countRows(rows: []const search.Row, kind: search.Kind) usize {
+    var n: usize = 0;
+    for (rows) |r| n += @intFromBool(r.kind == kind);
+    return n;
+}
+
+pub fn addNumberedApps(cat: *search.Catalog, count: usize) !void {
+    for (0..count) |i| {
+        try cat.addApp(try std.fmt.allocPrint(t.allocator, "/Applications/App {d:0>2}.app", .{i}));
+    }
+}
+
+pub fn picture(png: []const u8) clipboard.Capture {
+    return .{ .image = .{ .name = "PNG Image", .png = png, .thumbnail = "thumb", .width = 10, .height = 10 } };
+}
+
+pub const TmpStore = struct {
+    tmp: std.testing.TmpDir,
+    images: []const u8,
+    db: [:0]const u8,
+
+    pub fn init() !TmpStore {
+        var tmp = std.testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
+        const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+        const images = try std.fs.path.join(t.allocator, &.{ root, "images" });
+        errdefer t.allocator.free(images);
+        const db = try std.fs.path.joinZ(t.allocator, &.{ root, "clipboard.sqlite3" });
+        return .{ .tmp = tmp, .images = images, .db = db };
+    }
+
+    pub fn deinit(s: *TmpStore) void {
+        t.allocator.free(s.images);
+        t.allocator.free(s.db);
+        s.tmp.cleanup();
+    }
+
+    pub fn size(s: *TmpStore, sub: []const u8) u64 {
+        return (s.tmp.dir.statFile(t.io, sub, .{}) catch return 0).size;
+    }
+};
+
+/// History in memory, its pictures in a folder `ts` owns, as on disk.
+pub fn openMemory(ts: *const TmpStore) !clipboard.Store {
+    return clipboard.Store.open(":memory:", ts.images);
+}
+
+/// The board over a history in memory and no apps or files. Fill `store`
+/// between `init` and `show`; the fixture must not move after `init`.
+pub const BoardFixture = struct {
+    ts: TmpStore,
+    store: clipboard.Store,
+    cat: search.Catalog,
+    hooks: StubHooks,
+    p: panel_mod.Panel,
+    tester: ui.Tester,
+    shown: bool,
+
+    pub fn init(f: *BoardFixture) !void {
+        f.ts = try TmpStore.init();
+        errdefer f.ts.deinit();
+        f.store = try openMemory(&f.ts);
+        f.cat = .{ .gpa = t.allocator };
+        f.hooks = .{};
+        f.p = .init(t.allocator, &f.cat, &f.store, f.hooks.hooks());
+        f.shown = false;
+    }
+
+    /// Opens the board and draws it at its own size until it rests.
+    pub fn show(f: *BoardFixture) !void {
+        f.p.showClipboard();
+        const m = board_mod.board_metrics;
+        try f.tester.init(t.allocator, .init(&f.p, panel_mod.Panel.view), .{ .width = m.width, .height = m.height });
+        f.shown = true;
+        f.tester.settle(1);
+    }
+
+    /// `n` texts, "entry number 0" the oldest.
+    pub fn seed(f: *BoardFixture, n: usize) !void {
+        var buf: [32]u8 = undefined;
+        for (0..n) |i| _ = try f.store.add(.{ .text = try std.fmt.bufPrint(&buf, "entry number {d}", .{i}) }, "x", "Notes", @floatFromInt(1000 + i));
+    }
+
+    pub fn deinit(f: *BoardFixture) void {
+        if (f.shown) f.tester.deinit();
+        f.p.deinit();
+        f.cat.deinit();
+        f.store.close();
+        f.ts.deinit();
+    }
+};

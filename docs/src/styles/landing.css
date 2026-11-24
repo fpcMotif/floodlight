@@ -287,21 +287,18 @@ body {
 
 .hero__copy > * {
   opacity: 0;
-  translate: 0 0.75rem;
-  animation: rise 900ms var(--fl-ease) forwards;
+  translate: 0 0.5rem;
+  animation: rise 600ms var(--fl-ease) forwards;
 }
 
-.hero__copy > :nth-child(1) {
+.hero__copy > :nth-child(2) {
   animation-delay: 60ms;
 }
-.hero__copy > :nth-child(2) {
-  animation-delay: 150ms;
-}
 .hero__copy > :nth-child(3) {
-  animation-delay: 260ms;
+  animation-delay: 120ms;
 }
 .hero__copy > :nth-child(4) {
-  animation-delay: 370ms;
+  animation-delay: 180ms;
 }
 
 @keyframes rise {
@@ -319,8 +316,8 @@ body {
   padding-inline: var(--fl-gutter);
   padding-block: clamp(1.35rem, 3.5vh, 2.5rem) clamp(2.25rem, 6vh, 4.5rem);
   opacity: 0;
-  translate: 0 2rem;
-  animation: rise 1100ms var(--fl-ease) 520ms forwards;
+  translate: 0 1rem;
+  animation: rise 700ms var(--fl-ease) 200ms forwards;
 }
 
 /* Centred blocks need their wrapped buttons centred too. */
@@ -377,7 +374,7 @@ body {
   height: min(21rem, 36vh);
   opacity: 0;
   translate: -50% 0;
-  animation: beam-on 1900ms var(--fl-ease) 260ms forwards;
+  animation: beam-on 1200ms var(--fl-ease) 400ms forwards;
   pointer-events: none;
 }
 
@@ -394,7 +391,7 @@ body {
   clip-path: polygon(42% 100%, 4% 0%, 96% 0%, 58% 100%);
   filter: blur(4rem);
   opacity: calc(0.62 + var(--beam, 0) * 0.38);
-  transition: opacity 550ms var(--fl-ease);
+  transition: opacity 300ms var(--fl-ease);
 }
 
 .stage__flare {
@@ -411,7 +408,7 @@ body {
   filter: blur(1.75rem);
   opacity: calc(0.45 + var(--beam, 0) * 0.55);
   translate: -50% 0;
-  transition: opacity 550ms var(--fl-ease);
+  transition: opacity 300ms var(--fl-ease);
 }
 
 /* The panel — Floodlight itself, running in the page ---------------------- */

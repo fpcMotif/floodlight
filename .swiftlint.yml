@@ -20,6 +20,7 @@ excluded:
   - .tools
   - docs
   - Sources/Floodlight/Resources
+  - Vendor
 
 # Performance antipatterns. These are the reason SwiftLint is in the gate at
 # all: each one is a silent O(n) or allocation regression on a path that a

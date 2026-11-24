@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$SCRIPT_DIR/tools.sh"
 
 zig=$(resolve_tool zig "$FLOODLIGHT_ZIG_VERSION" version)
-cd "$PROJECT_DIR/frontends/nanoui"
+cd "$PROJECT_DIR/app"
 
 "$zig" fmt --check build.zig build.zig.zon src
 "$zig" build test --summary all

@@ -22,9 +22,16 @@ Floodlight.xcodeproj/xcuserdata/
 # Local vendored checkouts (fff-swift etc.) that Package.swift does not reference.
 Vendor/
 
-# Zig build output for core/.
+# Zig build output for core/ and app/.
 core/.zig-cache/
 core/zig-out/
-frontends/nanoui/.zig-cache/
-frontends/nanoui/zig-out/
-frontends/nanoui/zig-pkg/
+app/.zig-cache/
+app/zig-out/
+app/zig-pkg/
+
+# Docs demo and ephemeral agent/tool artifacts.
+docs/demo/node_modules/
+.scratch/
+.hallmark/
+.impeccable/
+codedb.snapshot
