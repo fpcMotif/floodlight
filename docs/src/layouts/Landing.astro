@@ -18,7 +18,7 @@ const socialImage = new URL(iconURL, Astro.site ?? Astro.url).href;
 const repository =
   import.meta.env.PUBLIC_GITHUB_REPOSITORY ??
   process.env.GITHUB_REPOSITORY ??
-  "fpcMotif/floodlight";
+  "fpcMotif/nanospot";
 const repositoryURL = `https://github.com/${repository}`;
 
 const docs = (slug: string) => `${root}${slug}/`;
@@ -39,10 +39,10 @@ const docs = (slug: string) => `${root}${slug}/`;
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content={socialImage} />
-    <meta property="og:image:alt" content="The Floodlight app icon." />
+    <meta property="og:image:alt" content="The Nanospot app icon." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:image" content={socialImage} />
-    <meta name="twitter:image:alt" content="The Floodlight app icon." />
+    <meta name="twitter:image:alt" content="The Nanospot app icon." />
   </head>
 
   <body>
@@ -52,7 +52,7 @@ const docs = (slug: string) => `${root}${slug}/`;
       <div class="nav__inner">
         <a class="nav__brand" href={root}>
           <img class="nav__mark" src={iconURL} alt="" width="22" height="22" />
-          Floodlight
+          Nanospot
         </a>
         <ul class="nav__links">
           <li><a href={docs("guides/search")}>Search</a></li>
@@ -69,7 +69,7 @@ const docs = (slug: string) => `${root}${slug}/`;
             </a>
           </li>
           <li class="nav__keep">
-            <a class="nav__cta" href={docs("getting-started/quickstart")}>Get started</a>
+            <a class="nav__cta" href={`${root}download/`}>Download</a>
           </li>
         </ul>
       </div>
@@ -85,13 +85,14 @@ const docs = (slug: string) => `${root}${slug}/`;
           <div>
             <p class="foot__h">Get started</p>
             <ul>
+              <li><a href={`${root}download/`}>Download</a></li>
               <li><a href={docs("getting-started/quickstart")}>Quickstart</a></li>
               <li><a href={docs("getting-started/install")}>Install &amp; permissions</a></li>
               <li><a href={docs("getting-started/replace-spotlight")}>Replace Spotlight</a></li>
             </ul>
           </div>
           <div>
-            <p class="foot__h">Using Floodlight</p>
+            <p class="foot__h">Using Nanospot</p>
             <ul>
               <li><a href={docs("guides/search")}>Search</a></li>
               <li><a href={docs("guides/filters")}>Filters</a></li>
@@ -115,18 +116,9 @@ const docs = (slug: string) => `${root}${slug}/`;
         </div>
 
         <div class="foot__legal">
-          <span>Floodlight is open source under the MIT License.</span>
+          <span>Nanospot is open source under the MIT License.</span>
         </div>
       </div>
     </footer>
-
-    <script>
-      const light = document.querySelector<HTMLElement>("[data-light]");
-      document.addEventListener("fl:query", (event) => {
-        const { length } = (event as CustomEvent<{ length: number }>).detail;
-        light?.style.setProperty("--beam", String(Math.min(length / 6, 1)));
-      });
-
-    </script>
   </body>
 </html>

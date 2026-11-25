@@ -1,44 +1,40 @@
 ---
 title: Indexing
-description: See what Floodlight searches, what it excludes, and how results stay current.
+description: See what Nanospot indexes, what it skips, and how the File Index refreshes.
 ---
 
 ## What is indexed
 
-Floodlight indexes your home directory. Choose another folder with
-<kbd>⌘ L</kbd>; the selection persists across launches. Floodlight can search
-only the locations macOS allows it to read.
+Nanospot indexes filenames and directory names under your home directory
+(`$HOME`) into a memory-mapped file at
+`~/Library/Application Support/Nanospot/names.flix`.
 
-Applications in standard macOS locations and inside the selected folder appear
-as launchable results. System Settings panes are searchable by name and common
-keywords.
+- On launch, Nanospot maps the last saved `names.flix` immediately so file
+  search works without waiting for a scan.
+- With Full Disk Access, a background thread scans `$HOME` with
+  `getattrlistbulk(2)` and swaps in the fresh index atomically once ready.
+- If you grant Full Disk Access during the first-launch prompt, Nanospot starts a
+  fresh scan immediately.
 
-## Live updates
+Nanospot scans applications in `/Applications`, `/Applications/Utilities`,
+`/System/Applications`, `/System/Applications/Utilities`, and
+`~/Applications` on launch.
 
-New, renamed, moved, and deleted items appear without restarting Floodlight.
-Newly installed applications and System Settings changes also refresh in the
-background. Use <kbd>⇧ ⌘ R</kbd> when you want to rebuild the file index
-immediately.
+## Exclusions
 
-## Content search
+To keep the File Index small and fast, the directory walker skips:
 
-Floodlight can search supported text content when filename matches are sparse.
-Images and PDFs are searchable by filename, not by their contents.
+- hidden files and directories (names beginning with `.`);
+- `node_modules`, `DerivedData`, `__pycache__`, `Caches`, `target`, `build`,
+  `.build`, and `Pods`;
+- symbolic links (indexed as entries themselves, never traversed); and
+- any folder deeper than 48 levels.
 
-## Intentional exclusions
+Search matches file and folder names (and relative paths when your query contains
+`/`). Nanospot does not index file text contents or read `.gitignore` files.
 
-Floodlight skips hidden paths and noisy dependency or build directories such as
-`node_modules`, Python virtual environments and caches, and Rust build output.
-It also skips `Library/Caches`, `Library/Application Support`,
-`Library/Containers`, and `Library/Group Containers`. Git ignore rules are
-honored when the selected folder is a repository.
+## Refreshing the index
 
-An empty folder does not appear until it contains an indexable file.
-Permission-denied paths, ignored paths, and anything outside the selected scope
-are not indexed. Full Disk Access can broaden readable coverage but does not
-override intentional exclusions.
-
-## Rebuild the index
-
-Press <kbd>⇧ ⌘ R</kbd> to rebuild the file index. Rebuilding never deletes or
-modifies your files.
+Each scan replaces `names.flix` atomically via a temporary sibling file and
+rename, while failed scans keep the previous index intact. Quit and reopen
+Nanospot if you want to trigger a background rescan immediately.

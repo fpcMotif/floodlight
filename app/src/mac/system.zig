@@ -28,7 +28,7 @@ const carbon = struct {
 pub const HotKey = enum(u32) {
     /// ⌥Space, so ⌘Space stays Spotlight's.
     search = 1,
-    /// ⌥⇧C, so ⇧⌘C stays the Swift board's.
+    /// ⌥⇧C opens the clipboard board without clashing with ⇧⌘C.
     clipboard = 2,
 };
 
@@ -60,7 +60,7 @@ pub fn registerHotKeys(ctx: ?*anyopaque, f: *const fn (?*anyopaque, HotKey) void
     };
     for (keys) |k| {
         var ref: ?*anyopaque = null;
-        const id: carbon.HotKeyId = .{ .signature = 0x464c6e75, .id = @backingInt(k[0]) }; // 'FLnu'
+        const id: carbon.HotKeyId = .{ .signature = 0x4e537074, .id = @backingInt(k[0]) }; // 'NSpt'
         if (carbon.RegisterEventHotKey(k[1], k[2], id, target, 0, &ref) != 0) std.log.warn("hotkey {s} is taken", .{@tagName(k[0])});
     }
 }
@@ -77,7 +77,7 @@ fn onReopen(_: objc.Object, _: objc.SEL, _: objc.Object, _: objc.Object) callcon
 pub fn handleReopen(ctx: ?*anyopaque, f: *const fn (?*anyopaque) void) void {
     reopen_fn = f;
     reopen_ctx = ctx;
-    const cls = objc.defineClass(.{ .name = "FloodlightReopenTarget", .methods = &.{
+    const cls = objc.defineClass(.{ .name = "NanospotReopenTarget", .methods = &.{
         .{ .name = "handleReopen:withReplyEvent:", .imp = &onReopen, .types = "v@:@@" },
     } });
     const target = objc.msg(objc.Object, cls, "new", .{});
@@ -127,21 +127,26 @@ pub fn copy(path: []const u8) void {
 
 pub const RunningApp = struct { pid: i32 = 0, bundle_id: []const u8 = "", name: []const u8 = "" };
 
-/// The frontmost app, its strings in `gpa`'s memory. Named as the Swift
-/// board names a source.
+/// The frontmost app, with strings owned by `gpa`.
 pub fn frontmostApp(gpa: std.mem.Allocator) RunningApp {
     const pool = objc.Pool.push();
     defer pool.pop();
     const app = objc.msg(?objc.Object, workspace(), "frontmostApplication", .{}) orelse return .{};
     const id = objc.fromNSString(objc.msg(?objc.Object, app, "bundleIdentifier", .{}));
+    const bundle_id = gpa.dupe(u8, id) catch return .{};
+    const label = sourceName(id, objc.fromNSString(objc.msg(?objc.Object, app, "localizedName", .{})));
+    const name = gpa.dupe(u8, label) catch {
+        gpa.free(bundle_id);
+        return .{};
+    };
     return .{
         .pid = objc.msg(i32, app, "processIdentifier", .{}),
-        .bundle_id = gpa.dupe(u8, id) catch "",
-        .name = gpa.dupe(u8, sourceName(id, objc.fromNSString(objc.msg(?objc.Object, app, "localizedName", .{})))) catch "Clipboard",
+        .bundle_id = bundle_id,
+        .name = name,
     };
 }
 
-pub fn sourceName(bundle_id: []const u8, localized: []const u8) []const u8 {
+fn sourceName(bundle_id: []const u8, localized: []const u8) []const u8 {
     if (bundle_id.len == 0) return "Clipboard";
     if (std.mem.eql(u8, bundle_id, "com.apple.screencaptureui")) return "Screenshot";
     if (std.mem.eql(u8, bundle_id, "com.apple.finder")) return "Finder";
@@ -176,7 +181,7 @@ pub fn promptAccessibility() void {
     _ = AXIsProcessTrustedWithOptions(options);
 }
 
-/// Brings `pid` forward and types ⌘V into it, as PasteTargetDelivery.
+/// Brings `pid` forward and posts ⌘V into it.
 /// False when the app is gone, never comes forward, or a password field
 /// has secure input on.
 pub fn deliverPaste(pid: i32) bool {
@@ -209,8 +214,6 @@ fn sleepMs(ms: u64) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
-// The ⌘K menu: native, as the Swift board's.
-
 pub const MenuItem = struct { title: []const u8, key: []const u8 = "", modifiers: objc.NSUInteger = 0, enabled: bool = true, separator_before: bool = false };
 
 pub const command_modifier: objc.NSUInteger = 1 << 20;
@@ -218,7 +221,7 @@ pub const command_modifier: objc.NSUInteger = 1 << 20;
 var menu_choice: ?usize = null;
 
 fn menuPicked(_: objc.Object, _: objc.SEL, item: objc.Object) callconv(.c) void {
-    menu_choice = @intCast(objc.msg(objc.NSInteger, item, "tag", .{}));
+    menu_choice = std.math.cast(usize, objc.msg(objc.NSInteger, item, "tag", .{}));
 }
 
 /// Pops up `items` at `at` (flipped points in `window`'s content) and
@@ -226,7 +229,7 @@ fn menuPicked(_: objc.Object, _: objc.SEL, item: objc.Object) callconv(.c) void 
 pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?usize {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const cls = objc.defineClass(.{ .name = "FloodlightMenuTarget", .methods = &.{
+    const cls = objc.defineClass(.{ .name = "NanospotMenuTarget", .methods = &.{
         .{ .name = "pick:", .imp = &menuPicked, .types = "v@:@" },
     } });
     const S = struct {
@@ -259,7 +262,7 @@ pub fn reveal(path: []const u8) void {
 }
 
 /// Full Disk Access is granted when the TCC database opens: it is readable
-/// by nothing else. The Swift shell probes the same file.
+/// by nothing else.
 pub const full_disk_access_probe = "/Library/Application Support/com.apple.TCC/TCC.db";
 
 pub fn fullDiskAccessGranted() bool {
@@ -301,7 +304,7 @@ pub fn iconPng(gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
     return gpa.dupe(u8, pasteboard.dataBytes(data)) catch null;
 }
 
-pub const retention_defaults_key = "sessionRetentionSeconds";
+const retention_defaults_key = "sessionRetentionSeconds";
 
 /// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
 /// user defaults; `default_seconds` when unset, `0` when non-positive).
@@ -311,18 +314,19 @@ pub fn retentionSeconds(default_seconds: f64) f64 {
     const defaults = objc.msg(objc.Object, objc.class("NSUserDefaults"), "standardUserDefaults", .{});
     const key = objc.nsString(retention_defaults_key);
     if (objc.msg(?objc.Object, defaults, "objectForKey:", .{key}) == null) return default_seconds;
-    return @max(0.0, objc.msg(f64, defaults, "doubleForKey:", .{key}));
+    const raw = objc.msg(f64, defaults, "doubleForKey:", .{key});
+    if (!std.math.isFinite(raw)) return default_seconds;
+    return std.math.clamp(raw, 0.0, 365.0 * 86400.0);
 }
 
-/// A native view over the guidance card that starts a drag carrying the
-/// app's file URL, as SwiftUI's `.draggable(appURL)`: System Settings' list
-/// takes files, and nanoui's own drags carry text.
+/// A native view over the guidance card that starts a file-URL drag:
+/// System Settings' list takes files, and nanoui's own drags carry text.
 pub const FileDragSource = struct {
     view: objc.Object,
     path: []const u8,
 
     pub fn create(parent: objc.Object, path: []const u8) *FileDragSource {
-        const cls = objc.defineClass(.{ .name = "FloodlightFileDragSource", .superclass = "NSView", .methods = &.{
+        const cls = objc.defineClass(.{ .name = "NanospotFileDragSource", .superclass = "NSView", .methods = &.{
             .{ .name = "mouseDown:", .imp = &mouseDown, .types = "v@:@" },
             .{ .name = "mouseDragged:", .imp = &mouseDragged, .types = "v@:@" },
             .{ .name = "acceptsFirstMouse:", .imp = &yes, .types = "c@:@" },

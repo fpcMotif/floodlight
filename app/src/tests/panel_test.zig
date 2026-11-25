@@ -2,7 +2,6 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
-const core = @import("floodlight_core");
 const search = @import("../search.zig");
 const panel_mod = @import("../panel.zig");
 const clipboard = @import("../clipboard.zig");
@@ -12,39 +11,19 @@ const h = @import("helpers.zig");
 const t = std.testing;
 
 const tmpCatalog = h.tmpCatalog;
-const ignoreOutcome = h.ignoreOutcome;
+const WakeSignal = h.WakeSignal;
 const StubHooks = h.StubHooks;
 const countRows = h.countRows;
 const addNumberedApps = h.addNumberedApps;
 const TmpStore = h.TmpStore;
 const openMemory = h.openMemory;
-
-fn fillAlphaBehind(tester: *ui.Tester, label: []const u8) ?f32 {
-    const nodes = tester.ctx.nodes.items;
-    for (nodes) |n| switch (n.content) {
-        .text => |tx| if (std.mem.eql(u8, tx.str, label)) {
-            var at = n.parent;
-            while (at < nodes.len) : (at = nodes[at].parent) {
-                if (nodes[at].style.background) |fill| return fill.a;
-            }
-        },
-        else => {},
-    };
-    return null;
-}
-
-fn pointAt(tester: *ui.Tester, label: []const u8) !void {
-    const at = tester.findText(label) orelse return error.TextNotDrawn;
-    tester.moveTo(at.x + at.w / 2, at.y + at.h / 2);
-}
+const fillAlphaBehind = h.fillAlphaBehind;
+const pointAt = h.pointAt;
 
 test "a query finds apps and files, apps first" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -107,10 +86,7 @@ test "an app whose name starts with the query outranks a folder named exactly th
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(t.io, "Projects/cal");
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -122,7 +98,7 @@ test "an app whose name starts with the query outranks a folder named exactly th
     try t.expectEqual(search.Kind.folder, rows[2].kind);
 }
 
-fn appTitles(arena: std.mem.Allocator, cat: *const search.Catalog, text: []const u8) ![]const []const u8 {
+fn appTitles(arena: std.mem.Allocator, cat: *search.Catalog, text: []const u8) ![]const []const u8 {
     var titles: std.ArrayList([]const u8) = .empty;
     for (try cat.query(arena, text)) |r| if (r.kind == .app) try titles.append(arena, r.title);
     return titles.items;
@@ -154,10 +130,7 @@ fn clickText(tester: *ui.Tester, s: []const u8) !void {
 test "the search footer counts the rows and opens, reveals or copies the selection" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -183,10 +156,7 @@ test "the search footer counts the rows and opens, reveals or copies the selecti
 test "typing shows rows; Return opens the selected one; hiding keeps the session within the window and forgets it after" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -277,7 +247,7 @@ test "typed links normalize to URLs while prose and source files stay searches" 
     const a = arena.allocator();
     const cases = [_]struct { []const u8, ?[]const u8 }{
         .{ "github.com", "https://github.com" },
-        .{ "github.com/fpcMotif/floodlight", "https://github.com/fpcMotif/floodlight" },
+        .{ "github.com/fpcMotif/nanospot", "https://github.com/fpcMotif/nanospot" },
         .{ "https://x.y/z", "https://x.y/z" },
         .{ "localhost:3000", "http://localhost:3000" },
         .{ "127.0.0.1:8080/a", "http://127.0.0.1:8080/a" },
@@ -306,10 +276,7 @@ test "typed links normalize to URLs while prose and source files stay searches" 
 test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and an exact title match stays first" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -338,10 +305,8 @@ test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and a
     p.pending = null;
 
     try tmp.dir.writeFile(t.io, .{ .sub_path = "Documents/github.com", .data = "" });
-    files.rebuild(.{ .ready = ignoreOutcome });
-    try t.expect(files.adopt());
-    p.list.markStale();
-    p.refresh();
+    cat.rebuildIndex();
+    try t.expect(p.poll());
     try t.expect(p.list.visible.len >= 3);
     try t.expectEqual(search.Kind.file, p.list.visible[0].kind);
     try t.expectEqualStrings("github.com", p.list.visible[0].title);
@@ -353,10 +318,7 @@ test "typing a link selects Open <host>, Return opens it, Cmd+C copies it, and a
 test "filter chips count, narrow the rows, and drop Top Hit" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -390,10 +352,7 @@ test "filter chips count, narrow the rows, and drop Top Hit" {
 test "a filter chip past the bar's edge scrolls into reach, and a click on a cut one brings it whole into view" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -480,8 +439,6 @@ test "Escape asks to hide" {
 
 const CompletionFixture = struct {
     tmp: std.testing.TmpDir,
-    buf: [std.posix.PATH_MAX]u8 = undefined,
-    files: core.file_index.FileIndex = undefined,
     cat: search.Catalog = undefined,
     hooks: StubHooks = .{},
     p: panel_mod.Panel = undefined,
@@ -491,8 +448,7 @@ const CompletionFixture = struct {
         f.tmp = t.tmpDir(.{});
         errdefer f.tmp.cleanup();
         for (extra_apps) |app| try f.tmp.dir.createDirPath(t.io, app);
-        f.cat = try tmpCatalog(&f.tmp, &f.buf, &f.files);
-        errdefer f.files.close();
+        f.cat = try tmpCatalog(&f.tmp);
         errdefer f.cat.deinit();
         f.hooks = .{};
         f.p = panel_mod.Panel.init(t.allocator, &f.cat, null, f.hooks.hooks());
@@ -505,7 +461,6 @@ const CompletionFixture = struct {
         f.tester.deinit();
         f.p.deinit();
         f.cat.deinit();
-        f.files.close();
         f.tmp.cleanup();
     }
 };
@@ -516,17 +471,17 @@ test "top hit offers a case-preserving inline completion suffix without changing
     defer fx.deinit();
 
     fx.tester.typeText("ant");
-    const comp = fx.p.completion orelse return error.NoCompletion;
+    const comp = fx.p.currentCompletion() orelse return error.NoCompletion;
     try t.expectEqualStrings("igravity", comp.suffix);
     try t.expectEqual(panel_mod.CompletionSource.top_hit, comp.source);
     try t.expect(fx.tester.hasText("igravity"));
     try t.expectEqualStrings("ant", fx.p.field.text());
     try t.expect(fx.tester.hasText("Grant"));
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("ANT");
-    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("igravity", fx.p.currentCompletion().?.suffix);
     try t.expectEqualStrings("ANT", fx.p.field.text());
 }
 
@@ -546,17 +501,17 @@ test "Right arrow and Tab accept the full completion on the same frame while Ret
     fx.tester.key(.right);
     try t.expectEqualStrings("antigravity", fx.p.field.text());
     try t.expectEqualStrings("antigravity", fx.p.list.answered());
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
     try t.expect(!fx.tester.hasText("Grant"));
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("ANT");
     try t.expect(fx.tester.hasText("Grant"));
     try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.tab }));
     try t.expectEqualStrings("ANTigravity", fx.p.field.text());
     try t.expectEqualStrings("ANTigravity", fx.p.list.answered());
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
     try t.expect(!fx.tester.hasText("Grant"));
 }
 
@@ -566,22 +521,22 @@ test "Option-Right accepts a multi-word completion one word at a time" {
     defer fx.deinit();
 
     fx.tester.typeText("vi");
-    try t.expectEqualStrings("sual Studio Code", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("sual Studio Code", fx.p.currentCompletion().?.suffix);
 
     try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
     try t.expectEqualStrings("visual", fx.p.field.text());
     try t.expectEqualStrings("visual", fx.p.list.answered());
-    try t.expectEqualStrings(" Studio Code", fx.p.completion.?.suffix);
+    try t.expectEqualStrings(" Studio Code", fx.p.currentCompletion().?.suffix);
 
     try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
     try t.expectEqualStrings("visual Studio", fx.p.field.text());
     try t.expectEqualStrings("visual Studio", fx.p.list.answered());
-    try t.expectEqualStrings(" Code", fx.p.completion.?.suffix);
+    try t.expectEqualStrings(" Code", fx.p.currentCompletion().?.suffix);
 
     try t.expect(fx.tester.shortcut(.{ .key = ui.Shortcut.right, .alt = true }));
     try t.expectEqualStrings("visual Studio Code", fx.p.field.text());
     try t.expectEqualStrings("visual Studio Code", fx.p.list.answered());
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
 }
 
 test "completion hides on Backspace, mid-text caret, IME composition, Link Row query, and exact match" {
@@ -590,48 +545,48 @@ test "completion hides on Backspace, mid-text caret, IME composition, Link Row q
     defer fx.deinit();
 
     fx.tester.typeText("ant");
-    try t.expect(fx.p.completion != null);
+    try t.expect(fx.p.currentCompletion() != null);
 
     fx.tester.key(.backspace);
     try t.expectEqualStrings("an", fx.p.field.text());
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
     try t.expect(!fx.tester.hasText("tigravity"));
 
     fx.tester.typeText("t");
-    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("igravity", fx.p.currentCompletion().?.suffix);
 
     fx.tester.key(.left);
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
     try t.expect(!fx.tester.hasText("igravity"));
 
     fx.tester.key(.right);
     try t.expectEqualStrings("ant", fx.p.field.text());
-    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("igravity", fx.p.currentCompletion().?.suffix);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.textOps(&.{.{ .set_marked = .{ .text = "ant", .sel_start = 3, .sel_len = 0 } }});
     try t.expectEqualStrings("ant", fx.p.field.text());
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
     try t.expect(!fx.tester.hasText("igravity"));
 
     fx.tester.textOps(&.{.unmark});
-    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("igravity", fx.p.currentCompletion().?.suffix);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("github.com");
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("localhost:3000");
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("antigravity");
-    try t.expect(fx.p.completion == null);
+    try t.expect(fx.p.currentCompletion() == null);
 }
 
 test "running a Selected-Result Action records its query across store restarts and beats the top hit" {
@@ -639,10 +594,7 @@ test "running a Selected-Result Action records its query across store restarts a
     defer ts.deinit();
     try ts.tmp.dir.createDirPath(t.io, "Apps/Antigravity.app/Contents");
     try ts.tmp.dir.createDirPath(t.io, "Apps/Anthropic Console.app/Contents");
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&ts.tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&ts.tmp);
     defer cat.deinit();
 
     {
@@ -662,7 +614,7 @@ test "running a Selected-Result Action records its query across store restarts a
         try t.expectEqualStrings("https://github.com", p.pending.?.open);
         p.pending = null;
 
-        p.reset();
+        p.forget();
         tester.frame();
         tester.typeText("Anthropic Console");
         tester.key(.enter);
@@ -681,15 +633,15 @@ test "running a Selected-Result Action records its query across store restarts a
     tester.settle(0.1);
 
     tester.typeText("git");
-    const link_comp = p.completion orelse return error.NoCompletion;
+    const link_comp = p.currentCompletion() orelse return error.NoCompletion;
     try t.expectEqual(panel_mod.CompletionSource.history, link_comp.source);
     try t.expectEqualStrings("hub.com", link_comp.suffix);
 
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("ant");
     try t.expectEqualStrings("Antigravity", p.list.visible[0].title);
-    const beat_comp = p.completion orelse return error.NoCompletion;
+    const beat_comp = p.currentCompletion() orelse return error.NoCompletion;
     try t.expectEqual(panel_mod.CompletionSource.history, beat_comp.source);
     try t.expectEqualStrings("hropic Console", beat_comp.suffix);
 }
@@ -711,26 +663,26 @@ test "Query History ranks by recency and frequency, evicts lowest-ranked entries
     fx.tester.key(.enter);
     fx.p.pending = null;
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.hooks.clock.advance(100);
     fx.tester.typeText("anthem studio");
     fx.tester.key(.enter);
     fx.p.pending = null;
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("ant");
-    try t.expectEqualStrings("hem studio", fx.p.completion.?.suffix);
-    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+    try t.expectEqualStrings("hem studio", fx.p.currentCompletion().?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.currentCompletion().?.source);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     for (0..2) |_| {
         fx.tester.typeText("anthropic console");
         fx.tester.key(.enter);
         fx.p.pending = null;
-        fx.p.reset();
+        fx.p.forget();
         fx.tester.frame();
     }
     fx.hooks.clock.advance(60);
@@ -738,12 +690,12 @@ test "Query History ranks by recency and frequency, evicts lowest-ranked entries
     fx.tester.key(.enter);
     fx.p.pending = null;
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("ant");
-    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("hropic console", fx.p.currentCompletion().?.suffix);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.hooks.clock.advance(10);
     fx.tester.typeText("calendar notes");
@@ -751,7 +703,7 @@ test "Query History ranks by recency and frequency, evicts lowest-ranked entries
     fx.p.pending = null;
     try t.expectEqual(@as(usize, 3), store.queryCount());
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.hooks.clock.advance(10);
     fx.tester.typeText("calculator pro");
@@ -759,21 +711,21 @@ test "Query History ranks by recency and frequency, evicts lowest-ranked entries
     fx.p.pending = null;
     try t.expectEqual(@as(usize, 3), store.queryCount());
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("cal");
-    try t.expectEqualStrings("culator pro", fx.p.completion.?.suffix);
+    try t.expectEqualStrings("culator pro", fx.p.currentCompletion().?.suffix);
 
-    fx.p.reset();
+    fx.p.forget();
     fx.tester.frame();
     fx.tester.typeText("ant");
-    try t.expectEqualStrings("hropic console", fx.p.completion.?.suffix);
-    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.completion.?.source);
+    try t.expectEqualStrings("hropic console", fx.p.currentCompletion().?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, fx.p.currentCompletion().?.source);
 
-    try t.expect(fx.tester.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true }));
+    try t.expect(fx.tester.shortcut(.{ .key = chrome.backspace, .cmd = true, .shift = true }));
     try t.expectEqual(@as(usize, 0), store.queryCount());
-    try t.expectEqualStrings("igravity", fx.p.completion.?.suffix);
-    try t.expectEqual(panel_mod.CompletionSource.top_hit, fx.p.completion.?.source);
+    try t.expectEqualStrings("igravity", fx.p.currentCompletion().?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, fx.p.currentCompletion().?.source);
 }
 
 test "the board field completes from past board queries and skips queries matching a sensitive entry" {
@@ -805,7 +757,7 @@ test "the board field completes from past board queries and skips queries matchi
     p.showClipboard();
     tester.frame();
     tester.typeText("quar");
-    const comp = p.completion orelse return error.NoCompletion;
+    const comp = p.currentCompletion() orelse return error.NoCompletion;
     try t.expectEqual(panel_mod.CompletionSource.history, comp.source);
     try t.expectEqualStrings("terly invoice", comp.suffix);
     try t.expect(tester.hasText("terly invoice"));
@@ -824,7 +776,7 @@ test "the board field completes from past board queries and skips queries matchi
     p.showClipboard();
     tester.frame();
     tester.typeText("vault");
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
 }
 
 const SuggestSpy = struct {
@@ -869,10 +821,7 @@ const SuggestSpy = struct {
 test "the first frame after a keystroke does not wait for suggestions, and arrival adds up to four bold-tail rows under Google without moving selection" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var spy: SuggestSpy = .{};
     defer spy.deinit();
@@ -976,18 +925,18 @@ test "YouTube, X and Grok rows follow Google and its suggestions and open that e
 
     const none = [_][]const u8{ "github.com", "/Applications", "~/Documents", "./build.zig" };
     for (none) |q| {
-        p.reset();
+        p.forget();
         tester.frame();
         tester.typeText(q);
         for (p.list.visible) |r| try t.expect(!r.engine);
     }
 
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("\t");
     for (p.list.visible) |r| try t.expect(!r.engine);
 
-    p.reset();
+    p.forget();
     tester.frame();
     try t.expectEqual(@as(usize, 0), p.list.visible.len);
 
@@ -1028,7 +977,7 @@ test "Return on X and Grok opens their searches, and an engine row stays selecte
 }
 
 fn openByQuery(p: *panel_mod.Panel, tester: *ui.Tester, query: []const u8) void {
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText(query);
     tester.key(.enter);
@@ -1068,7 +1017,7 @@ test "an empty panel lists the apps opened most, recent ones first on a tie, and
     hooks.clock.advance(7200);
     openByQuery(&p, &tester, "beta");
 
-    p.reset();
+    p.forget();
     p.showSearch();
     tester.frame();
     try t.expectEqual(@as(usize, 3), p.list.visible.len);
@@ -1143,7 +1092,7 @@ test "typing replaces the suggestions and clearing brings them back, the board s
 
     p.showSearch();
     p.clearAppOpens();
-    p.reset();
+    p.forget();
     p.showSearch();
     tester.frame();
     try t.expectEqual(@as(usize, 0), p.list.visible.len);
@@ -1230,7 +1179,7 @@ test "with the setting off, or for a Link Row, a path-like query, or Clipboard m
     };
     const count_before = spy.queries.items.len;
     for (suppressed) |q| {
-        p.reset();
+        p.forget();
         tester.frame();
         tester.typeText(q);
         try t.expectEqual(count_before, spy.queries.items.len);
@@ -1262,7 +1211,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
     try t.expectEqual(@as(usize, 6), p.list.visible.len);
 
     spy.hooks_base.clock.advance(299);
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 1), spy.queries.items.len);
@@ -1271,7 +1220,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
     try t.expectEqualStrings("weather radar", p.list.visible[2].title);
 
     spy.hooks_base.clock.advance(2);
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("weather");
     try t.expectEqual(@as(usize, 2), spy.queries.items.len);
@@ -1282,10 +1231,7 @@ test "a cached query reuses suggestions within five minutes without sending a se
 test "the first web suggestion becomes the completion only when neither query history nor top hit matches" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var mem = try TmpStore.init();
     defer mem.deinit();
@@ -1303,10 +1249,10 @@ test "the first web suggestion becomes the completion only when neither query hi
     tester.settle(0.1);
 
     tester.typeText("WEA");
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
     p.receiveSuggestions("WEA", &.{ "weather forecast", "wealthsimple" });
     tester.frame();
-    const web_comp = p.completion orelse return error.NoCompletion;
+    const web_comp = p.currentCompletion() orelse return error.NoCompletion;
     try t.expectEqual(panel_mod.CompletionSource.web_suggestion, web_comp.source);
     try t.expectEqualStrings("ther forecast", web_comp.suffix);
     try t.expect(tester.hasText("ther forecast"));
@@ -1315,28 +1261,28 @@ test "the first web suggestion becomes the completion only when neither query hi
     try t.expectEqualStrings("WEAther", p.field.text());
     p.receiveSuggestions("WEAther", &.{ "forecast tomorrow", "weather radar" });
     tester.frame();
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
 
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("cal");
-    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.currentCompletion().?.source);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
     p.receiveSuggestions("cal", &.{"calculator online"});
     tester.frame();
-    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.completion.?.source);
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.top_hit, p.currentCompletion().?.source);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
 
     try store.recordQuery(.search, "weather radar", 1000);
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("wea");
-    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
-    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, p.currentCompletion().?.source);
+    try t.expectEqualStrings("ther radar", p.currentCompletion().?.suffix);
     p.receiveSuggestions("wea", &.{"weather forecast"});
     tester.frame();
-    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
-    try t.expectEqualStrings("ther radar", p.completion.?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, p.currentCompletion().?.source);
+    try t.expectEqualStrings("ther radar", p.currentCompletion().?.suffix);
 }
 
 test "Google suggestion URL encoding and Firefox JSON response parsing cap at four items and ignore malformed payloads" {
@@ -1409,10 +1355,7 @@ test "rows out of view ask for no icon" {
 test "a date is described once per result set" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var ch: CountingHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, ch.hooks());
@@ -1483,11 +1426,10 @@ test "the top hit stays the first row after scrolling back" {
 test "a late file row keeps its date" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
@@ -1496,44 +1438,36 @@ test "a late file row keeps its date" {
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
 
-    p.async_files = true;
     tester.typeText("return");
     tester.settle(0.1);
-    try t.expect(p.files_due);
-    const view = files.view().?;
-    var hits: [search.max_file_hits]core.search.Hit = undefined;
-    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
-    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    try t.expect(cat.hasPending());
+    wake.wait();
+    try t.expect(p.poll());
     tester.frame();
     try t.expect(tester.hasText("2025-return.pdf"));
     try t.expect(tester.hasText("Today at 9:41 AM"));
 }
 
-fn manyFilesCatalog(tmp: *std.testing.TmpDir, buf: *[std.posix.PATH_MAX]u8, files: *core.file_index.FileIndex, count: usize) !search.Catalog {
+fn manyFilesCatalog(tmp: *std.testing.TmpDir, count: usize) !search.Catalog {
     var name: [32]u8 = undefined;
     for (0..count) |i| {
         const sub = try std.fmt.bufPrint(&name, "item-{d:0>2}.txt", .{i});
         try tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "hello" });
     }
-    const root = buf[0..try tmp.dir.realPath(t.io, buf)];
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
     var cat: search.Catalog = .{ .gpa = t.allocator };
+    errdefer cat.deinit();
     const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
     defer t.allocator.free(idx);
-    files.* = try .open(t.allocator, idx, root, .{});
-    errdefer files.close();
-    files.rebuild(.{ .ready = ignoreOutcome });
-    try t.expect(files.adopt());
-    cat.files = files;
+    try cat.buildIndex(idx, root);
     return cat;
 }
 
 test "a keystroke stats only the rows in view" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
-    defer files.close();
+    var cat = try manyFilesCatalog(&tmp, 40);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -1553,10 +1487,7 @@ test "a keystroke stats only the rows in view" {
 test "a row scrolled into view shows its size and date" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try manyFilesCatalog(&tmp, &buf, &files, 40);
-    defer files.close();
+    var cat = try manyFilesCatalog(&tmp, 40);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -1594,12 +1525,9 @@ test "bundle contents do not use result slots" {
     const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
     const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
     defer t.allocator.free(idx);
-    var files = try core.file_index.FileIndex.open(t.allocator, idx, root, .{});
-    defer files.close();
-    files.rebuild(.{ .ready = ignoreOutcome });
-    try t.expect(files.adopt());
-    var cat: search.Catalog = .{ .gpa = t.allocator, .files = &files };
+    var cat: search.Catalog = .{ .gpa = t.allocator };
     defer cat.deinit();
+    try cat.buildIndex(idx, root);
 
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -1628,13 +1556,13 @@ test "history completion is asked once per query" {
     defer tester.deinit();
 
     tester.typeText("cal");
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
 
     for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
     tester.frame();
     tester.frame();
     tester.frame();
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
 }
 
 test "a recorded query refreshes the completion" {
@@ -1656,13 +1584,13 @@ test "a recorded query refreshes the completion" {
     defer tester.deinit();
 
     tester.typeText("cal");
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
 
     for (0..5) |i| try store.recordQuery(.search, "calculator", @floatFromInt(1001 + i));
     tester.key(.enter);
     p.pending = null;
     tester.frame();
-    try t.expectEqualStrings("culator", p.completion.?.suffix);
+    try t.expectEqualStrings("culator", p.currentCompletion().?.suffix);
 }
 
 test "a query with no history is asked once" {
@@ -1683,15 +1611,15 @@ test "a query with no history is asked once" {
     defer tester.deinit();
 
     tester.typeText("zzz");
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
     try store.recordQuery(.search, "zzzz", 1000);
     tester.frame();
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
 
     p.clearField();
     tester.typeText("zzz");
-    try t.expectEqualStrings("z", p.completion.?.suffix);
-    try t.expectEqual(panel_mod.CompletionSource.history, p.completion.?.source);
+    try t.expectEqualStrings("z", p.currentCompletion().?.suffix);
+    try t.expectEqual(panel_mod.CompletionSource.history, p.currentCompletion().?.source);
 }
 
 test "clearing history clears the completion" {
@@ -1713,27 +1641,25 @@ test "clearing history clears the completion" {
     defer tester.deinit();
 
     tester.typeText("cal");
-    try t.expectEqualStrings("endar", p.completion.?.suffix);
+    try t.expectEqualStrings("endar", p.currentCompletion().?.suffix);
 
     p.clearQueryHistory();
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
     p.clearField();
     tester.typeText("cal");
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
 }
 
 test "app rows show before file rows land" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
-    p.async_files = true;
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
@@ -1741,29 +1667,25 @@ test "app rows show before file rows land" {
 
     tester.typeText("a");
     tester.frame();
-    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expect(cat.hasPending());
     try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
     try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
 
-    const view = files.view().?;
-    var hits: [search.max_file_hits]core.search.Hit = undefined;
-    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
-    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    wake.wait();
+    try t.expect(p.poll());
     try t.expect(countRows(p.list.visible, .file) > 0);
 }
 
 test "a late answer for an old query is dropped" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
-    p.async_files = true;
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
@@ -1771,36 +1693,32 @@ test "a late answer for an old query is dropped" {
 
     tester.typeText("re");
     tester.frame();
-    const old_seq = hooks.last_file_seq;
-    const view = files.view().?;
-    var old_hits: [search.max_file_hits]core.search.Hit = undefined;
-    const old_count = search.searchFiles(view, "re", &old_hits);
-    try t.expect(old_count > 0);
+    wake.wait();
 
     tester.typeText("z");
     tester.frame();
-    try t.expect(hooks.last_file_seq != old_seq);
-    const before_len = p.list.visible.len;
-
-    p.landFiles(old_seq, view, old_hits[0..old_count]);
+    wake.wait();
+    try t.expect(p.poll());
     try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
-    try t.expectEqual(before_len, p.list.visible.len);
     try t.expectEqualStrings("rez", p.list.answered());
-    try t.expect(p.files_due);
+    try t.expect(!cat.hasPending());
+
+    tester.typeText(" ");
+    p.clearField();
+    try t.expect(!p.poll());
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
 }
 
 test "late file rows keep the selection" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
-    p.async_files = true;
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
@@ -1813,114 +1731,94 @@ test "late file rows keep the selection" {
     const chosen_path = try t.allocator.dupe(u8, p.list.visible[2].path);
     defer t.allocator.free(chosen_path);
 
-    const view = files.view().?;
-    var hits: [search.max_file_hits]core.search.Hit = undefined;
-    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
-    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    wake.wait();
+    try t.expect(p.poll());
 
     try t.expect(countRows(p.list.visible, .file) > 0);
     try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
     try t.expect(p.list.selected > 2);
 }
 
-test "an index is not swapped while a search runs" {
-    var gate: search.AdoptGate = .{};
-    try t.expect(!gate.requestAdopt(true));
-    try t.expect(gate.pending);
-    try t.expect(!gate.takeAfterSearch(true));
-    try t.expect(gate.pending);
-    try t.expect(gate.takeAfterSearch(false));
-    try t.expect(!gate.pending);
-    try t.expect(!gate.takeAfterSearch(false));
-    try t.expect(gate.requestAdopt(false));
-    try t.expect(!gate.pending);
-}
+test "a selected file row and dynamic filter survive an async index refresh and a retained reopen" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var cat = try tmpCatalog(&tmp);
+    defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
 
-test "the worker searches only the newest waiting query" {
-    const Ctx = struct {
-        io: std.Io,
-        mutex: std.Io.Mutex = .init,
-        entered: std.Io.Semaphore = .{ .permits = 0 },
-        gate: std.Io.Semaphore = .{ .permits = 0 },
-        done: std.Io.Semaphore = .{ .permits = 0 },
-        seen: [8][64]u8 = undefined,
-        seen_lens: [8]usize = @splat(0),
-        seen_count: usize = 0,
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
 
-        fn searchFn(raw: ?*anyopaque, _: core.index.View, text: []const u8, _: []core.search.Hit) usize {
-            const c: *@This() = @ptrCast(@alignCast(raw));
-            c.mutex.lockUncancelable(c.io);
-            const idx = c.seen_count;
-            c.seen_count += 1;
-            const n = @min(text.len, 64);
-            @memcpy(c.seen[idx][0..n], text[0..n]);
-            c.seen_lens[idx] = n;
-            c.mutex.unlock(c.io);
-            if (idx == 0) {
-                c.entered.post(c.io);
-                c.gate.waitUncancelable(c.io);
-            }
-            return 0;
-        }
+    tester.typeText("a");
+    wake.wait();
+    try t.expect(p.poll());
+    tester.frame();
 
-        fn readyFn(raw: ?*anyopaque) void {
-            const c: *@This() = @ptrCast(@alignCast(raw));
-            c.done.post(c.io);
-        }
+    var file_index: ?usize = null;
+    for (p.list.visible, 0..) |r, i| if (r.kind == .file) {
+        file_index = i;
+        break;
     };
+    const at = file_index orelse return error.NoFileRow;
+    try t.expect(at > 0);
+    for (0..at) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    const chosen_path = try t.allocator.dupe(u8, p.list.selection().?.path);
+    defer t.allocator.free(chosen_path);
 
-    var ctx: Ctx = .{ .io = t.io };
-    var searcher: search.FileSearcher = .{
-        .io = t.io,
-        .search_ctx = &ctx,
-        .search_fn = Ctx.searchFn,
-        .ready_ctx = &ctx,
-        .ready_fn = Ctx.readyFn,
-    };
-    try searcher.start();
-    defer searcher.stop();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Documents/aardvark.txt", .data = "" });
+    cat.rebuildIndex();
+    wake.wait();
+    try t.expect(p.poll());
+    wake.wait();
+    try t.expect(p.poll());
+    tester.frame();
+    try t.expect(tester.hasText("aardvark.txt"));
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
 
-    const empty_view: core.index.View = .{
-        .path_mask = &.{},
-        .name_mask = &.{},
-        .parent = &.{},
-        .name_off = &.{},
-        .name_len = &.{},
-        .flags = &.{},
-        .depth = &.{},
-        .names = &.{},
-        .root = "",
-    };
+    p.hide();
+    hooks.clock.advance(30);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Documents/abacus.txt", .data = "" });
+    cat.rebuildIndex();
+    wake.wait();
+    try t.expect(!p.poll());
 
-    searcher.submit(1, empty_view, "first");
-    ctx.entered.waitUncancelable(t.io);
-    searcher.submit(2, empty_view, "second");
-    searcher.submit(3, empty_view, "third");
-    ctx.gate.post(t.io);
+    p.showSearch();
+    wake.wait();
+    try t.expect(p.poll());
+    tester.frame();
+    try t.expect(tester.hasText("abacus.txt"));
+    try t.expectEqualStrings(chosen_path, p.list.selection().?.path);
 
-    ctx.done.waitUncancelable(t.io);
-    ctx.done.waitUncancelable(t.io);
-
-    ctx.mutex.lockUncancelable(t.io);
-    defer ctx.mutex.unlock(t.io);
-    try t.expectEqual(@as(usize, 2), ctx.seen_count);
-    try t.expectEqualStrings("first", ctx.seen[0][0..ctx.seen_lens[0]]);
-    try t.expectEqualStrings("third", ctx.seen[1][0..ctx.seen_lens[1]]);
-    try t.expectEqual(@as(u64, 3), searcher.takeResult().result.?.seq);
+    p.clearField();
+    tester.typeText("return");
+    wake.wait();
+    try t.expect(p.poll());
+    tester.frame();
+    p.selectFilter(.pdfs);
+    try t.expectEqual(panel_mod.Filter.pdfs, p.list.filter);
+    cat.rebuildIndex();
+    wake.wait();
+    try t.expect(p.poll());
+    try t.expectEqual(panel_mod.Filter.pdfs, p.list.filter);
+    wake.wait();
+    try t.expect(p.poll());
+    try t.expectEqual(panel_mod.Filter.pdfs, p.list.filter);
+    try t.expectEqual(@as(usize, 1), p.list.visible.len);
 }
 
 test "the synchronous path still returns file rows" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
-    try t.expect(!p.async_files);
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
@@ -1928,8 +1826,7 @@ test "the synchronous path still returns file rows" {
 
     tester.typeText("return");
     tester.frame();
-    try t.expect(!p.files_due);
-    try t.expectEqual(@as(u32, 0), hooks.file_searches);
+    try t.expect(!cat.hasPending());
     try t.expect(countRows(p.list.visible, .file) > 0);
 }
 
@@ -1949,12 +1846,12 @@ test "a one-byte query asks for no suggestions, a two-byte query and a single CJ
     tester.typeText("w");
     try t.expectEqual(@as(usize, 0), spy.queries.items.len);
 
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("we");
     try t.expectEqualStrings("we", spy.queries.getLast());
 
-    p.reset();
+    p.forget();
     tester.frame();
     tester.typeText("\u{5929}");
     try t.expectEqualStrings("\u{5929}", spy.queries.getLast());

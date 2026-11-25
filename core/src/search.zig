@@ -28,20 +28,27 @@ pub const Query = struct {
     term_mask: [max_terms]u32 = undefined,
     n: u8 = 0,
     path_mask: u32 = 0,
+    any_slash: bool = false,
+    one_miss_ceiling: i32 = 0,
 
     pub fn parse(text: []const u8) Query {
         var q: Query = .{};
         var it = std.mem.tokenizeScalar(u8, text, ' ');
+        var sum_ub: i32 = 0;
         while (it.next()) |raw| {
             if (q.n == max_terms) break;
             const word = raw[0..@min(raw.len, max_term_len)];
             for (word, 0..) |c, i| q.terms[q.n][i] = std.ascii.toLower(c);
             q.lens[q.n] = @intCast(word.len);
-            q.has_slash[q.n] = std.mem.indexOfScalar(u8, word, '/') != null;
+            const has_slash = std.mem.indexOfScalar(u8, word, '/') != null;
+            q.has_slash[q.n] = has_slash;
+            q.any_slash = q.any_slash or has_slash;
+            sum_ub += match.upperBoundAnywhere(word.len);
             q.term_mask[q.n] = mask.of(word);
             q.path_mask |= q.term_mask[q.n];
             q.n += 1;
         }
+        q.one_miss_ceiling = sum_ub - path_only_penalty;
         return q;
     }
 
@@ -140,10 +147,18 @@ const Vec = @Vector(lanes, u32);
 pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
     const need: Vec = @splat(q.path_mask);
+    var use_name_mask = false;
+    var masks = v.path_mask;
     var i = lo;
     // Eight path masks per compare; most queries reject most lanes here.
     while (i + lanes <= hi) : (i += lanes) {
-        const chunk: Vec = v.path_mask[i..][0..lanes].*;
+        if (!q.any_slash and !use_name_mask) {
+            if (heap.floor()) |f| if (f > q.one_miss_ceiling) {
+                use_name_mask = true;
+                masks = v.name_mask;
+            };
+        }
+        const chunk: Vec = masks[i..][0..lanes].*;
         const pass = (chunk & need) == need;
         if (!@reduce(.Or, pass)) continue;
         const bits: u8 = @bitCast(pass);
@@ -154,7 +169,7 @@ pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK
         }
     }
     while (i < hi) : (i += 1) {
-        if (v.path_mask[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, &paths);
+        if (masks[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, &paths);
     }
 }
 
@@ -166,13 +181,13 @@ const PathCache = struct {
     buf: [4096]u8 = undefined,
     dir_len: usize = 0,
 
-    fn of(c: *PathCache, v: index.View, id: u32) ?[]const u8 {
+    fn of(c: *PathCache, v: index.View, id: u32, name: []const u8) ?[]const u8 {
         const parent = v.parent[id];
-        const name = v.name(id);
         if (parent == index.no_parent) return name;
         if (parent != c.parent) {
             var tmp: [4096]u8 = undefined;
             const dir = v.relativePath(parent, &tmp) orelse return null;
+            if (dir.len + 1 > c.buf.len) return null;
             @memcpy(c.buf[0..dir.len], dir);
             c.buf[dir.len] = '/';
             c.dir_len = dir.len + 1;
@@ -191,9 +206,12 @@ const PathCache = struct {
 pub const path_only_penalty: i32 = 1000;
 
 fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCache) void {
-    const name = v.name(id);
     const name_mask = v.name_mask[id];
+    if (q.n == 1 and !q.has_slash[0] and name_mask & q.path_mask != q.path_mask) {
+        if (heap.floor()) |f| if (q.one_miss_ceiling < f) return;
+    }
 
+    const name = v.name(id);
     if (heap.floor()) |floor| {
         var bound: i32 = 0;
         for (0..q.n) |ti| {
@@ -218,7 +236,13 @@ fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCa
                 continue;
             }
         }
-        if (path == null) path = paths.of(v, id) orelse return;
+        if (path == null) {
+            if (v.parent[id] == index.no_parent) {
+                if (q.has_slash[ti]) path = name else return;
+            } else {
+                path = paths.of(v, id, name) orelse return;
+            }
+        }
         const p = path.?;
         total += match.score(p, term, p.len - name.len) orelse return;
         if (!q.has_slash[ti]) total -= path_only_penalty;
@@ -281,9 +305,9 @@ fn fixture(b: *index.Builder) !void {
     _ = try b.add(tax, "2025-return.pdf", .{});
     _ = try b.add(docs, "budget.xlsx", .{});
     const proj = try b.add(index.no_parent, "projects", .{ .dir = true });
-    const fl = try b.add(proj, "floodlight", .{ .dir = true });
-    _ = try b.add(fl, "README.md", .{});
-    _ = try b.add(fl, "Package.swift", .{});
+    const ns = try b.add(proj, "nanospot", .{ .dir = true });
+    _ = try b.add(ns, "README.md", .{});
+    _ = try b.add(ns, "Package.swift", .{});
 }
 
 fn top(v: index.View, q: []const u8, buf: []u8) ?[]const u8 {
@@ -299,9 +323,9 @@ test "finds by name, by path, and by terms" {
     try fixture(&b);
     var buf: [256]u8 = undefined;
     try t.expectEqualStrings("Documents/budget.xlsx", top(b.view(), "budget", &buf).?);
-    try t.expectEqualStrings("projects/floodlight/Package.swift", top(b.view(), "pkgswift", &buf).?);
+    try t.expectEqualStrings("projects/nanospot/Package.swift", top(b.view(), "pkgswift", &buf).?);
     try t.expectEqualStrings("Documents/tax/2025-return.pdf", top(b.view(), "tax/2025", &buf).?);
-    try t.expectEqualStrings("projects/floodlight/README.md", top(b.view(), "flood readme", &buf).?);
+    try t.expectEqualStrings("projects/nanospot/README.md", top(b.view(), "nano readme", &buf).?);
     try t.expect(top(b.view(), "zzz", &buf) == null);
 }
 
@@ -333,4 +357,69 @@ test "parallel path agrees with serial" {
     const ns = heap.sorted(&ser);
     try t.expectEqual(ns, np);
     for (par[0..np], ser[0..ns]) |a, c| try t.expectEqual(a, c);
+}
+
+fn bruteScore(v: index.View, q: *const Query, id: u32) ?i32 {
+    const name = v.name(id);
+    var buf: [4096]u8 = undefined;
+    const p = v.relativePath(id, &buf) orelse return null;
+    const name_start = p.len - name.len;
+    var total: i32 = 0;
+    for (0..q.n) |ti| {
+        const term = q.term(ti);
+        if (!q.has_slash[ti]) {
+            if (match.score(name, term, 0)) |s| {
+                total += s;
+                continue;
+            }
+            total += (match.score(p, term, name_start) orelse return null) - path_only_penalty;
+        } else {
+            total += match.score(p, term, name_start) orelse return null;
+        }
+    }
+    return total;
+}
+
+test "SIMD tightening and PathCache pruning match brute-force results identically" {
+    var b = index.Builder.init(t.allocator);
+    defer b.deinit();
+    const lib = try b.add(index.no_parent, "lib", .{ .dir = true });
+    const sub = try b.add(lib, "alpha", .{ .dir = true });
+    const docs = try b.add(index.no_parent, "doc", .{ .dir = true });
+    const tax = try b.add(docs, "tax", .{ .dir = true });
+    var nbuf: [32]u8 = undefined;
+    for (0..300) |i| {
+        const nm = try std.fmt.bufPrint(&nbuf, "item_{d}.zig", .{i});
+        _ = try b.add(sub, nm, .{});
+    }
+    _ = try b.add(sub, "x_match.zig", .{});
+    _ = try b.add(lib, "beta_x.txt", .{});
+    _ = try b.add(tax, "return_a.pdf", .{});
+    _ = try b.add(docs, "tax_note.md", .{});
+    _ = try b.add(index.no_parent, "a", .{ .dir = true });
+    _ = try b.add(index.no_parent, "tax", .{ .dir = true });
+
+    const v = b.view();
+    const queries = [_][]const u8{ "item", "lib/x", "a//b", "doc tax", "lib/beta", "x" };
+    for (queries) |qtext| {
+        const q = Query.parse(qtext);
+        var got_heap = TopK.init(16);
+        searchRange(v, &q, 0, v.count(), &got_heap);
+        var got: [16]Hit = undefined;
+        const ng = got_heap.sorted(&got);
+
+        var want_heap = TopK.init(16);
+        var id: u32 = 0;
+        while (id < v.count()) : (id += 1) {
+            if (bruteScore(v, &q, id)) |s| {
+                const nm = v.name(id);
+                const tie = @as(u64, v.depth[id]) << 48 | @as(u64, @min(nm.len, 0xffff)) << 32 | id;
+                want_heap.offer(.{ .id = id, .score = s }, tie);
+            }
+        }
+        var want: [16]Hit = undefined;
+        const nw = want_heap.sorted(&want);
+        try t.expectEqual(nw, ng);
+        for (got[0..ng], want[0..nw]) |a, c| try t.expectEqual(c, a);
+    }
 }

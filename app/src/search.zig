@@ -1,7 +1,7 @@
 //! What the panel searches: the installed apps, scored in memory, and the
 //! home folder's name index, mapped from disk by the Zig core.
 const std = @import("std");
-const core = @import("floodlight_core");
+const core = @import("nanospot_core");
 const clipboard = @import("clipboard.zig");
 
 pub const Kind = enum {
@@ -72,7 +72,9 @@ pub const web_engines = [_]WebEngine{
 pub const App = struct {
     /// The bundle's name without `.app`.
     name: []const u8,
+    subtitle: []const u8,
     path: []const u8,
+    name_mask: u32,
 };
 
 /// Apps outrank files that score the same: a launcher's first job.
@@ -86,12 +88,52 @@ pub const max_suggestions = 4;
 /// Apps listed under Suggestions on an empty query: ⌘2 to ⌘6 plus the selected first row.
 pub const max_suggested_apps = 6;
 
+pub const Wake = struct {
+    ctx: ?*anyopaque = null,
+    wake: *const fn (?*anyopaque) void = noWake,
+};
+
+fn noWake(_: ?*anyopaque) void {}
+
+/// Only `.live` carries an allocator, so hidden or board sessions cannot allocate rows.
+pub const Session = union(enum) {
+    live: struct {
+        arena: std.mem.Allocator,
+        query: []const u8,
+    },
+    retained,
+    idle,
+};
+
+pub const Poll = union(enum) {
+    none,
+    redraw,
+    merged: []Row,
+    stale,
+    failed: anyerror,
+};
+
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
     apps: std.ArrayList(App) = .empty,
-    files: ?*const core.file_index.FileIndex = null,
+    files: ?core.file_index.FileIndex = null,
+    searcher: FileSearcher = .{},
+    worker_started: bool = false,
+    wake: Wake = .{},
+    rebuild_thread: ?std.Thread = null,
+    scan_pending: std.atomic.Value(bool) = .init(false),
+    scan_thread_alive: std.atomic.Value(bool) = .init(false),
+    inline_adopted: bool = false,
+    was_indexing: bool = false,
+    next_seq: u64 = 0,
+    pending_seq: u64 = 0,
+    pending_query: std.ArrayList(u8) = .empty,
 
     pub fn deinit(cat: *Catalog) void {
+        if (cat.worker_started) cat.searcher.stop();
+        if (cat.rebuild_thread) |th| th.join();
+        if (cat.files) |*fi| fi.close();
+        cat.pending_query.deinit(cat.gpa);
         for (cat.apps.items) |a| cat.gpa.free(a.path);
         cat.apps.deinit(cat.gpa);
         cat.* = undefined;
@@ -100,23 +142,193 @@ pub const Catalog = struct {
     /// Takes ownership of `path`; the name is a slice of it.
     pub fn addApp(cat: *Catalog, path: []u8) !void {
         const base = std.fs.path.basename(path);
-        try cat.apps.append(cat.gpa, .{ .name = base[0 .. base.len - ".app".len], .path = path });
+        const name = if (std.mem.endsWith(u8, base, ".app") and base.len > ".app".len) base[0 .. base.len - ".app".len] else base;
+        try cat.apps.append(cat.gpa, .{
+            .name = name,
+            .subtitle = std.fs.path.dirname(path) orelse "/",
+            .path = path,
+            .name_mask = core.mask.of(name),
+        });
     }
 
-    /// The best rows for `query`, best first, in `arena`'s memory.
-    pub fn query(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
-        const v = (if (cat.files) |fi| fi.view() else null) orelse return cat.queryApps(arena, text);
+    /// Maps the last good File Index at `path` if present, or starts empty.
+    pub fn openIndex(cat: *Catalog, path: []const u8, scope_root: []const u8) !void {
+        return cat.openIndexWithScanner(path, scope_root, .{});
+    }
+
+    fn openIndexWithScanner(cat: *Catalog, path: []const u8, scope_root: []const u8, scanner: core.file_index.Scanner) !void {
+        const next = try core.file_index.FileIndex.open(cat.gpa, path, scope_root, scanner);
+        if (cat.files) |*fi| fi.close();
+        cat.files = next;
+    }
+
+    /// Opens, scans, and adopts the File Index synchronously on the caller's thread.
+    pub fn buildIndex(cat: *Catalog, path: []const u8, scope_root: []const u8) !void {
+        try cat.openIndex(path, scope_root);
+        const fi = &(cat.files.?);
+        fi.rebuild(.{ .ready = logOutcome });
+        if (!fi.adopt()) return error.FileIndexNotBuilt;
+        cat.inline_adopted = false;
+        cat.was_indexing = false;
+    }
+
+    pub fn startWorker(cat: *Catalog, io: std.Io, wake: Wake) void {
+        cat.wake = wake;
+        if (cat.worker_started) return;
+        cat.searcher.io = io;
+        cat.searcher.ready_ctx = cat;
+        cat.searcher.ready_fn = workerReady;
+        if (cat.searcher.start()) |_| {
+            cat.worker_started = true;
+        } else |err| {
+            std.log.err("file search: no worker thread: {s}", .{@errorName(err)});
+        }
+    }
+
+    pub fn rebuildIndex(cat: *Catalog) void {
+        const fi = &(cat.files orelse return);
+        if (!cat.worker_started) {
+            fi.rebuild(.{ .ready = logOutcome });
+            if (fi.adopt()) cat.inline_adopted = true;
+            cat.was_indexing = false;
+            return;
+        }
+        cat.scan_pending.store(true, .seq_cst);
+        cat.was_indexing = true;
+        if (cat.scan_thread_alive.cmpxchgStrong(false, true, .seq_cst, .seq_cst) != null) return;
+        if (cat.rebuild_thread) |th| {
+            th.join();
+            cat.rebuild_thread = null;
+        }
+        cat.rebuild_thread = std.Thread.spawn(.{}, runRebuild, .{cat}) catch |err| {
+            cat.scan_pending.store(false, .seq_cst);
+            cat.scan_thread_alive.store(false, .seq_cst);
+            cat.was_indexing = fi.busy();
+            std.log.err("file index: no rebuild thread: {s}", .{@errorName(err)});
+            return;
+        };
+    }
+
+    pub fn indexing(cat: *const Catalog) bool {
+        const fi = &(cat.files orelse return false);
+        return cat.scan_pending.load(.seq_cst) or cat.scan_thread_alive.load(.seq_cst) or fi.busy();
+    }
+
+    pub fn hasPending(cat: *const Catalog) bool {
+        return cat.pending_seq != 0;
+    }
+
+    pub fn cancel(cat: *Catalog) void {
+        cat.pending_seq = 0;
+        cat.pending_query.clearRetainingCapacity();
+    }
+
+    /// The best rows for `text`, best first, in `arena`'s memory. With a worker
+    /// running, file search is dispatched asynchronously and lands on `poll`.
+    pub fn query(cat: *Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
+        const trimmed = std.mem.trim(u8, text, " ");
+        if (trimmed.len == 0) {
+            cat.cancel();
+            return &.{};
+        }
+        cat.inline_adopted = false;
+        const v = (if (cat.files) |*fi| fi.view() else null) orelse {
+            cat.cancel();
+            return cat.rank(arena, text, null, &.{});
+        };
+        if (cat.worker_started) {
+            try cat.pending_query.ensureTotalCapacity(cat.gpa, text.len);
+            cat.pending_query.clearRetainingCapacity();
+            cat.pending_query.appendSliceAssumeCapacity(text);
+            cat.next_seq += 1;
+            cat.pending_seq = cat.next_seq;
+            cat.searcher.submit(cat.pending_seq, v, text);
+            return cat.rank(arena, text, null, &.{});
+        }
+        cat.cancel();
         var hits: [max_file_hits]core.search.Hit = undefined;
         const n = searchFiles(v, text, &hits);
         return cat.rank(arena, text, v, hits[0..n]);
     }
 
-    pub fn queryApps(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8) ![]Row {
-        return cat.rank(arena, text, null, &.{});
+    pub fn poll(cat: *Catalog, session: Session) Poll {
+        const taken: FileSearcher.Taken = if (cat.worker_started)
+            cat.searcher.takeResult()
+        else
+            .{ .result = null, .active = false };
+
+        var adopted = cat.inline_adopted;
+        cat.inline_adopted = false;
+        if (!taken.active) {
+            if (cat.files) |*fi| {
+                if (fi.adopt()) adopted = true;
+            }
+        }
+
+        const now_indexing = cat.indexing();
+        const indexing_changed = now_indexing != cat.was_indexing;
+        cat.was_indexing = now_indexing;
+
+        if (adopted) {
+            cat.cancel();
+            return switch (session) {
+                .live, .retained => .stale,
+                .idle => if (indexing_changed) .redraw else .none,
+            };
+        }
+
+        if (taken.result) |res| {
+            if (cat.pending_seq != 0 and res.seq == cat.pending_seq) {
+                const answered_query = cat.pending_query.items;
+                cat.pending_seq = 0;
+                switch (session) {
+                    .live => |live| {
+                        if (!std.mem.eql(u8, live.query, answered_query)) return .stale;
+                        const rows = cat.rank(live.arena, live.query, res.view, res.slice()) catch |err| return .{ .failed = err };
+                        return .{ .merged = rows };
+                    },
+                    .retained => return .stale,
+                    .idle => {},
+                }
+            }
+        }
+
+        return if (indexing_changed) .redraw else .none;
     }
 
-    pub fn queryWithHits(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, view: core.index.View, hits: []const core.search.Hit) ![]Row {
-        return cat.rank(arena, text, view, hits);
+    fn workerReady(ctx: ?*anyopaque) void {
+        const cat: *Catalog = @ptrCast(@alignCast(ctx));
+        cat.wake.wake(cat.wake.ctx);
+    }
+
+    fn logIndexError(err: anyerror) void {
+        if (!@import("builtin").is_test) std.log.err("file index: {s}", .{@errorName(err)});
+    }
+
+    fn logOutcome(_: ?*anyopaque, outcome: core.file_index.Outcome) void {
+        if (outcome == .failed) logIndexError(outcome.failed);
+    }
+
+    fn onScanOutcome(ctx: ?*anyopaque, outcome: core.file_index.Outcome) void {
+        const cat: *Catalog = @ptrCast(@alignCast(ctx));
+        if (outcome == .failed) logIndexError(outcome.failed);
+        const fi = &(cat.files orelse return);
+        if (fi.busy() or cat.scan_pending.load(.seq_cst)) {
+            cat.wake.wake(cat.wake.ctx);
+        }
+    }
+
+    fn runRebuild(cat: *Catalog) void {
+        const fi = &(cat.files orelse unreachable);
+        while (true) {
+            while (cat.scan_pending.swap(false, .seq_cst)) {
+                fi.rebuild(.{ .ctx = cat, .ready = onScanOutcome });
+            }
+            cat.scan_thread_alive.store(false, .seq_cst);
+            if (!cat.scan_pending.load(.seq_cst)) break;
+            if (cat.scan_thread_alive.cmpxchgStrong(false, true, .seq_cst, .seq_cst) != null) break;
+        }
+        cat.wake.wake(cat.wake.ctx);
     }
 
     fn rank(cat: *const Catalog, arena: std.mem.Allocator, text: []const u8, file_view: ?core.index.View, hits: []const core.search.Hit) ![]Row {
@@ -127,10 +339,11 @@ pub const Catalog = struct {
         const terms = core.search.Query.parse(trimmed);
         try rows.ensureTotalCapacity(arena, cat.apps.items.len + max_rows);
         apps: for (cat.apps.items) |a| {
+            if (a.name_mask & terms.path_mask != terms.path_mask) continue;
             var s: i32 = 0;
             for (0..terms.n) |i| s += core.match.score(a.name, terms.term(i), 0) orelse continue :apps;
             if (std.ascii.startsWithIgnoreCase(a.name, trimmed)) s += app_prefix_bonus;
-            try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = std.fs.path.dirname(a.path) orelse "/", .path = a.path, .score = s + app_bonus });
+            try rows.append(arena, .{ .kind = .app, .title = a.name, .subtitle = a.subtitle, .path = a.path, .score = s + app_bonus });
         }
 
         if (file_view) |v| {
@@ -142,10 +355,14 @@ pub const Catalog = struct {
                 // Bundles are apps, listed above from the catalog; their insides are no one's.
                 if (std.mem.endsWith(u8, rel, ".app") or std.mem.indexOf(u8, rel, ".app/") != null) continue;
                 const path = try std.fs.path.join(arena, &.{ root, rel });
+                const subtitle = if (path.len >= rel.len and std.mem.eql(u8, path[path.len - rel.len ..], rel))
+                    path[path.len - rel.len ..]
+                else
+                    try arena.dupe(u8, rel);
                 try rows.append(arena, .{
                     .kind = if (v.flags[h.id].dir) .folder else .file,
                     .title = std.fs.path.basename(path),
-                    .subtitle = try arena.dupe(u8, rel),
+                    .subtitle = subtitle,
                     .path = path,
                     .score = h.score,
                 });
@@ -155,9 +372,10 @@ pub const Catalog = struct {
         }
         const link = try detectLink(arena, trimmed);
         const extra: usize = if (link != null) 2 else 1;
-        const ranked = try best(arena, rows.items, max_rows - extra);
-        var out = try arena.alloc(Row, ranked.len + extra);
+        const ranked_len = @min(rows.items.len, max_rows - extra);
+        var out = try arena.alloc(Row, ranked_len + extra);
         if (link) |url| {
+            try rankTop(arena, rows.items, out[1 .. 1 + ranked_len]);
             const link_row: Row = .{
                 .kind = .web,
                 .title = try std.fmt.allocPrint(arena, "Open {s}", .{clipboard.domain(url) orelse trimmed}),
@@ -165,19 +383,18 @@ pub const Catalog = struct {
                 .path = url,
                 .score = 0,
             };
-            if (exactMatchIndex(ranked, trimmed)) |idx| {
-                out[0] = ranked[idx];
+            if (exactMatchIndex(out[1 .. 1 + ranked_len], trimmed)) |idx| {
+                const match_row = out[1 + idx];
+                std.mem.copyBackwards(Row, out[2 .. 2 + idx], out[1 .. 1 + idx]);
+                out[0] = match_row;
                 out[1] = link_row;
-                @memcpy(out[2 .. 2 + idx], ranked[0..idx]);
-                @memcpy(out[2 + idx .. ranked.len + 1], ranked[idx + 1 ..]);
             } else {
                 out[0] = link_row;
-                @memcpy(out[1 .. ranked.len + 1], ranked);
             }
         } else {
-            @memcpy(out[0..ranked.len], ranked);
+            try rankTop(arena, rows.items, out[0..ranked_len]);
         }
-        out[ranked.len + extra - 1] = .{
+        out[ranked_len + extra - 1] = .{
             .kind = .web,
             .title = "Google",
             .subtitle = "google.com",
@@ -201,7 +418,9 @@ pub fn stamp(arena: std.mem.Allocator, r: *Row) void {
     var st: std.c.Stat = undefined;
     if (std.c.stat(z, &st) != 0) return;
     r.modified = st.mtime().sec;
-    if (r.kind == .file) r.size = @intCast(st.size);
+    if (r.kind == .file) if (std.math.cast(u64, st.size)) |sz| {
+        r.size = sz;
+    };
 }
 
 pub fn webSearchUrl(arena: std.mem.Allocator, query: []const u8) ![]const u8 {
@@ -318,18 +537,18 @@ fn inTldSet(tld: []const u8) bool {
 
 const RankKey = struct { score: i32, title_len: u32, at: u32 };
 
-fn best(arena: std.mem.Allocator, rows: []const Row, limit: usize) ![]Row {
+fn rankTop(arena: std.mem.Allocator, rows: []const Row, out: []Row) !void {
+    if (out.len == 0) return;
     const keys = try arena.alloc(RankKey, rows.len);
     for (rows, keys, 0..) |r, *k, i| k.* = .{ .score = r.score, .title_len = @intCast(r.title.len), .at = @intCast(i) };
-    std.mem.sort(RankKey, keys, {}, better);
-    const out = try arena.alloc(Row, @min(rows.len, limit));
+    std.sort.pdq(RankKey, keys, {}, better);
     for (out, keys[0..out.len]) |*o, k| o.* = rows[k.at];
-    return out;
 }
 
 fn better(_: void, a: RankKey, b: RankKey) bool {
     if (a.score != b.score) return a.score > b.score;
-    return a.title_len < b.title_len;
+    if (a.title_len != b.title_len) return a.title_len < b.title_len;
+    return a.at < b.at;
 }
 
 /// Where apps are installed, besides the user's own `~/Applications`.
@@ -358,56 +577,37 @@ pub fn scanApps(cat: *Catalog, io: std.Io, folder: []const u8) !void {
     }
 }
 
-pub fn searchFiles(view: core.index.View, text: []const u8, out: []core.search.Hit) usize {
+fn searchFiles(view: core.index.View, text: []const u8, out: []core.search.Hit) usize {
     const trimmed = std.mem.trim(u8, text, " ");
     if (trimmed.len == 0) return 0;
     return core.search.search(view, trimmed, out);
 }
 
-pub const AdoptGate = struct {
-    pending: bool = false,
-
-    pub fn requestAdopt(g: *AdoptGate, worker_active: bool) bool {
-        if (worker_active) {
-            g.pending = true;
-            return false;
-        }
-        g.pending = false;
-        return true;
-    }
-
-    pub fn takeAfterSearch(g: *AdoptGate, worker_active: bool) bool {
-        if (!g.pending or worker_active) return false;
-        g.pending = false;
-        return true;
-    }
-};
-
 extern "c" fn pthread_set_qos_class_self_np(qos_class: c_uint, relative_priority: c_int) c_int;
 const qos_class_user_interactive: c_uint = 0x21;
 
-pub const FileSearcher = struct {
-    pub const max_query_bytes = 256;
-    pub const SearchFn = *const fn (?*anyopaque, core.index.View, []const u8, []core.search.Hit) usize;
-    pub const ReadyFn = *const fn (?*anyopaque) void;
+const FileSearcher = struct {
+    const max_query_bytes = 256;
+    const SearchFn = *const fn (?*anyopaque, core.index.View, []const u8, []core.search.Hit) usize;
+    const ReadyFn = *const fn (?*anyopaque) void;
 
-    pub const Result = struct {
+    const Result = struct {
         seq: u64 = 0,
         view: core.index.View = undefined,
         hits: [max_file_hits]core.search.Hit = undefined,
         len: usize = 0,
 
-        pub fn slice(r: *const Result) []const core.search.Hit {
+        fn slice(r: *const Result) []const core.search.Hit {
             return r.hits[0..r.len];
         }
     };
 
-    pub const Taken = struct {
+    const Taken = struct {
         result: ?Result,
         active: bool,
     };
 
-    io: std.Io,
+    io: std.Io = undefined,
     mutex: std.Io.Mutex = .init,
     cond: std.Io.Condition = .init,
     thread: ?std.Thread = null,
@@ -438,23 +638,23 @@ pub const FileSearcher = struct {
         return n;
     }
 
-    pub fn start(fs: *FileSearcher) !void {
+    fn start(fs: *FileSearcher) !void {
         if (fs.thread != null) return;
         fs.stopped = false;
         fs.thread = try std.Thread.spawn(.{}, run, .{fs});
     }
 
-    pub fn stop(fs: *FileSearcher) void {
-        const t = fs.thread orelse return;
+    fn stop(fs: *FileSearcher) void {
+        const th = fs.thread orelse return;
         fs.mutex.lockUncancelable(fs.io);
         fs.stopped = true;
         fs.cond.signal(fs.io);
         fs.mutex.unlock(fs.io);
-        t.join();
+        th.join();
         fs.thread = null;
     }
 
-    pub fn submit(fs: *FileSearcher, seq: u64, view: core.index.View, text: []const u8) void {
+    fn submit(fs: *FileSearcher, seq: u64, view: core.index.View, text: []const u8) void {
         fs.mutex.lockUncancelable(fs.io);
         defer fs.mutex.unlock(fs.io);
         fs.req_seq = seq;
@@ -465,13 +665,7 @@ pub const FileSearcher = struct {
         fs.cond.signal(fs.io);
     }
 
-    pub fn isActive(fs: *FileSearcher) bool {
-        fs.mutex.lockUncancelable(fs.io);
-        defer fs.mutex.unlock(fs.io);
-        return fs.busy or fs.req_seq > fs.served_seq;
-    }
-
-    pub fn takeResult(fs: *FileSearcher) Taken {
+    fn takeResult(fs: *FileSearcher) Taken {
         fs.mutex.lockUncancelable(fs.io);
         defer fs.mutex.unlock(fs.io);
         const res: ?Result = if (fs.has_result) fs.result else null;
@@ -520,3 +714,199 @@ pub const FileSearcher = struct {
         }
     }
 };
+
+const t = std.testing;
+
+test "the worker searches only the newest waiting query" {
+    const Ctx = struct {
+        io: std.Io,
+        mutex: std.Io.Mutex = .init,
+        entered: std.Io.Semaphore = .{ .permits = 0 },
+        gate: std.Io.Semaphore = .{ .permits = 0 },
+        done: std.Io.Semaphore = .{ .permits = 0 },
+        seen: [8][64]u8 = undefined,
+        seen_lens: [8]usize = @splat(0),
+        seen_count: usize = 0,
+
+        fn searchFn(raw: ?*anyopaque, _: core.index.View, text: []const u8, _: []core.search.Hit) usize {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.mutex.lockUncancelable(c.io);
+            const idx = c.seen_count;
+            c.seen_count += 1;
+            const n = @min(text.len, 64);
+            @memcpy(c.seen[idx][0..n], text[0..n]);
+            c.seen_lens[idx] = n;
+            c.mutex.unlock(c.io);
+            if (idx == 0) {
+                c.entered.post(c.io);
+                c.gate.waitUncancelable(c.io);
+            }
+            return 0;
+        }
+
+        fn wake(raw: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.done.post(c.io);
+        }
+    };
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "note.txt", .data = "" });
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx_path = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx_path);
+
+    var ctx: Ctx = .{ .io = t.io };
+    var cat: Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    defer ctx.gate.post(t.io);
+    try cat.buildIndex(idx_path, root);
+    cat.searcher.search_ctx = &ctx;
+    cat.searcher.search_fn = Ctx.searchFn;
+    cat.startWorker(t.io, .{ .ctx = &ctx, .wake = Ctx.wake });
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    _ = try cat.query(arena.allocator(), "first");
+    ctx.entered.waitUncancelable(t.io);
+    _ = try cat.query(arena.allocator(), "second");
+    _ = try cat.query(arena.allocator(), "third");
+    ctx.gate.post(t.io);
+
+    ctx.done.waitUncancelable(t.io);
+    ctx.done.waitUncancelable(t.io);
+
+    ctx.mutex.lockUncancelable(t.io);
+    defer ctx.mutex.unlock(t.io);
+    try t.expectEqual(@as(usize, 2), ctx.seen_count);
+    try t.expectEqualStrings("first", ctx.seen[0][0..ctx.seen_lens[0]]);
+    try t.expectEqualStrings("third", ctx.seen[1][0..ctx.seen_lens[1]]);
+    const polled = cat.poll(.{ .live = .{ .arena = arena.allocator(), .query = "third" } });
+    try t.expect(polled == .merged);
+    try t.expect(!cat.hasPending());
+}
+
+test "index adoption waits while the worker searches and supersedes unpolled hits from the old index" {
+    const Ctx = struct {
+        io: std.Io,
+        entered: std.Io.Semaphore = .{ .permits = 0 },
+        gate: std.Io.Semaphore = .{ .permits = 0 },
+        wakes: std.Io.Semaphore = .{ .permits = 0 },
+        abort: std.atomic.Value(bool) = .init(false),
+        block_first: bool = true,
+
+        fn searchFn(raw: ?*anyopaque, view: core.index.View, text: []const u8, out: []core.search.Hit) usize {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            if (c.block_first) {
+                c.block_first = false;
+                c.entered.post(c.io);
+                c.gate.waitUncancelable(c.io);
+            }
+            if (c.abort.load(.seq_cst)) return 0;
+            return searchFiles(view, text, out);
+        }
+
+        fn wake(raw: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(raw));
+            c.wakes.post(c.io);
+        }
+    };
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "alpha-one.txt", .data = "" });
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx_path = try std.fs.path.join(t.allocator, &.{ root, ".names.flix" });
+    defer t.allocator.free(idx_path);
+
+    var ctx: Ctx = .{ .io = t.io };
+    var cat: Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    defer {
+        ctx.abort.store(true, .seq_cst);
+        ctx.gate.post(t.io);
+    }
+    try cat.buildIndex(idx_path, root);
+    cat.searcher.search_ctx = &ctx;
+    cat.searcher.search_fn = Ctx.searchFn;
+    cat.startWorker(t.io, .{ .ctx = &ctx, .wake = Ctx.wake });
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+
+    // 1. Start a worker search on the 1-file index and pause it mid-flight.
+    _ = try cat.query(arena.allocator(), "alpha");
+    ctx.entered.waitUncancelable(t.io);
+
+    // 2. Build a 2-file index while the worker still holds the 1-file View.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "alpha-two.txt", .data = "" });
+    cat.rebuildIndex();
+    try t.expect(cat.indexing());
+    ctx.wakes.waitUncancelable(t.io);
+    try t.expect(!cat.indexing());
+
+    // Polling while the worker is still active must NOT swap/unmap the old View yet.
+    const while_busy = cat.poll(.{ .live = .{ .arena = arena.allocator(), .query = "alpha" } });
+    try t.expectEqual(Poll.redraw, while_busy);
+    try t.expectEqual(@as(u32, 1), cat.files.?.view().?.count());
+
+    // 3. Release the worker; the next poll adopts the 2-file index and returns .stale instead of ranking old hits.
+    ctx.gate.post(t.io);
+    ctx.wakes.waitUncancelable(t.io);
+    const after_worker = cat.poll(.{ .live = .{ .arena = arena.allocator(), .query = "alpha" } });
+    try t.expectEqual(Poll.stale, after_worker);
+    try t.expectEqual(@as(u32, 2), cat.files.?.view().?.count());
+
+    // 4. Also verify the hidden/retained race: worker finishes first, rebuild finishes second, poll(.retained) adopts safely.
+    _ = try cat.query(arena.allocator(), "alpha");
+    ctx.wakes.waitUncancelable(t.io);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "alpha-three.txt", .data = "" });
+    cat.rebuildIndex();
+    ctx.wakes.waitUncancelable(t.io);
+    try t.expectEqual(Poll.stale, cat.poll(.retained));
+    try t.expectEqual(@as(u32, 3), cat.files.?.view().?.count());
+}
+
+test "a failed background scan settles indexing and asks for a redraw while keeping the last good index" {
+    const ScanProbe = struct {
+        scans: u32 = 0,
+        wakes: std.Io.Semaphore = .{ .permits = 0 },
+
+        fn run(raw: ?*anyopaque, b: *core.index.Builder, root: []const u8) anyerror!void {
+            const p: *@This() = @ptrCast(@alignCast(raw));
+            p.scans += 1;
+            if (p.scans >= 2) return error.AccessDenied;
+            try b.setRoot(root);
+            _ = try b.add(core.index.no_parent, "kept.txt", .{});
+        }
+
+        fn wake(raw: ?*anyopaque) void {
+            const p: *@This() = @ptrCast(@alignCast(raw));
+            p.wakes.post(t.io);
+        }
+    };
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const idx_path = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx_path);
+
+    var probe: ScanProbe = .{};
+    var cat: Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.openIndexWithScanner(idx_path, root, .{ .ctx = &probe, .run = ScanProbe.run });
+    cat.rebuildIndex();
+    try t.expectEqual(@as(u32, 1), cat.files.?.view().?.count());
+
+    cat.startWorker(t.io, .{ .ctx = &probe, .wake = ScanProbe.wake });
+    cat.rebuildIndex();
+    probe.wakes.waitUncancelable(t.io);
+    try t.expect(!cat.indexing());
+    try t.expectEqual(Poll.redraw, cat.poll(.idle));
+    try t.expectEqual(@as(u32, 1), cat.files.?.view().?.count());
+}

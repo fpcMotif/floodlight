@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>floodlight-nanoui</string>
+	<string>nanospot</string>
 	<key>CFBundleIconFile</key>
 	<string>Nanospot.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.floodlight.nano</string>
+	<string>com.nanospot.app</string>
 	<key>CFBundleName</key>
 	<string>Nanospot</string>
 	<key>CFBundleDisplayName</key>

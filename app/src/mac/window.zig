@@ -55,7 +55,7 @@ var signpost_dso: ?*const anyopaque = null;
 
 fn signpostLog() OsLog {
     if (signpost_log) |l| return l;
-    const l = os_log_create("com.floodlight.nano", "PointsOfInterest");
+    const l = os_log_create("com.nanospot.app", "PointsOfInterest");
     signpost_log = l;
     signpost_dso = _dyld_get_prog_image_header();
     return l;
@@ -63,21 +63,21 @@ fn signpostLog() OsLog {
 
 // `logd` resolves signpost strings only from `__TEXT,__oslogstring`; `export`
 // keeps ReleaseFast from merging them into `__TEXT,__const`.
-export const fl_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
-export const fl_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
-export const fl_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
-export const fl_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
+export const ns_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
+export const ns_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
+export const ns_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
+export const ns_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
 
 fn signpostEmit(s: Signpost, kind: u8) void {
     const log = signpostLog();
     if (!os_signpost_enabled(log)) return;
     var buf: [2]u8 align(16) = .{ 0, 0 };
     const name: [*:0]const u8 = switch (s) {
-        .summon => &fl_signpost_summon,
-        .keystroke => &fl_signpost_keystroke,
-        .submit => &fl_signpost_submit,
+        .summon => &ns_signpost_summon,
+        .keystroke => &ns_signpost_keystroke,
+        .submit => &ns_signpost_submit,
     };
-    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &fl_signpost_fmt, &buf, buf.len);
+    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &ns_signpost_fmt, &buf, buf.len);
 }
 
 pub fn signpostBegin(s: Signpost) void {
@@ -111,8 +111,8 @@ fn hostIsFlipped(_: objc.Object, _: objc.SEL) callconv(.c) objc.BOOL {
 }
 
 /// Puts the panel's content on a clear Liquid Glass slab (NSGlassEffectView,
-/// macOS 26) that refracts the desktop behind it, as the Swift panel does;
-/// a HUD material where glass isn't available or transparency is reduced.
+/// macOS 26) that refracts the desktop behind it; a HUD material where glass
+/// isn't available or transparency is reduced.
 /// Returns the flipped view the surface fills: native views go in it, over
 /// the surface, because nanoui's surface takes every click inside it.
 pub fn installSlab(window: *nanoui.Window, radius: f64, level: Level, style: GlassStyle) ?objc.Object {
@@ -134,7 +134,7 @@ pub fn installSlab(window: *nanoui.Window, radius: f64, level: Level, style: Gla
     objc.msg(void, content, "retain", .{});
     defer objc.msg(void, content, "release", .{});
     const frame = objc.msg(objc.CGRect, content, "frame", .{});
-    const host_class = objc.defineClass(.{ .name = "FloodlightHostView", .superclass = "NSView", .methods = &.{
+    const host_class = objc.defineClass(.{ .name = "NanospotHostView", .superclass = "NSView", .methods = &.{
         .{ .name = "isFlipped", .imp = &hostIsFlipped, .types = "c@:" },
     } });
     const host = objc.msg(objc.Object, objc.msg(objc.Object, host_class, "alloc", .{}), "initWithFrame:", .{frame});

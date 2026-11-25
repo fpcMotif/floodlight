@@ -63,18 +63,23 @@ pub const View = struct {
     }
 
     pub fn name(v: View, id: u32) []const u8 {
-        const off = v.name_off[id];
-        return v.names[off..][0..v.name_len[id]];
+        if (id >= v.name_off.len or id >= v.name_len.len) return "";
+        const off: usize = v.name_off[id];
+        const len: usize = v.name_len[id];
+        if (off > v.names.len or len > v.names.len - off) return "";
+        return v.names[off..][0..len];
     }
 
     /// Writes the root-relative path into the tail of `buf` and returns it.
     /// Built back to front so it needs no second pass and no allocation.
     pub fn relativePath(v: View, id: u32, buf: []u8) ?[]const u8 {
+        if (id != no_parent and id >= v.parent.len) return null;
         var end = buf.len;
         var cur = id;
         var first = true;
         while (cur != no_parent) {
             const n = v.name(cur);
+            if (cur >= v.name_len.len or n.len != v.name_len[cur]) return null;
             const need = n.len + @intFromBool(!first);
             if (need > end) return null;
             if (!first) {
@@ -84,7 +89,9 @@ pub const View = struct {
             end -= n.len;
             @memcpy(buf[end..][0..n.len], n);
             first = false;
-            cur = v.parent[cur];
+            const p = v.parent[cur];
+            if (p != no_parent and p >= cur) return null;
+            cur = p;
         }
         return buf[end..];
     }
@@ -119,6 +126,7 @@ pub const Builder = struct {
     }
 
     pub fn setRoot(b: *Builder, root: []const u8) !void {
+        if (root.len > std.math.maxInt(u32)) return error.NameTooLong;
         b.root.clearRetainingCapacity();
         try b.root.appendSlice(b.gpa, root);
     }
@@ -129,9 +137,10 @@ pub const Builder = struct {
 
     pub fn add(b: *Builder, parent: u32, entry_name: []const u8, flags: Flags) !u32 {
         if (entry_name.len > std.math.maxInt(u16)) return error.NameTooLong;
-        if (b.names.items.len + entry_name.len > std.math.maxInt(u32)) return error.IndexTooLarge;
+        if (entry_name.len > std.math.maxInt(u32) - b.names.items.len) return error.IndexTooLarge;
         const id = b.count();
         if (id == no_parent) return error.IndexTooLarge;
+        if (parent != no_parent and parent >= id) return error.CorruptIndex;
         const nm = mask.of(entry_name);
         const inherited = if (parent == no_parent) 0 else b.path_mask.items[parent];
         try b.path_mask.append(b.gpa, nm | inherited);
@@ -241,9 +250,10 @@ pub const Mapped = struct {
     pub fn open(dir: sys.fd_t, path: []const u8) !Mapped {
         const fd = try sys.openat(dir, path, .read);
         defer sys.close(fd);
-        const len = try sys.size(fd);
-        if (len < @sizeOf(Header)) return error.CorruptIndex;
-        const bytes = try sys.mmapRead(fd, @intCast(len));
+        const raw_len = try sys.size(fd);
+        if (raw_len < @sizeOf(Header)) return error.CorruptIndex;
+        const len = std.math.cast(usize, raw_len) orelse return error.CorruptIndex;
+        const bytes = try sys.mmapRead(fd, len);
         errdefer sys.munmap(bytes);
         return .{ .bytes = bytes, .view = try parse(bytes) };
     }
@@ -257,7 +267,7 @@ pub const Mapped = struct {
 fn parse(bytes: []align(std.heap.page_size_min) const u8) !View {
     const h: *const Header = @ptrCast(bytes.ptr);
     if (!std.mem.eql(u8, &h.magic, &magic) or h.version != version) return error.CorruptIndex;
-    if (h.total > bytes.len) return error.CorruptIndex;
+    if (h.total < @sizeOf(Header) or h.total > bytes.len) return error.CorruptIndex;
     const n: usize = h.count;
     return .{
         .path_mask = try section(u32, bytes, h.off_path_mask, n),
@@ -273,10 +283,13 @@ fn parse(bytes: []align(std.heap.page_size_min) const u8) !View {
 }
 
 fn section(comptime T: type, bytes: []const u8, off: u64, n: u64) ![]const T {
-    const len = n * @sizeOf(T);
-    if (off % section_align != 0 or off + len > bytes.len) return error.CorruptIndex;
-    const ptr: [*]const T = @ptrCast(@alignCast(bytes.ptr + off));
-    return ptr[0..n];
+    const count_usize = std.math.cast(usize, n) orelse return error.CorruptIndex;
+    const off_usize = std.math.cast(usize, off) orelse return error.CorruptIndex;
+    const byte_len = std.math.mul(usize, count_usize, @sizeOf(T)) catch return error.CorruptIndex;
+    const end = std.math.add(usize, off_usize, byte_len) catch return error.CorruptIndex;
+    if (off_usize % section_align != 0 or end > bytes.len) return error.CorruptIndex;
+    const ptr: [*]const T = @ptrCast(@alignCast(bytes.ptr + off_usize));
+    return ptr[0..count_usize];
 }
 
 const t = std.testing;
@@ -329,4 +342,64 @@ test "rejects a truncated file" {
     defer tmp.cleanup();
     try tmp.dir.writeFile(t.io, .{ .sub_path = "bad", .data = "FLIX" ++ @as([200]u8, @splat(0)) });
     try t.expectError(error.CorruptIndex, Mapped.open(tmp.dir.handle, "bad"));
+}
+
+test "rejects corrupt header counts and section offsets without overflowing" {
+    var raw: [4096]u8 align(std.heap.page_size_min) = @splat(0);
+    var h: Header = .{
+        .magic = magic,
+        .version = version,
+        .count = std.math.maxInt(u32),
+        .root_len = 0,
+        .names_len = std.math.maxInt(u64) - 15,
+        .off_path_mask = section_align,
+        .off_name_mask = section_align,
+        .off_parent = section_align,
+        .off_name_off = section_align,
+        .off_name_len = section_align,
+        .off_flags = section_align,
+        .off_depth = section_align,
+        .off_names = 4096,
+        .off_root = section_align,
+        .total = @sizeOf(Header),
+    };
+    @memcpy(raw[0..@sizeOf(Header)], std.mem.asBytes(&h));
+    try t.expectError(error.CorruptIndex, parse(&raw));
+
+    h.count = 1;
+    h.names_len = 0;
+    h.total = @sizeOf(Header) - 1;
+    @memcpy(raw[0..@sizeOf(Header)], std.mem.asBytes(&h));
+    try t.expectError(error.CorruptIndex, parse(&raw));
+}
+
+test "bounds checks corrupt View names and parent links" {
+    const masks = [_]u32{ 0, 0 };
+    const parents = [_]u32{ 0, 0 };
+    const offs = [_]u32{ 100, 0 };
+    const lens = [_]u16{ 4, 8 };
+    const fl = [_]Flags{ .{}, .{} };
+    const depths = [_]u8{ 1, 2 };
+    const v: View = .{
+        .path_mask = &masks,
+        .name_mask = &masks,
+        .parent = &parents,
+        .name_off = &offs,
+        .name_len = &lens,
+        .flags = &fl,
+        .depth = &depths,
+        .names = "ok",
+        .root = "",
+    };
+    try t.expectEqualStrings("", v.name(0));
+    try t.expectEqualStrings("", v.name(1));
+    try t.expectEqualStrings("", v.name(99));
+    var buf: [64]u8 = undefined;
+    try t.expect(v.relativePath(0, &buf) == null);
+    try t.expect(v.relativePath(1, &buf) == null);
+    try t.expect(v.relativePath(99, &buf) == null);
+
+    var b = Builder.init(t.allocator);
+    defer b.deinit();
+    try t.expectError(error.CorruptIndex, b.add(0, "self", .{}));
 }

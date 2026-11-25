@@ -1,9 +1,9 @@
-//! `flcore`: build, query, and measure an index from the command line.
+//! `nscore`: build, query, and measure an index from the command line.
 //!
-//!   flcore index <root> <out.flix>
-//!   flcore search <in.flix> <query...>
-//!   flcore bench <in.flix> [query ...]
-//!   flcore synth <out.flix> <count>
+//!   nscore index <root> <out.flix>
+//!   nscore search <in.flix> <query...>
+//!   nscore bench <in.flix> [query ...]
+//!   nscore synth <out.flix> <count>
 //!
 //! `bench` exists so a latency or memory claim about the engine is a number
 //! someone can reproduce, not a sentence in an issue.
@@ -39,10 +39,10 @@ fn run(gpa: std.mem.Allocator, out: *std.Io.Writer, args: []const [:0]const u8) 
 fn usage(out: *std.Io.Writer) !void {
     try out.writeAll(
         \\usage:
-        \\  flcore index <root> <out.flix>
-        \\  flcore search <in.flix> <query...>
-        \\  flcore bench <in.flix> [query ...]
-        \\  flcore synth <out.flix> <count>
+        \\  nscore index <root> <out.flix>
+        \\  nscore search <in.flix> <query...>
+        \\  nscore bench <in.flix> [query ...]
+        \\  nscore synth <out.flix> <count>
         \\
     );
 }

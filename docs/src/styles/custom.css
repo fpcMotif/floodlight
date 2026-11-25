@@ -1,7 +1,7 @@
 @import "./tokens.css";
 @import "./components.css";
 
-/* Floodlight documentation theme.
+/* Nanospot documentation theme.
 
    The landing page is the loud room; this is the quiet one. Same typeface,
    same grays, same amber — but amber appears only on the download button, and
@@ -66,7 +66,9 @@ html {
 }
 
 body {
+  font-synthesis: none;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.006em;
 }
 
@@ -236,10 +238,14 @@ body {
   display: block;
   width: 100%;
   height: auto;
-  border: 1px solid var(--sl-color-gray-5);
   border-radius: 1rem;
   background: #111;
-  box-shadow: 0 1rem 2.75rem rgb(0 0 0 / 22%);
+  outline: 1px solid rgb(255 255 255 / 10%);
+  outline-offset: -1px;
+}
+
+:root[data-theme="light"] .fl-doc-shot img {
+  outline-color: rgb(0 0 0 / 10%);
 }
 
 .fl-doc-shot--system img {

@@ -62,102 +62,86 @@ test "window list bounds flip to Cocoa's bottom-left origin" {
     try t.expectEqual(permission.Rect{ .x = 100, .y = 500, .w = 400, .h = 300 }, r);
 }
 
-const Spy = struct {
-    granted: bool = false,
-    opened: u32 = 0,
-    presented: u32 = 0,
-    closed: u32 = 0,
-    on_granted: u32 = 0,
+test "beginning opens System Settings, places the panel once, and guards the poll timer" {
+    var g: permission.Grant = .{ .anchors = .{ .settings = .{ .x = 400, .y = 300, .w = 640, .h = 480 }, .screen = screen } };
+    try t.expectEqual(permission.Phase.idle, g.phase);
 
-    fn of(ctx: ?*anyopaque) *Spy {
-        return @ptrCast(@alignCast(ctx));
-    }
-    fn isGranted(ctx: ?*anyopaque) bool {
-        return of(ctx).granted;
-    }
-    fn open(ctx: ?*anyopaque) void {
-        of(ctx).opened += 1;
-    }
-    fn present(ctx: ?*anyopaque) void {
-        of(ctx).presented += 1;
-    }
-    fn close(ctx: ?*anyopaque) void {
-        of(ctx).closed += 1;
-    }
-    fn onGranted(ctx: ?*anyopaque) void {
-        of(ctx).on_granted += 1;
-    }
-    fn flow(s: *Spy) permission.Flow {
-        return .{ .effects = .{ .ctx = s, .is_granted = isGranted, .open_settings = open, .present = present, .close = close, .on_granted = onGranted } };
-    }
-};
+    const first = g.begin(false);
+    try t.expect(g.isGuiding());
+    try t.expect(first.open_settings);
+    try t.expectEqual(permission.WindowOp{ .show = .{ .x = 530, .y = 210, .w = 380, .h = 110 } }, first.window);
+    try t.expectEqual(@as(?u32, permission.poll_ms), first.poll_ms);
 
-test "beginning the flow opens System Settings and guides" {
-    var spy: Spy = .{};
-    var f = spy.flow();
-    try t.expectEqual(permission.Phase.idle, f.phase);
-    f.begin();
-    try t.expectEqual(permission.Phase.guiding, f.phase);
-    try t.expectEqual(@as(u32, 1), spy.opened);
-    try t.expectEqual(@as(u32, 1), spy.presented);
-    // Asking again brings the panel back without reopening Settings.
-    f.begin();
-    try t.expectEqual(@as(u32, 1), spy.opened);
-    try t.expectEqual(@as(u32, 2), spy.presented);
+    // Asking again brings the panel back without reopening Settings or arming a second poll timer.
+    const again = g.begin(false);
+    try t.expect(!again.open_settings);
+    try t.expectEqual(@as(?u32, null), again.poll_ms);
+    try t.expectEqual(permission.WindowOp{ .show = .{ .x = 530, .y = 210, .w = 380, .h = 110 } }, again.window);
 }
 
-test "an existing grant skips System Settings" {
-    var spy: Spy = .{ .granted = true };
-    var f = spy.flow();
-    f.begin();
-    try t.expectEqual(permission.Phase.granted, f.phase);
-    try t.expectEqual(@as(u32, 0), spy.opened);
-    try t.expectEqual(@as(u32, 1), spy.on_granted);
+test "an existing grant skips System Settings and rebuilds the index" {
+    var g: permission.Grant = .{};
+    const out = g.begin(true);
+    try t.expectEqual(permission.Phase.granted, g.phase);
+    try t.expectEqual(permission.Outcome{ .rebuild_index = true }, out);
+    try t.expectEqual(permission.Outcome{}, g.begin(true));
 }
 
-test "polling keeps guiding until the grant, then stops" {
-    var spy: Spy = .{};
-    var f = spy.flow();
-    f.begin();
-    f.poll();
-    try t.expectEqual(permission.Phase.guiding, f.phase);
-    try t.expectEqual(@as(u32, 2), spy.presented);
-    try t.expectEqual(@as(u32, 0), spy.on_granted);
-    spy.granted = true;
-    f.poll();
-    try t.expectEqual(permission.Phase.granted, f.phase);
-    try t.expectEqual(@as(u32, 1), spy.on_granted);
-    f.poll();
-    try t.expectEqual(@as(u32, 1), spy.on_granted);
-    try t.expectEqual(@as(u32, 2), spy.presented);
+test "polling follows System Settings past jitter, lingers on grant, then hides while staying granted" {
+    var g: permission.Grant = .{ .anchors = .{ .settings = .{ .x = 400, .y = 300, .w = 640, .h = 480 }, .screen = screen } };
+    _ = g.begin(false);
+
+    g.anchors.settings.?.x += 3;
+    try t.expectEqual(permission.WindowOp.keep, g.poll(false).window);
+
+    g.anchors.settings.?.x += 10;
+    const moved = g.poll(false);
+    try t.expectEqual(permission.WindowOp{ .move = .{ .x = 543, .y = 210, .w = 380, .h = 110 } }, moved.window);
+
+    const granted = g.poll(true);
+    try t.expectEqual(permission.Phase.granted, g.phase);
+    try t.expectEqual(permission.Outcome{
+        .window = .redraw,
+        .drag = .clear,
+        .linger_ms = permission.granted_linger_ms,
+        .rebuild_index = true,
+    }, granted);
+    try t.expectEqual(permission.Outcome{}, g.poll(true));
+
+    try t.expectEqual(permission.Outcome{ .window = .hide, .drag = .clear }, g.lingerTimedOut());
+    try t.expectEqual(permission.Phase.granted, g.phase);
 }
 
-test "dismissing closes the panel and stops polling" {
-    var spy: Spy = .{};
-    var f = spy.flow();
-    f.begin();
-    f.dismiss();
-    try t.expectEqual(permission.Phase.dismissed, f.phase);
-    try t.expectEqual(@as(u32, 1), spy.closed);
-    f.poll();
-    try t.expectEqual(@as(u32, 1), spy.presented);
+test "the poll slows after a minute of guiding and resets when beginning again" {
+    var g: permission.Grant = .{};
+    _ = g.begin(false);
+    try t.expectEqual(permission.poll_ms, g.pollDelayMs());
+    for (0..permission.fast_polls - 1) |_| {
+        try t.expectEqual(@as(?u32, permission.poll_ms), g.poll(false).poll_ms);
+    }
+    try t.expectEqual(@as(?u32, permission.slow_poll_ms), g.poll(false).poll_ms);
+    _ = g.dismiss();
+    _ = g.begin(false);
+    try t.expectEqual(permission.poll_ms, g.pollDelayMs());
 }
 
 test "the guidance view offers the app card, then shows the grant" {
-    var phase: permission.Phase = .guiding;
-    var g: permission.Guidance = .{ .phase = &phase, .app_name = "Nanospot" };
+    var g: permission.Grant = .{ .phase = .guiding, .app_name = "Nanospot" };
     var tester: ui.Tester = undefined;
-    try tester.init(t.allocator, .init(&g, permission.Guidance.view), .{ .width = 380, .height = 110 });
+    try tester.init(t.allocator, g.view(), .{ .width = 380, .height = 110 });
     defer tester.deinit();
     tester.settle(0.2);
     try t.expect(tester.hasText("Drag Nanospot into the Full Disk Access list"));
     try t.expect(tester.hasText("Nanospot"));
-    const card = g.card orelse return error.NoCard;
-    try t.expect(card.w > 300 and card.h >= 30);
-    phase = .granted;
+    switch (g.applyPending().drag) {
+        .place => |r| try t.expect(r[2] > 300 and r[3] >= 30),
+        else => return error.NoCard,
+    }
+    g.phase = .granted;
     tester.settle(0.2);
     try t.expect(tester.hasText("Full Disk Access Granted"));
     try t.expect(g.card == null);
+    try t.expectEqual(permission.DragOp.clear, g.applyPending().drag);
 }
 
 test "the access probe names a file that exists" {
@@ -166,22 +150,56 @@ test "the access probe names a file that exists" {
     try t.expect(!missing);
 }
 
-test "the poll slows after a minute of guiding" {
-    var spy: Spy = .{};
-    var f = spy.flow();
-    f.begin();
-    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
-    for (0..permission.fast_polls) |_| f.poll();
-    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
+test "Finding 5: a poll tick before post-frame applyPending never clears a clicked close button" {
+    var g: permission.Grant = .{};
+    _ = g.begin(false);
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, g.view(), .{ .width = permission.panel_w, .height = permission.panel_h });
+    defer tester.deinit();
+    tester.settle(0.2);
+    try t.expect(g.applyPending().drag == .place);
+
+    const x = permission.panel_w - chrome.space.edge - permission.metrics.close_hit_size / 2;
+    const y = chrome.space.gap + permission.metrics.close_hit_size / 2;
+    tester.click(@floatCast(x), @floatCast(y));
+
+    const poll_out = g.poll(false);
+    try t.expectEqual(permission.Phase.dismissed, g.phase);
+    try t.expectEqual(permission.WindowOp.hide, poll_out.window);
+    try t.expectEqual(permission.DragOp.clear, poll_out.drag);
+    try t.expectEqual(@as(?u32, permission.slow_poll_ms), poll_out.poll_ms);
+    try t.expectEqual(permission.Outcome{}, g.applyPending());
 }
 
-test "beginning again polls fast again" {
-    var spy: Spy = .{};
-    var f = spy.flow();
-    f.begin();
-    for (0..permission.fast_polls) |_| f.poll();
-    try t.expectEqual(permission.slow_poll_ms, f.pollDelayMs());
-    f.dismiss();
-    f.begin();
-    try t.expectEqual(permission.poll_ms, f.pollDelayMs());
+test "Finding 8: dismissing hides immediately, polls silently at 5s without reading anchors, and rebuilds once on grant" {
+    const AnchorSpy = struct {
+        reads: u32 = 0,
+        fn read(ctx: ?*anyopaque) permission.Anchors {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.reads += 1;
+            return .{ .screen = screen };
+        }
+    };
+    var spy: AnchorSpy = .{};
+    var g: permission.Grant = .{ .ctx = &spy, .read_anchors = AnchorSpy.read };
+    const started = g.begin(false);
+    try t.expectEqual(@as(?u32, permission.poll_ms), started.poll_ms);
+    try t.expectEqual(@as(u32, 1), spy.reads);
+
+    // Dismiss while initial 500ms timer is still in flight: hides & clears drag, no duplicate poll timer.
+    const dis = g.dismiss();
+    try t.expectEqual(permission.Phase.dismissed, g.phase);
+    try t.expectEqual(permission.Outcome{ .window = .hide, .drag = .clear }, dis);
+
+    // In-flight timer fires while dismissed: silently checks TCC and switches to slow_poll_ms without reading anchors.
+    const silent = g.poll(false);
+    try t.expectEqual(permission.Outcome{ .poll_ms = permission.slow_poll_ms }, silent);
+    try t.expectEqual(@as(u32, 1), spy.reads);
+
+    // Grant arrives while dismissed: rebuilds index once, no show/redraw/linger, and stops polling permanently.
+    const granted = g.poll(true);
+    try t.expectEqual(permission.Phase.granted, g.phase);
+    try t.expectEqual(permission.Outcome{ .rebuild_index = true }, granted);
+    try t.expectEqual(permission.Outcome{}, g.poll(true));
 }

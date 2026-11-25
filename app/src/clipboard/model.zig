@@ -77,18 +77,7 @@ pub const Entry = struct {
     }
 
     pub fn matches(e: Entry, query: []const u8) bool {
-        const q = std.mem.trim(u8, query, " ");
-        if (q.len == 0) return true;
-        if (e.kind != .image) return containsIgnoreCase(e.text, q);
-        var buf: [512]u8 = undefined;
-        if (std.fmt.bufPrint(&buf, "{s} {d}\u{00D7}{d}", .{ e.text, e.width, e.height })) |haystack| {
-            return containsIgnoreCase(haystack, q);
-        } else |_| {
-            if (containsIgnoreCase(e.text, q)) return true;
-            var dim: [64]u8 = undefined;
-            const d = std.fmt.bufPrint(&dim, " {d}\u{00D7}{d}", .{ e.width, e.height }) catch return false;
-            return containsIgnoreCase(d, q);
-        }
+        return matchesFields(e.text, e.kind == .image, e.width, e.height, query);
     }
 
     pub fn dupe(e: Entry, arena: std.mem.Allocator) !Entry {
@@ -123,12 +112,61 @@ const sensitive_source_markers = [_][]const u8{
     "sensitive",
 };
 
+pub fn matchesFields(text: []const u8, is_image: bool, width: u32, height: u32, query: []const u8) bool {
+    const q = std.mem.trim(u8, query, " ");
+    if (q.len == 0) return true;
+    if (!is_image) return containsIgnoreCase(text, q);
+    var dim: [64]u8 = undefined;
+    const d = std.fmt.bufPrint(&dim, " {d}\u{00D7}{d}", .{ width, height }) catch return containsIgnoreCase(text, q);
+    if (text.len + d.len <= 512) {
+        var buf: [512]u8 = undefined;
+        @memcpy(buf[0..text.len], text);
+        @memcpy(buf[text.len..][0..d.len], d);
+        return containsIgnoreCase(buf[0 .. text.len + d.len], q);
+    }
+    return containsIgnoreCase(text, q) or containsIgnoreCase(d, q);
+}
+
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (haystack.len < needle.len) return false;
+    const n0 = std.ascii.toLower(needle[0]);
+    const f0: u8 = if (n0 >= 'a' and n0 <= 'z') 0x20 else 0;
+    const Vec16 = @Vector(16, u8);
+    const fv0: Vec16 = @splat(f0);
+    const tv0: Vec16 = @splat(n0);
+    if (needle.len == 1) {
+        var i: usize = 0;
+        while (i + 16 <= haystack.len) : (i += 16) {
+            const chunk: Vec16 = haystack[i..][0..16].*;
+            if (@reduce(.Or, (chunk | fv0) == tv0)) return true;
+        }
+        while (i < haystack.len) : (i += 1) {
+            if ((haystack[i] | f0) == n0) return true;
+        }
+        return false;
+    }
+    const tail_len = needle.len - 1;
+    const n_last = std.ascii.toLower(needle[tail_len]);
+    const f_last: u8 = if (n_last >= 'a' and n_last <= 'z') 0x20 else 0;
+    const fv_last: Vec16 = @splat(f_last);
+    const tv_last: Vec16 = @splat(n_last);
+    const limit = haystack.len - tail_len;
     var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    while (i + 16 <= limit) : (i += 16) {
+        const c0: Vec16 = haystack[i..][0..16].*;
+        const c_last: Vec16 = haystack[i + tail_len ..][0..16].*;
+        const hit = ((c0 | fv0) == tv0) & ((c_last | fv_last) == tv_last);
+        var m: u16 = @bitCast(hit);
+        while (m != 0) : (m &= m - 1) {
+            const idx = i + @ctz(m);
+            if (tail_len == 1 or std.ascii.eqlIgnoreCase(haystack[idx + 1 .. idx + tail_len], needle[1..tail_len])) return true;
+        }
+    }
+    while (i < limit) : (i += 1) {
+        if ((haystack[i] | f0) == n0 and (haystack[i + tail_len] | f_last) == n_last) {
+            if (tail_len == 1 or std.ascii.eqlIgnoreCase(haystack[i + 1 .. i + tail_len], needle[1..tail_len])) return true;
+        }
     }
     return false;
 }
@@ -228,7 +266,11 @@ const code_markers = [_][]const u8{ "func ", "struct ", "import ", "class ", "co
 
 fn codeLanguage(text: []const u8) ?[]const u8 {
     const wrapped = text.len >= 2 and ((text[0] == '{' and text[text.len - 1] == '}') or (text[0] == '[' and text[text.len - 1] == ']'));
-    if (wrapped and (std.json.validate(std.heap.page_allocator, text) catch false)) return "JSON";
+    if (wrapped) {
+        var buf: [512]u8 = undefined;
+        var fallback = std.heap.BufferFirstAllocator.init(&buf, std.heap.c_allocator);
+        if (std.json.validate(fallback.allocator(), text) catch false) return "JSON";
+    }
     for (code_markers) |m| if (std.mem.indexOf(u8, text, m) != null) return "Code";
     if (std.mem.startsWith(u8, text, "<!DOCTYPE") or std.mem.startsWith(u8, text, "<html")) return "HTML";
     if (text.len > 1 and text[0] == '<' and text[text.len - 1] == '>' and std.mem.indexOf(u8, text, "</") != null) return "HTML";
@@ -259,7 +301,8 @@ fn oneLine(arena: std.mem.Allocator, text: []const u8) []const u8 {
 }
 
 pub fn age(arena: std.mem.Allocator, seconds: f64) []const u8 {
-    const s: i64 = @intFromFloat(@max(0, seconds));
+    const clamped = if (std.math.isFinite(seconds)) std.math.clamp(seconds, 0, 1e15) else 0;
+    const s: i64 = @intFromFloat(clamped);
     if (s < 60) return "just now";
     if (s < 3600) return std.fmt.allocPrint(arena, "{d}m", .{@divFloor(s, 60)}) catch "";
     if (s < 86400) return std.fmt.allocPrint(arena, "{d}h", .{@divFloor(s, 3600)}) catch "";
@@ -309,7 +352,7 @@ pub const Filter = enum {
 pub fn fileType(arena: std.mem.Allocator, path: []const u8, is_dir: bool) []const u8 {
     const ext = extension(path);
     if (is_dir) return if (std.ascii.eqlIgnoreCase(ext, "app")) "Application" else "Folder";
-    // Source Code before Video: `.ts` is TypeScript here, as in the Swift inspector.
+    // Source Code before Video so `.ts` classifies as TypeScript, not a transport stream.
     const table = [_]struct { []const u8, []const []const u8 }{
         .{ "Source Code", &.{ "swift", "rs", "ts", "js", "py", "go", "c", "cpp", "h", "sh" } },
         .{ "Video", &video_extensions },
@@ -378,8 +421,8 @@ pub const Capture = union(enum) {
     };
 };
 
-/// The marker Floodlight puts on its own writes, so capture skips them.
-pub const own_write_type = "com.floodlight.own-write";
+/// The marker Nanospot puts on its own writes, so capture skips them.
+pub const own_write_type = "com.nanospot.own-write";
 /// A copy carrying any of these is not recorded.
 const skipped_types = [_][]const u8{ own_write_type, "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType", "com.apple.is-sensitive" };
 
@@ -410,7 +453,7 @@ pub const Pasteboard = struct {
 pub const App = struct { bundle_id: []const u8, name: []const u8 };
 
 /// What a copy becomes: its files, else its picture, else its text; nothing
-/// when it is marked private or Floodlight's own, or past a size cap.
+/// when it is marked private or Nanospot's own, or past a size cap.
 pub fn captures(arena: std.mem.Allocator, board: Pasteboard, source: []const u8) []const Capture {
     for (skipped_types) |ty| if (board.has_type(board.ctx, ty)) return &.{};
     var out: std.ArrayList(Capture) = .empty;
@@ -470,7 +513,8 @@ fn stat(path: []const u8) ?Stat {
     buf[path.len] = 0;
     var st: std.c.Stat = undefined;
     if (std.c.stat(buf[0..path.len :0], &st) != 0) return null;
-    return .{ .dir = (st.mode & std.c.S.IFMT) == std.c.S.IFDIR, .size = @intCast(st.size) };
+    const size = std.math.cast(u64, st.size) orelse return null;
+    return .{ .dir = (st.mode & std.c.S.IFMT) == std.c.S.IFDIR, .size = size };
 }
 
 /// The first `len` bytes of `path`, in `a`'s memory. Null when it does not
@@ -483,13 +527,17 @@ pub fn readFile(a: std.mem.Allocator, path: [:0]const u8, len: usize) ?[]const u
     var got: usize = 0;
     while (got < len) {
         const n = std.c.read(fd, buf[got..].ptr, len - got);
-        if (n <= 0) return null;
+        if (n < 0 and std.c.errno(n) == .INTR) continue;
+        if (n <= 0) {
+            a.free(buf);
+            return null;
+        }
         got += @intCast(n);
     }
     return buf;
 }
 
-/// Text past this is dropped whole, as the Swift store does.
+/// Text past this byte limit is dropped whole.
 pub const max_text_bytes = 32_000;
 pub const max_file_count = 100;
 /// Image representations past this are not read.

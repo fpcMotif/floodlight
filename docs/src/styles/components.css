@@ -24,7 +24,6 @@
   border: 1px solid transparent;
   border-radius: var(--fl-r-pill);
   background: var(--fl-amber);
-  box-shadow: 0 0 2.75rem rgb(255 176 32 / 32%);
   color: var(--fl-amber-ink);
   font-family: var(--fl-font);
   font-size: var(--fl-t-body);
@@ -35,32 +34,34 @@
   white-space: nowrap;
   transition:
     scale 150ms var(--fl-ease),
-    box-shadow 150ms var(--fl-ease),
-    background 150ms var(--fl-ease);
+    border-color 150ms var(--fl-ease),
+    background-color 150ms var(--fl-ease),
+    color 150ms var(--fl-ease);
 }
 
-.btn:hover {
-  background: #ffc352;
-  box-shadow: 0 0 3.5rem rgb(255 176 32 / 45%);
-  color: var(--fl-amber-ink);
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover {
+    background: var(--fl-amber-hover);
+    color: var(--fl-amber-ink);
+  }
 }
 
 .btn:active {
-  scale: 0.97;
+  scale: 0.96;
 }
 
 .btn--ghost {
   border-color: var(--sec-line, var(--fl-hairline));
   background: transparent;
-  box-shadow: none;
   color: var(--sec-fg, var(--fl-ink));
 }
 
-.btn--ghost:hover {
-  border-color: var(--sec-fg, var(--fl-ink));
-  background: transparent;
-  box-shadow: none;
-  color: var(--sec-fg, var(--fl-ink));
+@media (hover: hover) and (pointer: fine) {
+  .btn--ghost:hover {
+    border-color: var(--sec-fg, var(--fl-ink));
+    background: transparent;
+    color: var(--sec-fg, var(--fl-ink));
+  }
 }
 
 .btn__arrow {
@@ -115,7 +116,7 @@
   height: 1.9rem;
   place-items: center;
   padding-inline: 0.5rem;
-  border: 1px solid var(--sec-line, var(--fl-hairline));
+  border: var(--fl-hairline-w) solid var(--sec-line, var(--fl-hairline));
   border-radius: 0.45rem;
   background: var(--sec-tile, var(--fl-white));
   box-shadow: 0 1px 0 var(--sec-line, var(--fl-hairline));

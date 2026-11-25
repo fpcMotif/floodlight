@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "floodlight-demo",
+      "name": "nanospot-demo",
       "dependencies": {
         "lucide-react": "0.468.0",
         "react": "^18.3.1",

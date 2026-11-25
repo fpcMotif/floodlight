@@ -1,46 +1,44 @@
-# State machines in the Zig app
+# State machines in Nanospot
 
 ## At a glance
 
-The Zig app (`frontends/nanoui` over `core/`) runs eleven state machines.
+Nanospot (`app/` over `core/`) runs eleven state machines.
 Two are explicit enums: Presence and the grant flow. The rest are implicit,
 spread over flags, counters, arenas and timers. The worst reachable bug was a
 use-after-reset. The panel handed the shell an action that pointed into the
 result list's memory. Any query between the ask and the shell's turn reused
 that memory, so Return could paste or open a different item.
 
-Four bugs are fixed, each with a regression test that failed before its fix.
-Five findings stay open and are listed with their reason. The search ranking,
+Six bugs are fixed, each with a regression test that failed before its fix.
+Three findings stay open and are listed with their reason. The search ranking,
 the file index protocol and the clipboard schema are unchanged.
 
-Scope: Zig only. The Swift app in `Sources/` is out of scope. It is cited
-where the Zig port copies its behaviour.
+Scope: `app/` and `core/`.
 
 ## How control reaches these machines
 
-Everything except the file index scan runs on the main thread. "Concurrency"
+Everything except the file worker and file index scan runs on the main thread. "Concurrency"
 here means interleaving on the main dispatch queue, not data races. A turn is
 one main-queue work item or one frame. Turns interleave in this order:
 
 ```text
- frame (key, click)          main queue, FIFO-ish                 scan thread
-┌──────────────────┐        ┌──────────────────────────────┐     ┌───────────┐
-│ Panel.view       │──ask──▶│ applyPanel   (dispatch_async) │     │ rebuild() │
-│  ask() sets      │        │ captureTick  (after 500 ms)   │◀────│ indexReady│
-│  Panel.pending   │        │ landFiles    (after 0 ms)     │     └───────────┘
-└──────────────────┘        │ indexLanded  (dispatch_async) │
-                            │ pollTick, expireRetention ... │
+ frame (key, click)          main queue, FIFO-ish                 worker / scan
+┌──────────────────┐        ┌──────────────────────────────┐     ┌──────────────┐
+│ Panel.view       │──ask──▶│ applyPanel   (dispatch_async) │     │ FileSearcher │
+│  ask() sets      │        │ captureTick  (after 500 ms)   │◀────│ runRebuild   │
+│  Panel.pending   │        │ searchLanded (dispatch_async) │     └──────────────┘
+└──────────────────┘        │ pollTick, expireRetention ... │
                             └──────────────────────────────┘
 ```
 
 A nested run loop also drains the queue mid-turn. The ⌘K menu
-(`mac.popUpMenu`, called from `Shell.actionsMenu`) runs every timer while it
+(`mac.popUpMenu`, called from `AppShell.actionsMenu`) runs every timer while it
 is open. So any machine whose transition is split across two turns can see
 other transitions in between. Findings 1 and 2 come from that split.
 
 ## 1. Panel Presence (explicit)
 
-`frontends/nanoui/src/presence.zig`. Phase: `hidden`, `entering`, `shown`.
+`app/src/presence.zig`. Phase: `hidden`, `entering`, `shown`.
 `entering` means the window is ordered in at alpha 0.01 and waits for its own
 presented frame.
 
@@ -68,9 +66,9 @@ Invariants:
 
 ## 2. Pending action handoff (implicit)
 
-`Panel.ask` (`panel.zig:888`) stores `Panel.pending` and calls the request
-hook. `Shell.panelRequest` (`main.zig:228`) dispatches `applyPanel`
-(`main.zig:241`) to a later turn. That turn runs the action, then
+`Panel.ask` (`panel.zig`) stores `Panel.pending` and calls the request
+hook. `AppShell.onRequest` (`main.zig`) dispatches `applyPanel` to a later
+turn, where `Shell.applyPending` (`shell.zig`) executes the action and
 `Presence.settle`.
 
 States: `none`, `asked` (pending set, apply queued), `applying` (apply runs,
@@ -141,18 +139,23 @@ Invariants:
 | fetching | `fail` | failed(q) — query unchanged, so the next refresh asks again |
 | answered | `replaceRows` | answered, same query, selection kept by key |
 
-## 5. Staged file search (implicit)
+## 5. Staged file search (explicit `Session` / `Poll`)
 
-`Panel.files_due`, `Shell.landing_files`, `Panel.landFiles`
-(`panel.zig:544`), `Shell.landFiles` (`main.zig:153`). A query over the
-4 ms budget answers apps first. Files land on a 0 ms timer.
+`search.Catalog` (`app/src/search.zig`), `Panel.poll` (`app/src/panel.zig`), and
+`Shell.pollSearch` / `AppShell.searchLanded` (`app/src/shell.zig`,
+`app/src/main.zig`). With its worker started, `Catalog.query` answers app and
+web rows at once and submits the `FileIndex` query to the worker. `Catalog.poll`
+drains the worker, adopts any finished `FileIndex` only when the worker is
+idle, and resolves against `Session`.
 
 | From | Event | To |
 |---|---|---|
-| idle | `answer` over budget | due, timer queued once (`landing_files`) |
-| due | another keystroke over budget | due, no second timer |
-| due | timer, mode search, text answered | idle, rows with files |
-| due | timer, mode board or text changed | idle, files dropped (finding 7) |
+| idle | `query` with worker and mapped index | pending(`seq`, `query`), apps published |
+| pending | newer `query` | pending(`seq+1`, `query'`), worker coalesces waiting queries |
+| pending or idle | `poll` with finished index and idle worker | idle, index adopted; `.stale` if `live` or `retained` |
+| pending | `poll(.live)` matching `query` | idle, `.merged` rows ranked while `View` is mapped |
+| pending | `poll(.retained)` (hidden or board mode) | idle, `.stale` with zero allocations (fixed, finding 7) |
+| pending | `cancel` or `poll(.idle)` | idle, rows dropped |
 
 ## 6. Web suggestions (implicit)
 
@@ -184,18 +187,18 @@ next `loadDetail` resets `payload` before `preview` reads it.
 
 ## 8. Clipboard capture and history (implicit)
 
-`Shell.captureTick` (`main.zig:325`) compares the pasteboard change count
-every 500 ms. `Store.add` (`clipboard.zig:766`) and `keepWithinBudget`
-(`clipboard.zig:716`) keep history. A full image moves `png` → `avif` after
-7 days through `compactOne` (`clipboard.zig:726`), which runs only while the
-panel is hidden.
+`Shell.captureTick` (`shell.zig`) compares the pasteboard change count
+every 500 ms. `Store.capture` (`clipboard/store.zig`) wraps multi-item writes in a
+transaction (`BEGIN IMMEDIATE ... ROLLBACK`), and `keepWithinBudget` keeps
+history. A full image moves `png` → `avif` after 7 days through `compactOne`,
+which runs only while the panel is hidden.
 
 Invariants:
 
-- Floodlight's own writes carry `own_write_type`, and `writeEntry` updates
+- Nanospot's own writes carry `own_write_type` (`com.nanospot.own-write`), and `writeEntry` updates
   `change_count`, so they are never captured again.
-- `change_count` advances before the capture runs. A capture that fails is
-  never retried (finding 6).
+- `change_count` advances only after `Store.capture` returns without error, so
+  a transient error retries on the next tick (fixed, finding 6).
 - An image file exists while any row names its hash and format.
   `removeWhere` unlinks a hash once no row names it in any format.
 - `add` returning true means the entry is in history (fixed, finding 3).
@@ -211,26 +214,27 @@ Invariants:
 
 ## 9. Full Disk Access grant flow (explicit)
 
-`permission.zig:28`. Phase: `idle`, `guiding`, `granted`, `dismissed`. The
-shell adds `polling` and `Guidance.dismissed` (`main.zig:462`).
+`permission.zig` (`Grant`). Phase: `idle`, `guiding`, `granted`, `dismissed`. `Grant` owns `poll_armed`, `lingering`, `close_requested`, and `placed_card` windowless without shell flags.
 
-Invariants: at most one poll timer is pending (`polling`). Polling runs only
-while guiding.
+Invariants: at most one poll timer is pending (`poll_armed`). Clicking `✕` latches `close_requested` inside `Grant` so a queued poll drains dismissal cleanly instead of re-presenting. Polling continues silently at `slow_poll_ms` (`5000 ms`) while `dismissed` and stops once `granted`.
 
 | From | Event | Guard | To | Effects |
 |---|---|---|---|---|
-| any | `begin` | granted | granted | on_granted (rebuild index) |
-| guiding | `begin` | not granted | guiding | present |
-| idle, dismissed | `begin` | not granted | guiding | open_settings, present (poll armed) |
-| guiding | poll | granted | granted | on_granted, linger 1.5 s |
-| guiding | poll | not granted | guiding | present (poll rearmed) |
-| granted | linger ends | | dismissed | close |
-| any | ✕ on the card | | dismissed | close; polling stops (finding 8) |
+| any (not `granted`) | `begin` | granted | `granted` | `rebuild_index` (+ redraw, clear drag, linger 1.5 s if visible) |
+| `guiding` | `begin` | not granted | `guiding` | show / anchor, arm poll if unarmed |
+| `idle`, `dismissed` | `begin` | not granted | `guiding` | `open_settings`, show / anchor, arm poll (`500 ms`) |
+| `guiding` | `poll` | `close_requested` | `dismissed` (or `granted`) | hide, clear drag, arm `slow_poll_ms` (or `rebuild_index` if granted) |
+| `guiding` | `poll` | granted | `granted` | `rebuild_index`, clear drag, redraw, linger 1.5 s |
+| `guiding` | `poll` | not granted | `guiding` | move past jitter (`4 pt`), rearm poll (`500 ms` -> `5000 ms`) |
+| `dismissed` | `poll` | not granted | `dismissed` | rearm silent poll (`5000 ms`, no anchor read) |
+| `dismissed` | `poll` | granted | `granted` | `rebuild_index` silently (no window show or linger) |
+| `granted` | `lingerTimedOut` | `visible` | `granted` | hide, clear drag (polling stays stopped) |
+| `guiding` | ✕ on the card (`applyPending` / `poll`) | | `dismissed` | hide, clear drag; silent `5000 ms` poll armed |
 
 ## 10. File index rebuild (explicit protocol, real threads)
 
-`core/src/file_index.zig:97`. Atomics `running`, `requested`, `ready`.
-The scan runs on a detached thread. `adopt` runs on the main thread.
+`core/src/file_index.zig:97` and `app/src/search.zig`. Atomics `running`, `requested`, `ready`.
+The scan runs on a joinable thread owned by `Catalog`. `adopt` runs inside `Catalog.poll` on the main thread once the search worker is idle.
 
 Invariants:
 
@@ -258,13 +262,13 @@ The findings group by cause. Each issue is fixed in one change.
 | A. A panel action runs a turn after its ask | 1, 2 | The ask and the apply sit in different main-queue turns | Fixed |
 | B. History budget drops what it just stored | 3, 9 | Pinned bytes count toward the byte budget | 3 fixed, 9 open |
 | C. Retention arms a timer per hide | 4 | No record of the pending timer | Fixed |
-| D. Small main-queue races | 5, 6, 7 | State cleared before the step that needs it | Open |
-| E. A grant after ✕ is not seen | 8 | Polling stops on dismissal, as in Swift | Open |
+| D. Small main-queue races | 5, 6, 7 | State cleared before the step that needs it | Fixed |
+| E. A grant after ✕ is not seen | 8 | Polling stopped on dismissal | Fixed |
 
 ## Findings
 
-Ranked by impact. "Fixed" findings have a test in
-`frontends/nanoui/src/tests.zig` that failed before the fix.
+Ranked by impact. "Fixed" findings have a test under `app/src/tests/` that
+failed before the fix.
 
 | # | Machine | Invalid state | Reach | Impact | Status |
 |---|---|---|---|---|---|
@@ -272,10 +276,10 @@ Ranked by impact. "Fixed" findings have a test in
 | 2 | Presence | Settle on a hidden panel | Plausible | ⌘V into another app, a dismissed panel summoned again, a repeated exit | Fixed |
 | 3 | History budget | `add` true, entry evicted | Confirmed | Every new copy lost while pins fill the budget | Fixed |
 | 4 | Retention | Several expiry timers pending | Confirmed | Extra wakeups only | Fixed |
-| 5 | Grant flow | ✕ undone by a poll tick | Plausible | Click ignored, about 1 in 100 by timing estimate | Open |
-| 6 | Capture | Failed capture not retried; partial capture not shown | Confirmed by reading | One copy missing until the next refresh | Open |
-| 7 | File staging | Files dropped when the 0 ms timer lands in board mode | Plausible, narrow | A restored query without file rows | Open |
-| 8 | Grant flow | Grant after ✕ never detected | Confirmed, by design | Index without protected folders until relaunch | Open, matches Swift |
+| 5 | Grant flow | ✕ undone by a poll tick | Confirmed | Click ignored when a poll precedes `applyPending` | Fixed |
+| 6 | Capture | Failed capture not retried | Confirmed | Copy skipped on transient store error | Fixed |
+| 7 | File staging | Files dropped when worker lands in board mode | Confirmed | A restored query without file rows | Fixed |
+| 8 | Grant flow | Grant after ✕ never detected | Confirmed | Index without protected folders until relaunch | Fixed |
 | 9 | History budget | Pins over the byte budget evict all other history | Confirmed | History one entry deep | Open, product decision |
 
 ### 1. Actions borrowed the result list's memory
@@ -288,9 +292,9 @@ turns can query between the ask and the apply:
 - `captureTick` marks the board stale and refreshes it when another app
   copies. This includes the seconds the ⌘K menu stays open, because
   `popUpMenu` runs a nested run loop. `actionsMenu` then pastes `e`.
-- `indexLanded` (`main.zig:531`), dispatched from the scan thread, marks the
-  search list stale and refreshes it.
-- `landFiles` reanswers the query with file rows.
+- `searchLanded` (`main.zig`) calls `Panel.poll`, which either merges worker
+  file rows or marks the search list stale and refreshes it when a fresh
+  `FileIndex` is adopted.
 
 Evidence: before the fix, the test "a board action keeps the entry it named
 when a copy lands before the shell runs it" found `a copy from another app,`
@@ -337,21 +341,40 @@ Change: `Panel.armExpiry` and `Panel.disarmExpiry` keep one timer
 (`panel.zig:346`). The test "hiding again within the retention window arms
 no second expiry timer" covers it.
 
-### 5–9. Open
+### 5. Late file results were dropped outside search mode (finding 7)
 
-5. `Shell.present` sets `guidance.dismissed = false` (`main.zig:464`). A poll
-   tick queued before `applyGuidance` clears the ✕ click. The window is the
-   time between the frame and the queue drain, out of a 500 ms poll. The
-   timing ratio is an estimate, not a measurement. The shell has no test
-   seam, so this stays open.
-6. `captureTick` advances `change_count` before `Store.capture`. A capture
-   that errors (SQLite busy past 2 s, disk full) is lost. When the second of
-   two files fails, the first is stored but the board is not marked stale.
-7. `Panel.landFiles` clears `files_due` before it checks the mode. If the
-   timer runs after a switch to the board, the retained search query restores
-   later without its file rows, and `refresh` sees an unchanged query.
-8. Both the Swift coordinator and the Zig port stop polling on ✕. A grant
-   made afterwards is seen only at the next launch.
+Cause: `Panel.landFiles` cleared `files_due` before checking `p.mode`. When the
+worker landed after a switch to the clipboard board, the retained search query
+restored later without its file rows, and `refresh` saw an unchanged query.
+
+Change: `Panel.poll` passes `Session.retained` whenever a search session is
+retained while hidden or in board mode. `Catalog.poll(.retained)` returns
+`.stale` with zero allocations, so `showSearch` re-queries on return.
+
+### 6. A failed capture advanced `change_count` (finding 6)
+
+Cause: `Shell.captureTick` updated `change_count` before calling
+`Store.capture`. A transient store error (`SQLITE_BUSY` or I/O failure) rolled
+back the transaction in `Store.capture`, yet skipped retrying the pasteboard on
+the next tick.
+
+Change: `Shell.captureTick` (`shell.zig`) now advances `change_count` only
+after `Store.capture` returns without error.
+
+### 7. ✕ clicked right before a poll tick (finding 5)
+
+Cause: `AppShell.present` unconditionally cleared `guidance.dismissed = false`, so a poll tick queued ahead of `applyGuidance` erased a clicked `✕`.
+
+Change: `Grant` (`app/src/permission.zig`) owns both the view click flag (`close_requested`) and `poll`. `poll` drains `close_requested` via `dismiss` first so a queued poll completes dismissal instead of re-presenting.
+
+### 8. Full Disk Access granted after ✕ dismissal (finding 8)
+
+Cause: `Flow.dismiss` stopped polling, so granting access in System Settings after closing the floating card never rebuilt `FileIndex` until relaunch.
+
+Change: `Grant.dismiss` hides the panel and clears the drag rect immediately while keeping a single silent `slow_poll_ms` (`5000 ms`) timer running without reading window anchors. When `poll(true)` observes the grant while `dismissed`, `Grant` moves to `granted`, emits `rebuild_index` once without showing the window, and stops polling.
+
+### 9. Open
+
 9. Fix 3 keeps the newest copy. With pins over the byte budget, every other
    unpinned entry still goes on each add. Whether pins count toward the byte
    budget is a product decision. Plan 001 defers byte budgets.

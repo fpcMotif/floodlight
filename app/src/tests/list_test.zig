@@ -142,4 +142,16 @@ test "only the rows in view and a margin are built, within the list" {
     try t.expectEqual(@as(usize, 0), above.first);
     const short = list_mod.rowsInView(0, 2, 10, 30, 2);
     try t.expectEqual(@as(usize, 2), short.end);
+
+    const nan = list_mod.rowsInView(std.math.nan(f32), 10, 10, std.math.inf(f32), 2);
+    try t.expectEqual(@as(usize, 0), nan.first);
+    try t.expectEqual(@as(usize, 10), nan.end);
+
+    const zero_h = list_mod.rowsInView(50, 10, 0, 30, 2);
+    try t.expectEqual(@as(usize, 0), zero_h.first);
+    try t.expectEqual(@as(usize, 0), zero_h.end);
+
+    const huge = list_mod.rowsInView(1e30, 10, 10, 30, 2);
+    try t.expectEqual(@as(usize, 8), huge.first);
+    try t.expectEqual(@as(usize, 10), huge.end);
 }

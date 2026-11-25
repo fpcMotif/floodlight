@@ -1,4 +1,4 @@
-/* Floodlight design tokens.
+/* Nanospot design tokens.
    Shared by the marketing landing page and the Starlight documentation theme.
 
    The palette is macOS-native: true black and Apple's #f5f5f7 light gray carry
@@ -25,20 +25,22 @@
   --fl-gray-deep: #6e6e73;
   --fl-hairline: #d2d2d7;
   --fl-hairline-dark: rgb(255 255 255 / 13%);
+  --fl-hairline-w: 1px;
 
   /* Brand — the beam */
-  --fl-amber: #ffb020;
-  --fl-amber-hot: #ffdd9c;
-  --fl-amber-deep: #b3660f;
-  --fl-amber-ink: #1a1102;
+  --fl-amber: oklch(0.804 0.171 75.5);
+  --fl-amber-hover: oklch(0.848 0.155 75.5);
+  --fl-amber-hot: oklch(0.905 0.105 75.5);
+  --fl-amber-deep: oklch(0.545 0.132 75.5);
+  --fl-amber-ink: oklch(0.18 0.032 75.5);
 
   /* System blue, for links only */
   --fl-blue: #06c;
   --fl-blue-dark: #2997ff;
 
   /* macOS panel vibrancy */
-  --fl-panel-bg: rgb(30 30 34 / 72%);
-  --fl-panel-line: rgb(255 255 255 / 10%);
+  --fl-panel-bg: #161618;
+  --fl-panel-line: rgb(255 255 255 / 12%);
   --fl-well: #1c1c1e;
   --fl-well-inset: 0.4375rem;
 
@@ -65,4 +67,10 @@
 
   /* Motion */
   --fl-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@media (min-resolution: 2dppx) {
+  :root {
+    --fl-hairline-w: 0.5px;
+  }
 }

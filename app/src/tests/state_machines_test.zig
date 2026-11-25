@@ -2,7 +2,6 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
-const core = @import("floodlight_core");
 const search = @import("../search.zig");
 const panel_mod = @import("../panel.zig");
 const mac = @import("../mac.zig");
@@ -15,6 +14,7 @@ const h = @import("helpers.zig");
 const t = std.testing;
 
 const tmpCatalog = h.tmpCatalog;
+const WakeSignal = h.WakeSignal;
 const StubHooks = h.StubHooks;
 const countRows = h.countRows;
 const picture = h.picture;
@@ -225,7 +225,7 @@ test "losing focus hides the panel, unless Quick Look took it" {
 test "after an action the panel hides, or stays for the board's copy, preview and menu" {
     const e: clipboard.Entry = .{ .id = 1, .kind = .text, .text = "x", .created_at = 0 };
     const row: search.Row = .{ .kind = .file, .title = "a", .subtitle = "~", .path = "/a", .score = 0 };
-    const hides = [_]panel_mod.Action{ .hide, .{ .open = "/a" }, .{ .reveal = "/a" }, .{ .copy = row }, .{ .clipboard = .{ .reveal = "/a" } } };
+    const hides = [_]panel_mod.Action{ .hide, .{ .open = "/a" }, .{ .reveal = "/a" }, .{ .copy = row }, .{ .clipboard = .{ .open = "https://example.com" } }, .{ .clipboard = .{ .reveal = "/a" } } };
     for (hides) |a| {
         var spy: PresenceSpy = .{};
         var p = shownPresence(&spy);
@@ -306,10 +306,7 @@ test "the 200-app latency benchmark measures keystroke publication, summon layou
 test "the injected clock advances board ages and pins, and forget clears both surfaces" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var ts = try TmpStore.init();
     defer ts.deinit();
@@ -373,10 +370,7 @@ test "the injected clock advances board ages and pins, and forget clears both su
 test "search retention selects the top row when the remembered path is gone, and clearing the field forgets at once" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -417,10 +411,7 @@ test "search retention selects the top row when the remembered path is gone, and
 test "a retained reopen keeps the last presented frame valid until what it shows changes" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -444,7 +435,7 @@ test "a retained reopen keeps the last presented frame valid until what it shows
     p.showSearch();
     try t.expect(p.lastFrameValid());
     try t.expectEqual(@as(usize, 1), p.list.selected);
-    try t.expect(p.completion == null);
+    try t.expect(p.currentCompletion() == null);
 
     tester.frame();
     try t.expect(tester.shortcut(.{ .key = ui.Shortcut.up }));
@@ -511,11 +502,10 @@ test "a retained board's last frame stays valid within the minute its ages were 
 test "a slow file index publishes apps on the keystroke's frame and file rows on the next; a retained reopen shows both at once" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
@@ -526,18 +516,15 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     tester.settle(0.1);
 
     hooks.clock.step = 0.01;
-    p.async_files = true;
     tester.typeText("a");
     tester.frame();
-    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expect(cat.hasPending());
     try t.expect(tester.hasText("Calculator"));
     try t.expectEqual(@as(usize, 2), countRows(p.list.visible, .app));
     try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
 
-    const view = files.view().?;
-    var hits: [search.max_file_hits]core.search.Hit = undefined;
-    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
-    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    wake.wait();
+    try t.expect(p.poll());
     tester.frame();
     try t.expect(countRows(p.list.visible, .file) > 0);
     try t.expect(tester.hasText("kind-of-blue.flac"));
@@ -546,8 +533,46 @@ test "a slow file index publishes apps on the keystroke's frame and file rows on
     p.hide();
     hooks.clock.advance(60);
     p.showSearch();
-    try t.expectEqual(@as(u32, 1), hooks.file_searches);
+    try t.expect(!cat.hasPending());
     try t.expect(countRows(p.list.visible, .file) > 0);
+}
+
+test "switching to the clipboard board while file search is in flight retains the file rows on return" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var cat = try tmpCatalog(&tmp);
+    defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
+    var hooks: StubHooks = .{};
+    hooks.clock.advance(100);
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("return");
+    tester.frame();
+    try t.expect(cat.hasPending());
+    try t.expectEqual(@as(usize, 0), countRows(p.list.visible, .file));
+
+    p.showClipboard();
+    tester.frame();
+    wake.wait();
+    try t.expect(!p.poll());
+
+    hooks.clock.advance(30);
+    p.showSearch();
+    if (cat.hasPending()) {
+        wake.wait();
+        try t.expect(p.poll());
+    }
+    tester.frame();
+    try t.expect(countRows(p.list.visible, .file) > 0);
+    try t.expect(tester.hasText("2025-return.pdf"));
 }
 
 test "board retention restores query, kind filter, and selection or selects the newest matching copy" {
@@ -613,10 +638,7 @@ test "board retention restores query, kind filter, and selection or selects the 
 test "search and clipboard board sessions expire separately, and zero retention forgets on hide" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var mem = try TmpStore.init();
     defer mem.deinit();
@@ -701,31 +723,26 @@ test "a board action keeps the entry it named when a copy lands before the shell
 test "a search action keeps the row it named when the file rows land before the shell runs it" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
+    var wake: WakeSignal = .{};
+    cat.startWorker(t.io, wake.binding());
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
     defer p.deinit();
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
     defer tester.deinit();
-    // Over the budget: apps answer first, files land on the next turn.
-    p.async_files = true;
     tester.typeText("cal");
     tester.settle(0.2);
-    try t.expect(p.files_due);
+    try t.expect(cat.hasPending());
     p.list.selected = p.list.visible.len - 1;
     tester.key(.enter);
     const asked = (p.pending orelse return error.NoAction).open;
     const want = try t.allocator.dupe(u8, asked);
     defer t.allocator.free(want);
-    const view = files.view().?;
-    var hits: [search.max_file_hits]core.search.Hit = undefined;
-    const hit_count = search.searchFiles(view, hooks.lastFileQuery(), &hits);
-    p.landFiles(hooks.last_file_seq, view, hits[0..hit_count]);
+    wake.wait();
+    try t.expect(p.poll());
     try t.expectEqualStrings(want, asked);
 }
 
@@ -788,10 +805,7 @@ test "hiding again within the retention window arms no second expiry timer" {
 test "a released surface draws the same frame again" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.posix.PATH_MAX]u8 = undefined;
-    var files: core.file_index.FileIndex = undefined;
-    var cat = try tmpCatalog(&tmp, &buf, &files);
-    defer files.close();
+    var cat = try tmpCatalog(&tmp);
     defer cat.deinit();
     var hooks: StubHooks = .{};
     var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
@@ -839,4 +853,27 @@ test "scroll position survives a release" {
     mac.forgetContextStorage(&tester.ctx);
     tester.frame();
     try t.expectEqual(saved_offset, tester.ctx.scroll.get(id).?);
+}
+
+test "extreme clock and retention values do not overflow expiry or frame keys" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+    p.retention_seconds = std.math.inf(f64);
+    p.showSearch();
+    p.field.set("notes");
+    p.hide();
+    try t.expect(p.nextExpiryMs() == null);
+
+    p.retention_seconds = 1e20;
+    p.showSearch();
+    p.hide();
+    try t.expectEqual(std.math.maxInt(u32), p.nextExpiryMs().?);
+
+    hooks.clock.advance(1e20);
+    p.showClipboard();
+    p.notePresented();
+    try t.expect(p.lastFrameValid());
 }

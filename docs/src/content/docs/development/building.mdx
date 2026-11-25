@@ -1,70 +1,64 @@
 ---
 title: Build from source
-description: Build Floodlight on a development Mac.
+description: Build Nanospot on a development Mac.
 ---
 
 import { Steps, Aside } from "@astrojs/starlight/components";
 
 ## Requirements
 
-- macOS 14 or later
-- Xcode command-line tools with Swift 5.10 or later
-- Node.js 24 only when working on this documentation site
+- macOS 14 or later on Apple silicon
+- Xcode Command Line Tools (`codesign`, `sips`, `iconutil`, and the macOS SDK)
+- Zig 0.17.0 (fetched into `.tools/` by `make install-zig`)
+- [Bun](https://bun.sh) only when working on this documentation site
 
 <Steps>
 
 1. **Clone the repository**
 
    ```sh
-   git clone https://github.com/vmg-dev/floodlight.git
-   cd floodlight
+   git clone https://github.com/fpcMotif/nanospot.git
+   cd nanospot
    ```
 
-2. **Build and test**
+2. **Install the pinned toolchain and run checks**
 
    ```sh
-   make test
+   make install-zig
+   make check
    ```
 
 3. **Create the application bundle**
 
    ```sh
    make bundle
-   open .build/Floodlight.app
-   ```
-
-4. **Create a local DMG**
-
-   ```sh
-   make dmg
+   open app/zig-out/Nanospot.app
    ```
 
 </Steps>
 
 <Aside type="caution" title="Local builds are ad-hoc signed">
-  `make bundle` uses ad-hoc signing unless `CODE_SIGN_IDENTITY` names a
-  Developer ID Application certificate. Ad-hoc builds are for development and
-  are not equivalent to the notarized release asset.
+  `make bundle` signs `app/zig-out/Nanospot.app` ad-hoc with bundle identifier
+  `com.nanospot.app` unless `-Dsign-identity` names a Developer ID Application
+  certificate. Ad-hoc builds are for development and are not equivalent to a
+  notarized release asset.
 </Aside>
 
 ## Icon assets
 
-`Sources/Floodlight/Resources/AppIcon.png` is the 1024-pixel application icon
-master used by Finder and the DMG installation flow. Run `make icons` to
-generate `.build/Floodlight.icns`; `make bundle` does this automatically.
-
-The menu bar intentionally uses a separate 18-point black-and-clear vector:
-`Sources/Floodlight/Resources/FloodlightMenuBar.svg`. Floodlight marks it as an
-AppKit template image so macOS applies the correct light, dark, highlighted, and
-accessibility treatment instead of shrinking the full-color application icon.
+`app/icon/Nanospot.png` is the 1024-pixel application icon master used by Finder
+and the app bundle. `scripts/build-app-icon.sh` generates `Nanospot.icns` from
+it automatically during `make bundle`.
 
 ## Documentation
 
 ```sh frame="none"
 cd docs
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
-Run `npm run build` before submitting documentation changes. Astro emits the
-static site under `docs/dist`.
+Run `bun run build` (or `make docs` from the repository root) before submitting
+documentation changes. Astro emits the static site under `docs/dist`. When
+changing the interactive hero stage under `docs/demo`, run
+`bun --cwd=docs/demo run build` first to update `docs/public/demo/`.

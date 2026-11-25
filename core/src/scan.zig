@@ -81,7 +81,7 @@ fn keep(name: []const u8, is_dir: bool, opts: Options) bool {
 const listing = switch (builtin.os.tag) {
     .linux => Linux,
     .macos => Darwin,
-    else => @compileError("floodlight-core scans macOS and Linux only"),
+    else => @compileError("nanospot-core scans macOS and Linux only"),
 };
 
 const Linux = struct {
@@ -95,11 +95,14 @@ const Linux = struct {
             // An unreadable directory (permissions, raced away) is skipped,
             // not fatal: a home folder always has a few.
             if (posix.errno(rc) != .SUCCESS) return;
-            if (rc == 0) return;
+            if (rc == 0 or rc > buf.len) return;
             var off: usize = 0;
             while (off < rc) {
-                const rec = buf[off..];
+                const rem = rc - off;
+                if (rem < 20) break;
+                const rec = buf[off..rc];
                 const reclen = std.mem.readInt(u16, rec[16..18], .little);
+                if (reclen < 20 or reclen > rem) break;
                 const dtype = rec[18];
                 const name = std.mem.sliceTo(rec[19..reclen], 0);
                 off += reclen;
@@ -178,8 +181,11 @@ const Darwin = struct {
             var off: usize = 0;
             var left: c_int = n;
             while (left > 0) : (left -= 1) {
-                const rec = buf[off..];
-                const len = std.mem.readInt(u32, rec[0..4], .little);
+                if (buf.len - off < 4) break;
+                const tail = buf[off..];
+                const len = std.mem.readInt(u32, tail[0..4], .little);
+                if (len < 4 + @sizeOf(attribute_set) or len > tail.len) break;
+                const rec = tail[0..len];
                 off += len;
 
                 // Layout in bit order after the length: the returned set,
@@ -188,14 +194,19 @@ const Darwin = struct {
                 const returned = std.mem.bytesToValue(attribute_set, rec[at..][0..@sizeOf(attribute_set)]);
                 at += @sizeOf(attribute_set);
                 if (returned.commonattr & ATTR_CMN_NAME == 0) continue;
+                if (rec.len - at < @sizeOf(attrreference)) continue;
                 const ref = std.mem.bytesToValue(attrreference, rec[at..][0..@sizeOf(attrreference)]);
-                const name_at: usize = @intCast(@as(i64, @intCast(at)) + ref.dataoffset);
+                const name_pos = @as(i64, @intCast(at)) + ref.dataoffset;
+                if (name_pos < 0) continue;
+                const name_at: usize = @intCast(name_pos);
+                if (name_at > rec.len or ref.length > rec.len - name_at) continue;
                 at += @sizeOf(attrreference);
                 const raw = rec[name_at..][0..ref.length];
                 const name = std.mem.sliceTo(raw, 0);
 
                 var objtype: u32 = 0;
                 if (returned.commonattr & ATTR_CMN_OBJTYPE != 0) {
+                    if (rec.len - at < 4) continue;
                     objtype = std.mem.readInt(u32, rec[at..][0..4], .little);
                 }
                 const flags: index.Flags = .{ .dir = objtype == VDIR };

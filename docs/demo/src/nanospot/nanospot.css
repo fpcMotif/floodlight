@@ -1,0 +1,469 @@
+/* Nanospot, dark appearance, under its own light on a black page.
+   Colors are the app's: chrome.zig's tone, hue and fill tokens. */
+
+.fl-stage .ss-stage {
+  overflow: hidden;
+  background: #000;
+  --fl-text: #f5f5f7;
+  --fl-text-2: #c2c2c7;
+  --fl-text-3: #67676c;
+  --fl-well: #1c1c1e;
+  --fl-ring: rgba(245, 245, 247, 0.12);
+  --fl-line: rgba(72, 72, 74, 0.45);
+  --fl-sel: rgba(255, 255, 255, 0.12);
+  --fl-chip: rgba(245, 245, 247, 0.055);
+  --fl-chip-on: rgba(245, 245, 247, 0.14);
+  --fl-key: rgba(152, 152, 157, 0.12);
+  --fl-caret: #0a84ff;
+  --fl-amber: #ffb020;
+}
+
+.fl-desk {
+  position: absolute;
+  inset: 0;
+  --fl-x: 56px;
+  --fl-y: 44px;
+  --fl-w: 648px;
+  --fl-h: 470px;
+  --fl-input: 20px;
+  --fl-list-w: 43%;
+}
+
+.fl-desk[data-layout="compact"] {
+  --fl-x: 12px;
+  --fl-y: 28px;
+  --fl-w: 334px;
+  --fl-h: 440px;
+  --fl-input: 18px;
+  --fl-list-w: 52%;
+}
+
+/* The panel: a dark graphite surface, the well set into it */
+.fl-panel {
+  position: absolute;
+  left: var(--fl-x);
+  top: var(--fl-y);
+  width: var(--fl-w);
+  height: var(--fl-h);
+  display: flex;
+  flex-direction: column;
+  border-radius: 26px;
+  background: #161618;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  color: var(--fl-text);
+  font-family: var(--ss-font);
+}
+
+.fl-search {
+  flex-shrink: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 18px;
+}
+
+.fl-glass {
+  flex-shrink: 0;
+  color: var(--fl-text-2);
+}
+
+.fl-input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--fl-input);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.fl-caret {
+  flex-shrink: 0;
+  width: 2px;
+  height: calc(var(--fl-input) + 4px);
+  border-radius: 1px;
+  background: var(--fl-caret);
+  animation: ss-caret 1.06s steps(1) 0.5s infinite;
+}
+
+.fl-ghost {
+  color: var(--fl-text-3);
+  opacity: 0;
+}
+
+.fl-ghost[data-show] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-caret {
+    animation: none;
+  }
+}
+
+.fl-placeholders {
+  position: absolute;
+  left: 5px;
+  display: grid;
+  color: var(--fl-text-3);
+}
+
+.fl-placeholders[data-hidden] {
+  opacity: 0;
+}
+
+.fl-placeholder {
+  grid-area: 1 / 1;
+  opacity: 0;
+}
+
+.fl-placeholder[data-show] {
+  opacity: 1;
+}
+
+.fl-well {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 6px 6px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--fl-well);
+  box-shadow: inset 0 0 0 1px var(--fl-ring);
+}
+
+/* The app swaps the well's content at once; so does this. */
+.fl-page {
+  position: absolute;
+  inset: 0 0 28px 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fl-page[data-show] {
+  opacity: 1;
+}
+
+.fl-bar {
+  flex-shrink: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--fl-text-2);
+}
+
+.fl-heads {
+  display: grid;
+  align-items: center;
+}
+
+.fl-head {
+  grid-area: 1 / 1;
+  opacity: 0;
+}
+
+.fl-head[data-show] {
+  opacity: 1;
+}
+
+.fl-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.fl-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--fl-text-2);
+}
+
+.fl-chip[data-selected] {
+  background: var(--fl-chip-on);
+  color: var(--fl-text);
+}
+
+.fl-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 6px;
+}
+
+/* The app replaces the list in one frame, so the rows do not ease. */
+.fl-filter.ss-collapse,
+.fl-filter.ss-collapse[data-open] {
+  transition: none;
+}
+
+.fl-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 50px;
+  padding: 0 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.fl-row[data-selected] {
+  background: var(--fl-sel);
+}
+
+.fl-tile {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--fl-hue);
+  background: color-mix(in srgb, var(--fl-hue) 14%, transparent);
+}
+
+.fl-tile[data-big] {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.fl-tile[data-hue="red"] { --fl-hue: #ff453a; }
+.fl-tile[data-hue="amber"] { --fl-hue: #ffb020; }
+.fl-tile[data-hue="green"] { --fl-hue: #30d158; }
+.fl-tile[data-hue="blue"] { --fl-hue: #0a84ff; }
+.fl-tile[data-hue="cyan"] { --fl-hue: #32ade6; }
+.fl-tile[data-hue="gray"] { --fl-hue: #c2c2c7; }
+.fl-tile--swatch {
+  background: #3478f6;
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+  outline-offset: -1px;
+}
+
+.fl-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.fl-title {
+  font-size: 13.5px;
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--fl-text);
+}
+
+.fl-row[data-top] .fl-title {
+  font-size: 16.5px;
+  font-weight: 600;
+}
+
+.fl-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 12px;
+  font-size: 10.5px;
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--fl-text-2);
+}
+
+.fl-tophit {
+  display: none;
+}
+
+.fl-tophit[data-show] {
+  display: inline;
+}
+
+.fl-clamp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fl-enter {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--fl-key);
+  color: var(--fl-text-2);
+  opacity: 0;
+}
+
+.fl-enter[data-show] {
+  opacity: 1;
+}
+
+/* The board */
+.fl-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.fl-entries {
+  flex-shrink: 0;
+  width: var(--fl-list-w);
+  padding: 0 6px;
+  border-right: 1px solid var(--fl-line);
+}
+
+.fl-inspector {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(245, 245, 247, 0.03);
+}
+
+.fl-preview {
+  position: relative;
+  height: 132px;
+  flex-shrink: 0;
+}
+
+.fl-layer {
+  position: absolute;
+  inset: 0;
+  padding: 14px;
+  opacity: 0;
+}
+
+.fl-layer[data-show] {
+  opacity: 1;
+}
+
+.fl-layer-color {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fl-preview-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fl-text);
+}
+
+.fl-mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 500;
+}
+
+.fl-swatch {
+  height: 64px;
+  border-radius: 10px;
+  background: #3478f6;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.fl-info {
+  margin: 0 14px;
+  border-top: 1px solid var(--fl-line);
+}
+
+.fl-info-head {
+  display: block;
+  padding: 12px 0 4px;
+  font-size: 10.5px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--fl-text-2);
+}
+
+.fl-info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 22px;
+}
+
+.fl-info-label {
+  display: flex;
+  justify-content: flex-end;
+  width: 72px;
+}
+
+.fl-info-val {
+  position: relative;
+  flex: 1;
+  height: 6px;
+}
+
+.fl-v {
+  position: absolute;
+  left: 0;
+  opacity: 0;
+}
+
+.fl-v[data-show] {
+  opacity: 1;
+}
+
+.fl-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-top: 1px solid var(--fl-line);
+  background: rgba(152, 152, 157, 0.04);
+}
+
+.fl-spacer {
+  flex: 1;
+}
+
+.fl-action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 6px 0 8px;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 10.5px;
+  line-height: 1;
+  font-weight: 500;
+  color: var(--fl-text);
+}
+
+.fl-glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 12px;
+  border-radius: 3px;
+  background: rgba(152, 152, 157, 0.25);
+}
+
+/* Keycaps read light over the dark panel */
+.fl-stage .ss-key {
+  background: rgba(250, 250, 252, 0.94);
+  color: #1c1c1e;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12), 0 6px 16px rgba(0, 0, 0, 0.35);
+}

@@ -1,4 +1,4 @@
-/* Hallmark · shape: Workbench · genre: modern-minimal · theme: project tokens, preserved (deal download-floodlight-fast-native-e5e9·4d6d3fb1·2026-11-24·r0, Console 2/3 was nearest) · job: try · draw: manual
+/* Hallmark · shape: Workbench · genre: modern-minimal · theme: project tokens, preserved (deal download-nanospot-fast-native-e5e9·4d6d3fb1·2026-11-24·r0, Console 2/3 was nearest) · job: try · draw: manual
  * hero: Stage · nav: the site's own · footer: the site's own · imagery: the product · signature: the panel answering "cal" and opening the clipboard board, live in the hero · console: none
  * axes: dark/system-sans/chromatic-amber · posture: restrained · contrast: pass · fold: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 · weakest: S, a download page can be any app's; the hero runs the real panel instead of a badge and a button */
@@ -95,14 +95,7 @@ body {
 
 .dl-sec {
   padding-block: var(--dl-section-y);
-  border-top: 1px solid var(--sec-line);
-}
-
-.dl-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  gap: var(--dl-gap);
+  border-top: var(--fl-hairline-w) solid var(--sec-line);
 }
 
 .dl-copy {
@@ -112,7 +105,7 @@ body {
 }
 
 .dl-copy p {
-  max-width: 30rem;
+  max-width: 34rem;
   color: var(--sec-mute);
   font-size: var(--fl-t-lede);
   line-height: 1.38;
@@ -122,12 +115,23 @@ body {
 
 .dl-kbd {
   padding: 0.05em 0.4em;
-  border: 1px solid var(--sec-line);
+  border: var(--fl-hairline-w) solid var(--sec-line);
   border-radius: 0.35em;
   background: var(--dl-step-fill);
   color: var(--sec-fg);
   font-family: var(--fl-font);
   font-size: 0.85em;
+}
+
+.dl-figure {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.dl-figure figcaption {
+  color: var(--sec-mute);
+  font-size: var(--fl-t-small);
 }
 
 /* The panel's own 30px corner on its 760 by 560 capture, as percentages so
@@ -136,20 +140,8 @@ body {
   width: 100%;
   height: auto;
   border-radius: 3.95% / 5.36%;
-}
-
-@media (min-width: 62rem) {
-  .dl-split {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  }
-
-  .dl-split--flip {
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  }
-
-  .dl-split--flip .dl-copy {
-    order: 2;
-  }
+  outline: 1px solid rgb(255 255 255 / 10%);
+  outline-offset: -1px;
 }
 
 /* Light band: the same panel in the light appearance */
@@ -163,10 +155,14 @@ body {
   --sec-fg: var(--fl-ink);
 }
 
+.dl-sec--light .dl-shot {
+  outline-color: rgb(0 0 0 / 10%);
+}
+
 .dl-pair {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: clamp(1rem, 3vw, 2rem);
+  gap: clamp(1.25rem, 3vw, 2rem);
   margin-top: clamp(2rem, 5vw, 3.5rem);
 }
 
@@ -186,32 +182,29 @@ body {
 
 .dl-steps {
   display: grid;
-  gap: 0.875rem;
   margin-top: 1.75rem;
   padding: 0;
   list-style: none;
   counter-reset: step;
   font-size: var(--fl-t-lede);
   letter-spacing: -0.012em;
+  border-top: var(--fl-hairline-w) solid var(--sec-line);
 }
 
 .dl-steps li {
   display: flex;
-  align-items: center;
-  gap: 0.875rem;
+  align-items: baseline;
+  gap: 1.125rem;
+  padding-block: 0.9rem;
+  border-bottom: var(--fl-hairline-w) solid var(--sec-line);
   counter-increment: step;
 }
 
 .dl-steps li::before {
-  content: counter(step);
+  content: counter(step, decimal-leading-zero);
   flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 50%;
-  background: var(--dl-step-fill);
-  color: var(--sec-fg);
+  color: var(--fl-amber);
+  font-family: var(--fl-font-mono);
   font-size: var(--fl-t-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -259,7 +252,7 @@ body {
 }
 
 .dl a:focus-visible {
-  outline: 2px solid var(--fl-amber);
+  outline: 2px solid var(--sec-fg);
   outline-offset: 3px;
 }
 

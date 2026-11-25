@@ -1,274 +1,87 @@
-# Floodlight
+# Nanospot
 
-Floodlight is a keyboard-first Spotlight alternative for macOS, written in
-SwiftUI and powered by the [FFF Swift](https://github.com/vmg-dev/fff-swift)
-package.
+Nanospot is a keyboard-first macOS launcher written in Zig on [nanoui](https://github.com/justrach/nanoui) over `nanospot-core`, a zero-allocation memory-mapped file index.
 
-It searches files and folders with FFF's fuzzy ranking, live filesystem watcher,
-query history, and frecency database. Native catalogs add applications and
-System Settings. Floodlight also evaluates arithmetic, provides a web-search
-fallback, supports Quick Look, and opens or reveals results without touching the
-mouse.
+It searches applications, files, folders, and the web from one Liquid Glass panel. It also keeps a local Clipboard History board with a live preview pane and direct paste into the active app.
 
 ## Features
 
-- Global `⌘Space` invocation, with automatic `⌥Space` fallback while Apple's
-  Spotlight still owns the shortcut
-- Global `⇧⌘C` opens Clipboard History from any app, with automatic
-  `⇧⌘Space` fallback
-- FFF fuzzy search across files and folders
-- Relative, absolute, and `~/` path queries with directory-only trailing-slash
-  search
-- Time-budgeted FFF content search when filename matches are sparse
-- Live file and folder index updates
-- Persistent FFF frecency and query history
-- FFF-ranked application search via a package-marker index
-- Native System Settings search
-- Arithmetic with precedence, powers, percentages, and unit conversions
-- Web-search fallback in the default browser
-- Open, Finder reveal, Quick Look, copy, and drag actions
-- Configurable indexing scope and manual index rebuild
-- Multi-display placement, full-screen space support, and menu-bar access
-- Optional launch at login
+- `⌥Space` summons the search panel from any space.
+- `⌥⇧C` opens Clipboard History with text, file, and image filters.
+- `nanospot-core` scans `$HOME` with `getattrlistbulk` into a memory-mapped File Index. Queries run an 8-wide SIMD mask prefilter, fzf-v1 scoring, and a bounded top-k heap with zero allocations.
+- Application ranking boosts prefix matches. An empty query lists your most-opened apps under Suggestions (`⌘2` to `⌘6`).
+- Inline query completion draws from local query history, Top Hit titles, and Google suggestions.
+- Web queries detect direct links and add Google, YouTube, X, and Grok rows.
+- Clipboard History stores entries in SQLite and content-addressed image files. It classifies each copy once (`plain`, `link`, `color`, `code`, or `path`) and compacts 7-day-old PNGs to AVIF.
+- Clipboard Inspector previews numbered code lines, color swatches, images, and file heads. `Space` opens Quick Look and `⌘K` opens the actions menu.
+- Session Retention keeps a hidden search or clipboard session in memory for five minutes. Expiry releases its surfaces and memory pages.
+- A Full Disk Access guidance card lets you drag Nanospot straight into System Settings.
 
 ## Requirements
 
 - macOS 14 or newer
-- Xcode 27 or newer (Swift 6.4)
+- Zig 0.17.0 (`make install-zig` fetches the checksum-pinned toolchain into `.tools/`)
 
 ## Build and run
 
 ```sh
+make install-zig
 make run
 ```
 
-Swift Package Manager downloads the versioned FFFKit XCFramework automatically.
-Building Floodlight does not require Rust or a separate FFF checkout.
-
-Create a signed ad-hoc application bundle:
+Build a signed `Nanospot.app` bundle in `app/zig-out/Nanospot.app`:
 
 ```sh
 make bundle
-open .build/Floodlight.app
-```
-
-For normal use, install Floodlight at a stable app path:
-
-```sh
-make install
-```
-
-This installs to `~/Applications/Floodlight.app` with a stable designated code
-requirement. Grant macOS file access to that installed copy once; the grant
-persists on later launches and development rebuilds. Set
-`FLOODLIGHT_INSTALL_DIR` to choose another install directory.
-
-Run the test suite:
-
-```sh
-make test
+open app/zig-out/Nanospot.app
 ```
 
 ## Quality gates
 
-`make check` is the single entry point for every mechanical gate, and CI runs
-exactly the same command — so a green run locally is a green run on the pull
-request.
+`make check` runs the same mechanical gates locally and in CI:
 
 ```sh
-make install-tools   # pinned binaries into .tools/, once
-make check           # format, lint, ast-grep rules, architecture, build, dead code
-make format          # fix everything the format gate would complain about
+make check                # core + app fmt check, unit tests, cross-build, release benches, bundle codesign, and snapshot
+make format               # format core/ and app/ with pinned zig fmt
+make bench-nanoui-memory  # verify idle and post-retention footprint budgets
+make docs                 # build the Astro site in docs/ with bun
 ```
 
-The gate is deliberately made of small pieces you can run one at a time while
-iterating: `make check-format`, `check-lint`, `check-rules`,
-`check-architecture`, `check-build`, `check-dead-code`.
-
-| Gate | Tool | What it owns |
+| Gate | Script | What it verifies |
 | --- | --- | --- |
-| `check-format` | SwiftFormat | One deterministic style. Never hand-edit its feedback — run `make format`. |
-| `check-lint` | SwiftLint `--strict` | Whatever SwiftLint already has a rule for: performance antipatterns (`first_where`, `contains_over_filter_count`, …) and the size and complexity ratchets. |
-| `check-rules` | ast-grep | Whatever needs the parse tree — Floodlight's own invariants, and the shapes that make code hard to read. See below. |
-| `check-architecture` | `rg` | Nothing under `Sources` declares `public` or `open`. |
-| `check-build` | `swift build` | Warnings as errors, with strict concurrency checking on. |
-| `check-dead-code` | Periphery | Unused declarations, with no suppression baseline. |
-
-The ast-grep rules live one-per-file in
-[`tools/ast-grep/rules`](tools/ast-grep/rules) and come in two kinds. The
-architecture rules encode this codebase rather than Swift style: the engine may
-not import a UI framework, the query path may not touch the filesystem, the
-search path may not fully sort a candidate set, and `try!`/`as!`/force unwrap
-may not ship. The readability rules encode the shapes that cost a reader more
-than a branch counter can see — a block nested past the current depth, an
-`else` after a branch that already returned, a condition with three or more
-`&&`/`||`, and the two comment forms below. Every message names the alternative
-to use, and every `note` says what does *and does not* trip the rule, so you can
-predict the verdict before you push. Adding a rule is one YAML file plus one
-test file in [`tools/ast-grep/rule-tests`](tools/ast-grep/rule-tests), then
-`ast-grep test --update-all` to record the snapshot the test run compares
-against.
-
-The size and complexity thresholds in [`.swiftlint.yml`](.swiftlint.yml) are a
-ratchet: each sits on exactly the tree's worst offender, so adding a line to a
-standing offender fails the gate on purpose — split it, then lower the number in
-the same commit. `check-lint` re-measures the tree on every run and also fails
-when a threshold sits *above* what anything reaches, naming the rule and the
-value to set, so a number cannot quietly outlive the offender that justified it.
-
-Latency budgets run separately, in release configuration, because a debug
-build's search path is several times slower than what a user feels:
-
-```sh
-make test-performance
-```
-
-**A new hot path is not done until it has a budgeted test.** Anything that runs
-per keystroke — scoring, filtering, selection, a new catalog's
-`immediatePage` — gets a test in the engine's performance suite: warm up, take
-many samples, take the median, then assert against a hard bound with enough
-margin to survive a shared CI runner. Print a `FLOODLIGHT_BENCH` line so the
-measured number is in the log even on a green run. `SearchItemRankingPerformanceTests`
-is the shape to copy. Elegance is not a substitute for a measurement, and none
-of the rules above can tell you something is slow — only that it is shaped
-wrong.
-
-Some rules are worth breaking at a specific site. Suppress one with a
-`// ast-grep-ignore: <rule-id>` comment on the line directly above, with the
-reason beside it — ast-grep reports suppressions that have stopped matching, so
-a stale one cannot quietly outlive its justification.
-
-Tool versions are pinned in
-[`scripts/tool-versions.env`](scripts/tool-versions.env); the check scripts
-refuse to run against a different version rather than give you a verdict CI
-will not reproduce.
-
-Build the Astro documentation site:
-
-```sh
-npm --prefix docs install
-make docs
-```
-
-Create a local development DMG:
-
-```sh
-make dmg
-```
-
-Local bundles and DMGs use ad-hoc signing. Tagged GitHub releases use the
-Developer ID signing and notarization workflow in
-[`.github/workflows/release.yml`](.github/workflows/release.yml).
-
-The Finder/DMG icon is generated from
-`Sources/Floodlight/Resources/AppIcon.png` with `make icons`. The menu bar uses
-the separate monochrome `FloodlightMenuBar.svg` vector as a template image so
-macOS supplies the correct foreground color for every appearance and state.
-
-## Comments
-
-A comment says **why**. The code already says what, and a comment that repeats
-it is a second thing to keep true: it goes stale in silence, and it spends the
-attention the code needed.
-
-- A `///` doc comment states the **contract** — an invariant, a precondition,
-  the units, what `nil` means, which actor the caller has to be on. Not the
-  signature in prose.
-- A `//` line comment states the **reason** — the constraint, the measurement,
-  the bug it avoids, the simpler thing that was tried and did not work. Not the
-  operation on the next line.
-
-Write this. The code cannot say it:
-
-```swift
-// A max-heap under `ranksBefore`: the root is the worst item kept so far, so
-// deciding whether a candidate belongs is one comparison.
-var heap: [SearchItem] = []
-```
-
-Delete this. The next line already says it:
-
-```swift
-// Create store 1 and write data
-let store1 = try ClipboardHistoryStore(databaseURL: dbURL)
-```
-
-Two shapes of this are mechanical, and `check-rules` owns them: commented-out
-code (`comments-no-dead-code`), and a short imperative fragment naming the next
-line's operation (`comments-say-why`). Both are deliberately narrow — they
-catch only the forms a regex can be trusted with, so they are a floor under the
-convention rather than the convention itself. The rest is a review judgement,
-and "what does this comment add?" is the question it answers.
-
-## Make `⌘Space` belong to Floodlight
-
-Floodlight tries `⌘Space` first and falls back to `⌥Space` when another macOS
-feature owns the shortcut. Follow the
-[Replace Spotlight guide](docs/src/content/docs/getting-started/replace-spotlight.mdx)
-to use `⌘Space` and restore Spotlight later if needed.
-
-## Keyboard controls
-
-See the complete [keyboard shortcut
-reference](docs/src/content/docs/guides/keyboard-shortcuts.mdx).
+| `make test-core` | `scripts/test-core.sh` | `zig fmt --check`, engine unit tests, Linux/macOS cross-build, and `nscore` index/search/bench smoke test. |
+| `make test-nanoui` | `scripts/test-nanoui.sh` | `zig fmt --check`, offscreen `ui.Tester` unit and state-machine tests, `NANOSPOT_BENCH` p99 latency budgets, `com.nanospot.app` bundle codesign requirement, and headless PNG snapshot. |
 
 ## Architecture
 
 ```text
-FloodlightPanelController
-  ├─ SwiftUI search panel
-  │   └─ SearchCoordinator (Search Session and selection)
-  │       ├─ SourceSearchEngine actor
-  │       │   ├─ FFFFileSource → FFFKit → vendored fff-search
-  │       │   ├─ ApplicationCatalog → private app markers → a second FFFIndex
-  │       │   └─ SystemCatalog
-  │       ├─ Calculator
-  │       ├─ ClipboardSearch (Clipboard mode: rows, inspector, pin and preview facts)
-  │       │   └─ ClipboardHistoryStore (SQLite; ClipboardCaptureService writes it;
-  │       │       classifies text once at record, ADR 0009)
-  │       └─ SelectedResultActionPerformer (selected-result action policy)
-  │           └─ SelectedResultActionEffects → NSPasteboard / NSWorkspace
-  └─ QuickLookController
+app/src/main.zig (Shell: windows, hotkeys, timers, worker dispatch, OS wiring)
+  ├─ Presence (app/src/presence.zig: hidden / entering / shown state machine)
+  ├─ Panel (app/src/panel.zig + panel/view.zig + panel/suggestions.zig)
+  │   ├─ search.Catalog (app/src/search.zig: apps, worker thread, FileIndex swap gating)
+  │   │   └─ FileIndex (core/src/file_index.zig: scan, mmap, atomic swap, SIMD top-k search)
+  │   ├─ list.List (app/src/list.zig: arena-owned rows, filter counts, selection)
+  │   └─ Board (app/src/board.zig: Clipboard History rows, Clipboard Inspector, footer actions)
+  │       └─ clipboard.Store (app/src/clipboard/: SQLite + image files, single-pass classification)
+  ├─ permission.Flow + Guidance (app/src/permission.zig: Full Disk Access grant flow)
+  └─ mac (app/src/mac/: Carbon hotkeys, Liquid Glass slab, NSPasteboard, Quick Look, TCC)
 ```
 
-The actor owns source startup, cancellation, scope changes, and rebuilds. Each
-FFF instance serializes its own calls on a high-priority queue. Application and
-System Settings matches publish immediately. File and application-marker search
-then run concurrently after a 15–20 ms debounce. Content search waits another
-30 ms. New queries cancel stale work before it can publish.
+[`GLOSSARY.md`](GLOSSARY.md) defines the domain terms, and [`docs/adr/`](docs/adr/) records the architectural decisions.
 
-macOS applications are directory packages, while FFF indexes regular files and
-derives directories from indexed file paths. Floodlight discovers apps in
-standard system, user, and CoreServices locations without descending into their
-packages. It writes one empty marker per app under its private Application
-Support directory and gives that marker tree to a dedicated FFF instance. The
-marker result maps back to the real bundle URL, so app fuzzy scoring, frecency,
-and query history use FFF without indexing every package file. `.app` bundles
-elsewhere inside the selected scope are also recognized by the main FFF index.
+## Comments
 
-## Search scope and privacy
+A comment says **why** because the code already says what.
 
-Floodlight indexes the current user's home directory by default. Change the
-scope with `⌘L`, or from the menu-bar flashlight. The main file
-index uses FFF's native macOS scanner and file-system watcher. Startup, rebuild,
-and scope changes wait until the new snapshot is searchable before results are
-marked settled. Persistent FFF history, frecency data, and private app markers stay on the Mac under
-`~/Library/Application Support/Floodlight`.
+- A `///` doc comment states the **contract**: invariants, preconditions, units, ownership, and thread rules.
+- A `//` line comment states the **reason**: constraints, measurements, or subtle failure modes avoided.
 
-macOS privacy rules still apply. To search protected locations, grant Floodlight
-Full Disk Access in System Settings → Privacy & Security. Return on a Clipboard
-History entry pastes it into the app you came from; that keystroke needs
-Floodlight under Accessibility in the same pane, and until it is granted the
-footer says "Copy" and Return copies and closes instead.
+## Privacy and storage
 
-## Current compatibility boundary
+Nanospot indexes your home folder and keeps all state under `~/Library/Application Support/Nanospot`. That folder holds the File Index (`names.flix`), Clipboard History (`clipboard.sqlite3` and `clipboard-images/`), query history, and app open counts. Clipboard Capture skips password-manager copies, transient pasteboard types, and Nanospot's own `com.nanospot.own-write` writes before storage.
 
-Floodlight currently covers local apps, files, folders, settings, calculations,
-previews, and web handoff. See [sources not yet
-integrated](docs/src/content/docs/guides/search.mdx#sources-not-yet-integrated)
-for the current Contacts, Photos, Mail, Messages, and Spotlight metadata
-boundaries.
+Grant **Full Disk Access** in System Settings → Privacy & Security so Nanospot can index protected folders. Grant **Accessibility** so Return can paste directly into the previous app.
 
 ## License
 
-Floodlight is available under the [MIT License](LICENSE).
+Nanospot is available under the [MIT License](LICENSE).

@@ -32,7 +32,7 @@ pub const Context = struct {
     query: []const u8,
 };
 
-/// The Swift shell's `FloodlightMetrics` clipboard values.
+/// Clipboard board layout and inspector metrics.
 pub const board_metrics = struct {
     pub const list_width: f32 = 320;
     pub const width: f32 = metrics.width;
@@ -55,8 +55,6 @@ pub const board_metrics = struct {
 
 pub const summon_label = "⌥⇧ C";
 
-/// ⌫ as a shortcut key; `ui.Shortcut` names no constant for it.
-pub const backspace: u21 = 0x7f;
 const held_key_gap_seconds = 0.15;
 const detail_kept_bytes = 1 << 20;
 /// The bytes `shownHead` allows each line.
@@ -66,7 +64,7 @@ const max_link_lines = 6;
 const max_thumbnails = 256;
 
 pub fn shownHead(text: []const u8, lines: usize) []const u8 {
-    var end = lines * max_line_bytes;
+    var end = lines *| max_line_bytes;
     if (text.len <= end) return text;
     while (end > 0 and text[end] & 0xC0 == 0x80) end -= 1;
     return text[0..end];
@@ -80,18 +78,12 @@ pub const Action = union(enum) {
     reveal: []const u8,
     preview: Entry,
     actions: Entry,
-
-    pub fn hides(a: Action) bool {
-        return switch (a) {
-            .paste, .open, .reveal => true,
-            .copy, .preview, .actions => false,
-        };
-    }
 };
 
 pub const Board = struct {
     store: ?*const clipboard.Store,
     list: History,
+    scratch_arena: std.heap.ArenaAllocator,
     /// The selection's payload: a full image, a file's head.
     detail_arena: std.heap.ArenaAllocator,
     clock: clipboard.Clock = .wall_clock,
@@ -110,13 +102,14 @@ pub const Board = struct {
     truncated: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
-        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa) };
+        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .scratch_arena = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa) };
         b.list.markStale();
         return b;
     }
 
     pub fn deinit(b: *Board) void {
         b.list.deinit();
+        b.scratch_arena.deinit();
         b.detail_arena.deinit();
         b.thumbnails.deinit(b.thumb_arena.child_allocator);
         b.thumb_arena.deinit();
@@ -124,6 +117,7 @@ pub const Board = struct {
 
     pub fn forget(b: *Board) void {
         b.list.reset();
+        _ = b.scratch_arena.reset(.free_all);
         b.list.markStale();
         b.truncated = false;
         b.releaseDetail();
@@ -155,18 +149,19 @@ pub const Board = struct {
 
     fn answer(b: *Board, query: []const u8) !void {
         if (b.canNarrow(query)) {
-            const gpa = b.list.arena.child_allocator;
-            var tmp: std.heap.ArenaAllocator = .init(gpa);
-            defer tmp.deinit();
-            const ta = tmp.allocator();
-            var kept: std.ArrayList(Entry) = .empty;
+            _ = b.scratch_arena.reset(.retain_capacity);
+            const ta = b.scratch_arena.allocator();
+            const kept = try ta.alloc(Entry, b.list.rows.len);
+            var n: usize = 0;
             for (b.list.rows) |e| {
-                if (e.matches(query)) try kept.append(ta, try e.dupe(ta));
+                if (e.matches(query)) {
+                    kept[n] = try e.dupe(ta);
+                    n += 1;
+                }
             }
-            const a = b.list.beginQuery(query);
-            const rows = try a.alloc(Entry, kept.items.len);
-            for (kept.items, 0..) |e, i| rows[i] = try e.dupe(a);
-            try b.list.setRows(query, rows);
+            _ = b.list.beginQuery(query);
+            std.mem.swap(std.heap.ArenaAllocator, &b.list.arena, &b.scratch_arena);
+            try b.list.setRows(query, kept[0..n]);
             return;
         }
         const a = b.list.beginQuery(query);
@@ -187,17 +182,28 @@ pub const Board = struct {
 
     pub fn togglePin(b: *Board) void {
         const e = b.list.selection() orelse return;
+        b.togglePinId(e.id);
+    }
+
+    pub fn togglePinId(b: *Board, id: i64) void {
         const store = b.store orelse return;
-        store.togglePin(e.id, b.clock.now()) catch return;
+        store.togglePin(id, b.clock.now()) catch return;
         b.list.markStale();
         b.refresh(b.list.answered());
     }
 
     pub fn delete(b: *Board) void {
         const e = b.list.selection() orelse return;
+        b.deleteId(e.id);
+    }
+
+    pub fn deleteId(b: *Board, id: i64) void {
         const store = b.store orelse return;
-        store.delete(e.id) catch return;
-        _ = b.thumbnails.remove(e.id);
+        store.delete(id) catch return;
+        _ = b.thumbnails.remove(id);
+        if (b.detail_id == id) b.releaseDetail();
+        if (b.facts_id == id) b.facts_id = null;
+        const selected_id: ?i64 = if (b.list.selection()) |sel| sel.id else null;
         const at = b.list.selected;
         const next = b.list.allocator().alloc(Entry, b.list.rows.len -| 1) catch {
             b.list.markStale();
@@ -206,12 +212,14 @@ pub const Board = struct {
             return;
         };
         var n: usize = 0;
-        for (b.list.rows) |r| if (r.id != e.id) {
+        for (b.list.rows) |r| if (r.id != id) {
             next[n] = r;
             n += 1;
         };
         b.list.replaceRows(next[0..n]);
-        b.list.clampSelection(at);
+        if (selected_id == null or selected_id == id) {
+            b.list.clampSelection(at);
+        }
     }
 
     fn thumbnailOf(b: *Board, e: Entry) []const u8 {
@@ -305,8 +313,17 @@ pub const Board = struct {
     fn filterBar(b: *Board, c: *ui.Context) void {
         const bar = chrome.filterBar(c);
         defer bar.end();
-        for (Filter.options) |f| {
-            if (chrome.filterChip(c, bar, f.title(), f.symbol(), b.list.filter == f, .{ .count = b.list.count(f) })) b.list.selectFilter(f);
+        var counts: [Filter.options.len]usize = @splat(0);
+        counts[0] = b.list.rows.len;
+        for (b.list.rows) |e| {
+            switch (e.kind) {
+                .text => counts[1] += 1,
+                .file => counts[2] += 1,
+                .image => counts[3] += 1,
+            }
+        }
+        for (Filter.options, 0..) |f, i| {
+            if (chrome.filterChip(c, bar, f.title(), b.list.filter == f, .{ .count = counts[i] })) b.list.selectFilter(f);
         }
     }
 
@@ -318,19 +335,13 @@ pub const Board = struct {
         chrome.revealSelection(c, &b.list, col.id(), m.list_height - 2 * metrics.row_padding);
         const visible = b.list.visible;
         const shown = list.rowsInView(c.scroll.get(col.id()) orelse 0, visible.len, metrics.row_height, m.list_height, margin_rows);
-        spacer(c, "above", shown.first);
+        chrome.rowSpacer(c, "above", shown.first);
         var asked: ?Action = null;
         for (visible[shown.first..shown.end], shown.first..) |e, i| if (b.rowView(c, host, e, i)) |a| {
             asked = a;
         };
-        spacer(c, "below", visible.len - shown.end);
+        chrome.rowSpacer(c, "below", visible.len - shown.end);
         return asked;
-    }
-
-    fn spacer(c: *ui.Context, name: []const u8, rows: usize) void {
-        if (rows == 0) return;
-        ui.key(c, name);
-        ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
     }
 
     fn rowView(b: *Board, c: *ui.Context, host: Context, e: Entry, i: usize) ?Action {
@@ -361,7 +372,7 @@ pub const Board = struct {
         const size = metrics.icon_size;
         const th = c.theme;
         const blue = chrome.hue(th, .blue);
-        const purple = chrome.hue(th, .purple);
+        const amber = chrome.hue(th, .amber);
         const cyan = chrome.hue(th, .cyan);
         const gray = chrome.tone(th).secondary;
         if (e.kind == .image) {
@@ -379,7 +390,10 @@ pub const Board = struct {
             .image => return tile(c, "photo", gray),
             .text => switch (e.content) {
                 .link => return tile(c, "link", blue),
-                .color => return tile(c, "paintpalette.fill", purple),
+                .color => |rgba| {
+                    ui.div(c).w(size).h(size).rounded(metrics.icon_tile_radius).bg(swatchColor(rgba)).border(chrome.outline(th)).borderW(metrics.hairline).end();
+                    return;
+                },
                 .code => return tile(c, "curlybraces", cyan),
                 .plain => return tile(c, "doc.text", gray),
                 .path => {},
@@ -389,7 +403,7 @@ pub const Board = struct {
         const path = e.filePath().?;
         const ext = clipboard.extension(path);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.board_image_extensions)) return tile(c, "photo", cyan);
-        if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", purple);
+        if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", amber);
         if (host.app_icon(host.ctx, path)) |png| {
             _ = ui.image(c, .{ .key = path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
             return;
@@ -447,8 +461,7 @@ pub const Board = struct {
                 ui.text(c, shownHead(e.text, max_link_lines), .{ .size = type_size.inspector_row, .mono = true, .color = quiet, .wrap = true, .max_lines = max_link_lines });
             },
             .color => |rgba| {
-                const swatch: ui.Color = .{ .r = @as(f32, @floatFromInt(rgba.r)) / 255, .g = @as(f32, @floatFromInt(rgba.g)) / 255, .b = @as(f32, @floatFromInt(rgba.b)) / 255, .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1 };
-                ui.div(c).wFull().h(board_metrics.swatch_height).rounded(metrics.row_radius).bg(swatch).border(chrome.outline(th)).borderW(metrics.hairline).end();
+                ui.div(c).wFull().h(board_metrics.swatch_height).rounded(metrics.row_radius).bg(swatchColor(rgba)).border(chrome.outline(th)).borderW(metrics.hairline).end();
                 const line = ui.div(c).row().gap(space.gap).itemsCenter();
                 defer line.end();
                 ui.text(c, std.mem.trim(u8, e.text, " \t\r\n"), .{ .size = type_size.value, .weight = .medium, .mono = true });
@@ -525,6 +538,15 @@ pub const Board = struct {
 
 const max_code_lines = 40;
 
+fn swatchColor(rgba: anytype) ui.Color {
+    return .{
+        .r = @as(f32, @floatFromInt(rgba.r)) / 255,
+        .g = @as(f32, @floatFromInt(rgba.g)) / 255,
+        .b = @as(f32, @floatFromInt(rgba.b)) / 255,
+        .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1,
+    };
+}
+
 const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
 
 fn infoRow(c: *ui.Context, label: []const u8, value: []const u8) void {
@@ -549,13 +571,12 @@ fn mediaBox(c: *ui.Context, key: []const u8, bytes: []const u8, width: f32) void
         ui.icon(c, "photo", .{ .size = board_metrics.media_placeholder_size, .color = chrome.tone(th).tertiary });
 }
 
-/// Numbered lines, as the Swift board's code block.
 fn codeLines(c: *ui.Context, text: []const u8) void {
     const th = c.theme;
     const quiet = chrome.tone(th).secondary;
     const total = std.mem.count(u8, text, "\n") + 1;
     const shown = @min(total, max_code_lines);
-    const gutter = board_metrics.gutter_widths[std.math.log10_int(shown)];
+    const gutter = board_metrics.gutter_widths[@min(board_metrics.gutter_widths.len - 1, std.math.log10_int(@max(1, shown)))];
     const box = ui.div(c).column().wFull().p(space.pad).gap(space.text).rounded(metrics.media_radius).bg(th.muted.alpha(fill.code));
     defer box.end();
     var it = std.mem.splitScalar(u8, text, '\n');

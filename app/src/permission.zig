@@ -1,7 +1,6 @@
 //! The Full Disk Access grant flow: open System Settings at the list, float
 //! a guidance panel under its window with the app to drag in, and watch for
-//! the grant. A port of the Swift shell's `FullDiskAccessGrantCoordinator`,
-//! `GuidancePanelAnchorPolicy` and `FullDiskAccessGuidanceView`.
+//! the grant.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -11,64 +10,11 @@ const type_size = chrome.type_size;
 
 pub const Phase = enum { idle, guiding, granted, dismissed };
 
-/// What the flow asks of the system. Production wires these to `mac.zig`;
-/// tests count the calls.
-pub const Effects = struct {
-    ctx: ?*anyopaque = null,
-    is_granted: *const fn (?*anyopaque) bool,
-    open_settings: *const fn (?*anyopaque) void,
-    /// Shows the guidance panel, or moves it to follow System Settings.
-    present: *const fn (?*anyopaque) void,
-    /// Hides the guidance panel.
-    close: *const fn (?*anyopaque) void,
-    on_granted: *const fn (?*anyopaque) void,
-};
-
 /// How long the granted state stays on screen before the panel goes.
-pub const granted_linger_ms = 1500;
-pub const poll_ms = 500;
-pub const slow_poll_ms = 5000;
-pub const fast_polls = 120;
-
-pub const Flow = struct {
-    phase: Phase = .idle,
-    effects: Effects,
-    polls: u32 = 0,
-
-    pub fn begin(f: *Flow) void {
-        if (f.effects.is_granted(f.effects.ctx)) {
-            f.phase = .granted;
-            f.effects.on_granted(f.effects.ctx);
-            return;
-        }
-        if (f.phase == .guiding) return f.effects.present(f.effects.ctx);
-        f.polls = 0;
-        f.phase = .guiding;
-        f.effects.open_settings(f.effects.ctx);
-        f.effects.present(f.effects.ctx);
-    }
-
-    /// While guiding: the grant, or the panel presented again. Else nothing.
-    pub fn poll(f: *Flow) void {
-        if (f.phase != .guiding) return;
-        f.polls +|= 1;
-        if (f.effects.is_granted(f.effects.ctx)) {
-            f.phase = .granted;
-            f.effects.on_granted(f.effects.ctx);
-            return;
-        }
-        f.effects.present(f.effects.ctx);
-    }
-
-    pub fn pollDelayMs(f: *const Flow) u32 {
-        return if (f.polls < fast_polls) poll_ms else slow_poll_ms;
-    }
-
-    pub fn dismiss(f: *Flow) void {
-        f.effects.close(f.effects.ctx);
-        f.phase = .dismissed;
-    }
-};
+pub const granted_linger_ms: u32 = 1500;
+pub const poll_ms: u32 = 500;
+pub const slow_poll_ms: u32 = 5000;
+pub const fast_polls: u32 = 120;
 
 /// A rectangle in Cocoa screen points: origin at the bottom left.
 pub const Rect = struct {
@@ -77,7 +23,7 @@ pub const Rect = struct {
     w: f64,
     h: f64,
 
-    fn midX(r: Rect) f64 {
+    pub fn midX(r: Rect) f64 {
         return r.x + r.w / 2;
     }
 };
@@ -112,40 +58,228 @@ pub fn shouldMove(from: Rect, to: Rect) bool {
     return @abs(to.x - from.x) > 4 or @abs(to.y - from.y) > 4;
 }
 
-/// The guidance panel's content. `card` is where the app card was laid
-/// out last frame: the window puts its native drag source there.
-pub const Guidance = struct {
-    /// The flow's phase, which this view only reads.
-    phase: *const Phase,
+/// Reference frames used to anchor the guidance panel while `.guiding`.
+pub const Anchors = struct {
+    settings: ?Rect = null,
+    parent: ?Rect = null,
+    screen: Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 },
+};
+
+pub const WindowOp = union(enum) {
+    keep,
+    show: Rect,
+    move: Rect,
+    redraw,
+    hide,
+};
+
+pub const DragOp = union(enum) {
+    keep,
+    clear,
+    place: [4]f64,
+
+    pub fn rect(op: DragOp) ??[4]f64 {
+        return switch (op) {
+            .keep => null,
+            .clear => @as(?[4]f64, null),
+            .place => |r| r,
+        };
+    }
+};
+
+pub const Outcome = struct {
+    open_settings: bool = false,
+    window: WindowOp = .keep,
+    drag: DragOp = .keep,
+    poll_ms: ?u32 = null,
+    linger_ms: ?u32 = null,
+    rebuild_index: bool = false,
+};
+
+pub fn noOp(_: ?*anyopaque) void {}
+
+/// Windowless controller and view for the Full Disk Access grant flow.
+pub const Grant = struct {
+    phase: Phase = .idle,
     app_name: []const u8 = "Nanospot",
     /// The app's icon as PNG, when the shell has one.
     icon_png: ?[]const u8 = null,
-    dismissed: bool = false,
-    card: ?ui.Rect = null,
-    /// Told when `card` moves or `dismissed` is set, after the frame.
-    request: ?*const fn (?*anyopaque) void = null,
+    anchors: Anchors = .{},
+    read_anchors: ?*const fn (?*anyopaque) Anchors = null,
+    on_request: *const fn (?*anyopaque) void = noOp,
     ctx: ?*anyopaque = null,
+    /// Where the app card was laid out last frame; the window puts its native drag source there.
+    card: ?ui.Rect = null,
 
-    pub fn view(g: *Guidance, c: *ui.Context) void {
+    polls: u32 = 0,
+    visible: bool = false,
+    placed_frame: ?Rect = null,
+    placed_card: ?ui.Rect = null,
+    poll_armed: bool = false,
+    lingering: bool = false,
+    close_requested: bool = false,
+
+    pub fn view(g: *Grant) ui.View {
+        return .init(g, draw);
+    }
+
+    pub fn isGuiding(g: *const Grant) bool {
+        return g.phase == .guiding;
+    }
+
+    pub fn pollDelayMs(g: *const Grant) u32 {
+        return if (g.phase == .dismissed or g.polls >= fast_polls) slow_poll_ms else poll_ms;
+    }
+
+    fn currentAnchor(g: *const Grant) Rect {
+        const a = if (g.read_anchors) |r| r(g.ctx) else g.anchors;
+        return anchorFrame(a.settings, a.parent, a.screen);
+    }
+
+    fn enterGranted(g: *Grant) Outcome {
+        g.phase = .granted;
+        g.close_requested = false;
+        g.card = null;
+        g.placed_card = null;
+        var out: Outcome = .{ .rebuild_index = true };
+        if (g.visible) {
+            out.window = .redraw;
+            out.drag = .clear;
+            if (!g.lingering) {
+                g.lingering = true;
+                out.linger_ms = granted_linger_ms;
+            }
+        }
+        return out;
+    }
+
+    fn hidePanel(g: *Grant) Outcome {
+        g.visible = false;
+        g.placed_frame = null;
+        g.card = null;
+        g.placed_card = null;
+        return .{ .window = .hide, .drag = .clear };
+    }
+
+    pub fn begin(g: *Grant, granted: bool) Outcome {
+        if (g.phase == .granted) return .{};
+        if (granted) return g.enterGranted();
+        g.close_requested = false;
+        var out: Outcome = .{};
+        if (g.phase != .guiding) {
+            g.polls = 0;
+            g.phase = .guiding;
+            out.open_settings = true;
+        }
+        const want = g.currentAnchor();
+        g.visible = true;
+        g.placed_frame = want;
+        out.window = .{ .show = want };
+        if (!g.poll_armed) {
+            g.poll_armed = true;
+            out.poll_ms = g.pollDelayMs();
+        }
+        return out;
+    }
+
+    pub fn poll(g: *Grant, granted: bool) Outcome {
+        g.poll_armed = false;
+        if (g.close_requested) {
+            var out = g.dismiss();
+            if (granted and g.phase == .dismissed) {
+                g.phase = .granted;
+                g.poll_armed = false;
+                out.poll_ms = null;
+                out.rebuild_index = true;
+            }
+            return out;
+        }
+        switch (g.phase) {
+            .idle, .granted => return .{},
+            .dismissed => {
+                if (granted) {
+                    g.phase = .granted;
+                    return .{ .rebuild_index = true };
+                }
+                g.poll_armed = true;
+                return .{ .poll_ms = slow_poll_ms };
+            },
+            .guiding => {},
+        }
+        g.polls +|= 1;
+        if (granted) return g.enterGranted();
+        const want = g.currentAnchor();
+        var out: Outcome = .{};
+        if (!g.visible) {
+            g.visible = true;
+            g.placed_frame = want;
+            out.window = .{ .show = want };
+        } else if (g.placed_frame == null or shouldMove(g.placed_frame.?, want)) {
+            g.placed_frame = want;
+            out.window = .{ .move = want };
+        }
+        g.poll_armed = true;
+        out.poll_ms = g.pollDelayMs();
+        return out;
+    }
+
+    pub fn dismiss(g: *Grant) Outcome {
+        g.close_requested = false;
+        switch (g.phase) {
+            .guiding => {
+                g.phase = .dismissed;
+                var out = g.hidePanel();
+                if (!g.poll_armed) {
+                    g.poll_armed = true;
+                    out.poll_ms = slow_poll_ms;
+                }
+                return out;
+            },
+            .granted => return if (g.visible) g.hidePanel() else .{},
+            .idle, .dismissed => return .{},
+        }
+    }
+
+    pub fn lingerTimedOut(g: *Grant) Outcome {
+        g.lingering = false;
+        return if (g.phase == .granted and g.visible) g.hidePanel() else .{};
+    }
+
+    pub fn applyPending(g: *Grant) Outcome {
+        if (g.close_requested) return g.dismiss();
+        if (g.phase != .guiding) {
+            if (g.placed_card != null) {
+                g.placed_card = null;
+                return .{ .drag = .clear };
+            }
+            return .{};
+        }
+        if (std.meta.eql(g.placed_card, g.card)) return .{};
+        g.placed_card = g.card;
+        if (g.card) |r| return .{ .drag = .{ .place = .{ r.x, r.y, r.w, r.h } } };
+        return .{ .drag = .clear };
+    }
+
+    fn draw(g: *Grant, c: *ui.Context) void {
         const th = c.theme;
         const before = g.card;
-        const was_dismissed = g.dismissed;
-        defer if (g.request) |r| if (!std.meta.eql(before, g.card) or g.dismissed != was_dismissed) r(g.ctx);
-        if (g.phase.* != .guiding) g.card = null;
+        const was_close = g.close_requested;
+        defer if (!std.meta.eql(before, g.card) or g.close_requested != was_close) g.on_request(g.ctx);
+        if (g.phase != .guiding) g.card = null;
         // The window's glass slab is the material; this only draws its rim.
         const root = ui.div(c).column().sizeFull().px(space.edge).py(space.gap).gap(space.pad).rounded(metrics.radius).border(chrome.outline(th));
         defer root.end();
         // Seen once per install, so it may move: the grant eases in. A phase
         // that flips back mid-way turns the same value around.
-        const settled = ui.tween(c, root.id(), 0, if (g.phase.* == .granted) 1 else 0, metrics.settle_seconds, .ease_out);
-        switch (g.phase.*) {
+        const settled = ui.tween(c, root.id(), 0, if (g.phase == .granted) 1 else 0, metrics.settle_seconds, .ease_out);
+        switch (g.phase) {
             .guiding => g.guidingView(c),
             .granted => grantedView(c, settled),
             .idle, .dismissed => {},
         }
     }
 
-    fn guidingView(g: *Guidance, c: *ui.Context) void {
+    fn guidingView(g: *Grant, c: *ui.Context) void {
         const th = c.theme;
         const tone = chrome.tone(th);
         const blue = chrome.hue(th, .blue);
@@ -159,7 +293,7 @@ pub const Guidance = struct {
             const it = c.interact(close.index, .{});
             _ = close.bg(th.muted.alpha(chrome.pointerAlpha(0, it)));
             ui.icon(c, "xmark", .{ .size = type_size.micro, .weight = .bold, .color = tone.secondary });
-            if (close.clicked()) g.dismissed = true;
+            if (close.clicked()) g.close_requested = true;
             close.end();
         }
         {

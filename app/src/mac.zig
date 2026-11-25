@@ -1,16 +1,13 @@
 //! Everything that talks to macOS past what nanoui covers: the global
 //! hotkey, the glass slab behind the panel, NSWorkspace, the Full Disk
 //! Access probe, System Settings' window, and a drag that carries a file.
-pub const window = @import("mac/window.zig");
-pub const pasteboard = @import("mac/pasteboard.zig");
-pub const system = @import("mac/system.zig");
+const window = @import("mac/window.zig");
+const pasteboard = @import("mac/pasteboard.zig");
+const system = @import("mac/system.zig");
 
-pub const Level = window.Level;
-pub const GlassStyle = window.GlassStyle;
 pub const setFrameOrigin = window.setFrameOrigin;
 pub const frameOf = window.frameOf;
 pub const orderFrontRegardless = window.orderFrontRegardless;
-pub const Signpost = window.Signpost;
 pub const signpostBegin = window.signpostBegin;
 pub const signpostEnd = window.signpostEnd;
 pub const keepLinkAtDisplayRate = window.keepLinkAtDisplayRate;
@@ -44,7 +41,6 @@ pub const copy = system.copy;
 pub const reveal = system.reveal;
 pub const RunningApp = system.RunningApp;
 pub const frontmostApp = system.frontmostApp;
-pub const sourceName = system.sourceName;
 pub const ownPid = system.ownPid;
 pub const canDeliverPaste = system.canDeliverPaste;
 pub const promptAccessibility = system.promptAccessibility;
@@ -57,6 +53,5 @@ pub const fullDiskAccessGranted = system.fullDiskAccessGranted;
 pub const openFullDiskAccessSettings = system.openFullDiskAccessSettings;
 pub const bundlePath = system.bundlePath;
 pub const iconPng = system.iconPng;
-pub const retention_defaults_key = system.retention_defaults_key;
 pub const retentionSeconds = system.retentionSeconds;
 pub const FileDragSource = system.FileDragSource;

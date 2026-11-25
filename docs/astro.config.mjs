@@ -4,11 +4,11 @@ import starlight from "@astrojs/starlight";
 const repository =
   process.env.PUBLIC_GITHUB_REPOSITORY ??
   process.env.GITHUB_REPOSITORY ??
-  "fpcMotif/floodlight";
+  "fpcMotif/nanospot";
 const [owner, repositoryName] = repository.split("/");
 const isUserPagesRepository = repositoryName === `${owner}.github.io`;
 const isGitHubPagesBuild = process.env.GITHUB_ACTIONS === "true";
-const site = process.env.SITE_URL ?? `https://${owner}.github.io`;
+const site = process.env.SITE_URL ?? "https://nanospot.vmg.dev";
 const base =
   process.env.BASE_PATH ??
   (isGitHubPagesBuild && !isUserPagesRepository ? `/${repositoryName}` : "/");
@@ -21,7 +21,7 @@ export default defineConfig({
   base,
   integrations: [
     starlight({
-      title: "Floodlight",
+      title: "Nanospot",
       favicon: "/app-icon.png",
       logo: {
         src: "./src/assets/app-icon.png",
@@ -34,7 +34,7 @@ export default defineConfig({
       social: [
         {
           icon: "github",
-          label: "Floodlight on GitHub",
+          label: "Nanospot on GitHub",
           href: repositoryURL,
         },
       ],
@@ -57,7 +57,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             property: "og:image:alt",
-            content: "Floodlight app icon.",
+            content: "Nanospot app icon.",
           },
         },
         {
@@ -71,7 +71,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             name: "twitter:image:alt",
-            content: "Floodlight app icon.",
+            content: "Nanospot app icon.",
           },
         },
       ],
@@ -91,7 +91,7 @@ export default defineConfig({
           ],
         },
         {
-          label: "Using Floodlight",
+          label: "Using Nanospot",
           items: [
             { label: "Search", slug: "guides/search" },
             { label: "Filters", slug: "guides/filters" },
@@ -123,7 +123,7 @@ export default defineConfig({
               slug: "development/building",
             },
             {
-              label: "Zig frontend (nanoui)",
+              label: "Architecture (nanoui)",
               slug: "development/nanoui-port",
             },
           ],

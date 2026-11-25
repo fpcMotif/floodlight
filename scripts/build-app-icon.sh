@@ -3,8 +3,8 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(dirname "$SCRIPT_DIR")
-SOURCE_ICON=${1:-"$PROJECT_DIR/Sources/Floodlight/Resources/AppIcon.png"}
-OUTPUT_ICON=${2:-"$PROJECT_DIR/.build/Floodlight.icns"}
+SOURCE_ICON=${1:-"$PROJECT_DIR/app/icon/Nanospot.png"}
+OUTPUT_ICON=${2:-"$PROJECT_DIR/.build/Nanospot.icns"}
 
 case "$SOURCE_ICON" in
     /*) ;;
@@ -21,8 +21,8 @@ if [ ! -f "$SOURCE_ICON" ]; then
     exit 1
 fi
 
-ICON_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/floodlight-icon.XXXXXX")
-ICONSET="$ICON_WORK_DIR/Floodlight.iconset"
+ICON_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/nanospot-icon.XXXXXX")
+ICONSET="$ICON_WORK_DIR/Nanospot.iconset"
 cleanup() {
     rm -R "$ICON_WORK_DIR"
 }
@@ -104,10 +104,7 @@ def filter_and_compress(data):
             idat.extend(cdata)
     if not ihdr or not idat:
         return data
-    try:
-        decomp = zlib.decompress(idat)
-    except Exception:
-        return data
+    decomp = zlib.decompress(idat)
     w, h, bit_depth, color_type = struct.unpack('>IIBB', ihdr[:10])
     bpp = 4 if color_type == 6 else (3 if color_type == 2 else 1)
     stride = w * bpp
@@ -146,7 +143,7 @@ def filter_and_compress(data):
                 up_left = prev_row[x - bpp] if x >= bpp else 0
                 p = left + up - up_left
                 pa, pb, pc = abs(p - left), abs(p - up), abs(p - up_left)
-                pr = left if (pa <= pb and pa <= pc) else (b if pb <= pc else up_left)
+                pr = left if (pa <= pb and pa <= pc) else (up if pb <= pc else up_left)
                 row[x] = (row[x] + pr) & 0xff
         raw_rgba[y*stride:(y+1)*stride] = row
         prev_row = row
@@ -216,7 +213,4 @@ with open(output_icns, 'wb') as f:
     f.write(icns_data)
 EOF
 
-if [ ! -s "$OUTPUT_ICON" ]; then
-    iconutil --convert icns --output "$OUTPUT_ICON" "$ICONSET"
-fi
 echo "$OUTPUT_ICON"

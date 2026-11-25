@@ -46,30 +46,14 @@ fn addPicture(store: *clipboard.Store, png: []const u8, at: f64) !void {
     _ = try store.add(.{ .image = .{ .name = "", .png = png, .thumbnail = "", .width = 3840, .height = 2160 } }, "com.apple.Preview", "Preview", at);
 }
 
-fn fillAlphaBehind(tester: *ui.Tester, label: []const u8) ?f32 {
-    const nodes = tester.ctx.nodes.items;
-    for (nodes) |n| switch (n.content) {
-        .text => |tx| if (std.mem.eql(u8, tx.str, label)) {
-            var at = n.parent;
-            while (at < nodes.len) : (at = nodes[at].parent) {
-                if (nodes[at].style.background) |fill| return fill.a;
-            }
-        },
-        else => {},
-    };
-    return null;
-}
-
-fn pointAt(tester: *ui.Tester, label: []const u8) !void {
-    const at = tester.findText(label) orelse return error.TextNotDrawn;
-    tester.moveTo(at.x + at.w / 2, at.y + at.h / 2);
-}
+const fillAlphaBehind = h.fillAlphaBehind;
+const pointAt = h.pointAt;
 
 test "the board lists history, inspects the selection, and filters" {
     var f: BoardFixture = undefined;
     try f.init();
     defer f.deinit();
-    _ = try f.store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
+    _ = try f.store.add(.{ .file = "/tmp/nanospot-test.pdf" }, "com.apple.finder", "Finder", 500);
     _ = try f.store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
     _ = try f.store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
     f.hooks.clock.advance(2060);
@@ -112,7 +96,6 @@ test "the board lists history, inspects the selection, and filters" {
 
     try t.expect(tester.shortcut(.{ .key = 'o', .cmd = true }));
     try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.open);
-    try t.expect(p.pending.?.clipboard.hides());
     p.pending = null;
 
     _ = tester.shortcut(.{ .key = ui.Shortcut.down });
@@ -155,9 +138,9 @@ test "⌫ on an empty board filter switches to search, and with text it edits th
     try t.expectEqualStrings("", p.field.text());
     try t.expect(p.pending == null);
 
-    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .alt = true }));
+    try t.expect(!tester.shortcut(.{ .key = chrome.backspace, .alt = true }));
     tester.textOps(&.{.{ .command = .delete_word_backward }});
-    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .cmd = true }));
+    try t.expect(!tester.shortcut(.{ .key = chrome.backspace, .cmd = true }));
     tester.textOps(&.{.{ .command = .delete_to_line_start }});
     try t.expect(p.pending == null);
     // Unfocused, AppKit hands ⌥⌫ and ⌘⌫ over as the bare key, modifiers held.
@@ -418,7 +401,7 @@ test "the inspector types a file by the extensions the board's tiles use" {
     const a = arena.allocator();
     try t.expectEqualStrings("Image", clipboard.fileType(a, "/x.bmp", false));
     try t.expectEqualStrings("Video", clipboard.fileType(a, "/x.wmv", false));
-    // `.ts` is TypeScript to the Swift inspector, not a video stream.
+    // `.ts` classifies as TypeScript, not a video stream.
     try t.expectEqualStrings("Source Code", clipboard.fileType(a, "/x.ts", false));
     try t.expectEqualStrings("ZZZ", clipboard.fileType(a, "/x.zzz", false));
 }

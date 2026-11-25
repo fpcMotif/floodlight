@@ -5,15 +5,15 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 . "$SCRIPT_DIR/tools.sh"
 
-idle_budget_mb=${FLOODLIGHT_NANO_IDLE_BUDGET_MB:-60}
+idle_budget_mb=${NANOSPOT_IDLE_BUDGET_MB:-60}
 cycles=3
 expiry_wait_s=4
 
-zig=$(resolve_tool zig "$FLOODLIGHT_ZIG_VERSION" version)
+zig=$(resolve_tool zig "$NANOSPOT_ZIG_VERSION" version)
 cd "$PROJECT_DIR/app"
 "$zig" build bundle --release
 
-bin="$PWD/zig-out/Nanospot.app/Contents/MacOS/floodlight-nanoui"
+bin="$PWD/zig-out/Nanospot.app/Contents/MacOS/nanospot"
 scratch_home=
 pid=
 cleanup() {
@@ -33,12 +33,12 @@ largest_categories() {
 
 # start_session <retention-seconds>: a fresh seeded home and a running session.
 start_session() {
-    scratch_home=$(mktemp -d "${TMPDIR:-/tmp}/floodlight-nano-memory.XXXXXX")
+    scratch_home=$(mktemp -d "${TMPDIR:-/tmp}/nanospot-memory.XXXXXX")
     mkdir -p "$scratch_home/Applications"
     log="$scratch_home/session.log"
     report="$scratch_home/footprint.json"
-    HOME="$scratch_home" "$bin" --floodlight-memory-seed >"$log" 2>&1
-    HOME="$scratch_home" "$bin" --floodlight-memory-session -sessionRetentionSeconds "$1" >"$log" 2>&1 &
+    HOME="$scratch_home" "$bin" --nanospot-memory-seed >"$log" 2>&1
+    HOME="$scratch_home" "$bin" --nanospot-memory-session -sessionRetentionSeconds "$1" >"$log" 2>&1 &
     pid=$!
 }
 
@@ -61,12 +61,12 @@ run_session() {
             cat "$log" >&2
             exit 1
         fi
-        markers=$(rg -c '^FLOODLIGHT_MEMORY ' "$log" || true)
+        markers=$(rg -c '^NANOSPOT_MEMORY ' "$log" || true)
         while [ "$seen" -lt "${markers:-0}" ]; do
             seen=$((seen + 1))
-            marker=$(rg '^FLOODLIGHT_MEMORY ' "$log" | awk -v n="$seen" 'NR == n { print $2, $3 }')
+            marker=$(rg '^NANOSPOT_MEMORY ' "$log" | awk -v n="$seen" 'NR == n { print $2, $3 }')
             set -- $(sample_footprint)
-            echo "FLOODLIGHT_MEMORY $marker footprint_mb=$1 peak_mb=$2"
+            echo "NANOSPOT_MEMORY $marker footprint_mb=$1 peak_mb=$2"
             largest_categories
             if [ "$marker" = "phase=idle cycle=$cycles" ]; then
                 idle_mb=$1
@@ -100,7 +100,7 @@ run_session
 sleep "$expiry_wait_s"
 set -- $(sample_footprint)
 expired_mb=$1
-echo "FLOODLIGHT_MEMORY phase=expired footprint_mb=$1 peak_mb=$2"
+echo "NANOSPOT_MEMORY phase=expired footprint_mb=$1 peak_mb=$2"
 largest_categories
 stop_session
 check_budget expired "$expired_mb" || status=1

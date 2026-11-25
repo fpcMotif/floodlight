@@ -1,7 +1,7 @@
 .{
-    .name = .floodlight_nanoui,
+    .name = .nanospot,
     .version = "0.1.0",
-    .fingerprint = 0xc6d6999d4b5ffed7,
+    .fingerprint = 0x3c6801682af08c24,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .nanoui = .{
