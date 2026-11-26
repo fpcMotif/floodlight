@@ -10,7 +10,6 @@ cd "$PROJECT_DIR/app"
 
 "$zig" fmt --check build.zig build.zig.zon src
 "$zig" build test --summary all
-"$zig" build bench --release
 "$zig" build bundle --release
 
 bin="zig-out/Nanospot.app/Contents/MacOS/nanospot"
@@ -26,3 +25,4 @@ case "$requirement" in
 esac
 mkdir -p "$PROJECT_DIR/.build"
 "$bin" --nanoui-snapshot="$PROJECT_DIR/.build/nanoui-panel.png" --nanoui-script="type:cal"
+"$zig" build bench --release

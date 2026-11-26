@@ -5,7 +5,8 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 . "$SCRIPT_DIR/tools.sh"
 
-idle_budget_mb=${NANOSPOT_IDLE_BUDGET_MB:-60}
+idle_budget_mb=${NANOSPOT_IDLE_BUDGET_MB:-23}
+peak_budget_mb=${NANOSPOT_PEAK_BUDGET_MB:-67}
 cycles=3
 expiry_wait_s=4
 
@@ -25,6 +26,10 @@ trap cleanup EXIT INT TERM
 sample_footprint() {
     footprint -f bytes -j "$report" "$pid" >/dev/null 2>&1
     jq -r '.processes[0] | "\(.footprint / 1048576 * 10 | round / 10) \(.auxiliary.phys_footprint_peak / 1048576 * 10 | round / 10)"' "$report"
+}
+
+note_peak() {
+    max_peak_mb=$(awk -v a="$max_peak_mb" -v b="$1" 'BEGIN { print (b > a) ? b : a }')
 }
 
 largest_categories() {
@@ -66,6 +71,7 @@ run_session() {
             seen=$((seen + 1))
             marker=$(rg '^NANOSPOT_MEMORY ' "$log" | awk -v n="$seen" 'NR == n { print $2, $3 }')
             set -- $(sample_footprint)
+            note_peak "$2"
             echo "NANOSPOT_MEMORY $marker footprint_mb=$1 peak_mb=$2"
             largest_categories
             if [ "$marker" = "phase=idle cycle=$cycles" ]; then
@@ -81,27 +87,31 @@ run_session() {
 }
 
 check_budget() {
-    if awk -v m="$2" -v b="$idle_budget_mb" 'BEGIN { exit !(m > b) }'; then
-        echo "bench-nanoui-memory: $1 footprint ${2} MB exceeds the ${idle_budget_mb} MB budget" >&2
+    if awk -v m="$2" -v b="$3" 'BEGIN { exit !(m > b) }'; then
+        echo "bench-nanoui-memory: $1 footprint ${2} MB exceeds the ${3} MB budget" >&2
         return 1
     fi
-    echo "bench-nanoui-memory: $1 footprint ${2} MB within the ${idle_budget_mb} MB budget"
+    echo "bench-nanoui-memory: $1 footprint ${2} MB within the ${3} MB budget"
 }
 
+max_peak_mb=0
 start_session 0
 run_session
 stop_session
 status=0
-check_budget idle "$idle_mb" || status=1
+check_budget idle "$idle_mb" "$idle_budget_mb" || status=1
 
 # With retention on, the hidden session keeps its rows until the timer ends it.
 start_session 2
 run_session
 sleep "$expiry_wait_s"
 set -- $(sample_footprint)
+note_peak "$2"
 expired_mb=$1
 echo "NANOSPOT_MEMORY phase=expired footprint_mb=$1 peak_mb=$2"
 largest_categories
 stop_session
-check_budget expired "$expired_mb" || status=1
+check_budget expired "$expired_mb" "$idle_budget_mb" || status=1
+echo "NANOSPOT_MEMORY phase=peak footprint_mb=$max_peak_mb budget_mb=$peak_budget_mb"
+check_budget peak "$max_peak_mb" "$peak_budget_mb" || status=1
 exit "$status"

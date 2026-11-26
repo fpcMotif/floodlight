@@ -135,43 +135,9 @@ fn writeKb(out: *std.Io.Writer, bytes: ?usize) !void {
 /// a long tail of deep ones, names drawn from words people actually type.
 fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count_text: []const u8) !void {
     const want = try std.fmt.parseInt(u32, count_text, 10);
-    var b = index.Builder.init(gpa);
-    defer b.deinit();
-    try b.setRoot("/Users/synthetic");
-    var prng = std.Random.DefaultPrng.init(0x5eed);
-    const r = prng.random();
-    const words = [_][]const u8{
-        "readme",  "notes",  "budget", "report", "invoice", "photo",  "main",   "index",
-        "config",  "test",   "draft",  "final",  "backup",  "music",  "album",  "track",
-        "project", "source", "lib",    "util",   "server",  "client", "design", "mock",
-        "tax",     "2024",   "2025",   "q3",     "meeting", "resume", "letter", "scan",
-    };
-    const exts = [_][]const u8{ ".md", ".txt", ".pdf", ".png", ".jpg", ".swift", ".zig", ".json", ".xlsx", "" };
-
-    var dirs: std.ArrayList(u32) = .empty;
-    defer dirs.deinit(gpa);
-    var name_buf: [96]u8 = undefined;
-    while (b.count() < want) {
-        const parent = if (dirs.items.len == 0 or r.uintLessThan(u32, 16) == 0)
-            index.no_parent
-        else
-            dirs.items[r.uintLessThan(usize, dirs.items.len)];
-        const is_dir = r.uintLessThan(u32, 10) == 0;
-        const w1 = words[r.uintLessThan(usize, words.len)];
-        const w2 = words[r.uintLessThan(usize, words.len)];
-        const ext = if (is_dir) "" else exts[r.uintLessThan(usize, exts.len)];
-        const sep: []const u8 = switch (r.uintLessThan(u32, 3)) {
-            0 => "-",
-            1 => "_",
-            else => "",
-        };
-        const nm = try std.fmt.bufPrint(&name_buf, "{s}{s}{s}{d}{s}", .{ w1, sep, w2, r.uintLessThan(u32, 1000), ext });
-        const id = try b.add(parent, nm, .{ .dir = is_dir });
-        if (is_dir) try dirs.append(gpa, id);
-    }
-    try b.writeFile(sys.cwd, path);
+    const written = try index.writeSynthetic(gpa, path, "/Users/synthetic", want);
     const size = try fileSize(path);
-    try out.print("entries={d} file_bytes={d}\n", .{ b.count(), size });
+    try out.print("entries={d} file_bytes={d}\n", .{ written, size });
 }
 
 fn ms(ns: u64) f64 {

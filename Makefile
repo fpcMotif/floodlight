@@ -1,9 +1,14 @@
-.PHONY: bench-nanoui-memory build bundle check clean docs format install-zig run test test-core test-nanoui
+.PHONY: bench-nanoui-latency bench-nanoui-memory build bundle check clean docs format install-zig run test test-core test-nanoui
 
 ZIG = $(shell SCRIPT_DIR="$$PWD/scripts" . ./scripts/tools.sh && resolve_tool zig "$$NANOSPOT_ZIG_VERSION" version)
 
-check: test-core test-nanoui
-	@echo "check: all gates passed"
+check:
+	@status=0; \
+	./scripts/test-core.sh || status=1; \
+	./scripts/test-nanoui.sh || status=1; \
+	./scripts/bench-nanoui-latency.sh || status=1; \
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
+	echo "check: all gates passed"
 
 test: test-core test-nanoui
 
@@ -28,6 +33,9 @@ test-core:
 
 test-nanoui:
 	./scripts/test-nanoui.sh
+
+bench-nanoui-latency:
+	./scripts/bench-nanoui-latency.sh
 
 bench-nanoui-memory:
 	./scripts/bench-nanoui-memory.sh

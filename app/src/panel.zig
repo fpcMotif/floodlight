@@ -179,6 +179,7 @@ pub const Panel = struct {
     action_arena: std.heap.ArenaAllocator,
     /// The shell's expiry timer is pending; it keeps at most one.
     expiry_armed: bool = false,
+    keystroke_open: bool = false,
     presented_key: ?u64 = null,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
@@ -188,6 +189,7 @@ pub const Panel = struct {
     }
 
     pub fn deinit(p: *Panel) void {
+        p.endKeystroke();
         const gpa = p.list.arena.child_allocator;
         p.frequent_arena.deinit();
         p.action_arena.deinit();
@@ -230,6 +232,7 @@ pub const Panel = struct {
     /// Drops both surfaces' retained sessions: queries, rows, and the
     /// memory behind them.
     pub fn forget(p: *Panel) void {
+        p.endKeystroke();
         p.forgetSearch();
         p.forgetBoard();
         p.field.clear();
@@ -337,6 +340,7 @@ pub const Panel = struct {
     /// Records the active surface's state for the retention window, or
     /// forgets at once when retention is off or the field was cleared.
     pub fn hide(p: *Panel) void {
+        p.endKeystroke();
         p.pending = null;
         p.completer.invalidateHistory();
         const now = p.clock.now();
@@ -438,7 +442,24 @@ pub const Panel = struct {
         p.completer.reset();
     }
 
+    pub fn keystrokePending(p: *const Panel) bool {
+        return p.keystroke_open;
+    }
+
+    fn beginKeystroke(p: *Panel) void {
+        if (p.keystroke_open) return;
+        p.keystroke_open = true;
+        mac.signpostBegin(.keystroke);
+    }
+
+    fn endKeystroke(p: *Panel) void {
+        if (!p.keystroke_open) return;
+        p.keystroke_open = false;
+        mac.signpostEnd(.keystroke);
+    }
+
     pub fn notePresented(p: *Panel) void {
+        p.endKeystroke();
         p.presented_key = p.frameKey();
     }
 
@@ -497,8 +518,7 @@ pub const Panel = struct {
         const text = p.field.text();
         if (p.mode == .clipboard) {
             if (!p.board.list.needsQuery(text)) return;
-            mac.signpostBegin(.keystroke);
-            defer mac.signpostEnd(.keystroke);
+            p.beginKeystroke();
             if (text.len == 0 and p.board.list.answered().len > 0) {
                 p.board.list.filter = .all;
                 p.retained_board.clear();
@@ -509,8 +529,7 @@ pub const Panel = struct {
             return;
         }
         if (!p.list.needsQuery(text)) return;
-        mac.signpostBegin(.keystroke);
-        defer mac.signpostEnd(.keystroke);
+        p.beginKeystroke();
         p.completer.onQueryChanged(text.len, p.list.answered().len);
         if (text.len == 0) {
             p.list.filter = .all;

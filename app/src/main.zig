@@ -58,7 +58,11 @@ const AppShell = struct {
             },
             .reveal => mac.setAlpha(s.panel_window, 1),
             .resize => |sz| s.resizeKeepingTop(sz.w, sz.h),
-            .hide => s.panel_window.hide(),
+            .hide => {
+                const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
+                s.panel_window.hide();
+                if (s.latency_session) latency_probe.Runner(AppShell).hidden(s, t0);
+            },
         }
         switch (out.paste) {
             .none => {},
@@ -125,7 +129,7 @@ const AppShell = struct {
 
     fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
-        if (!w.isFocused()) s.apply(s.shell.focusLost(mac.previewVisible()));
+        if (!w.isFocused() and !s.latency_session) s.apply(s.shell.focusLost(mac.previewVisible()));
     }
 
     fn onRequest(ctx: ?*anyopaque) void {
@@ -134,7 +138,16 @@ const AppShell = struct {
 
     fn applyPanel(ctx: ?*anyopaque) callconv(.c) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.latency_session) latency_probe.Runner(AppShell).applyBegin(s);
         s.apply(s.shell.applyPending());
+        if (s.latency_session) latency_probe.Runner(AppShell).applyEnd(s);
+    }
+
+    fn timedOpen(ctx: ?*anyopaque, target: []const u8) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        const t0 = latency_probe.nowNs();
+        mac.open(target);
+        latency_probe.Runner(AppShell).actionHanded(s, t0, latency_probe.nowNs());
     }
 
     fn positionOnPointerScreen(s: *AppShell, sz: shell_mod.Size) void {
@@ -148,15 +161,18 @@ const AppShell = struct {
     fn resizeKeepingTop(s: *AppShell, w: f32, h: f32) void {
         const f = mac.frameOf(s.panel_window);
         if (@abs(f.h - h) < 0.5 and @abs(f.w - w) < 0.5) return;
+        const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
         const top = f.y + f.h;
         const mid = f.x + f.w / 2;
         s.panel_window.setSize(w, h);
         mac.setFrameOrigin(s.panel_window, .{ .x = mid - w / 2, .y = top - h, .w = w, .h = h });
         nanoui.App.after(resize_redraw_ms, s, redrawPanel);
+        if (s.latency_session) latency_probe.Runner(AppShell).resized(s, t0, latency_probe.nowNs());
     }
 
     fn redrawPanel(ctx: ?*anyopaque) callconv(.c) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.latency_session) latency_probe.Runner(AppShell).resizeRedrawFired(s);
         s.panel_window.redraw();
     }
 
@@ -321,6 +337,7 @@ const AppShell = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
+    const t_launch0 = latency_probe.nowNs();
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
     const support = try std.fs.path.join(gpa, &.{ home, "Library/Application Support/Nanospot" });
     defer gpa.free(support);
@@ -342,11 +359,15 @@ pub fn main(init: std.process.Init) !void {
     var shell: AppShell = .{ .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
     shell.latency.measure_open = memory_probe.hasFlag(args, latency_probe.open_flag);
     defer shell.catalog.deinit();
+    const t_index0 = latency_probe.nowNs();
     try shell.catalog.openIndex(index_path, home);
+    const index_open_ns = latency_probe.nowNs() -| t_index0;
+    const t_apps0 = latency_probe.nowNs();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
     const user_apps = try std.fs.path.join(gpa, &.{ home, "Applications" });
     defer gpa.free(user_apps);
     try search.scanApps(&shell.catalog, init.io, user_apps);
+    const app_scan_ns = latency_probe.nowNs() -| t_apps0;
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
     defer gpa.free(store_path);
@@ -356,6 +377,7 @@ pub fn main(init: std.process.Init) !void {
     const scratch_images = try std.fmt.allocPrint(gpa, "{s}/nanospot-{d}-images", .{ tmp, std.c.getpid() });
     defer gpa.free(scratch_images);
     defer std.Io.Dir.cwd().deleteTree(init.io, scratch_images) catch {};
+    const t_clip_open0 = latency_probe.nowNs();
     shell.store = if (headless)
         try clipboard.Store.open(":memory:", scratch_images)
     else
@@ -363,15 +385,20 @@ pub fn main(init: std.process.Init) !void {
             std.log.err("clipboard history: {s} at {s}; keeping this session's in memory", .{ @errorName(err), store_path });
             break :fallback try clipboard.Store.open(":memory:", scratch_images);
         };
+    const clipboard_open_ns = latency_probe.nowNs() -| t_clip_open0;
     defer shell.store.close();
+    const t_prune0 = latency_probe.nowNs();
     shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
+    const clipboard_prune_ns = latency_probe.nowNs() -| t_prune0;
     if (memory_seed) return memory_probe.seedMemoryHistory(gpa, shell.store);
 
+    var host = shell_mod.macHost(&shell, AppShell.onRequest, if (headless) shell_mod.noSuggest else AppShell.onSuggest);
+    if (latency_session) host.open = AppShell.timedOpen;
     shell.shell.init(
         gpa,
         &shell.catalog,
         &shell.store,
-        shell_mod.macHost(&shell, AppShell.onRequest, if (headless) shell_mod.noSuggest else AppShell.onSuggest),
+        host,
     );
     defer shell.shell.deinit();
     if (!headless) {
@@ -408,6 +435,7 @@ pub fn main(init: std.process.Init) !void {
         surface.after_frame_ctx = &shell;
     }
 
+    const t_guide0 = latency_probe.nowNs();
     const guide_icon = mac.iconPng(gpa, mac.bundlePath(), 44);
     defer if (guide_icon) |p| gpa.free(p);
     shell.grant = .{
@@ -429,7 +457,8 @@ pub fn main(init: std.process.Init) !void {
         .visible = false,
         .content = .{ .view = shell.grant.view() },
     });
-    if (mac.installSlab(shell.guide_window, permission.metrics.radius, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
+    if (mac.installSlab(shell.guide_window, permission.metrics.radius, .floating, .regular)) |guide_host| shell.drag = mac.FileDragSource.create(guide_host, mac.bundlePath());
+    const guide_window_ns = latency_probe.nowNs() -| t_guide0;
 
     if (!headless) {
         try mac.registerHotKeys(&shell, AppShell.hotKey);
@@ -444,6 +473,17 @@ pub fn main(init: std.process.Init) !void {
             latency_probe.Runner(AppShell).launched
         else
             AppShell.launched);
+    }
+    if (latency_session) {
+        shell.latency.index_entries = if (shell.catalog.files) |*fi| if (fi.view()) |v| v.count() else 0 else 0;
+        shell.latency.launch = .{
+            .index_open_ns = index_open_ns,
+            .app_scan_ns = app_scan_ns,
+            .clipboard_open_ns = clipboard_open_ns,
+            .clipboard_prune_ns = clipboard_prune_ns,
+            .guide_window_ns = guide_window_ns,
+            .total_ns = latency_probe.nowNs() -| t_launch0,
+        };
     }
     try app.run();
 }

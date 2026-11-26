@@ -65,7 +65,8 @@ fn signpostLog() OsLog {
 // keeps ReleaseFast from merging them into `__TEXT,__const`.
 export const ns_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
 export const ns_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
-export const ns_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
+const signpost_keystroke_name = "keystroke → presented frame";
+export const ns_signpost_keystroke: [signpost_keystroke_name.len:0]u8 align(1) linksection("__TEXT,__oslogstring") = signpost_keystroke_name.*;
 export const ns_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
 
 fn signpostEmit(s: Signpost, kind: u8) void {
