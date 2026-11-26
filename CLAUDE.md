@@ -12,6 +12,7 @@ Nanospot is a Zig 0.17 and nanoui macOS launcher (`app/`) over a memory-mapped Z
 
 ```sh
 make install-zig  # fetch pinned Zig 0.17.0 into .tools/, once
+make install      # build release bundle, replace /Applications/Nanospot.app whole, verify signature
 make check        # format check, core unit/cross-build/bench, app unit/bench/bundle/snapshot
 make test         # same core + app verification suite
 make format       # zig fmt across core/ and app/

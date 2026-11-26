@@ -69,6 +69,9 @@ run_session() {
         markers=$(rg -c '^NANOSPOT_MEMORY ' "$log" || true)
         while [ "$seen" -lt "${markers:-0}" ]; do
             seen=$((seen + 1))
+            if [ "$seen" -eq 1 ]; then
+                rg '^NANOSPOT_CATALOG ' "$log" | head -n 1 || true
+            fi
             marker=$(rg '^NANOSPOT_MEMORY ' "$log" | awk -v n="$seen" 'NR == n { print $2, $3 }')
             set -- $(sample_footprint)
             note_peak "$2"

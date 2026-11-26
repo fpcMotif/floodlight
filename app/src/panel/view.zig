@@ -99,6 +99,19 @@ fn resultList(p: anytype, c: *ui.Context) void {
         const f = p.list.filter;
         const message: chrome.Empty = if (p.list.failed)
             .{ .symbol = "exclamationmark.triangle", .title = c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()}) }
+        else if (f != .all and f != .apps and !p.catalog.hasFileIndex())
+            if (p.catalog.indexing())
+                .{
+                    .symbol = f.symbol(),
+                    .title = "Indexing your files\u{2026}",
+                    .hint = "Press \u{2318}1 to search everything.",
+                }
+            else
+                .{
+                    .symbol = "folder.badge.questionmark",
+                    .title = "No File Index yet",
+                    .hint = "Grant Full Disk Access so Nanospot can index your files.",
+                }
         else
             .{
                 .symbol = f.symbol(),

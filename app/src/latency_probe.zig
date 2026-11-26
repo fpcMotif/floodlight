@@ -139,6 +139,8 @@ pub const State = struct {
 pub fn Runner(comptime Shell: type) type {
     return struct {
         pub fn launched(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *Shell = @ptrCast(@alignCast(ctx));
+            std.debug.print("NANOSPOT_LATENCY catalog apps={d} file_entries={d}\n", .{ s.catalog.apps.items.len, s.catalog.fileEntryCount() });
             nanoui.App.after(gap_ms * 4, ctx, stepFn);
         }
 
