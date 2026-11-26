@@ -5,6 +5,7 @@ const ui = nanoui.ui;
 const search = @import("../search.zig");
 const board_mod = @import("../board.zig");
 const chrome = @import("../chrome.zig");
+const icons = @import("../icons.zig");
 const list = @import("../list.zig");
 
 const metrics = chrome.metrics;
@@ -225,9 +226,18 @@ fn subtitleLine(c: *ui.Context, row: search.Row, top_hit: bool) void {
     }
 }
 
+fn iconKind(kind: search.Kind) icons.Kind {
+    return switch (kind) {
+        .app => .app,
+        .file => .file,
+        .folder => .folder,
+        .web => .unknown,
+    };
+}
+
 fn iconView(p: anytype, c: *ui.Context, row: search.Row, size: f32) void {
-    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path)) |px| {
-        _ = ui.image(c, .{ .key = row.path, .source = .{ .pixels = px }, .max_width = size, .max_height = size, .radius = 0 });
+    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path, iconKind(row.kind))) |img| {
+        _ = ui.image(c, .{ .key = img.key, .source = .{ .pixels = img.pixels }, .max_width = size, .max_height = size, .radius = 0 });
         return;
     };
     const blue = chrome.hue(c.theme, .blue);

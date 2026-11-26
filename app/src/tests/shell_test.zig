@@ -9,6 +9,8 @@ const shell_mod = @import("../shell.zig");
 const clipboard = @import("../clipboard.zig");
 const board_mod = @import("../board.zig");
 const mac = @import("../mac.zig");
+const chrome = @import("../chrome.zig");
+const icons_mod = @import("../icons.zig");
 const h = @import("helpers.zig");
 const t = std.testing;
 
@@ -25,6 +27,13 @@ const HostSpy = struct {
     opened: std.ArrayList([]u8) = .empty,
     revealed: std.ArrayList([]u8) = .empty,
     clipboard_writes: usize = 0,
+    icon_calls: std.atomic.Value(usize) = .init(0),
+    main_thread_calls: std.atomic.Value(usize) = .init(0),
+    main_thread_id: ?std.Thread.Id = null,
+    entered: ?*std.Io.Semaphore = null,
+    gate: ?*std.Io.Semaphore = null,
+    finished: ?*std.Io.Semaphore = null,
+    null_icons: bool = false,
 
     fn deinit(spy: *HostSpy) void {
         for (spy.opened.items) |s| t.allocator.free(s);
@@ -116,7 +125,18 @@ const HostSpy = struct {
         70, 80, 90, 150, 100, 110, 120, 255,
     };
 
-    fn iconPixels(_: ?*anyopaque, gpa: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
+    fn iconPixels(ctx: ?*anyopaque, gpa: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
+        const spy: *HostSpy = @ptrCast(@alignCast(ctx));
+        const idx = spy.icon_calls.fetchAdd(1, .seq_cst);
+        if (spy.main_thread_id) |tid| {
+            if (std.Thread.getCurrentId() == tid) _ = spy.main_thread_calls.fetchAdd(1, .seq_cst);
+        }
+        if (idx == 0) {
+            if (spy.entered) |sem| sem.post(t.io);
+            if (spy.gate) |sem| sem.waitUncancelable(t.io);
+            if (spy.finished) |sem| sem.post(t.io);
+        }
+        if (spy.null_icons) return null;
         const bgra = gpa.dupe(u8, &sample_icon_bgra) catch return null;
         return .{ .bgra = bgra, .width = 2, .height = 2 };
     }
@@ -253,9 +273,11 @@ test "session expiry, self-frontmost summon, hidden suggest replies, and paste o
 
     var spy: HostSpy = .{};
     defer spy.deinit();
+    var wake: h.WakeSignal = .{};
     var sh: shell_mod.Shell = undefined;
     sh.init(t.allocator, &cat, &store, spy.host());
     defer sh.deinit();
+    sh.startIconWorker(t.io, wake.iconBinding());
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
@@ -265,6 +287,8 @@ test "session expiry, self-frontmost summon, hidden suggest replies, and paste o
     _ = sh.hotKey(.search, false);
     tester.typeText("cal");
     tester.frame();
+    wake.wait();
+    _ = sh.pollIcons();
     try t.expectEqual(@as(usize, 1), sh.icons.count());
     const seq = sh.panel.pendingSuggestSeq();
     try t.expect(sh.shouldSendSuggest(seq));
@@ -343,9 +367,11 @@ test "app icons pack from raw pixels with zero decodes and release on expiry" {
 
     var spy: HostSpy = .{};
     defer spy.deinit();
+    var wake: h.WakeSignal = .{};
     var sh: shell_mod.Shell = undefined;
     sh.init(t.allocator, &cat, &store, spy.host());
     defer sh.deinit();
+    sh.startIconWorker(t.io, wake.iconBinding());
 
     var tester: ui.Tester = undefined;
     try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height, .scale = 2 });
@@ -353,6 +379,11 @@ test "app icons pack from raw pixels with zero decodes and release on expiry" {
 
     _ = sh.hotKey(.search, false);
     tester.typeText("cal");
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), sh.icons.count());
+    try t.expectEqual(@as(usize, 0), tester.ctx.text.images.entries.count());
+    wake.wait();
+    try t.expect(sh.pollIcons().redraw);
     tester.frame();
 
     try t.expectEqual(@as(usize, 1), sh.icons.count());
@@ -370,6 +401,9 @@ test "app icons pack from raw pixels with zero decodes and release on expiry" {
     try t.expectEqualSlices(u8, HostSpy.sample_icon_bgra[8..16], tester.ctx.text.images.pixels[((ay + 1) * atlas_side + ax) * 4 ..][0..8]);
 
     _ = sh.hotKey(.clipboard, false);
+    tester.frame();
+    wake.wait();
+    try t.expect(sh.pollIcons().redraw);
     tester.frame();
     try t.expectEqual(@as(usize, 2), sh.icons.count());
     try t.expectEqual(@as(usize, 0), tester.ctx.text.images.headers.count());
@@ -473,4 +507,317 @@ test "board paste writes the clipboard before hiding and delivering" {
     try t.expectEqual(shell_mod.WindowOp.hide, menu_paste.window);
     try t.expectEqual(shell_mod.ActionOp.none, menu_paste.action);
     try t.expectEqual(shell_mod.PasteOp{ .deliver = 77 }, menu_paste.paste);
+}
+
+test "layout never fetches icons on the main thread" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calendar.app"));
+
+    var spy: HostSpy = .{ .main_thread_id = std.Thread.getCurrentId() };
+    defer spy.deinit();
+    var wake: h.WakeSignal = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    sh.startIconWorker(t.io, wake.iconBinding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.search, false);
+    tester.typeText("cal");
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), spy.main_thread_calls.load(.seq_cst));
+    try t.expectEqual(@as(usize, 0), tester.ctx.text.images.entries.count());
+
+    wake.wait();
+    try t.expect(sh.pollIcons().redraw);
+    try t.expectEqual(@as(usize, 1), spy.icon_calls.load(.seq_cst));
+    try t.expectEqual(@as(usize, 0), spy.main_thread_calls.load(.seq_cst));
+
+    tester.frame();
+    try t.expectEqual(@as(usize, 1), tester.ctx.text.images.entries.count());
+}
+
+const WakeCounter = struct {
+    sem: std.Io.Semaphore = .{ .permits = 0 },
+    count: std.atomic.Value(usize) = .init(0),
+
+    fn wake(ctx: ?*anyopaque) void {
+        const w: *@This() = @ptrCast(@alignCast(ctx));
+        _ = w.count.fetchAdd(1, .seq_cst);
+        w.sem.post(t.io);
+    }
+
+    fn binding(w: *@This()) icons_mod.Wake {
+        return .{ .ctx = w, .wake = wake };
+    }
+};
+
+test "two files with one extension cause one fetch, folders share one key, and apps keep bundle keys" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "docs");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "docs/shared_first.pdf", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "docs/shared_SECOND.PDF", .data = "" });
+    try tmp.dir.createDirPath(t.io, "shared_alpha");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "shared_alpha/one.pdf", .data = "" });
+    try tmp.dir.createDirPath(t.io, "shared_beta.dir");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "shared_beta.dir/two.pdf", .data = "" });
+    try tmp.dir.createDirPath(t.io, "Apps/SharedOne.app/Contents");
+    try tmp.dir.createDirPath(t.io, "Apps/SharedTwo.app/Contents");
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    const apps = try std.fs.path.join(t.allocator, &.{ root, "Apps" });
+    defer t.allocator.free(apps);
+    try search.scanApps(&cat, t.io, apps);
+    const idx = try std.fs.path.join(t.allocator, &.{ root, "names.flix" });
+    defer t.allocator.free(idx);
+    try cat.buildIndex(idx, root);
+
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var wake: h.WakeSignal = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    sh.startIconWorker(t.io, wake.iconBinding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.field.set("pdf");
+    sh.panel.refresh();
+    tester.frame();
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(@as(usize, 1), spy.icon_calls.load(.seq_cst));
+    try t.expectEqual(@as(usize, 1), sh.icons.count());
+
+    sh.panel.field.set("shared");
+    sh.panel.refresh();
+    tester.frame();
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(@as(usize, 4), spy.icon_calls.load(.seq_cst));
+    try t.expectEqual(@as(usize, 4), sh.icons.count());
+
+    tester.frame();
+    try t.expectEqual(@as(usize, 4), tester.ctx.text.images.entries.count());
+    try t.expectEqual(@as(usize, 4), spy.icon_calls.load(.seq_cst));
+}
+
+test "many icons arriving together cause one redraw and cache caps at max_icons" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try h.addNumberedApps(&cat, 70);
+
+    var entered: std.Io.Semaphore = .{ .permits = 0 };
+    var gate: std.Io.Semaphore = .{ .permits = 0 };
+    var spy: HostSpy = .{ .entered = &entered, .gate = &gate };
+    defer spy.deinit();
+    var wake: WakeCounter = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    defer gate.post(t.io);
+    sh.startIconWorker(t.io, wake.binding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.search, false);
+    tester.typeText("app");
+    tester.frame();
+    entered.waitUncancelable(t.io);
+    gate.post(t.io);
+
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        const out = sh.pollIcons();
+        try t.expect(out.redraw);
+    }
+    try t.expectEqual(@as(usize, 1), wake.count.load(.seq_cst));
+    try t.expect(!sh.pollIcons().redraw);
+    const first_batch = sh.icons.count();
+    try t.expect(first_batch >= 4);
+
+    spy.entered = null;
+    spy.gate = null;
+    for (0..69) |_| _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(shell_mod.max_icons, sh.icons.count());
+    try t.expectEqual(shell_mod.max_icons, spy.icon_calls.load(.seq_cst));
+}
+
+test "frequent apps prefetch at launch and at hide without redrawing while hidden" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calendar.app"));
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Notes.app"));
+    try store.recordAppOpen("/Applications/Calendar.app", 900);
+
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var wake: h.WakeSignal = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    sh.startIconWorker(t.io, wake.iconBinding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    _ = sh.launched(true);
+    try t.expect(sh.icons.hasPending());
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        const out = sh.pollIcons();
+        try t.expect(!out.redraw);
+    }
+    try t.expectEqual(@as(usize, 1), sh.icons.count());
+    try t.expectEqual(@as(usize, 1), spy.icon_calls.load(.seq_cst));
+
+    _ = sh.hotKey(.search, false);
+    tester.frame();
+    try t.expectEqual(@as(usize, 1), tester.ctx.text.images.entries.count());
+    try t.expectEqual(@as(usize, 1), spy.icon_calls.load(.seq_cst));
+
+    _ = sh.framePresented(true);
+    tester.typeText("cal");
+    sh.panel.ask(.{ .open = "/Applications/Notes.app" });
+    _ = sh.applyPending();
+    try t.expect(sh.isHidden());
+    try t.expect(sh.icons.hasPending());
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        const out = sh.pollIcons();
+        try t.expect(!out.redraw);
+    }
+    try t.expectEqual(@as(usize, 2), sh.icons.count());
+    try t.expectEqual(@as(usize, 2), spy.icon_calls.load(.seq_cst));
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.clearField();
+    tester.frame();
+    try t.expectEqual(@as(usize, 2), tester.ctx.text.images.entries.count());
+    try t.expectEqual(@as(usize, 2), spy.icon_calls.load(.seq_cst));
+
+    _ = sh.hotKey(.search, true);
+    try t.expect(sh.icons.hasPending());
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        try t.expect(!sh.pollIcons().redraw);
+    }
+    try t.expectEqual(@as(usize, 2), sh.icons.count());
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.retention_seconds = 0;
+    _ = sh.hotKey(.search, true);
+    try t.expect(!sh.icons.hasPending());
+    try t.expectEqual(@as(usize, 0), sh.icons.count());
+}
+
+test "icon worker drops results from a forgotten session and null fetches do not loop" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calendar.app"));
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Notes.app"));
+
+    var entered: std.Io.Semaphore = .{ .permits = 0 };
+    var gate: std.Io.Semaphore = .{ .permits = 0 };
+    var finished: std.Io.Semaphore = .{ .permits = 0 };
+    var spy: HostSpy = .{ .entered = &entered, .gate = &gate, .finished = &finished };
+    defer spy.deinit();
+    var wake: h.WakeSignal = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    defer gate.post(t.io);
+    sh.startIconWorker(t.io, wake.iconBinding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.search, false);
+    tester.typeText("cal");
+    tester.frame();
+    entered.waitUncancelable(t.io);
+
+    _ = sh.hotKey(.search, true);
+    spy.clock.advance(6 * 60);
+    const exp = sh.expireRetention();
+    try t.expect(exp.release_idle);
+    try t.expectEqual(@as(usize, 0), sh.icons.count());
+    try t.expect(!sh.icons.hasPending());
+
+    gate.post(t.io);
+    finished.waitUncancelable(t.io);
+    spy.entered = null;
+    spy.gate = null;
+    spy.finished = null;
+
+    _ = sh.hotKey(.search, false);
+    tester.typeText("not");
+    tester.frame();
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(@as(usize, 1), sh.icons.count());
+    try t.expect(sh.icons.entries.contains("app:/Applications/Notes.app"));
+    try t.expect(!sh.icons.entries.contains("app:/Applications/Calendar.app"));
+
+    sh.icons.clear();
+    spy.null_icons = true;
+    const before_null = spy.icon_calls.load(.seq_cst);
+    sh.panel.field.set("cal");
+    sh.panel.refresh();
+    tester.frame();
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        try t.expect(!sh.pollIcons().redraw);
+    }
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), sh.icons.count());
+    try t.expect(!sh.icons.hasPending());
+    try t.expectEqual(before_null + 1, spy.icon_calls.load(.seq_cst));
 }

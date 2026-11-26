@@ -7,6 +7,7 @@ const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
 const chrome = @import("chrome.zig");
+const icons = @import("icons.zig");
 const list = @import("list.zig");
 const mac = @import("mac.zig");
 const panel_completion = @import("panel/completion.zig");
@@ -97,7 +98,7 @@ pub const Hooks = struct {
     /// An action, or a new height to fit the rows.
     request: *const fn (?*anyopaque) void,
     /// An app's icon as PNG, cached by the shell; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?ui.ImageSource.Pixels,
+    app_icon: *const fn (?*anyopaque, []const u8, icons.Kind) ?icons.Image,
     describe_date: *const fn (?*anyopaque, i64, std.mem.Allocator) []const u8,
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
@@ -769,7 +770,7 @@ pub const Panel = struct {
     }
 
     /// Up to `search.max_suggested_apps` most-opened apps still in the catalog.
-    fn frequentApps(p: *Panel) []const search.Row {
+    pub fn frequentApps(p: *Panel) []const search.Row {
         const store = p.store orelse return &.{};
         if (!p.frequent_dirty and p.frequent_catalog_len == p.catalog.apps.items.len) return p.frequent_rows;
         _ = p.frequent_arena.reset(.retain_capacity);

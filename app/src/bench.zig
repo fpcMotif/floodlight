@@ -14,6 +14,7 @@ const panel_mod = @import("panel.zig");
 const shell_mod = @import("shell.zig");
 const mac = @import("mac.zig");
 const chrome = @import("chrome.zig");
+const icons_mod = @import("icons.zig");
 
 extern "c" fn clock_gettime_nsec_np(clock_id: c_int) u64;
 extern "c" fn pthread_set_qos_class_self_np(qos_class: c_uint, relative_priority: c_int) c_int;
@@ -273,26 +274,10 @@ pub const icon_runs: usize = 20;
 /// Hooks for the built-frame metrics: real dates, and icons that are either
 /// absent or rendered by the system on every request, with no cache.
 const FrameHooks = struct {
-    gpa: std.mem.Allocator,
-    render_icons: bool,
-    icons: std.ArrayList(mac.Icon) = .empty,
-
-    fn deinit(h: *FrameHooks) void {
-        for (h.icons.items) |ic| ic.deinit(h.gpa);
-        h.icons.deinit(h.gpa);
-    }
-
     fn request(_: ?*anyopaque) void {}
 
-    fn icon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
-        const h: *FrameHooks = @ptrCast(@alignCast(ctx orelse return null));
-        if (!h.render_icons) return null;
-        const ic = mac.iconPixels(h.gpa, path, 92) orelse return null;
-        h.icons.append(h.gpa, ic) catch {
-            ic.deinit(h.gpa);
-            return null;
-        };
-        return ic.pixels();
+    fn icon(_: ?*anyopaque, _: []const u8, _: icons_mod.Kind) ?icons_mod.Image {
+        return null;
     }
 
     fn date(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {
@@ -350,14 +335,13 @@ const Fixture = struct {
     }
 };
 
-fn measureBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize, render_icons: bool, warm: bool) !Stats {
+fn measureBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize) !Stats {
     var fx: Fixture = undefined;
     const count: usize = if (builtin.is_test) 2_000 else file_count;
     try fx.init(gpa, io, count);
     defer fx.deinit();
 
-    var hooks: FrameHooks = .{ .gpa = gpa, .render_icons = render_icons };
-    defer hooks.deinit();
+    var hooks: FrameHooks = .{};
     var p = panel_mod.Panel.init(gpa, &fx.cat, &fx.store, hooks.hooks());
     defer p.deinit();
 
@@ -368,12 +352,12 @@ fn measureBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize, render_ico
     });
     defer tester.deinit();
 
-    if (warm) for (keystroke_queries) |q| {
+    for (keystroke_queries) |q| {
         p.field.set(q);
         p.refresh();
         tester.frame();
         if (p.list.visible.len == 0) return error.EmptyPublication;
-    };
+    }
 
     const samples = try gpa.alloc(u64, runs);
     defer gpa.free(samples);
@@ -390,11 +374,41 @@ fn measureBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize, render_ico
 }
 
 pub fn measureKeystrokeToBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize) !Stats {
-    return measureBuiltFrame(gpa, io, runs, false, true);
+    return measureBuiltFrame(gpa, io, runs);
 }
 
 pub fn measureFirstFrameWithIcons(gpa: std.mem.Allocator, io: std.Io, runs: usize) !Stats {
-    return measureBuiltFrame(gpa, io, runs, true, false);
+    var fx: Fixture = undefined;
+    const count: usize = if (builtin.is_test) 2_000 else file_count;
+    try fx.init(gpa, io, count);
+    defer fx.deinit();
+
+    var sh: shell_mod.Shell = undefined;
+    sh.init(gpa, &fx.cat, &fx.store, shell_mod.macHost(null, shell_mod.noOp, shell_mod.noSuggest));
+    defer sh.deinit();
+    sh.startIconWorker(io, .{});
+
+    var tester: ui.Tester = undefined;
+    try tester.init(gpa, sh.view(), .{
+        .width = chrome.metrics.width,
+        .height = chrome.metrics.expanded_height,
+    });
+    defer tester.deinit();
+    _ = sh.hotKey(.search, false);
+
+    const samples = try gpa.alloc(u64, runs);
+    defer gpa.free(samples);
+    for (samples, 0..) |*s, i| {
+        const q = keystroke_queries[i % keystroke_queries.len];
+        _ = sh.pollIcons();
+        const t0 = nowNs();
+        sh.panel.field.set(q);
+        sh.panel.refresh();
+        tester.frame();
+        s.* = nowNs() - t0;
+        if (sh.panel.list.visible.len == 0) return error.EmptyPublication;
+    }
+    return summarize(samples);
 }
 
 pub fn measureHotKeyToBuiltFrame(gpa: std.mem.Allocator, runs: usize) !Stats {

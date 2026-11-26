@@ -9,12 +9,13 @@ const board_mod = @import("board.zig");
 const clipboard = @import("clipboard.zig");
 const presence = @import("presence.zig");
 const chrome = @import("chrome.zig");
+const icons_mod = @import("icons.zig");
 const mac = @import("mac.zig");
 
 const metrics = chrome.metrics;
 
 /// Icons drawn per session at most; all go when the session is forgotten.
-pub const max_icons: usize = 64;
+pub const max_icons: usize = icons_mod.max_icons;
 
 pub const Size = struct {
     w: f32,
@@ -234,7 +235,7 @@ pub const Shell = struct {
     host: Host,
     panel: panel_mod.Panel,
     presence: presence.Presence,
-    icons: std.StringHashMapUnmanaged(mac.Icon) = .empty,
+    icons: icons_mod.Cache,
     paste_target: mac.RunningApp = .{},
     change_count: isize = 0,
     submitting: bool = false,
@@ -269,14 +270,14 @@ pub const Shell = struct {
                     .last_frame_valid = lastFrameValid,
                 },
             },
+            .icons = .init(gpa, metrics.top_hit_icon_size * 2),
             .menu_arena = .init(gpa),
         };
     }
 
     pub fn deinit(s: *Shell) void {
         s.endSubmit();
-        s.clearIcons();
-        s.icons.deinit(s.gpa);
+        s.icons.deinit();
         s.freePasteTarget();
         s.menu_arena.deinit();
         s.panel.deinit();
@@ -319,6 +320,7 @@ pub const Shell = struct {
         s.active_out = &out;
         defer s.active_out = prev;
 
+        s.prefetchFrequentIcons();
         s.presence.launched(guiding);
         return out;
     }
@@ -448,6 +450,20 @@ pub const Shell = struct {
 
     pub fn pollSearch(s: *Shell) Outcome {
         return .{ .redraw = s.panel.poll() and !s.isHidden() };
+    }
+
+    pub fn startIconWorker(s: *Shell, io: std.Io, wake: icons_mod.Wake) void {
+        s.icons.startWorker(io, s.host.ctx, s.host.icon_pixels, wake);
+    }
+
+    pub fn pollIcons(s: *Shell) Outcome {
+        const changed = s.icons.poll();
+        if (changed) s.panel.forgetPresented();
+        return .{ .redraw = changed and !s.isHidden() };
+    }
+
+    pub fn prefetchFrequentIcons(s: *Shell) void {
+        for (s.panel.frequentApps()) |row| s.icons.prefetch(row.path, .app);
     }
 
     pub fn shouldSendSuggest(s: *const Shell, seq: u64) bool {
@@ -624,9 +640,11 @@ pub const Shell = struct {
         s.panel.hide();
         if (s.panel.nextExpiryMs() == null) {
             s.evictIdleSession();
+            if (s.panel.retention_seconds > 0) s.prefetchFrequentIcons();
             if (out) |o| o.release_idle = true;
             return;
         }
+        s.prefetchFrequentIcons();
         const ms = s.panel.armExpiry();
         if (out) |o| o.expiry_ms = ms;
     }
@@ -637,12 +655,7 @@ pub const Shell = struct {
     }
 
     fn clearIcons(s: *Shell) void {
-        var it = s.icons.iterator();
-        while (it.next()) |e| {
-            s.gpa.free(e.key_ptr.*);
-            e.value_ptr.deinit(s.gpa);
-        }
-        s.icons.clearRetainingCapacity();
+        s.icons.clear();
     }
 
     pub fn finishSubmit(s: *Shell) void {
@@ -688,20 +701,8 @@ pub const Shell = struct {
         return s.host.relative_date(s.host.ctx, secs, arena);
     }
 
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
+    fn appIcon(ctx: ?*anyopaque, path: []const u8, kind: icons_mod.Kind) ?icons_mod.Image {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |icon| return icon.pixels();
-        if (s.icons.count() >= max_icons) return null;
-        const icon = s.host.icon_pixels(s.host.ctx, s.gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
-        const key = s.gpa.dupe(u8, path) catch {
-            icon.deinit(s.gpa);
-            return null;
-        };
-        s.icons.put(s.gpa, key, icon) catch {
-            s.gpa.free(key);
-            icon.deinit(s.gpa);
-            return null;
-        };
-        return icon.pixels();
+        return s.icons.lookupOrEnqueue(path, kind);
     }
 };

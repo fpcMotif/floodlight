@@ -8,6 +8,7 @@ const permission = @import("../permission.zig");
 const clipboard = @import("../clipboard.zig");
 const board_mod = @import("../board.zig");
 const chrome = @import("../chrome.zig");
+const icons = @import("../icons.zig");
 const t = std.testing;
 
 pub const screen: permission.Rect = .{ .x = 0, .y = 0, .w = 1440, .h = 900 };
@@ -47,6 +48,10 @@ pub const WakeSignal = struct {
         return .{ .ctx = w, .wake = wake };
     }
 
+    pub fn iconBinding(w: *WakeSignal) icons.Wake {
+        return .{ .ctx = w, .wake = wake };
+    }
+
     pub fn wait(w: *WakeSignal) void {
         w.sem.waitUncancelable(t.io);
     }
@@ -75,7 +80,7 @@ pub const StubHooks = struct {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
     }
-    pub fn icon(_: ?*anyopaque, _: []const u8) ?ui.ImageSource.Pixels {
+    pub fn icon(_: ?*anyopaque, _: []const u8, _: icons.Kind) ?icons.Image {
         return null;
     }
     /// Every date, whatever its seconds' type, as the same one.
