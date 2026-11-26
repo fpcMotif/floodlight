@@ -106,11 +106,50 @@ fn urlFor(path: []const u8) ?objc.Object {
     return pasteboard.fileURL(path);
 }
 
-pub fn open(path: []const u8) void {
+extern "c" fn dispatch_get_global_queue(identifier: isize, flags: usize) ?*anyopaque;
+extern "c" fn dispatch_async_f(queue: *anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
+const qos_class_user_initiated: isize = 0x19;
+
+const WorkspaceJob = struct {
+    path: []u8,
+    run: *const fn ([]const u8) void,
+};
+
+fn workspaceWorker(ctx: ?*anyopaque) callconv(.c) void {
+    const job: *WorkspaceJob = @ptrCast(@alignCast(ctx));
+    defer {
+        std.heap.c_allocator.free(job.path);
+        std.heap.c_allocator.destroy(job);
+    }
+    job.run(job.path);
+}
+
+fn dispatchWorkspace(path: []const u8, run: *const fn ([]const u8) void) void {
+    const queue = dispatch_get_global_queue(qos_class_user_initiated, 0) orelse return run(path);
+    const alloc = std.heap.c_allocator;
+    const duped = alloc.dupe(u8, path) catch return run(path);
+    const job = alloc.create(WorkspaceJob) catch {
+        alloc.free(duped);
+        return run(path);
+    };
+    job.* = .{ .path = duped, .run = run };
+    dispatch_async_f(queue, job, workspaceWorker);
+}
+
+fn openSync(path: []const u8) void {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const url = urlFor(path) orelse return;
-    _ = objc.msg(objc.BOOL, workspace(), "openURL:", .{url});
+    const url = urlFor(path) orelse {
+        std.log.err("open failed: invalid target {s}", .{path});
+        return;
+    };
+    if (!objc.msg(objc.BOOL, workspace(), "openURL:", .{url})) {
+        std.log.err("open failed: {s}", .{path});
+    }
+}
+
+pub fn open(path: []const u8) void {
+    dispatchWorkspace(path, openSync);
 }
 
 pub fn copy(path: []const u8) void {
@@ -254,11 +293,15 @@ pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?u
     return menu_choice;
 }
 
-pub fn reveal(path: []const u8) void {
+fn revealSync(path: []const u8) void {
     const pool = objc.Pool.push();
     defer pool.pop();
     const urls = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{pasteboard.fileURL(path)});
     objc.msg(void, workspace(), "activateFileViewerSelectingURLs:", .{urls});
+}
+
+pub fn reveal(path: []const u8) void {
+    dispatchWorkspace(path, revealSync);
 }
 
 /// Full Disk Access is granted when the TCC database opens: it is readable

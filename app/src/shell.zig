@@ -37,6 +37,12 @@ pub const PasteOp = union(enum) {
     deliver: i32,
 };
 
+pub const ActionOp = union(enum) {
+    none,
+    open: []const u8,
+    reveal: []const u8,
+};
+
 pub const BoardMenuChoice = enum(u3) {
     paste = 0,
     copy = 1,
@@ -52,6 +58,7 @@ pub const BoardMenuChoice = enum(u3) {
 
 pub const Outcome = struct {
     window: WindowOp = .none,
+    action: ActionOp = .none,
     paste: PasteOp = .none,
     redraw: bool = false,
     release_idle: bool = false,
@@ -373,14 +380,14 @@ pub const Shell = struct {
         if (s.panel.pending) |a| {
             s.panel.pending = null;
             switch (a) {
-                .open => |path| s.host.open(s.host.ctx, path),
-                .reveal => |path| s.host.reveal(s.host.ctx, path),
+                .open => |path| out.action = .{ .open = path },
+                .reveal => |path| out.action = .{ .reveal = path },
                 .copy => |row| s.host.copy(s.host.ctx, row.path),
                 .hide, .show_search => {},
                 .clipboard => |b| s.applyBoardAction(b, &out),
             }
-            s.endSubmit();
             s.presence.settle(a);
+            if (out.action == .none) s.endSubmit();
             if (!s.isHidden() and out.actions_menu == null) out.redraw = true;
             return out;
         }
@@ -414,7 +421,7 @@ pub const Shell = struct {
             .copy => s.writeEntry(e),
             .preview => s.previewEntry(e),
             .reveal => if (e.filePath()) |path| {
-                s.host.reveal(s.host.ctx, path);
+                out.action = .{ .reveal = path };
                 s.presence.settle(.{ .clipboard = .{ .reveal = path } });
             },
             .toggle_pin => s.panel.board.togglePinId(e.id),
@@ -510,8 +517,8 @@ pub const Shell = struct {
     fn applyBoardAction(s: *Shell, a: board_mod.Action, out: *Outcome) void {
         switch (a) {
             .paste, .copy => |e| s.writeEntry(e),
-            .open => |url| s.host.open(s.host.ctx, url),
-            .reveal => |path| s.host.reveal(s.host.ctx, path),
+            .open => |url| out.action = .{ .open = url },
+            .reveal => |path| out.action = .{ .reveal = path },
             .preview => |e| s.previewEntry(e),
             .actions => |e| if (!s.isHidden()) {
                 _ = s.menu_arena.reset(.retain_capacity);
@@ -612,7 +619,7 @@ pub const Shell = struct {
     }
 
     fn endSession(s: *Shell, out: ?*Outcome) void {
-        s.endSubmit();
+        if (out == null or out.?.action == .none) s.endSubmit();
         s.syncRetention();
         s.panel.hide();
         if (s.panel.nextExpiryMs() == null) {
@@ -636,6 +643,10 @@ pub const Shell = struct {
             e.value_ptr.deinit(s.gpa);
         }
         s.icons.clearRetainingCapacity();
+    }
+
+    pub fn finishSubmit(s: *Shell) void {
+        s.endSubmit();
     }
 
     fn endSubmit(s: *Shell) void {

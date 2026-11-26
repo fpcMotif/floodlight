@@ -66,6 +66,17 @@ const AppShell = struct {
                 if (s.latency_session) latency_probe.Runner(AppShell).hidden(s, t0);
             },
         }
+        switch (out.action) {
+            .none => {},
+            .open => |target| {
+                s.shell.host.open(s.shell.host.ctx, target);
+                s.shell.finishSubmit();
+            },
+            .reveal => |path| {
+                s.shell.host.reveal(s.shell.host.ctx, path);
+                s.shell.finishSubmit();
+            },
+        }
         switch (out.paste) {
             .none => {},
             .prompt_accessibility => mac.promptAccessibility(),
