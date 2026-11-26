@@ -102,21 +102,37 @@ fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given
     // One untimed pass faults the mapping in, so the numbers below are the
     // warm, every-keystroke cost rather than first-touch disk reads.
     var hits: [60]search.Hit = undefined;
-    for (queries.items) |q| _ = search.search(m.view, q, &hits);
+    for (queries.items) |q| {
+        _ = search.searchSingleThread(m.view, q, &hits);
+        _ = search.search(m.view, q, &hits);
+    }
 
     const runs = 50;
-    var samples: [runs]u64 = undefined;
+    var single_samples: [runs]u64 = undefined;
+    var par_samples: [runs]u64 = undefined;
     try out.print("entries={d} open_us={d:.1}\n", .{ m.view.count(), us(open_ns) });
     for (queries.items) |q| {
-        var n: usize = 0;
-        for (&samples) |*s| {
+        var n_single: usize = 0;
+        var n_par: usize = 0;
+        for (&single_samples, &par_samples) |*s1, *sp| {
             timer.reset();
-            n = search.search(m.view, q, &hits);
-            s.* = timer.read();
+            n_single = search.searchSingleThread(m.view, q, &hits);
+            s1.* = timer.read();
+
+            timer.reset();
+            n_par = search.search(m.view, q, &hits);
+            sp.* = timer.read();
+            if (n_single != n_par) return error.SearchMismatch;
         }
-        std.sort.pdq(u64, &samples, {}, std.sort.asc(u64));
-        try out.print("query={s: <10} hits={d: >2} p50_us={d: >8.1} p99_us={d: >8.1}\n", .{
-            q, n, us(samples[runs / 2]), us(samples[runs - 1]),
+        std.sort.pdq(u64, &single_samples, {}, std.sort.asc(u64));
+        std.sort.pdq(u64, &par_samples, {}, std.sort.asc(u64));
+        const p50_1t = us(single_samples[runs / 2]);
+        const p99_1t = us(single_samples[runs - 1]);
+        const p50_par = us(par_samples[runs / 2]);
+        const p99_par = us(par_samples[runs - 1]);
+        const speedup = if (p50_par > 0) p50_1t / p50_par else 0;
+        try out.print("query={s: <10} hits={d: >2} 1t_p50_us={d: >8.1} 1t_p99_us={d: >8.1} par_p50_us={d: >8.1} par_p99_us={d: >8.1} speedup={d: >4.2}x\n", .{
+            q, n_par, p50_1t, p99_1t, p50_par, p99_par, speedup,
         });
     }
     const rss_after = residentBytes();

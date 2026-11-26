@@ -5,9 +5,36 @@
 //! the steady-state memory of searching is zero.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const index = @import("index.zig");
 const mask = @import("mask.zig");
 const match = @import("match.zig");
+
+const Qos = if (builtin.os.tag == .macos) struct {
+    class: c_uint,
+    rel: c_int,
+
+    extern "c" fn pthread_self() ?*anyopaque;
+    extern "c" fn pthread_get_qos_class_np(thread: ?*anyopaque, qos_class: *c_uint, relative_priority: *c_int) c_int;
+    extern "c" fn pthread_set_qos_class_self_np(qos_class: c_uint, relative_priority: c_int) c_int;
+
+    fn current() ?Qos {
+        var q: Qos = .{ .class = 0, .rel = 0 };
+        if (pthread_get_qos_class_np(pthread_self(), &q.class, &q.rel) != 0) return null;
+        return q;
+    }
+
+    fn apply(q: ?Qos) void {
+        if (q) |v| if (v.class != 0) {
+            _ = pthread_set_qos_class_self_np(v.class, v.rel);
+        };
+    }
+} else struct {
+    fn current() ?@This() {
+        return null;
+    }
+    fn apply(_: ?@This()) void {}
+};
 
 pub const max_terms = 8;
 pub const max_term_len = 64;
@@ -142,18 +169,68 @@ pub const TopK = struct {
 
 const lanes = 8;
 const Vec = @Vector(lanes, u32);
+const no_floor: i32 = std.math.minInt(i32);
+const chunk_size: u32 = 8192;
+
+const SharedFloor = struct {
+    raw: std.atomic.Value(i32) = .init(no_floor),
+
+    fn load(sf: *const SharedFloor) ?i32 {
+        const v = sf.raw.load(.monotonic);
+        return if (v == no_floor) null else v;
+    }
+
+    fn raise(sf: *SharedFloor, v: i32) i32 {
+        const prev = sf.raw.fetchMax(v, .monotonic);
+        return @max(prev, v);
+    }
+};
+
+fn higherFloor(a: ?i32, b: ?i32) ?i32 {
+    if (a) |av| {
+        if (b) |bv| return @max(av, bv);
+        return av;
+    }
+    return b;
+}
 
 /// Requires `lo <= hi <= v.count()`.
 pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
+    var local_floor: ?i32 = heap.floor();
+    searchRangeWithFloor(v, q, lo, hi, heap, &paths, null, &local_floor);
+}
+
+fn searchRangeWithFloor(
+    v: index.View,
+    q: *const Query,
+    lo: u32,
+    hi: u32,
+    heap: *TopK,
+    paths: *PathCache,
+    shared_floor: ?*SharedFloor,
+    local_floor: *?i32,
+) void {
+    if (shared_floor) |sf| local_floor.* = higherFloor(local_floor.*, sf.load());
     const need: Vec = @splat(q.path_mask);
     var use_name_mask = false;
     var masks = v.path_mask;
+    if (!q.any_slash) {
+        if (local_floor.*) |f| if (f > q.one_miss_ceiling) {
+            use_name_mask = true;
+            masks = v.name_mask;
+        };
+    }
     var i = lo;
+    var steps: u32 = 0;
     // Eight path masks per compare; most queries reject most lanes here.
     while (i + lanes <= hi) : (i += lanes) {
+        if ((steps & 7) == 0) {
+            if (shared_floor) |sf| local_floor.* = higherFloor(local_floor.*, sf.load());
+        }
+        steps +%= 1;
         if (!q.any_slash and !use_name_mask) {
-            if (heap.floor()) |f| if (f > q.one_miss_ceiling) {
+            if (local_floor.*) |f| if (f > q.one_miss_ceiling) {
                 use_name_mask = true;
                 masks = v.name_mask;
             };
@@ -165,11 +242,11 @@ pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK
         var m = bits;
         while (m != 0) : (m &= m - 1) {
             const lane: u32 = @ctz(m);
-            scoreOne(v, q, i + lane, heap, &paths);
+            scoreOne(v, q, i + lane, heap, paths, shared_floor, local_floor);
         }
     }
     while (i < hi) : (i += 1) {
-        if (masks[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, &paths);
+        if (masks[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, paths, shared_floor, local_floor);
     }
 }
 
@@ -205,14 +282,23 @@ const PathCache = struct {
 /// top k holds name matches.
 pub const path_only_penalty: i32 = 1000;
 
-fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCache) void {
+fn scoreOne(
+    v: index.View,
+    q: *const Query,
+    id: u32,
+    heap: *TopK,
+    paths: *PathCache,
+    shared_floor: ?*SharedFloor,
+    local_floor: *?i32,
+) void {
     const name_mask = v.name_mask[id];
+    const active_floor = local_floor.*;
     if (q.n == 1 and !q.has_slash[0] and name_mask & q.path_mask != q.path_mask) {
-        if (heap.floor()) |f| if (q.one_miss_ceiling < f) return;
+        if (active_floor) |f| if (q.one_miss_ceiling < f) return;
     }
 
     const name = v.name(id);
-    if (heap.floor()) |floor| {
+    if (active_floor) |floor| {
         var bound: i32 = 0;
         for (0..q.n) |ti| {
             const term = q.term(ti);
@@ -252,6 +338,33 @@ fn scoreOne(v: index.View, q: *const Query, id: u32, heap: *TopK, paths: *PathCa
     // last so equal hits order the same however the table was split.
     const tie = @as(u64, v.depth[id]) << 48 | @as(u64, @min(name.len, 0xffff)) << 32 | id;
     heap.offer(.{ .id = id, .score = total }, tie);
+    if (heap.floor()) |f| {
+        if (local_floor.* == null or f > local_floor.*.?) {
+            local_floor.* = if (shared_floor) |sf| sf.raise(f) else f;
+        }
+    }
+}
+
+const WorkerCtx = struct {
+    v: index.View,
+    q: *const Query,
+    n: u32,
+    next: *std.atomic.Value(u32),
+    shared_floor: *SharedFloor,
+    heap: *TopK,
+    qos: ?Qos = null,
+};
+
+fn searchWorker(ctx: WorkerCtx) void {
+    if (ctx.qos != null) Qos.apply(ctx.qos);
+    var paths: PathCache = .{};
+    var local_floor: ?i32 = null;
+    while (true) {
+        const lo = ctx.next.fetchAdd(chunk_size, .monotonic);
+        if (lo >= ctx.n) break;
+        const hi = @min(ctx.n, lo + chunk_size);
+        searchRangeWithFloor(ctx.v, ctx.q, lo, hi, ctx.heap, &paths, ctx.shared_floor, &local_floor);
+    }
 }
 
 /// Splits the table across threads when it is large enough to pay for them.
@@ -260,24 +373,20 @@ pub fn search(v: index.View, text: []const u8, out: []Hit) usize {
     if (q.n == 0) return 0;
     const n = v.count();
     const threads = threadCount(n);
-    if (threads <= 1) {
-        var heap = TopK.init(out.len);
-        searchRange(v, &q, 0, n, &heap);
-        return heap.sorted(out);
-    }
+    if (threads <= 1) return runSingleThread(v, &q, n, out);
 
     var heaps: [max_threads]TopK = undefined;
     var handles: [max_threads]?std.Thread = @splat(null);
-    const per = (n + threads - 1) / threads;
+    var next: std.atomic.Value(u32) = .init(0);
+    var shared_floor: SharedFloor = .{};
+    const qos = Qos.current();
     for (0..threads) |ti| {
         heaps[ti] = TopK.init(out.len);
-        const lo: u32 = @intCast(@min(n, ti * per));
-        const hi: u32 = @intCast(@min(n, lo + per));
+        const ctx: WorkerCtx = .{ .v = v, .q = &q, .n = n, .next = &next, .shared_floor = &shared_floor, .heap = &heaps[ti], .qos = qos };
         if (ti == 0) continue;
-        handles[ti] = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, searchRange, .{ v, &q, lo, hi, &heaps[ti] }) catch null;
-        if (handles[ti] == null) searchRange(v, &q, lo, hi, &heaps[ti]);
+        handles[ti] = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, searchWorker, .{ctx}) catch null;
     }
-    searchRange(v, &q, 0, @intCast(@min(n, per)), &heaps[0]);
+    searchWorker(.{ .v = v, .q = &q, .n = n, .next = &next, .shared_floor = &shared_floor, .heap = &heaps[0] });
 
     var merged = TopK.init(out.len);
     for (0..threads) |ti| {
@@ -285,6 +394,18 @@ pub fn search(v: index.View, text: []const u8, out: []Hit) usize {
         for (heaps[ti].items[0..heaps[ti].len], heaps[ti].tie[0..heaps[ti].len]) |hit, tie| merged.offer(hit, tie);
     }
     return merged.sorted(out);
+}
+
+pub fn searchSingleThread(v: index.View, text: []const u8, out: []Hit) usize {
+    const q = Query.parse(text);
+    if (q.n == 0) return 0;
+    return runSingleThread(v, &q, v.count(), out);
+}
+
+fn runSingleThread(v: index.View, q: *const Query, n: u32, out: []Hit) usize {
+    var heap = TopK.init(out.len);
+    searchRange(v, q, 0, n, &heap);
+    return heap.sorted(out);
 }
 
 const max_threads = 8;
@@ -357,6 +478,41 @@ test "parallel path agrees with serial" {
     const ns = heap.sorted(&ser);
     try t.expectEqual(ns, np);
     for (par[0..np], ser[0..ns]) |a, c| try t.expectEqual(a, c);
+}
+
+test "parallel search matches single-thread output identically across skewed directories and queries" {
+    var b = index.Builder.init(t.allocator);
+    defer b.deinit();
+    const early = try b.add(index.no_parent, "work", .{ .dir = true });
+    _ = try b.add(early, "doc", .{});
+    _ = try b.add(early, "doc.txt", .{});
+    _ = try b.add(early, "report-2026.pdf", .{});
+
+    var name_buf: [48]u8 = undefined;
+    const docs_dir = try b.add(index.no_parent, "doc", .{ .dir = true });
+    const tax_dir = try b.add(docs_dir, "tax", .{ .dir = true });
+    for (0..parallel_threshold + 20_000) |i| {
+        const parent = if (i < 120_000) docs_dir else if (i % 7 == 0) tax_dir else early;
+        const nm = switch (i % 5) {
+            0 => try std.fmt.bufPrint(&name_buf, "item-{d}-2026.txt", .{i}),
+            1 => try std.fmt.bufPrint(&name_buf, "alpha-{d}.md", .{i}),
+            2 => try std.fmt.bufPrint(&name_buf, "report_{d}.pdf", .{i}),
+            3 => try std.fmt.bufPrint(&name_buf, "doc_note_{d}.txt", .{i}),
+            else => try std.fmt.bufPrint(&name_buf, "misc-{d}.bin", .{i}),
+        };
+        _ = try b.add(parent, nm, .{});
+    }
+
+    const v = b.view();
+    const queries = [_][]const u8{ "doc", "2026", "report", "doc tax", "doc/item", "alpha", "a", "zzzq" };
+    for (queries) |qtext| {
+        var par: [60]Hit = undefined;
+        var ser: [60]Hit = undefined;
+        const np = search(v, qtext, &par);
+        const ns = searchSingleThread(v, qtext, &ser);
+        try t.expectEqual(ns, np);
+        for (par[0..np], ser[0..ns]) |a, c| try t.expectEqual(c, a);
+    }
 }
 
 fn bruteScore(v: index.View, q: *const Query, id: u32) ?i32 {
