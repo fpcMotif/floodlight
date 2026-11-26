@@ -12,4 +12,5 @@ comptime {
     _ = @import("tests/state_machines_test.zig");
     _ = @import("tests/shell_test.zig");
     _ = @import("stage_clock.zig");
+    _ = @import("latency_probe.zig");
 }

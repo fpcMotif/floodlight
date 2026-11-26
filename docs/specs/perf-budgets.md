@@ -321,7 +321,7 @@ Evidence, each read on 2026-11-26:
 | Keystroke to publication | `log stream --signpost` during the memory session |
 | Cold summon trace and the retained-redraw trial | temporary prints in nanoui's link callback, `setPaced`, and `occlusionChanged`, read against the latency session. Removed after the run. |
 
-The Swift probe ran outside the app. The latency session does not yet time icons or the open in the app.
+The Swift probe ran outside the app. The latency session does not yet time icons or the open in the app. `NANOSPOT_LATENCY_ROUNDS` sets the session round count from 1 to 30 (default 30); p99 from fewer than 30 rounds is only a direction signal.
 
 ## ELI5
 
