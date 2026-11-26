@@ -191,12 +191,12 @@ pub fn pngBytes(arena: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
 }
 
 extern "c" fn CGImageSourceCreateImageAtIndex(src: *anyopaque, index: usize, options: ?objc.Object) ?*anyopaque;
-extern "c" fn CGImageGetWidth(image: *anyopaque) usize;
-extern "c" fn CGImageGetHeight(image: *anyopaque) usize;
+pub extern "c" fn CGImageGetWidth(image: *anyopaque) usize;
+pub extern "c" fn CGImageGetHeight(image: *anyopaque) usize;
 extern "c" fn CGImageGetAlphaInfo(image: *anyopaque) u32;
 extern "c" fn CGColorSpaceCreateDeviceRGB() ?*anyopaque;
-extern "c" fn CGBitmapContextCreate(data: ?*anyopaque, width: usize, height: usize, bits: usize, row_bytes: usize, space: *anyopaque, info: u32) ?*anyopaque;
-extern "c" fn CGContextDrawImage(context: *anyopaque, rect: objc.CGRect, image: *anyopaque) void;
+pub extern "c" fn CGBitmapContextCreate(data: ?*anyopaque, width: usize, height: usize, bits: usize, row_bytes: usize, space: *anyopaque, info: u32) ?*anyopaque;
+pub extern "c" fn CGContextDrawImage(context: *anyopaque, rect: objc.CGRect, image: *anyopaque) void;
 extern "c" fn CGImageDestinationCreateWithData(data: objc.Object, kind: objc.Object, count: usize, options: ?objc.Object) ?*anyopaque;
 extern "c" fn CGImageDestinationAddImageFromSource(dest: *anyopaque, src: *anyopaque, index: usize, properties: ?objc.Object) void;
 extern "c" fn CGImageDestinationFinalize(dest: *anyopaque) bool;

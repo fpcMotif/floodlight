@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .nanoui = .{
-            .url = "https://github.com/fpcMotif/nanoui/archive/701a775dace5276c2e31127a62e2ac46a70dd156.tar.gz",
-            .hash = "nanoui-0.9.2-we0KMXliIQBvT-Zf3ypJ3qtd7oItCAQZlwh113BxWuAG",
+            .url = "https://github.com/fpcMotif/nanoui/archive/f12290cf4a1f71d08bcb08c4c34e931c4615bc6c.tar.gz",
+            .hash = "nanoui-0.9.2-we0KMd2CIQBL6fXovJJXJzDhS99bME9LiMVCuJbw6s3-",
         },
     },
     .paths = .{

@@ -1311,7 +1311,7 @@ const CountingHooks = struct {
 
     fn request(_: ?*anyopaque) void {}
 
-    fn icon(ctx: ?*anyopaque, _: []const u8) ?[]const u8 {
+    fn icon(ctx: ?*anyopaque, _: []const u8) ?ui.ImageSource.Pixels {
         const h_self: *CountingHooks = @ptrCast(@alignCast(ctx));
         h_self.icon_calls += 1;
         return null;

@@ -25,7 +25,7 @@ pub const History = list.List(Entry, Filter, i64, entryKey);
 pub const Context = struct {
     ctx: ?*anyopaque,
     /// An app's icon as PNG; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?[]const u8,
+    app_icon: *const fn (?*anyopaque, []const u8) ?ui.ImageSource.Pixels,
     /// "Today at 3:03 PM": the inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     /// The text in the search field, filtering history.
@@ -404,8 +404,8 @@ pub const Board = struct {
         const ext = clipboard.extension(path);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.board_image_extensions)) return tile(c, "photo", cyan);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", amber);
-        if (host.app_icon(host.ctx, path)) |png| {
-            _ = ui.image(c, .{ .key = path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
+        if (host.app_icon(host.ctx, path)) |px| {
+            _ = ui.image(c, .{ .key = path, .source = .{ .pixels = px }, .max_width = size, .max_height = size, .radius = 0 });
             return;
         }
         tile(c, "doc", gray);

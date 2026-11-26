@@ -39,7 +39,7 @@ const Stage = struct {
     out: []const u8,
     cat: search.Catalog,
     store: clipboard.Store,
-    icons: std.StringHashMapUnmanaged([]u8) = .empty,
+    icons: std.StringHashMapUnmanaged(mac.Icon) = .empty,
 
     fn hooks(s: *Stage) panel_mod.Hooks {
         return .{ .ctx = s, .request = ignoreRequest, .app_icon = appIcon, .describe_date = describeDate, .detailed_date = detailedDate };
@@ -47,27 +47,27 @@ const Stage = struct {
 
     fn ignoreRequest(_: ?*anyopaque) void {}
 
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
+    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
         const s: *Stage = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |png| return png;
-        const png = mac.iconPng(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
+        if (s.icons.get(path)) |icon| return icon.pixels();
+        const icon = mac.iconPixels(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
         const key = gpa.dupe(u8, path) catch {
-            gpa.free(png);
+            icon.deinit(gpa);
             return null;
         };
-        s.icons.put(gpa, key, png) catch {
+        s.icons.put(gpa, key, icon) catch {
             gpa.free(key);
-            gpa.free(png);
+            icon.deinit(gpa);
             return null;
         };
-        return png;
+        return icon.pixels();
     }
 
     fn deinitIcons(s: *Stage) void {
         var it = s.icons.iterator();
         while (it.next()) |e| {
             gpa.free(e.key_ptr.*);
-            gpa.free(e.value_ptr.*);
+            e.value_ptr.deinit(gpa);
         }
         s.icons.deinit(gpa);
     }

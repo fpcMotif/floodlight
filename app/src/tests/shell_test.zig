@@ -96,8 +96,14 @@ const HostSpy = struct {
         return run(turn, pb);
     }
 
-    fn iconPng(_: ?*anyopaque, gpa: std.mem.Allocator, _: []const u8, _: f64) ?[]u8 {
-        return gpa.dupe(u8, "fake-png-bytes") catch null;
+    const sample_icon_bgra = [_]u8{
+        10, 20, 30, 255, 40,  50,  60,  200,
+        70, 80, 90, 150, 100, 110, 120, 255,
+    };
+
+    fn iconPixels(_: ?*anyopaque, gpa: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
+        const bgra = gpa.dupe(u8, &sample_icon_bgra) catch return null;
+        return .{ .bgra = bgra, .width = 2, .height = 2 };
     }
 
     fn host(spy: *HostSpy) shell_mod.Host {
@@ -110,7 +116,7 @@ const HostSpy = struct {
             .can_deliver_paste = canDeliver,
             .pasteboard_change_count = changeCount,
             .read_pasteboard = readBoard,
-            .icon_png = iconPng,
+            .icon_pixels = iconPixels,
         };
     }
 };
@@ -306,4 +312,55 @@ test "keystroke pending stays open until a frame presents or the panel hides" {
     try t.expect(sh.panel.keystrokePending());
     _ = sh.hotKey(.search, true);
     try t.expect(!sh.panel.keystrokePending());
+}
+
+test "app icons pack from raw pixels with zero decodes and release on expiry" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    _ = try store.add(.{ .file = "/Applications/Notes.app" }, "com.apple.Finder", "Finder", 900);
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calendar.app"));
+
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height, .scale = 2 });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.search, false);
+    tester.typeText("cal");
+    tester.frame();
+
+    try t.expectEqual(@as(usize, 1), sh.icons.count());
+    try t.expectEqual(@as(usize, 0), tester.ctx.text.images.headers.count());
+    try t.expectEqual(@as(u32, 8), tester.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, 1), tester.ctx.text.images.entries.count());
+
+    const atlas_side = std.math.sqrt(tester.ctx.text.images.pixels.len / 4);
+    const atlas_side_f: f32 = @floatFromInt(atlas_side);
+    var it = tester.ctx.text.images.entries.valueIterator();
+    const e = it.next().?.entry.?;
+    const ax: usize = @intFromFloat(@round(e.uv[0] * atlas_side_f));
+    const ay: usize = @intFromFloat(@round(e.uv[1] * atlas_side_f));
+    try t.expectEqualSlices(u8, HostSpy.sample_icon_bgra[0..8], tester.ctx.text.images.pixels[((ay + 0) * atlas_side + ax) * 4 ..][0..8]);
+    try t.expectEqualSlices(u8, HostSpy.sample_icon_bgra[8..16], tester.ctx.text.images.pixels[((ay + 1) * atlas_side + ax) * 4 ..][0..8]);
+
+    _ = sh.hotKey(.clipboard, false);
+    tester.frame();
+    try t.expectEqual(@as(usize, 2), sh.icons.count());
+    try t.expectEqual(@as(usize, 0), tester.ctx.text.images.headers.count());
+    try t.expectEqual(@as(u32, 8), tester.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, 2), tester.ctx.text.images.entries.count());
+
+    _ = sh.hotKey(.clipboard, true);
+    spy.clock.advance(6 * 60);
+    _ = sh.expireRetention();
+    try t.expectEqual(@as(usize, 0), sh.icons.count());
 }

@@ -213,8 +213,8 @@ fn subtitleLine(c: *ui.Context, row: search.Row, top_hit: bool) void {
 }
 
 fn iconView(p: anytype, c: *ui.Context, row: search.Row, size: f32) void {
-    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path)) |png| {
-        _ = ui.image(c, .{ .key = row.path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
+    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path)) |px| {
+        _ = ui.image(c, .{ .key = row.path, .source = .{ .pixels = px }, .max_width = size, .max_height = size, .radius = 0 });
         return;
     };
     const blue = chrome.hue(c.theme, .blue);

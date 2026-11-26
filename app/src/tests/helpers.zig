@@ -75,7 +75,7 @@ pub const StubHooks = struct {
         const h: *StubHooks = @ptrCast(@alignCast(ctx));
         h.requests += 1;
     }
-    pub fn icon(_: ?*anyopaque, _: []const u8) ?[]const u8 {
+    pub fn icon(_: ?*anyopaque, _: []const u8) ?ui.ImageSource.Pixels {
         return null;
     }
     /// Every date, whatever its seconds' type, as the same one.

@@ -267,24 +267,24 @@ pub const icon_runs: usize = 20;
 const FrameHooks = struct {
     gpa: std.mem.Allocator,
     render_icons: bool,
-    icons: std.ArrayList([]u8) = .empty,
+    icons: std.ArrayList(mac.Icon) = .empty,
 
     fn deinit(h: *FrameHooks) void {
-        for (h.icons.items) |png| h.gpa.free(png);
+        for (h.icons.items) |ic| ic.deinit(h.gpa);
         h.icons.deinit(h.gpa);
     }
 
     fn request(_: ?*anyopaque) void {}
 
-    fn icon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
+    fn icon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
         const h: *FrameHooks = @ptrCast(@alignCast(ctx orelse return null));
         if (!h.render_icons) return null;
-        const png = mac.iconPng(h.gpa, path, 92) orelse return null;
-        h.icons.append(h.gpa, png) catch {
-            h.gpa.free(png);
+        const ic = mac.iconPixels(h.gpa, path, 92) orelse return null;
+        h.icons.append(h.gpa, ic) catch {
+            ic.deinit(h.gpa);
             return null;
         };
-        return png;
+        return ic.pixels();
     }
 
     fn date(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {

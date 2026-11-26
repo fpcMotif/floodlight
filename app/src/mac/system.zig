@@ -291,13 +291,66 @@ pub fn bundlePath() []const u8 {
     return objc.fromNSString(objc.msg(?objc.Object, bundle, "bundlePath", .{}));
 }
 
+extern "c" const kCGColorSpaceSRGB: *const anyopaque;
+extern "c" fn CGColorSpaceCreateWithName(name: *const anyopaque) ?*anyopaque;
+extern "c" fn CGContextSetInterpolationQuality(context: *anyopaque, quality: c_int) void;
+const bgra_premultiplied: u32 = 2 | (2 << 12);
+const cg_interpolation_high: c_int = 3;
+
+pub const Icon = struct {
+    bgra: []u8,
+    width: u32,
+    height: u32,
+
+    pub fn deinit(self: Icon, gpa: std.mem.Allocator) void {
+        gpa.free(self.bgra);
+    }
+
+    pub fn pixels(self: Icon) nanoui.ui.ImageSource.Pixels {
+        return .{ .bgra = self.bgra, .width = self.width, .height = self.height };
+    }
+};
+
+fn iconCgImage(path: []const u8, px: f64) ?*anyopaque {
+    const img = objc.msg(objc.Object, workspace(), "iconForFile:", .{objc.nsString(path)});
+    var rect: objc.CGRect = .{ .size = .{ .width = px, .height = px } };
+    return objc.msg(?*anyopaque, img, "CGImageForProposedRect:context:hints:", .{ &rect, @as(?objc.Object, null), @as(?objc.Object, null) });
+}
+
+pub fn iconPixels(gpa: std.mem.Allocator, path: []const u8, px: f64) ?Icon {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const side: u32 = @intFromFloat(@max(1.0, @min(1024.0, @ceil(px))));
+    const cg = iconCgImage(path, px) orelse return null;
+    const iw = pasteboard.CGImageGetWidth(cg);
+    const ih = pasteboard.CGImageGetHeight(cg);
+    if (iw == 0 or ih == 0) return null;
+    const out = gpa.alloc(u8, @as(usize, side) * side * 4) catch return null;
+    @memset(out, 0);
+    const space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(space);
+    const ctx = pasteboard.CGBitmapContextCreate(out.ptr, side, side, 8, @as(usize, side) * 4, space, bgra_premultiplied) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(ctx);
+    CGContextSetInterpolationQuality(ctx, cg_interpolation_high);
+    const s_f: f64 = @floatFromInt(side);
+    const scale = s_f / @as(f64, @floatFromInt(@max(iw, ih)));
+    const dw = @as(f64, @floatFromInt(iw)) * scale;
+    const dh = @as(f64, @floatFromInt(ih)) * scale;
+    pasteboard.CGContextDrawImage(ctx, .{ .origin = .{ .x = (s_f - dw) * 0.5, .y = (s_f - dh) * 0.5 }, .size = .{ .width = dw, .height = dh } }, cg);
+    return .{ .bgra = out, .width = side, .height = side };
+}
+
 /// An app's icon as PNG at `px` pixels square, in `gpa`'s memory.
 pub fn iconPng(gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const img = objc.msg(objc.Object, workspace(), "iconForFile:", .{objc.nsString(path)});
-    var rect: objc.CGRect = .{ .size = .{ .width = px, .height = px } };
-    const cg = objc.msg(?*anyopaque, img, "CGImageForProposedRect:context:hints:", .{ &rect, @as(?objc.Object, null), @as(?objc.Object, null) }) orelse return null;
+    const cg = iconCgImage(path, px) orelse return null;
     const rep = objc.msg(objc.Object, objc.alloc("NSBitmapImageRep"), "initWithCGImage:", .{cg});
     defer objc.release(rep);
     const data = pasteboard.pngRepresentation(rep) orelse return null;
