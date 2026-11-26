@@ -11,6 +11,7 @@ const clipboard = @import("clipboard.zig");
 const chrome = @import("chrome.zig");
 const presence = @import("presence.zig");
 const memory_probe = @import("memory_probe.zig");
+const latency_probe = @import("latency_probe.zig");
 
 const metrics = chrome.metrics;
 const gpa = std.heap.c_allocator;
@@ -33,6 +34,8 @@ const AppShell = struct {
     drag: ?*mac.FileDragSource = null,
     compacting: bool = false,
     memory_step: u32 = 0,
+    latency: latency_probe.State = .{},
+    latency_session: bool = false,
 
     pub fn apply(s: *AppShell, out: shell_mod.Outcome) void {
         switch (out.window) {
@@ -93,7 +96,9 @@ const AppShell = struct {
     fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
-        const out = s.shell.framePresented(surface.renderer.given_drawable != null);
+        const presenting = surface.renderer.given_drawable != null;
+        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, presenting);
+        const out = s.shell.framePresented(presenting);
         if (out.retry_frame) surface.ctx.changed = true;
         if (out.reveal) mac.setAlpha(s.panel_window, 1);
         return out.reveal;
@@ -332,8 +337,10 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const memory_session = memory_probe.hasFlag(args, memory_probe.session_flag);
     const memory_seed = memory_probe.hasFlag(args, memory_probe.seed_flag);
+    const latency_session = memory_probe.hasFlag(args, latency_probe.session_flag);
 
-    var shell: AppShell = .{ .catalog = .{ .gpa = gpa } };
+    var shell: AppShell = .{ .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
+    shell.latency.measure_open = memory_probe.hasFlag(args, latency_probe.open_flag);
     defer shell.catalog.deinit();
     try shell.catalog.openIndex(index_path, home);
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
@@ -431,7 +438,12 @@ pub fn main(init: std.process.Init) !void {
         nanoui.App.after(compact_next_ms, &shell, AppShell.compactTick);
         nanoui.App.after(prune_ms, &shell, AppShell.pruneTick);
         shell.applyGrant(shell.grant.begin(mac.fullDiskAccessGranted()));
-        nanoui.App.after(0, &shell, if (memory_session) memory_probe.Runner(AppShell).launched else AppShell.launched);
+        nanoui.App.after(0, &shell, if (memory_session)
+            memory_probe.Runner(AppShell).launched
+        else if (latency_session)
+            latency_probe.Runner(AppShell).launched
+        else
+            AppShell.launched);
     }
     try app.run();
 }
