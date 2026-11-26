@@ -6,15 +6,17 @@ Read a spec fully before starting, honor its STOP conditions, and update its row
 
 ## Execution order and status
 
-| Plan | Unit | Title | Priority | Effort | Depends on | Status |
-|------|------|-------|----------|--------|------------|--------|
-| 001 | 0 | Stage clock, latency session, real-size fixture, tight budgets | P1 | M | none | TODO |
-| 001 | 1 | Hide first, then open off the main thread | P1 | S | Unit 0 | TODO |
-| 001 | 2 | Icons never run on the frame | P1 | M | Unit 0 | TODO |
-| 001 | 3 | First frame carries file hits | P2 | S | Unit 0 | TODO |
-| 001 | 4 | Launch does only what the first frame needs | P2 | S | Unit 0 | TODO |
-| 001 | 5 | Idle memory returns toward the launch floor | P2 | M | Unit 4 | TODO |
-| 001 | 6 | Find the owner of the open-panel graphics memory | P2 | S | none | TODO |
+| Plan | Unit | Issue | Title | Priority | Effort | Depends on | Status |
+|------|------|-------|-------|----------|--------|------------|--------|
+| 001 | 0 | [#161](https://github.com/fpcMotif/floodlight/issues/161) | Stage clock, latency session, real-size fixture, tight budgets | P1 | M | none | TODO |
+| 001 | 1 | [#162](https://github.com/fpcMotif/floodlight/issues/162) | Hide first, then open off the main thread | P1 | S | Unit 0 | TODO |
+| 001 | 2 | [#163](https://github.com/fpcMotif/floodlight/issues/163) | Icons never run on the frame | P1 | M | Unit 0 | TODO |
+| 001 | 3 | [#164](https://github.com/fpcMotif/floodlight/issues/164) | First frame carries file hits | P2 | S | Unit 0 | TODO |
+| 001 | 4 | [#165](https://github.com/fpcMotif/floodlight/issues/165) | Launch does only what the first frame needs | P2 | S | Unit 0 | TODO |
+| 001 | 5 | [#166](https://github.com/fpcMotif/floodlight/issues/166) | Idle memory returns toward the launch floor | P2 | M | Unit 4 | TODO |
+| 001 | 6 | [#167](https://github.com/fpcMotif/floodlight/issues/167) | Find the owner of the open-panel graphics memory | P2 | S | none | TODO |
+
+Each unit has its own issue. [#159](https://github.com/fpcMotif/floodlight/issues/159) tracks the batch.
 
 Status values: TODO, IN PROGRESS, DONE, BLOCKED (with a one-line reason), REJECTED (with the measured number that ruled it out).
 
