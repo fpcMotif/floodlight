@@ -89,7 +89,7 @@ pub const Host = struct {
     read_pasteboard: ReadPasteboardFn = noReadPasteboard,
     preview_path: *const fn (ctx: ?*anyopaque, path: []const u8) void = noTarget,
     preview_image: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, id: i64, stored: []const u8, fallback_png: []const u8) void = noPreviewImage,
-    icon_png: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 = noIcon,
+    icon_pixels: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?mac.Icon = noIcon,
     relative_date: *const fn (ctx: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 = stubDateI64,
     detailed_date: *const fn (ctx: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 = stubDateF64,
     retention_seconds: ?*const fn (ctx: ?*anyopaque, default_seconds: f64) f64 = null,
@@ -115,7 +115,7 @@ fn noReadPasteboard(_: ?*anyopaque, _: ?*anyopaque, _: *const fn (?*anyopaque, c
     return false;
 }
 fn noPreviewImage(_: ?*anyopaque, _: std.mem.Allocator, _: i64, _: []const u8, _: []const u8) void {}
-fn noIcon(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: f64) ?[]u8 {
+fn noIcon(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
     return null;
 }
 fn stubDateI64(_: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
@@ -198,9 +198,9 @@ pub fn macHost(
                 mac.togglePreview(path);
             }
         }.f,
-        .icon_png = struct {
-            fn f(_: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
-                return mac.iconPng(gpa, path, px);
+        .icon_pixels = struct {
+            fn f(_: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?mac.Icon {
+                return mac.iconPixels(gpa, path, px);
             }
         }.f,
         .relative_date = struct {
@@ -227,7 +227,7 @@ pub const Shell = struct {
     host: Host,
     panel: panel_mod.Panel,
     presence: presence.Presence,
-    icons: std.StringHashMapUnmanaged([]u8) = .empty,
+    icons: std.StringHashMapUnmanaged(mac.Icon) = .empty,
     paste_target: mac.RunningApp = .{},
     change_count: isize = 0,
     submitting: bool = false,
@@ -633,7 +633,7 @@ pub const Shell = struct {
         var it = s.icons.iterator();
         while (it.next()) |e| {
             s.gpa.free(e.key_ptr.*);
-            s.gpa.free(e.value_ptr.*);
+            e.value_ptr.deinit(s.gpa);
         }
         s.icons.clearRetainingCapacity();
     }
@@ -677,20 +677,20 @@ pub const Shell = struct {
         return s.host.relative_date(s.host.ctx, secs, arena);
     }
 
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
+    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
         const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |png| return png;
+        if (s.icons.get(path)) |icon| return icon.pixels();
         if (s.icons.count() >= max_icons) return null;
-        const png = s.host.icon_png(s.host.ctx, s.gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
+        const icon = s.host.icon_pixels(s.host.ctx, s.gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
         const key = s.gpa.dupe(u8, path) catch {
-            s.gpa.free(png);
+            icon.deinit(s.gpa);
             return null;
         };
-        s.icons.put(s.gpa, key, png) catch {
+        s.icons.put(s.gpa, key, icon) catch {
             s.gpa.free(key);
-            s.gpa.free(png);
+            icon.deinit(s.gpa);
             return null;
         };
-        return png;
+        return icon.pixels();
     }
 };

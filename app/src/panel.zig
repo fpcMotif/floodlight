@@ -97,7 +97,7 @@ pub const Hooks = struct {
     /// An action, or a new height to fit the rows.
     request: *const fn (?*anyopaque) void,
     /// An app's icon as PNG, cached by the shell; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?[]const u8,
+    app_icon: *const fn (?*anyopaque, []const u8) ?ui.ImageSource.Pixels,
     describe_date: *const fn (?*anyopaque, i64, std.mem.Allocator) []const u8,
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
