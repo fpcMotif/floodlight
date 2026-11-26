@@ -194,11 +194,26 @@ fn higherFloor(a: ?i32, b: ?i32) ?i32 {
     return b;
 }
 
+const FloorState = struct {
+    shared: ?*SharedFloor = null,
+    local: ?i32 = null,
+
+    fn sync(fs: *FloorState) void {
+        if (fs.shared) |sf| fs.local = higherFloor(fs.local, sf.load());
+    }
+
+    fn raise(fs: *FloorState, f: i32) void {
+        if (fs.local == null or f > fs.local.?) {
+            fs.local = if (fs.shared) |sf| sf.raise(f) else f;
+        }
+    }
+};
+
 /// Requires `lo <= hi <= v.count()`.
 pub fn searchRange(v: index.View, q: *const Query, lo: u32, hi: u32, heap: *TopK) void {
     var paths: PathCache = .{};
-    var local_floor: ?i32 = heap.floor();
-    searchRangeWithFloor(v, q, lo, hi, heap, &paths, null, &local_floor);
+    var floor_state: FloorState = .{ .local = heap.floor() };
+    searchRangeWithFloor(v, q, lo, hi, heap, &paths, &floor_state);
 }
 
 fn searchRangeWithFloor(
@@ -208,29 +223,19 @@ fn searchRangeWithFloor(
     hi: u32,
     heap: *TopK,
     paths: *PathCache,
-    shared_floor: ?*SharedFloor,
-    local_floor: *?i32,
+    floor_state: *FloorState,
 ) void {
-    if (shared_floor) |sf| local_floor.* = higherFloor(local_floor.*, sf.load());
     const need: Vec = @splat(q.path_mask);
     var use_name_mask = false;
     var masks = v.path_mask;
-    if (!q.any_slash) {
-        if (local_floor.*) |f| if (f > q.one_miss_ceiling) {
-            use_name_mask = true;
-            masks = v.name_mask;
-        };
-    }
     var i = lo;
     var steps: u32 = 0;
     // Eight path masks per compare; most queries reject most lanes here.
     while (i + lanes <= hi) : (i += lanes) {
-        if ((steps & 7) == 0) {
-            if (shared_floor) |sf| local_floor.* = higherFloor(local_floor.*, sf.load());
-        }
+        if ((steps & 7) == 0) floor_state.sync();
         steps +%= 1;
         if (!q.any_slash and !use_name_mask) {
-            if (local_floor.*) |f| if (f > q.one_miss_ceiling) {
+            if (floor_state.local) |f| if (f > q.one_miss_ceiling) {
                 use_name_mask = true;
                 masks = v.name_mask;
             };
@@ -242,11 +247,19 @@ fn searchRangeWithFloor(
         var m = bits;
         while (m != 0) : (m &= m - 1) {
             const lane: u32 = @ctz(m);
-            scoreOne(v, q, i + lane, heap, paths, shared_floor, local_floor);
+            scoreOne(v, q, i + lane, heap, paths, floor_state);
         }
     }
-    while (i < hi) : (i += 1) {
-        if (masks[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, paths, shared_floor, local_floor);
+    if (i < hi) {
+        floor_state.sync();
+        if (!q.any_slash and !use_name_mask) {
+            if (floor_state.local) |f| if (f > q.one_miss_ceiling) {
+                masks = v.name_mask;
+            };
+        }
+        while (i < hi) : (i += 1) {
+            if (masks[i] & q.path_mask == q.path_mask) scoreOne(v, q, i, heap, paths, floor_state);
+        }
     }
 }
 
@@ -288,11 +301,10 @@ fn scoreOne(
     id: u32,
     heap: *TopK,
     paths: *PathCache,
-    shared_floor: ?*SharedFloor,
-    local_floor: *?i32,
+    floor_state: *FloorState,
 ) void {
     const name_mask = v.name_mask[id];
-    const active_floor = local_floor.*;
+    const active_floor = floor_state.local;
     if (q.n == 1 and !q.has_slash[0] and name_mask & q.path_mask != q.path_mask) {
         if (active_floor) |f| if (q.one_miss_ceiling < f) return;
     }
@@ -338,11 +350,7 @@ fn scoreOne(
     // last so equal hits order the same however the table was split.
     const tie = @as(u64, v.depth[id]) << 48 | @as(u64, @min(name.len, 0xffff)) << 32 | id;
     heap.offer(.{ .id = id, .score = total }, tie);
-    if (heap.floor()) |f| {
-        if (local_floor.* == null or f > local_floor.*.?) {
-            local_floor.* = if (shared_floor) |sf| sf.raise(f) else f;
-        }
-    }
+    if (heap.floor()) |f| floor_state.raise(f);
 }
 
 const WorkerCtx = struct {
@@ -358,12 +366,12 @@ const WorkerCtx = struct {
 fn searchWorker(ctx: WorkerCtx) void {
     if (ctx.qos != null) Qos.apply(ctx.qos);
     var paths: PathCache = .{};
-    var local_floor: ?i32 = null;
+    var floor_state: FloorState = .{ .shared = ctx.shared_floor };
     while (true) {
         const lo = ctx.next.fetchAdd(chunk_size, .monotonic);
         if (lo >= ctx.n) break;
         const hi = @min(ctx.n, lo + chunk_size);
-        searchRangeWithFloor(ctx.v, ctx.q, lo, hi, ctx.heap, &paths, ctx.shared_floor, &local_floor);
+        searchRangeWithFloor(ctx.v, ctx.q, lo, hi, ctx.heap, &paths, &floor_state);
     }
 }
 

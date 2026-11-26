@@ -215,8 +215,7 @@ pub const Catalog = struct {
     }
 
     pub fn hasFileIndex(cat: *const Catalog) bool {
-        const fi = &(cat.files orelse return false);
-        return fi.view() != null;
+        return cat.fileEntryCount() > 0;
     }
 
     pub fn fileEntryCount(cat: *const Catalog) u32 {

@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds the release bundle, quits any running Nanospot, moves the old bundle
-# to the Trash, copies the new bundle into place, verifies its code signature,
-# and checks LaunchServices for stale records pointing at deleted builds.
+# Replacing the bundle whole through Trash keeps the code signature and macOS
+# TCC privacy grants intact across builds (copying in place can leave stale
+# binaries inside Contents/MacOS and invalidate grants).
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -70,33 +70,27 @@ if [ ! -d "$src_bundle" ]; then
     exit 1
 fi
 
-quit_running() {
-    if [ "$dest" = "/Applications/Nanospot.app" ]; then
-        osascript -e 'tell application id "com.nanospot.app" to quit' >/dev/null 2>&1 || true
-        tries=0
-        while [ "$tries" -lt 30 ]; do
-            pgrep -x nanospot >/dev/null 2>&1 || return 0
-            sleep 0.1
-            tries=$((tries + 1))
-        done
-        pkill -x nanospot >/dev/null 2>&1 || true
-        tries=0
-        while [ "$tries" -lt 20 ]; do
-            pgrep -x nanospot >/dev/null 2>&1 || return 0
-            sleep 0.1
-            tries=$((tries + 1))
-        done
-        echo "install-app: running nanospot process did not quit" >&2
-        exit 1
-    fi
-
-    pkill -f "$dest/Contents/MacOS/" >/dev/null 2>&1 || true
+wait_exit() {
+    pattern=$1
+    limit=$2
     tries=0
-    while [ "$tries" -lt 20 ]; do
-        pgrep -f "$dest/Contents/MacOS/" >/dev/null 2>&1 || return 0
+    while [ "$tries" -lt "$limit" ]; do
+        pgrep -f "$pattern" >/dev/null 2>&1 || return 0
         sleep 0.1
         tries=$((tries + 1))
     done
+    return 1
+}
+
+quit_running() {
+    pattern="$dest/Contents/MacOS/nanospot"
+    pgrep -f "$pattern" >/dev/null 2>&1 || return 0
+    if [ "$dest" = "/Applications/Nanospot.app" ]; then
+        osascript -e 'tell application id "com.nanospot.app" to quit' >/dev/null 2>&1 || true
+        wait_exit "$pattern" 30 && return 0
+    fi
+    pkill -f "$pattern" >/dev/null 2>&1 || true
+    wait_exit "$pattern" 20 && return 0
     echo "install-app: process at $dest did not quit" >&2
     exit 1
 }
@@ -208,12 +202,12 @@ if [ -x "$lsregister" ]; then
     fi
 fi
 
-index_file="$HOME/Library/Application Support/Nanospot/names.flix"
-if [ -s "$index_file" ]; then
-    index_bytes=$(stat -f '%z' "$index_file")
-    echo "File Index: present ($index_file, $index_bytes bytes)"
+file_index_path="$HOME/Library/Application Support/Nanospot/names.flix"
+if [ -s "$file_index_path" ]; then
+    index_bytes=$(stat -f '%z' "$file_index_path")
+    echo "File Index: present ($file_index_path, $index_bytes bytes)"
 else
-    echo "Warning: File Index missing or empty at $index_file (file search will have no rows until Full Disk Access is granted)." >&2
+    echo "Warning: File Index missing or empty at $file_index_path (file search will have no rows until Full Disk Access is granted)." >&2
     if [ "$require_index" -eq 1 ]; then
         exit 1
     fi
