@@ -292,6 +292,51 @@ fn section(comptime T: type, bytes: []const u8, off: u64, n: u64) ![]const T {
     return ptr[0..count_usize];
 }
 
+pub fn synthesize(gpa: std.mem.Allocator, root: []const u8, want: u32) !Builder {
+    var b = Builder.init(gpa);
+    errdefer b.deinit();
+    try b.setRoot(root);
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const r = prng.random();
+    const words = [_][]const u8{
+        "readme",  "notes",  "budget", "report", "invoice", "photo",  "main",   "index",
+        "config",  "test",   "draft",  "final",  "backup",  "music",  "album",  "track",
+        "project", "source", "lib",    "util",   "server",  "client", "design", "mock",
+        "tax",     "2024",   "2025",   "q3",     "meeting", "resume", "letter", "scan",
+    };
+    const exts = [_][]const u8{ ".md", ".txt", ".pdf", ".png", ".jpg", ".swift", ".zig", ".json", ".xlsx", "" };
+
+    var dirs: std.ArrayList(u32) = .empty;
+    defer dirs.deinit(gpa);
+    var name_buf: [96]u8 = undefined;
+    while (b.count() < want) {
+        const parent = if (dirs.items.len == 0 or r.uintLessThan(u32, 16) == 0)
+            no_parent
+        else
+            dirs.items[r.uintLessThan(usize, dirs.items.len)];
+        const is_dir = r.uintLessThan(u32, 10) == 0;
+        const w1 = words[r.uintLessThan(usize, words.len)];
+        const w2 = words[r.uintLessThan(usize, words.len)];
+        const ext = if (is_dir) "" else exts[r.uintLessThan(usize, exts.len)];
+        const sep: []const u8 = switch (r.uintLessThan(u32, 3)) {
+            0 => "-",
+            1 => "_",
+            else => "",
+        };
+        const nm = try std.fmt.bufPrint(&name_buf, "{s}{s}{s}{d}{s}", .{ w1, sep, w2, r.uintLessThan(u32, 1000), ext });
+        const id = try b.add(parent, nm, .{ .dir = is_dir });
+        if (is_dir) try dirs.append(gpa, id);
+    }
+    return b;
+}
+
+pub fn writeSynthetic(gpa: std.mem.Allocator, path: []const u8, root: []const u8, want: u32) !u32 {
+    var b = try synthesize(gpa, root, want);
+    defer b.deinit();
+    try b.writeFile(sys.cwd, path);
+    return b.count();
+}
+
 const t = std.testing;
 
 test "relative path walks parents" {
@@ -402,4 +447,27 @@ test "bounds checks corrupt View names and parent links" {
     var b = Builder.init(t.allocator);
     defer b.deinit();
     try t.expectError(error.CorruptIndex, b.add(0, "self", .{}));
+}
+
+test "synthesize and writeSynthetic build a deterministic mappable index" {
+    var b = try synthesize(t.allocator, "/Users/synthetic", 200);
+    defer b.deinit();
+    try t.expectEqual(@as(u32, 200), b.count());
+    try t.expectEqualStrings("/Users/synthetic", b.view().root);
+    try t.expect(b.view().name(0).len > 0);
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(t.io, &root_buf)];
+    const path = try std.fs.path.join(t.allocator, &.{ root, "synth.flix" });
+    defer t.allocator.free(path);
+
+    const written = try writeSynthetic(t.allocator, path, "/Users/synthetic", 200);
+    try t.expectEqual(@as(u32, 200), written);
+
+    var m = try Mapped.open(sys.cwd, path);
+    defer m.close();
+    try t.expectEqual(@as(u32, 200), m.view.count());
+    try t.expectEqualStrings("/Users/synthetic", m.view.root);
 }

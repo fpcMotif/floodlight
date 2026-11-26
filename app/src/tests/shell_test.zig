@@ -274,3 +274,36 @@ test "session expiry, self-frontmost summon, hidden suggest replies, and paste o
     try t.expect(exp_out.release_idle);
     try t.expectEqual(@as(usize, 0), sh.icons.count());
 }
+
+test "keystroke pending stays open until a frame presents or the panel hides" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calendar.app"));
+
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.field.set("cal");
+    sh.panel.refresh();
+    try t.expect(sh.panel.keystrokePending());
+
+    _ = sh.framePresented(false);
+    try t.expect(sh.panel.keystrokePending());
+
+    _ = sh.framePresented(true);
+    try t.expect(!sh.panel.keystrokePending());
+
+    sh.panel.field.set("ca");
+    sh.panel.refresh();
+    try t.expect(sh.panel.keystrokePending());
+    _ = sh.hotKey(.search, true);
+    try t.expect(!sh.panel.keystrokePending());
+}

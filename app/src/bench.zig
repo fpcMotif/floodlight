@@ -3,8 +3,10 @@
 //! `Return → action`, prints `p50` and `p99` in microseconds, and exits
 //! non-zero when a `p99` exceeds its budget.
 const std = @import("std");
+const builtin = @import("builtin");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
+const core = @import("nanospot_core");
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
@@ -31,7 +33,7 @@ pub const Budgets = struct {
     pub const hotkey_to_laid_out_frame_p99_us: f64 = 10.0;
     pub const return_to_action_p99_us: f64 = 10.0;
     pub const keystroke_to_built_frame_p99_us: f64 = 4300.0;
-    pub const first_frame_with_icons_p99_us: f64 = 46000.0;
+    pub const first_frame_with_icons_p99_us: f64 = 8000.0;
     pub const hotkey_to_built_frame_p99_us: f64 = 1500.0;
 };
 
@@ -256,11 +258,9 @@ pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
     return summarize(samples);
 }
 
-pub const file_count: usize = 2000;
+pub const file_count: usize = 750_000;
 pub const frame_runs: usize = 200;
 pub const icon_runs: usize = 20;
-
-const file_extensions = [_][]const u8{ ".pdf", ".txt", ".png", ".zig" };
 
 /// Hooks for the built-frame metrics: real dates, and icons that are either
 /// absent or rendered by the system on every request, with no cache.
@@ -304,26 +304,20 @@ const FrameHooks = struct {
 /// has seen every benchmark query, so a keystroke pays for all three sources.
 const Fixture = struct {
     gpa: std.mem.Allocator,
+    io: std.Io,
     root: []u8,
     cat: search.Catalog,
     store: clipboard.Store,
 
-    fn init(f: *Fixture, gpa: std.mem.Allocator) !void {
-        const io = std.Io.Threaded.global_single_threaded.io();
+    fn init(f: *Fixture, gpa: std.mem.Allocator, io: std.Io, entry_count: usize) !void {
         f.gpa = gpa;
+        f.io = io;
         f.root = try std.fmt.allocPrint(gpa, "/tmp/nanospot-bench-{d}", .{std.c.getpid()});
         errdefer gpa.free(f.root);
         std.Io.Dir.cwd().deleteTree(io, f.root) catch {};
         var dir = try std.Io.Dir.cwd().createDirPathOpen(io, f.root, .{});
-        defer dir.close(io);
+        dir.close(io);
         errdefer std.Io.Dir.cwd().deleteTree(io, f.root) catch {};
-        var name: [96]u8 = undefined;
-        for (0..file_count) |i| {
-            const stem = app_stems[i % app_stems.len];
-            const ext = file_extensions[i % file_extensions.len];
-            const sub = try std.fmt.bufPrint(&name, "{s} {d}{s}", .{ stem, i, ext });
-            try dir.writeFile(io, .{ .sub_path = sub, .data = "" });
-        }
 
         f.cat = .{ .gpa = gpa };
         errdefer f.cat.deinit();
@@ -331,7 +325,9 @@ const Fixture = struct {
 
         const index_path = try std.fs.path.join(gpa, &.{ f.root, "names.flix" });
         defer gpa.free(index_path);
-        try f.cat.buildIndex(index_path, f.root);
+        _ = try core.index.writeSynthetic(gpa, index_path, "/Users/synthetic", @intCast(entry_count));
+        try f.cat.openIndex(index_path, "/Users/synthetic");
+        f.cat.startWorker(io, .{});
 
         f.store = try .open(":memory:", f.root);
         errdefer f.store.close();
@@ -339,17 +335,17 @@ const Fixture = struct {
     }
 
     fn deinit(f: *Fixture) void {
-        const io = std.Io.Threaded.global_single_threaded.io();
         f.store.close();
         f.cat.deinit();
-        std.Io.Dir.cwd().deleteTree(io, f.root) catch {};
+        std.Io.Dir.cwd().deleteTree(f.io, f.root) catch {};
         f.gpa.free(f.root);
     }
 };
 
-fn measureBuiltFrame(gpa: std.mem.Allocator, runs: usize, render_icons: bool, warm: bool) !Stats {
+fn measureBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize, render_icons: bool, warm: bool) !Stats {
     var fx: Fixture = undefined;
-    try fx.init(gpa);
+    const count: usize = if (builtin.is_test) 2_000 else file_count;
+    try fx.init(gpa, io, count);
     defer fx.deinit();
 
     var hooks: FrameHooks = .{ .gpa = gpa, .render_icons = render_icons };
@@ -385,12 +381,12 @@ fn measureBuiltFrame(gpa: std.mem.Allocator, runs: usize, render_icons: bool, wa
     return summarize(samples);
 }
 
-pub fn measureKeystrokeToBuiltFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
-    return measureBuiltFrame(gpa, runs, false, true);
+pub fn measureKeystrokeToBuiltFrame(gpa: std.mem.Allocator, io: std.Io, runs: usize) !Stats {
+    return measureBuiltFrame(gpa, io, runs, false, true);
 }
 
-pub fn measureFirstFrameWithIcons(gpa: std.mem.Allocator, runs: usize) !Stats {
-    return measureBuiltFrame(gpa, runs, true, false);
+pub fn measureFirstFrameWithIcons(gpa: std.mem.Allocator, io: std.Io, runs: usize) !Stats {
+    return measureBuiltFrame(gpa, io, runs, true, false);
 }
 
 pub fn measureHotKeyToBuiltFrame(gpa: std.mem.Allocator, runs: usize) !Stats {
@@ -555,8 +551,8 @@ pub fn main(init: std.process.Init) !void {
     const keystroke = try measureKeystrokeToPublication(gpa, default_runs);
     const summon = try measureHotKeyToLaidOutFrame(gpa, default_runs);
     const submit = try measureReturnToAction(gpa, default_runs);
-    const built = try measureKeystrokeToBuiltFrame(gpa, frame_runs);
-    const icons = try measureFirstFrameWithIcons(gpa, icon_runs);
+    const built = try measureKeystrokeToBuiltFrame(gpa, init.io, frame_runs);
+    const icons = try measureFirstFrameWithIcons(gpa, init.io, icon_runs);
     const built_summon = try measureHotKeyToBuiltFrame(gpa, default_runs);
     const board_keystroke = try measureBoardKeystroke(gpa, board_runs);
     const board_narrowed = try measureBoardKeystrokes(gpa, board_runs);
