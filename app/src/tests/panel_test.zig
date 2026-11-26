@@ -1856,3 +1856,27 @@ test "a one-byte query asks for no suggestions, a two-byte query and a single CJ
     tester.typeText("\u{5929}");
     try t.expectEqualStrings("\u{5929}", spy.queries.getLast());
 }
+
+test "a file filter with no File Index says so instead of reporting no match" {
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    try cat.addApp(try t.allocator.dupe(u8, "/Applications/Calculator.app"));
+    var hooks: StubHooks = .{};
+    var p = panel_mod.Panel.init(t.allocator, &cat, null, hooks.hooks());
+    defer p.deinit();
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, .init(&p, panel_mod.Panel.view), .{ .width = chrome.metrics.width, .height = chrome.metrics.expanded_height });
+    defer tester.deinit();
+    tester.settle(0.1);
+
+    tester.typeText("cal");
+    tester.settle(0.1);
+    try t.expect(tester.shortcut(.{ .key = '3', .cmd = true }));
+    tester.settle(0.1);
+
+    try t.expectEqual(panel_mod.Filter.files, p.list.filter);
+    try t.expect(!cat.hasFileIndex());
+    try t.expect(tester.hasText("No File Index yet"));
+    try t.expect(!tester.hasText("No files match \u{201C}cal\u{201D}"));
+}

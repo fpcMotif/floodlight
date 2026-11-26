@@ -476,6 +476,7 @@ pub const Panel = struct {
         var h: std.hash.Wyhash = .init(0);
         hashValue(&h, p.mode);
         hashValue(&h, p.catalog.indexing());
+        hashValue(&h, p.catalog.hasFileIndex());
         hashValue(&h, p.panelWidth());
         hashValue(&h, p.panelHeight());
         hashBytes(&h, p.field.text());

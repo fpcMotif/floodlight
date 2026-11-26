@@ -214,6 +214,16 @@ pub const Catalog = struct {
         return cat.scan_pending.load(.seq_cst) or cat.scan_thread_alive.load(.seq_cst) or fi.busy();
     }
 
+    pub fn hasFileIndex(cat: *const Catalog) bool {
+        return cat.fileEntryCount() > 0;
+    }
+
+    pub fn fileEntryCount(cat: *const Catalog) u32 {
+        const fi = &(cat.files orelse return 0);
+        const v = fi.view() orelse return 0;
+        return v.count();
+    }
+
     pub fn hasPending(cat: *const Catalog) bool {
         return cat.pending_seq != 0;
     }

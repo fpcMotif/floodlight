@@ -1,4 +1,4 @@
-.PHONY: bench-nanoui-latency bench-nanoui-memory build bundle check clean docs format install-zig run test test-core test-nanoui
+.PHONY: bench-nanoui-latency bench-nanoui-memory build bundle check clean docs format install install-zig run test test-core test-nanoui
 
 ZIG = $(shell SCRIPT_DIR="$$PWD/scripts" . ./scripts/tools.sh && resolve_tool zig "$$NANOSPOT_ZIG_VERSION" version)
 
@@ -21,6 +21,9 @@ build:
 
 bundle:
 	cd app && "$(ZIG)" build bundle --release
+
+install:
+	./scripts/install-app.sh
 
 run:
 	cd app && "$(ZIG)" build run

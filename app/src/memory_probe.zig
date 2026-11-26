@@ -25,6 +25,8 @@ fn markMemory(phase: []const u8, cycle: u32) void {
 pub fn Runner(comptime Shell: type) type {
     return struct {
         pub fn launched(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *Shell = @ptrCast(@alignCast(ctx));
+            std.debug.print("NANOSPOT_CATALOG apps={d} file_entries={d}\n", .{ s.catalog.apps.items.len, s.catalog.fileEntryCount() });
             markMemory("launched", 0);
             nanoui.App.after(settle_ms, ctx, stepFn);
         }
