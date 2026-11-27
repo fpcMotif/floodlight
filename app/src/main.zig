@@ -130,6 +130,15 @@ const AppShell = struct {
         s.apply(s.shell.pollSearch());
     }
 
+    fn iconsWake(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, iconsLanded);
+    }
+
+    fn iconsLanded(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.pollIcons());
+    }
+
     fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         s.apply(s.shell.entranceTimedOut());
@@ -447,6 +456,8 @@ pub fn main(init: std.process.Init) !void {
     defer shell.shell.deinit();
     if (!headless) {
         shell.catalog.startWorker(init.io, .{ .ctx = &shell, .wake = AppShell.searchWake });
+        shell.shell.startIconWorker(init.io, .{ .ctx = &shell, .wake = AppShell.iconsWake });
+        shell.shell.prefetchFrequentIcons();
     }
     if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
         defer gpa.free(v);

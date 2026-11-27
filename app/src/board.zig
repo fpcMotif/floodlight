@@ -6,6 +6,7 @@ const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const clipboard = @import("clipboard.zig");
 const chrome = @import("chrome.zig");
+const icons = @import("icons.zig");
 const list = @import("list.zig");
 
 const Entry = clipboard.Entry;
@@ -25,7 +26,7 @@ pub const History = list.List(Entry, Filter, i64, entryKey);
 pub const Context = struct {
     ctx: ?*anyopaque,
     /// An app's icon as PNG; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?ui.ImageSource.Pixels,
+    app_icon: *const fn (?*anyopaque, []const u8, icons.Kind) ?icons.Image,
     /// "Today at 3:03 PM": the inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     /// The text in the search field, filtering history.
@@ -404,11 +405,17 @@ pub const Board = struct {
         const ext = clipboard.extension(path);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.board_image_extensions)) return tile(c, "photo", cyan);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", amber);
-        if (host.app_icon(host.ctx, path)) |px| {
-            _ = ui.image(c, .{ .key = path, .source = .{ .pixels = px }, .max_width = size, .max_height = size, .radius = 0 });
+        if (host.app_icon(host.ctx, path, boardIconKind(path, ext))) |img| {
+            _ = ui.image(c, .{ .key = img.key, .source = .{ .pixels = img.pixels }, .max_width = size, .max_height = size, .radius = 0 });
             return;
         }
         tile(c, "doc", gray);
+    }
+
+    fn boardIconKind(path: []const u8, ext: []const u8) icons.Kind {
+        if (path.len > 0 and path[path.len - 1] == '/') return .folder;
+        if (ext.len > 0) return .file;
+        return .unknown;
     }
 
     fn inspector(b: *Board, c: *ui.Context, host: Context) void {

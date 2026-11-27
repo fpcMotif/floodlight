@@ -11,6 +11,7 @@ const panel_mod = @import("panel.zig");
 const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const chrome = @import("chrome.zig");
+const icons_mod = @import("icons.zig");
 
 const gpa = std.heap.c_allocator;
 const metrics = chrome.metrics;
@@ -47,9 +48,9 @@ const Stage = struct {
 
     fn ignoreRequest(_: ?*anyopaque) void {}
 
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?ui.ImageSource.Pixels {
+    fn appIcon(ctx: ?*anyopaque, path: []const u8, _: icons_mod.Kind) ?icons_mod.Image {
         const s: *Stage = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |icon| return icon.pixels();
+        if (s.icons.getEntry(path)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
         const icon = mac.iconPixels(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
         const key = gpa.dupe(u8, path) catch {
             icon.deinit(gpa);
@@ -60,7 +61,7 @@ const Stage = struct {
             icon.deinit(gpa);
             return null;
         };
-        return icon.pixels();
+        return .{ .key = key, .pixels = icon.pixels() };
     }
 
     fn deinitIcons(s: *Stage) void {

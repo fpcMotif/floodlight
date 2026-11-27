@@ -7,6 +7,7 @@ const panel_mod = @import("../panel.zig");
 const clipboard = @import("../clipboard.zig");
 const board_mod = @import("../board.zig");
 const chrome = @import("../chrome.zig");
+const icons = @import("../icons.zig");
 const h = @import("helpers.zig");
 const t = std.testing;
 
@@ -1311,7 +1312,7 @@ const CountingHooks = struct {
 
     fn request(_: ?*anyopaque) void {}
 
-    fn icon(ctx: ?*anyopaque, _: []const u8) ?ui.ImageSource.Pixels {
+    fn icon(ctx: ?*anyopaque, _: []const u8, _: icons.Kind) ?icons.Image {
         const h_self: *CountingHooks = @ptrCast(@alignCast(ctx));
         h_self.icon_calls += 1;
         return null;
