@@ -355,8 +355,10 @@ pub fn main(init: std.process.Init) !void {
     const memory_session = memory_probe.hasFlag(args, memory_probe.session_flag);
     const memory_seed = memory_probe.hasFlag(args, memory_probe.seed_flag);
     const latency_session = memory_probe.hasFlag(args, latency_probe.session_flag);
+    const latency_rounds = if (latency_session) latency_probe.resolveRoundsOrExit() else latency_probe.default_rounds;
 
     var shell: AppShell = .{ .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
+    shell.latency.rounds = latency_rounds;
     shell.latency.measure_open = memory_probe.hasFlag(args, latency_probe.open_flag);
     defer shell.catalog.deinit();
     const t_index0 = latency_probe.nowNs();

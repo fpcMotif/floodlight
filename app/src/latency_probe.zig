@@ -16,10 +16,29 @@ pub const Budgets = struct {
     pub const return_to_hidden_p99_us: u64 = 8300;
 };
 
-const rounds = 30;
+pub const max_rounds: usize = 30;
+pub const default_rounds: usize = max_rounds;
 const open_runs = 5;
 const gap_ms = 250;
 const frame_timeout_ms = 1000;
+
+pub const ParseRoundsError = error{InvalidRounds};
+
+pub fn parseRounds(raw: ?[]const u8) ParseRoundsError!usize {
+    const slice = raw orelse return default_rounds;
+    const n = std.fmt.parseInt(usize, slice, 10) catch return error.InvalidRounds;
+    if (n < 1 or n > max_rounds) return error.InvalidRounds;
+    return n;
+}
+
+pub fn resolveRoundsOrExit() usize {
+    const raw = std.c.getenv("NANOSPOT_LATENCY_ROUNDS");
+    const slice: ?[]const u8 = if (raw) |p| std.mem.span(p) else null;
+    return parseRounds(slice) catch {
+        std.debug.print("NANOSPOT_LATENCY error invalid NANOSPOT_LATENCY_ROUNDS={s} (expected 1..{d})\n", .{ slice orelse "", max_rounds });
+        std.process.exit(1);
+    };
+}
 
 /// How long the panel stays hidden before the next summon
 /// (`NANOSPOT_LATENCY_IDLE_MS`): a quick re-summon and one after a rest differ.
@@ -75,6 +94,7 @@ pub const LaunchTimings = struct {
 const queries = [_][]const u8{ "a", "s", "c", "m", "t", "p", "n", "f", "d", "r" };
 
 pub const State = struct {
+    rounds: usize = default_rounds,
     step: u32 = 0,
     waiting: ?Waiting = null,
     frame_sample: stage_clock.FrameSample = .{},
@@ -82,22 +102,22 @@ pub const State = struct {
     generation: u32 = 0,
     timeouts: u32 = 0,
     frame_counts: [std.enums.values(FrameMetric).len]usize = @splat(0),
-    frame_total: [std.enums.values(FrameMetric).len][rounds]u64 = undefined,
-    frame_publish: [std.enums.values(FrameMetric).len][rounds]u64 = undefined,
-    frame_build: [std.enums.values(FrameMetric).len][rounds]u64 = undefined,
-    frame_present: [std.enums.values(FrameMetric).len][rounds]u64 = undefined,
+    frame_total: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_publish: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_build: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_present: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     action_count: usize = 0,
-    action_total: [rounds]u64 = undefined,
-    action_publish: [rounds]u64 = undefined,
-    action_action: [rounds]u64 = undefined,
-    action_hide: [rounds]u64 = undefined,
-    action_handoff: [rounds]u64 = undefined,
+    action_total: [max_rounds]u64 = undefined,
+    action_publish: [max_rounds]u64 = undefined,
+    action_action: [max_rounds]u64 = undefined,
+    action_hide: [max_rounds]u64 = undefined,
+    action_handoff: [max_rounds]u64 = undefined,
     scalar_counts: [std.enums.values(ScalarMetric).len]usize = @splat(0),
-    scalar_samples: [std.enums.values(ScalarMetric).len][rounds]u64 = undefined,
+    scalar_samples: [std.enums.values(ScalarMetric).len][max_rounds]u64 = undefined,
     resize_runs: usize = 0,
-    resize_samples: [rounds * 4]u64 = undefined,
+    resize_samples: [max_rounds * 4]u64 = undefined,
     resize_delay_runs: usize = 0,
-    resize_delay_samples: [rounds * 4]u64 = undefined,
+    resize_delay_samples: [max_rounds * 4]u64 = undefined,
     resize_pending_ns: u64 = 0,
     resize_waiting_gen: u32 = 0,
     resize_waited_count: u32 = 0,
@@ -108,7 +128,7 @@ pub const State = struct {
     fn recordFrame(st: *State, m: FrameMetric, d: stage_clock.FrameDeltas) void {
         const i = @backingInt(m);
         const k = st.frame_counts[i];
-        if (k == rounds) return;
+        if (k >= st.rounds) return;
         st.frame_total[i][k] = d.total_ns;
         st.frame_publish[i][k] = d.publish_ns;
         st.frame_build[i][k] = d.build_ns;
@@ -118,7 +138,7 @@ pub const State = struct {
 
     fn recordAction(st: *State, d: stage_clock.ActionDeltas) void {
         const k = st.action_count;
-        if (k == rounds) return;
+        if (k >= st.rounds) return;
         st.action_total[k] = d.total_ns;
         st.action_publish[k] = d.publish_ns;
         st.action_action[k] = d.action_ns;
@@ -130,7 +150,7 @@ pub const State = struct {
     fn recordScalar(st: *State, m: ScalarMetric, ns: u64) void {
         const i = @backingInt(m);
         const k = st.scalar_counts[i];
-        if (k == rounds) return;
+        if (k >= st.rounds) return;
         st.scalar_samples[i][k] = ns;
         st.scalar_counts[i] = k + 1;
     }
@@ -140,7 +160,7 @@ pub fn Runner(comptime Shell: type) type {
     return struct {
         pub fn launched(ctx: ?*anyopaque) callconv(.c) void {
             const s: *Shell = @ptrCast(@alignCast(ctx));
-            std.debug.print("NANOSPOT_LATENCY catalog apps={d} file_entries={d}\n", .{ s.catalog.apps.items.len, s.catalog.fileEntryCount() });
+            std.debug.print("NANOSPOT_LATENCY catalog rounds={d} apps={d} file_entries={d}\n", .{ s.latency.rounds, s.catalog.apps.items.len, s.catalog.fileEntryCount() });
             nanoui.App.after(gap_ms * 4, ctx, stepFn);
         }
 
@@ -260,7 +280,7 @@ pub fn Runner(comptime Shell: type) type {
             const round = st.step / 5;
             const step = st.step % 5;
             st.step += 1;
-            if (round == rounds) return finish(s);
+            if (round >= st.rounds) return finish(s);
             const q = queries[round % queries.len];
             switch (step) {
                 0 => {
@@ -309,12 +329,13 @@ pub fn Runner(comptime Shell: type) type {
 
         fn finish(s: *Shell) void {
             const st = &s.latency;
-            printScalar("summon_placed", st.scalar_samples[@backingInt(ScalarMetric.summon_placed)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_placed)]]);
-            printScalar("summon_built", st.scalar_samples[@backingInt(ScalarMetric.summon_built)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_built)]]);
+            printScalar(st.rounds, "summon_placed", st.scalar_samples[@backingInt(ScalarMetric.summon_placed)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_placed)]]);
+            printScalar(st.rounds, "summon_built", st.scalar_samples[@backingInt(ScalarMetric.summon_built)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_built)]]);
             for (std.enums.values(FrameMetric)) |m| {
                 const i = @backingInt(m);
                 const n = st.frame_counts[i];
                 printFrame(
+                    st.rounds,
                     @tagName(m),
                     st.frame_total[i][0..n],
                     st.frame_publish[i][0..n],
@@ -324,21 +345,24 @@ pub fn Runner(comptime Shell: type) type {
                 );
             }
             printAction(
+                st.rounds,
                 st.action_total[0..st.action_count],
                 st.action_publish[0..st.action_count],
                 st.action_action[0..st.action_count],
                 st.action_hide[0..st.action_count],
                 st.action_handoff[0..st.action_count],
             );
-            printScalar("hide", st.scalar_samples[@backingInt(ScalarMetric.hide)][0..st.scalar_counts[@backingInt(ScalarMetric.hide)]]);
+            printScalar(st.rounds, "hide", st.scalar_samples[@backingInt(ScalarMetric.hide)][0..st.scalar_counts[@backingInt(ScalarMetric.hide)]]);
             printResize(
+                st.rounds,
                 st.resize_samples[0..st.resize_runs],
                 st.resize_delay_samples[0..st.resize_delay_runs],
                 st.resize_waited_count,
             );
             std.debug.print(
-                "NANOSPOT_LATENCY metric=launch runs=1 index_open_us={d:.0} app_scan_us={d:.0} clipboard_open_us={d:.0} clipboard_prune_us={d:.0} guide_window_us={d:.0} total_us={d:.0}\n",
+                "NANOSPOT_LATENCY metric=launch rounds={d} runs=1 index_open_us={d:.0} app_scan_us={d:.0} clipboard_open_us={d:.0} clipboard_prune_us={d:.0} guide_window_us={d:.0} total_us={d:.0}\n",
                 .{
+                    st.rounds,
                     us(st.launch.index_open_ns),
                     us(st.launch.app_scan_ns),
                     us(st.launch.clipboard_open_ns),
@@ -355,9 +379,9 @@ pub fn Runner(comptime Shell: type) type {
                     mac.open(home);
                     o.* = nowNs() -| t0;
                 }
-                printScalar("open_handoff", &opens);
+                printScalar(st.rounds, "open_handoff", &opens);
             }
-            std.debug.print("NANOSPOT_LATENCY done entries={d} timeouts={d}\n", .{ st.index_entries, st.timeouts });
+            std.debug.print("NANOSPOT_LATENCY done rounds={d} entries={d} timeouts={d}\n", .{ st.rounds, st.index_entries, st.timeouts });
             std.process.exit(0);
         }
 
@@ -365,15 +389,16 @@ pub fn Runner(comptime Shell: type) type {
             return @as(f64, @floatFromInt(ns)) / 1e3;
         }
 
-        fn printScalar(name: []const u8, samples: []u64) void {
+        fn printScalar(rounds: usize, name: []const u8, samples: []u64) void {
             const sum = stage_clock.summarize(samples);
-            if (sum.runs == 0) return std.debug.print("NANOSPOT_LATENCY metric={s} runs=0\n", .{name});
-            std.debug.print("NANOSPOT_LATENCY metric={s} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0}\n", .{
-                name, sum.runs, us(sum.p50_ns), us(sum.p99_ns), us(sum.max_ns),
+            if (sum.runs == 0) return std.debug.print("NANOSPOT_LATENCY metric={s} rounds={d} runs=0\n", .{ name, rounds });
+            std.debug.print("NANOSPOT_LATENCY metric={s} rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0}\n", .{
+                name, rounds, sum.runs, us(sum.p50_ns), us(sum.p99_ns), us(sum.max_ns),
             });
         }
 
         fn printFrame(
+            rounds: usize,
             name: []const u8,
             total: []u64,
             publish: []u64,
@@ -383,39 +408,52 @@ pub fn Runner(comptime Shell: type) type {
         ) void {
             const tot = stage_clock.summarize(total);
             if (tot.runs == 0) {
-                return std.debug.print("NANOSPOT_LATENCY metric={s} runs=0 budget_p99_us={d}\n", .{ name, budget_p99_us });
+                return std.debug.print("NANOSPOT_LATENCY metric={s} rounds={d} runs=0 budget_p99_us={d}\n", .{ name, rounds, budget_p99_us });
             }
             const pub_s = stage_clock.summarize(publish);
             const bld_s = stage_clock.summarize(build);
             const prs_s = stage_clock.summarize(present);
             std.debug.print(
-                "NANOSPOT_LATENCY metric={s} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} build_p50_us={d:.0} present_p50_us={d:.0} budget_p99_us={d}\n",
-                .{ name, tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(bld_s.p50_ns), us(prs_s.p50_ns), budget_p99_us },
+                "NANOSPOT_LATENCY metric={s} rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} build_p50_us={d:.0} present_p50_us={d:.0} budget_p99_us={d}\n",
+                .{ name, rounds, tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(bld_s.p50_ns), us(prs_s.p50_ns), budget_p99_us },
             );
         }
 
-        fn printAction(total: []u64, publish: []u64, action: []u64, hide: []u64, handoff: []u64) void {
+        fn printAction(rounds: usize, total: []u64, publish: []u64, action: []u64, hide: []u64, handoff: []u64) void {
             const tot = stage_clock.summarize(total);
             if (tot.runs == 0) {
-                return std.debug.print("NANOSPOT_LATENCY metric=return_to_hidden runs=0 budget_p99_us={d}\n", .{Budgets.return_to_hidden_p99_us});
+                return std.debug.print("NANOSPOT_LATENCY metric=return_to_hidden rounds={d} runs=0 budget_p99_us={d}\n", .{ rounds, Budgets.return_to_hidden_p99_us });
             }
             const pub_s = stage_clock.summarize(publish);
             const act_s = stage_clock.summarize(action);
             const hid_s = stage_clock.summarize(hide);
             const hnd_s = stage_clock.summarize(handoff);
             std.debug.print(
-                "NANOSPOT_LATENCY metric=return_to_hidden runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} action_p50_us={d:.0} hide_p50_us={d:.0} handoff_p50_us={d:.0} budget_p99_us={d}\n",
-                .{ tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(act_s.p50_ns), us(hid_s.p50_ns), us(hnd_s.p50_ns), Budgets.return_to_hidden_p99_us },
+                "NANOSPOT_LATENCY metric=return_to_hidden rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} action_p50_us={d:.0} hide_p50_us={d:.0} handoff_p50_us={d:.0} budget_p99_us={d}\n",
+                .{ rounds, tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(act_s.p50_ns), us(hid_s.p50_ns), us(hnd_s.p50_ns), Budgets.return_to_hidden_p99_us },
             );
         }
 
-        fn printResize(resize_samples: []u64, delay_samples: []u64, waited_count: u32) void {
+        fn printResize(rounds: usize, resize_samples: []u64, delay_samples: []u64, waited_count: u32) void {
             const res_s = stage_clock.summarize(resize_samples);
             const del_s = stage_clock.summarize(delay_samples);
             std.debug.print(
-                "NANOSPOT_LATENCY metric=resize_redraw runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} delay_runs={d} delay_p50_us={d:.0} waited_count={d}\n",
-                .{ res_s.runs, us(res_s.p50_ns), us(res_s.p99_ns), us(res_s.max_ns), del_s.runs, us(del_s.p50_ns), waited_count },
+                "NANOSPOT_LATENCY metric=resize_redraw rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} delay_runs={d} delay_p50_us={d:.0} waited_count={d}\n",
+                .{ rounds, res_s.runs, us(res_s.p50_ns), us(res_s.p99_ns), us(res_s.max_ns), del_s.runs, us(del_s.p50_ns), waited_count },
             );
         }
     };
+}
+
+test "parseRounds defaults to 30 and rejects out-of-range or invalid values" {
+    const t = std.testing;
+    try t.expectEqual(@as(usize, 30), try parseRounds(null));
+    try t.expectEqual(@as(usize, 1), try parseRounds("1"));
+    try t.expectEqual(@as(usize, 5), try parseRounds("5"));
+    try t.expectEqual(@as(usize, 30), try parseRounds("30"));
+    try t.expectError(error.InvalidRounds, parseRounds("0"));
+    try t.expectError(error.InvalidRounds, parseRounds("31"));
+    try t.expectError(error.InvalidRounds, parseRounds("abc"));
+    try t.expectError(error.InvalidRounds, parseRounds(""));
+    try t.expectError(error.InvalidRounds, parseRounds("-1"));
 }
