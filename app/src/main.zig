@@ -166,9 +166,17 @@ const AppShell = struct {
     }
 
     fn timedOpen(ctx: ?*anyopaque, target: []const u8) void {
+        timedHostAction(ctx, target, mac.open);
+    }
+
+    fn timedReveal(ctx: ?*anyopaque, path: []const u8) void {
+        timedHostAction(ctx, path, mac.reveal);
+    }
+
+    fn timedHostAction(ctx: ?*anyopaque, target: []const u8, comptime run: *const fn ([]const u8) void) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         const t0 = latency_probe.nowNs();
-        mac.open(target);
+        run(target);
         latency_probe.Runner(AppShell).actionHanded(s, t0, latency_probe.nowNs());
     }
 
@@ -446,7 +454,10 @@ pub fn main(init: std.process.Init) !void {
     if (memory_seed) return memory_probe.seedMemoryHistory(gpa, shell.store);
 
     var host = shell_mod.macHost(&shell, AppShell.onRequest, if (headless) shell_mod.noSuggest else AppShell.onSuggest);
-    if (latency_session) host.open = AppShell.timedOpen;
+    if (latency_session) {
+        host.open = AppShell.timedOpen;
+        host.reveal = AppShell.timedReveal;
+    }
     shell.shell.init(
         gpa,
         &shell.catalog,

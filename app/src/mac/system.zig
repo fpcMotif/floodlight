@@ -293,11 +293,33 @@ pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?u
     return menu_choice;
 }
 
+fn pathExists(path: []const u8) bool {
+    if (path.len == 0) return false;
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const fm = objc.msg(objc.Object, objc.class("NSFileManager"), "defaultManager", .{});
+    const ns_path = objc.nsString(path);
+    if (objc.msg(objc.BOOL, fm, "fileExistsAtPath:", .{ns_path})) return true;
+    return objc.msg(?objc.Object, fm, "destinationOfSymbolicLinkAtPath:error:", .{ ns_path, @as(?*anyopaque, null) }) != null;
+}
+
+fn activateFinder(path: []const u8) void {
+    const urls = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{pasteboard.fileURL(path)});
+    objc.msg(void, workspace(), "activateFileViewerSelectingURLs:", .{urls});
+}
+
+fn revealChecked(path: []const u8, activate: *const fn ([]const u8) void) bool {
+    if (!pathExists(path)) return false;
+    activate(path);
+    return true;
+}
+
 fn revealSync(path: []const u8) void {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const urls = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{pasteboard.fileURL(path)});
-    objc.msg(void, workspace(), "activateFileViewerSelectingURLs:", .{urls});
+    if (!revealChecked(path, activateFinder)) {
+        std.log.err("reveal failed: {s}", .{path});
+    }
 }
 
 pub fn reveal(path: []const u8) void {
@@ -476,3 +498,55 @@ pub const FileDragSource = struct {
         _ = objc.msg(?objc.Object, obj, "beginDraggingSessionWithItems:event:source:", .{ items, event, obj });
     }
 };
+
+test "revealChecked skips missing paths and activates existing and symlinked ones" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "present.txt", .data = "" });
+    try tmp.dir.symLink(t.io, "missing-target.txt", "dangling.link", .{});
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+
+    const existing = try std.fs.path.join(t.allocator, &.{ root, "present.txt" });
+    defer t.allocator.free(existing);
+    const missing = try std.fs.path.join(t.allocator, &.{ root, "missing.txt" });
+    defer t.allocator.free(missing);
+    const dangling = try std.fs.path.join(t.allocator, &.{ root, "dangling.link" });
+    defer t.allocator.free(dangling);
+
+    const Spy = struct {
+        var activated_len: usize = 0;
+        var activated_buf: [std.posix.PATH_MAX]u8 = undefined;
+        var activated_calls: usize = 0;
+
+        fn reset() void {
+            activated_len = 0;
+            activated_calls = 0;
+        }
+
+        fn activate(path: []const u8) void {
+            activated_calls += 1;
+            @memcpy(activated_buf[0..path.len], path);
+            activated_len = path.len;
+        }
+    };
+
+    Spy.reset();
+    try t.expect(!revealChecked(missing, Spy.activate));
+    try t.expectEqual(@as(usize, 0), Spy.activated_calls);
+
+    Spy.reset();
+    try t.expect(!revealChecked("", Spy.activate));
+    try t.expectEqual(@as(usize, 0), Spy.activated_calls);
+
+    Spy.reset();
+    try t.expect(revealChecked(existing, Spy.activate));
+    try t.expectEqual(@as(usize, 1), Spy.activated_calls);
+    try t.expectEqualStrings(existing, Spy.activated_buf[0..Spy.activated_len]);
+
+    Spy.reset();
+    try t.expect(revealChecked(dangling, Spy.activate));
+    try t.expectEqual(@as(usize, 1), Spy.activated_calls);
+    try t.expectEqualStrings(dangling, Spy.activated_buf[0..Spy.activated_len]);
+}

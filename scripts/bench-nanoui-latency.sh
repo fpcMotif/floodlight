@@ -37,6 +37,7 @@ BEGIN {
     budgets["keystroke_same_rows"] = 16000
     budgets["switch_to_board"] = 8300
     budgets["return_to_hidden"] = 8300
+    budgets["reveal_to_hidden"] = 8300
     failed = 0
     timeouts = -1
 }
@@ -61,7 +62,8 @@ END {
     order[3] = "keystroke_same_rows"
     order[4] = "switch_to_board"
     order[5] = "return_to_hidden"
-    for (k = 1; k <= 5; k++) {
+    order[6] = "reveal_to_hidden"
+    for (k = 1; k <= 6; k++) {
         m = order[k]
         b = budgets[m]
         if (!(m in runs)) {
