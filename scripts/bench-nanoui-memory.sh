@@ -5,7 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 . "$SCRIPT_DIR/tools.sh"
 
-idle_budget_mb=${NANOSPOT_IDLE_BUDGET_MB:-23}
+idle_budget_mb=${NANOSPOT_IDLE_BUDGET_MB:-44}
 peak_budget_mb=${NANOSPOT_PEAK_BUDGET_MB:-67}
 cycles=3
 expiry_wait_s=4

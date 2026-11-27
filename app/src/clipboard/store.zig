@@ -29,6 +29,8 @@ const lite = struct {
     const Function = *const fn (*Context, c_int, [*]*Value) callconv(.c) void;
     extern "c" fn sqlite3_open_v2(path: [*:0]const u8, db: *?*Db, flags: c_int, vfs: ?[*:0]const u8) c_int;
     extern "c" fn sqlite3_close_v2(db: *Db) c_int;
+    extern "c" fn sqlite3_db_release_memory(db: *Db) c_int;
+    extern "c" fn sqlite3_release_memory(n: c_int) c_int;
     extern "c" fn sqlite3_exec(db: *Db, sql: [*:0]const u8, cb: ?*anyopaque, arg: ?*anyopaque, err: ?*?[*:0]u8) c_int;
     extern "c" fn sqlite3_prepare_v2(db: *Db, sql: [*]const u8, n: c_int, stmt: *?*Stmt, tail: ?*?[*]const u8) c_int;
     extern "c" fn sqlite3_finalize(stmt: *Stmt) c_int;
@@ -64,6 +66,7 @@ const schema =
     \\PRAGMA auto_vacuum=INCREMENTAL;
     \\PRAGMA journal_mode=WAL;
     \\PRAGMA synchronous=NORMAL;
+    \\PRAGMA cache_size=-256;
     \\CREATE TABLE IF NOT EXISTS entries(
     \\  id INTEGER PRIMARY KEY,
     \\  kind TEXT NOT NULL,
@@ -357,6 +360,12 @@ pub const Store = struct {
 
     pub fn close(s: Store) void {
         _ = lite.sqlite3_close_v2(s.db);
+    }
+
+    pub fn releaseMemory(s: Store) void {
+        _ = lite.sqlite3_exec(s.db, "PRAGMA cache_size=0; PRAGMA shrink_memory; PRAGMA cache_size=-256;", null, null, null);
+        _ = lite.sqlite3_db_release_memory(s.db);
+        _ = lite.sqlite3_release_memory(std.math.maxInt(c_int));
     }
 
     fn prepare(s: Store, sql: []const u8) !*lite.Stmt {
