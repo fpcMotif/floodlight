@@ -41,6 +41,34 @@ pub const ActionDeltas = struct {
     total_ns: u64,
 };
 
+pub const SwitchDeltas = struct {
+    presence_ns: u64,
+    store_query_ns: u64,
+    resize_ns: u64,
+    order_in_ns: u64,
+};
+
+pub const SwitchSample = struct {
+    input_ns: u64 = 0,
+    presence_ns: ?u64 = null,
+    store_query_ns: ?u64 = null,
+    resized_ns: ?u64 = null,
+    ordered_ns: ?u64 = null,
+
+    pub fn deltas(s: SwitchSample) SwitchDeltas {
+        const pres_t = s.presence_ns orelse s.input_ns;
+        const query_t = s.store_query_ns orelse pres_t;
+        const res_t = s.resized_ns orelse query_t;
+        const ord_t = s.ordered_ns orelse res_t;
+        return .{
+            .presence_ns = pres_t -| s.input_ns,
+            .store_query_ns = query_t -| pres_t,
+            .resize_ns = res_t -| query_t,
+            .order_in_ns = ord_t -| res_t,
+        };
+    }
+};
+
 pub const ActionSample = struct {
     input_ns: u64 = 0,
     apply_ns: ?u64 = null,
@@ -174,4 +202,30 @@ test "summarize computes p50, p99, and max for empty, single, and 30-sample inpu
     try t.expectEqual(@as(u64, 16), ts.p50_ns);
     try t.expectEqual(@as(u64, 30), ts.p99_ns);
     try t.expectEqual(@as(u64, 30), ts.max_ns);
+}
+
+test "SwitchSample deltas split presence, store query, resize, and order-in" {
+    const full: SwitchSample = .{
+        .input_ns = 1000,
+        .presence_ns = 1150,
+        .store_query_ns = 2050,
+        .resized_ns = 3300,
+        .ordered_ns = 8300,
+    };
+    const d = full.deltas();
+    try t.expectEqual(@as(u64, 150), d.presence_ns);
+    try t.expectEqual(@as(u64, 900), d.store_query_ns);
+    try t.expectEqual(@as(u64, 1250), d.resize_ns);
+    try t.expectEqual(@as(u64, 5000), d.order_in_ns);
+
+    const no_window: SwitchSample = .{
+        .input_ns = 500,
+        .presence_ns = 550,
+        .store_query_ns = 800,
+    };
+    const nw = no_window.deltas();
+    try t.expectEqual(@as(u64, 50), nw.presence_ns);
+    try t.expectEqual(@as(u64, 250), nw.store_query_ns);
+    try t.expectEqual(@as(u64, 0), nw.resize_ns);
+    try t.expectEqual(@as(u64, 0), nw.order_in_ns);
 }

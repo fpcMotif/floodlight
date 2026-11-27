@@ -890,3 +890,27 @@ test "pngBytes, compactImage, age, SIMD matching, and corrupt SQLite sizes handl
     try t.expectEqual(@as(u64, 0), listed[0].byte_count);
     try t.expect(store.image(a, listed[0].id) == null);
 }
+
+test "changeToken is per Store and ignores failed compaction" {
+    var ts1 = try TmpStore.init();
+    defer ts1.deinit();
+    var ts2 = try TmpStore.init();
+    defer ts2.deinit();
+    var store1 = try clipboard.Store.open(ts1.db, ts1.images);
+    defer store1.close();
+    var store2 = try clipboard.Store.open(ts2.db, ts2.images);
+    defer store2.close();
+
+    const png = "\x89PNG isolated store token";
+    _ = try store1.add(picture(png), "", "Preview", 0);
+    const tok1_after_add = store1.changeToken();
+    const tok2_before = store2.changeToken();
+    _ = try store2.add(.{ .text = "other store" }, "", "Notes", 10);
+    try t.expectEqual(tok1_after_add, store1.changeToken());
+    try t.expect(store2.changeToken() != tok2_before);
+
+    const job = store1.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    store1.finishCompaction(job, null);
+    try t.expectEqual(tok1_after_add, store1.changeToken());
+    try t.expect(store1.nextCompaction(8 * day) == null);
+}

@@ -142,7 +142,7 @@ pub fn dataBytes(data: objc.Object) []const u8 {
     return objc.msg([*]const u8, data, "bytes", .{})[0..len];
 }
 
-extern "c" fn CGImageSourceCreateWithData(data: objc.Object, options: ?objc.Object) ?*anyopaque;
+pub extern "c" fn CGImageSourceCreateWithData(data: objc.Object, options: ?objc.Object) ?*anyopaque;
 extern "c" fn CGImageSourceCreateThumbnailAtIndex(src: *anyopaque, index: usize, options: objc.Object) ?*anyopaque;
 extern "c" const kCGImageSourceThumbnailMaxPixelSize: objc.Object;
 extern "c" const kCGImageSourceCreateThumbnailFromImageAlways: objc.Object;
@@ -164,7 +164,7 @@ fn thumbnailPng(arena: std.mem.Allocator, data: objc.Object) ?[]const u8 {
     return arena.dupe(u8, dataBytes(out)) catch null;
 }
 
-fn nsData(bytes: []const u8) objc.Object {
+pub fn nsData(bytes: []const u8) objc.Object {
     if (bytes.len == 0) return objc.msg(objc.Object, objc.class("NSData"), "data", .{});
     return objc.msg(objc.Object, objc.class("NSData"), "dataWithBytes:length:", .{ bytes.ptr, bytes.len });
 }
@@ -190,7 +190,7 @@ pub fn pngBytes(arena: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
     return arena.dupe(u8, out) catch null;
 }
 
-extern "c" fn CGImageSourceCreateImageAtIndex(src: *anyopaque, index: usize, options: ?objc.Object) ?*anyopaque;
+pub extern "c" fn CGImageSourceCreateImageAtIndex(src: *anyopaque, index: usize, options: ?objc.Object) ?*anyopaque;
 pub extern "c" fn CGImageGetWidth(image: *anyopaque) usize;
 pub extern "c" fn CGImageGetHeight(image: *anyopaque) usize;
 extern "c" fn CGImageGetAlphaInfo(image: *anyopaque) u32;

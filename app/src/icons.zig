@@ -4,6 +4,9 @@ const ui = nanoui.ui;
 const mac = @import("mac.zig");
 
 pub const max_icons: usize = 64;
+pub const max_kept_thumbnails: usize = 16;
+const max_transient_images: usize = 32;
+const max_transient_bytes: usize = 8 * 1024 * 1024;
 const max_seen: usize = max_icons * 4;
 const max_batch: usize = 16;
 
@@ -18,6 +21,7 @@ pub const Image = struct {
 };
 
 pub const FetchFn = *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?mac.Icon;
+pub const DecodeFn = *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, bytes: []const u8, max_w: u32, max_h: u32) ?mac.Icon;
 
 pub const Wake = struct {
     ctx: ?*anyopaque = null,
@@ -27,6 +31,10 @@ pub const Wake = struct {
 fn noWake(_: ?*anyopaque) void {}
 
 fn noFetch(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
+    return null;
+}
+
+fn noDecode(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: u32, _: u32) ?mac.Icon {
     return null;
 }
 
@@ -51,14 +59,33 @@ pub fn keyFor(buf: []u8, path: []const u8, kind: Kind) ?[]const u8 {
 
 pub const Cache = struct {
     const SeenState = enum { queued, failed };
+    const Bucket = enum { icon, kept_image, transient_image };
+
+    const Payload = union(enum) {
+        path: []u8,
+        encoded: struct {
+            bytes: []u8,
+            max_w: u32,
+            max_h: u32,
+        },
+
+        fn deinit(p: Payload, gpa: std.mem.Allocator) void {
+            switch (p) {
+                .path => |s| gpa.free(s),
+                .encoded => |e| gpa.free(e.bytes),
+            }
+        }
+    };
 
     const Job = struct {
+        bucket: Bucket,
         seq: u64,
         key: []u8,
-        path: []u8,
+        payload: Payload,
     };
 
     const Result = struct {
+        bucket: Bucket,
         seq: u64,
         key: []u8,
         icon: ?mac.Icon,
@@ -68,7 +95,14 @@ pub const Cache = struct {
     icon_px: f64,
     entries: std.StringHashMapUnmanaged(mac.Icon) = .empty,
     seen: std.StringHashMapUnmanaged(SeenState) = .empty,
+    kept_images: std.StringHashMapUnmanaged(mac.Icon) = .empty,
+    kept_seen: std.StringHashMapUnmanaged(SeenState) = .empty,
+    transient_images: std.StringArrayHashMapUnmanaged(mac.Icon) = .empty,
+    transient_seen: std.StringHashMapUnmanaged(SeenState) = .empty,
+    transient_bytes: usize = 0,
     in_flight: usize = 0,
+    kept_in_flight: usize = 0,
+    transient_in_flight: usize = 0,
     session_seq: u64 = 1,
     worker_started: bool = false,
 
@@ -84,6 +118,8 @@ pub const Cache = struct {
     wake_scheduled: bool = false,
     fetch_ctx: ?*anyopaque = null,
     fetch_fn: FetchFn = noFetch,
+    decode_ctx: ?*anyopaque = null,
+    decode_fn: DecodeFn = noDecode,
     wake: Wake = .{},
 
     pub fn init(gpa: std.mem.Allocator, icon_px: f64) Cache {
@@ -92,14 +128,27 @@ pub const Cache = struct {
 
     pub fn deinit(c: *Cache) void {
         c.stopWorker();
-        c.freeQueued();
+        c.freeAllQueued();
         c.pending_jobs.deinit(c.gpa);
         c.ready.deinit(c.gpa);
-        c.freeEntries();
+        c.freeMap(&c.entries);
         c.entries.deinit(c.gpa);
-        c.freeSeen();
+        c.freeSeenMap(&c.seen);
         c.seen.deinit(c.gpa);
+        c.freeMap(&c.kept_images);
+        c.kept_images.deinit(c.gpa);
+        c.freeSeenMap(&c.kept_seen);
+        c.kept_seen.deinit(c.gpa);
+        c.freeTransient();
+        c.transient_images.deinit(c.gpa);
+        c.freeSeenMap(&c.transient_seen);
+        c.transient_seen.deinit(c.gpa);
         c.* = undefined;
+    }
+
+    pub fn setDecoder(c: *Cache, decode_ctx: ?*anyopaque, decode_fn: DecodeFn) void {
+        c.decode_ctx = decode_ctx;
+        c.decode_fn = decode_fn;
     }
 
     pub fn startWorker(c: *Cache, io: std.Io, fetch_ctx: ?*anyopaque, fetch_fn: FetchFn, wake: Wake) void {
@@ -132,8 +181,19 @@ pub const Cache = struct {
         return c.entries.count();
     }
 
+    pub fn keptCount(c: *const Cache) usize {
+        return c.kept_images.count();
+    }
+
+    pub fn keptBytes(c: *const Cache) usize {
+        var total: usize = 0;
+        var it = c.kept_images.valueIterator();
+        while (it.next()) |ic| total += ic.bgra.len;
+        return total;
+    }
+
     pub fn hasPending(c: *const Cache) bool {
-        return c.in_flight > 0;
+        return c.in_flight + c.kept_in_flight + c.transient_in_flight > 0;
     }
 
     pub fn lookupOrEnqueue(c: *Cache, path: []const u8, kind: Kind) ?Image {
@@ -148,41 +208,126 @@ pub const Cache = struct {
         _ = c.lookupOrEnqueue(path, kind);
     }
 
+    pub fn lookupImage(c: *const Cache, key: []const u8) ?Image {
+        if (c.kept_images.getEntry(key)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+        if (c.transient_images.getEntry(key)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+        return null;
+    }
+
+    pub fn decodeOrEnqueue(c: *Cache, key: []const u8, bytes: []const u8, max_w: u32, max_h: u32, keep_across_hide: bool) ?Image {
+        if (c.lookupImage(key)) |img| return img;
+        if (!c.worker_started or bytes.len == 0 or key.len == 0) return null;
+        if (c.kept_seen.contains(key) or c.transient_seen.contains(key)) return null;
+        if (keep_across_hide and c.kept_images.count() + c.kept_in_flight < max_kept_thumbnails) {
+            c.enqueueImage(.kept_image, &c.kept_seen, &c.kept_in_flight, 0, key, bytes, max_w, max_h);
+        } else {
+            c.enqueueImage(.transient_image, &c.transient_seen, &c.transient_in_flight, c.session_seq, key, bytes, max_w, max_h);
+        }
+        return null;
+    }
+
+    pub fn retainFirstPage(c: *Cache, live_keys: []const []const u8) void {
+        for (live_keys) |k| {
+            if (c.kept_images.contains(k) or c.kept_images.count() >= max_kept_thumbnails) continue;
+            if (c.transient_images.fetchOrderedRemove(k)) |kv| {
+                c.transient_bytes -|= kv.value.bgra.len;
+                c.kept_images.put(c.gpa, kv.key, kv.value) catch {
+                    c.gpa.free(kv.key);
+                    kv.value.deinit(c.gpa);
+                };
+            }
+        }
+        var dead_keys: [max_kept_thumbnails][]const u8 = undefined;
+        var dead_n: usize = 0;
+        var it = c.kept_images.keyIterator();
+        while (it.next()) |k| {
+            if (!containsSlice(live_keys, k.*) and dead_n < dead_keys.len) {
+                dead_keys[dead_n] = k.*;
+                dead_n += 1;
+            }
+        }
+        for (dead_keys[0..dead_n]) |k| {
+            if (c.kept_images.fetchRemove(k)) |old| {
+                c.gpa.free(old.key);
+                old.value.deinit(c.gpa);
+            }
+        }
+        var dead_seen: std.ArrayList([]const u8) = .empty;
+        defer dead_seen.deinit(c.gpa);
+        var sit = c.kept_seen.keyIterator();
+        while (sit.next()) |k| {
+            if (!containsSlice(live_keys, k.*)) dead_seen.append(c.gpa, k.*) catch {};
+        }
+        for (dead_seen.items) |k| {
+            if (c.kept_seen.fetchRemove(k)) |old| c.gpa.free(old.key);
+        }
+    }
+
+    fn enqueueImage(
+        c: *Cache,
+        bucket: Bucket,
+        seen_map: *std.StringHashMapUnmanaged(SeenState),
+        counter: *usize,
+        seq: u64,
+        key: []const u8,
+        bytes: []const u8,
+        max_w: u32,
+        max_h: u32,
+    ) void {
+        if (bucket == .transient_image and counter.* >= max_transient_images) return;
+        const job_bytes = c.gpa.dupe(u8, bytes) catch return;
+        if (!c.enqueuePayload(bucket, seen_map, counter, seq, key, .{ .encoded = .{ .bytes = job_bytes, .max_w = max_w, .max_h = max_h } })) {
+            c.gpa.free(job_bytes);
+        }
+    }
+
     fn enqueueKey(c: *Cache, key: []const u8, path: []const u8) void {
         if (!c.worker_started) return;
-        if (c.seen.contains(key)) return;
         if (c.entries.count() + c.in_flight >= max_icons) return;
-        if (c.seen.count() >= max_seen) return;
+        const job_path = c.gpa.dupe(u8, path) catch return;
+        if (!c.enqueuePayload(.icon, &c.seen, &c.in_flight, c.session_seq, key, .{ .path = job_path })) {
+            c.gpa.free(job_path);
+        }
+    }
 
-        const seen_key = c.gpa.dupe(u8, key) catch return;
+    fn enqueuePayload(
+        c: *Cache,
+        bucket: Bucket,
+        seen_map: *std.StringHashMapUnmanaged(SeenState),
+        counter: *usize,
+        seq: u64,
+        key: []const u8,
+        payload: Payload,
+    ) bool {
+        if (seen_map.contains(key)) return false;
+        if (seen_map.count() >= max_seen) return false;
+        const seen_key = c.gpa.dupe(u8, key) catch return false;
         const job_key = c.gpa.dupe(u8, key) catch {
             c.gpa.free(seen_key);
-            return;
+            return false;
         };
-        const job_path = c.gpa.dupe(u8, path) catch {
+        seen_map.put(c.gpa, seen_key, .queued) catch {
             c.gpa.free(job_key);
             c.gpa.free(seen_key);
-            return;
+            return false;
         };
-        c.seen.put(c.gpa, seen_key, .queued) catch {
-            c.gpa.free(job_path);
-            c.gpa.free(job_key);
-            c.gpa.free(seen_key);
-            return;
-        };
-
         {
             c.mutex.lockUncancelable(c.io);
             defer c.mutex.unlock(c.io);
-            c.pending_jobs.append(c.gpa, .{ .seq = c.session_seq, .key = job_key, .path = job_path }) catch {
-                if (c.seen.fetchRemove(key)) |old| c.gpa.free(old.key);
-                c.gpa.free(job_path);
+            c.pending_jobs.append(c.gpa, .{
+                .bucket = bucket,
+                .seq = seq,
+                .key = job_key,
+                .payload = payload,
+            }) catch {
+                if (seen_map.fetchRemove(key)) |old| c.gpa.free(old.key);
                 c.gpa.free(job_key);
-                return;
+                return false;
             };
             c.cond.signal(c.io);
         }
-        c.in_flight += 1;
+        counter.* += 1;
+        return true;
     }
 
     pub fn poll(c: *Cache) bool {
@@ -199,27 +344,88 @@ pub const Cache = struct {
 
         var changed = false;
         for (batch.items) |res| {
-            if (res.seq != c.session_seq) {
-                c.gpa.free(res.key);
-                if (res.icon) |ic| ic.deinit(c.gpa);
-                continue;
-            }
-            c.in_flight -|= 1;
-            if (res.icon) |ic| {
-                if (c.entries.count() < max_icons and !c.entries.contains(res.key)) {
-                    if (c.entries.put(c.gpa, res.key, ic)) |_| {
-                        if (c.seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
-                        changed = true;
+            switch (res.bucket) {
+                .icon => {
+                    if (res.seq != c.session_seq) {
+                        c.gpa.free(res.key);
+                        if (res.icon) |ic| ic.deinit(c.gpa);
                         continue;
-                    } else |_| {}
-                }
-                if (c.seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
-                c.gpa.free(res.key);
-                ic.deinit(c.gpa);
-                continue;
+                    }
+                    c.in_flight -|= 1;
+                    if (res.icon) |ic| {
+                        if (c.entries.count() < max_icons and !c.entries.contains(res.key)) {
+                            if (c.entries.put(c.gpa, res.key, ic)) |_| {
+                                if (c.seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                                changed = true;
+                                continue;
+                            } else |_| {}
+                        }
+                        if (c.seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                        c.gpa.free(res.key);
+                        ic.deinit(c.gpa);
+                        continue;
+                    }
+                    if (c.seen.getPtr(res.key)) |st| st.* = .failed;
+                    c.gpa.free(res.key);
+                },
+                .kept_image => {
+                    c.kept_in_flight -|= 1;
+                    if (!c.kept_seen.contains(res.key)) {
+                        c.gpa.free(res.key);
+                        if (res.icon) |ic| ic.deinit(c.gpa);
+                        continue;
+                    }
+                    if (res.icon) |ic| {
+                        if (c.kept_images.count() < max_kept_thumbnails and !c.kept_images.contains(res.key)) {
+                            if (c.kept_images.put(c.gpa, res.key, ic)) |_| {
+                                if (c.kept_seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                                changed = true;
+                                continue;
+                            } else |_| {}
+                        }
+                        if (c.kept_seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                        c.gpa.free(res.key);
+                        ic.deinit(c.gpa);
+                        continue;
+                    }
+                    if (c.kept_seen.getPtr(res.key)) |st| st.* = .failed;
+                    c.gpa.free(res.key);
+                },
+                .transient_image => {
+                    if (res.seq != c.session_seq) {
+                        c.gpa.free(res.key);
+                        if (res.icon) |ic| ic.deinit(c.gpa);
+                        continue;
+                    }
+                    c.transient_in_flight -|= 1;
+                    if (res.icon) |ic| {
+                        if (!c.transient_images.contains(res.key) and ic.bgra.len <= max_transient_bytes) {
+                            while (c.transient_images.count() >= max_transient_images or
+                                (c.transient_bytes + ic.bgra.len > max_transient_bytes and c.transient_images.count() > 0))
+                            {
+                                const old_key = c.transient_images.keys()[0];
+                                const old_val = c.transient_images.values()[0];
+                                c.transient_bytes -|= old_val.bgra.len;
+                                c.transient_images.orderedRemoveAt(0);
+                                c.gpa.free(old_key);
+                                old_val.deinit(c.gpa);
+                            }
+                            if (c.transient_images.put(c.gpa, res.key, ic)) |_| {
+                                c.transient_bytes += ic.bgra.len;
+                                if (c.transient_seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                                changed = true;
+                                continue;
+                            } else |_| {}
+                        }
+                        if (c.transient_seen.fetchRemove(res.key)) |old| c.gpa.free(old.key);
+                        c.gpa.free(res.key);
+                        ic.deinit(c.gpa);
+                        continue;
+                    }
+                    if (c.transient_seen.getPtr(res.key)) |st| st.* = .failed;
+                    c.gpa.free(res.key);
+                },
             }
-            if (c.seen.getPtr(res.key)) |st| st.* = .failed;
-            c.gpa.free(res.key);
         }
         return changed;
     }
@@ -227,23 +433,35 @@ pub const Cache = struct {
     pub fn clear(c: *Cache) void {
         c.session_seq += 1;
         c.in_flight = 0;
+        c.transient_in_flight = 0;
+        var should_wake = false;
+        var wake: Wake = .{};
         if (c.worker_started) {
             c.mutex.lockUncancelable(c.io);
-            defer c.mutex.unlock(c.io);
             c.active_seq = c.session_seq;
-            c.freeQueued();
-            c.wake_scheduled = false;
+            c.pruneSessionQueuedLocked();
+            if (c.ready.items.len > 0 and !c.hasCurrentJobLocked() and !c.wake_scheduled) {
+                c.wake_scheduled = true;
+                should_wake = true;
+                wake = c.wake;
+            }
+            c.mutex.unlock(c.io);
         }
-        c.freeEntries();
+        c.freeMap(&c.entries);
         c.entries.clearRetainingCapacity();
-        c.freeSeen();
+        c.freeSeenMap(&c.seen);
         c.seen.clearRetainingCapacity();
+        c.freeTransient();
+        c.transient_images.clearRetainingCapacity();
+        c.freeSeenMap(&c.transient_seen);
+        c.transient_seen.clearRetainingCapacity();
+        if (should_wake) wake.wake(wake.ctx);
     }
 
-    fn freeQueued(c: *Cache) void {
+    fn freeAllQueued(c: *Cache) void {
         for (c.pending_jobs.items[c.pending_head..]) |job| {
             c.gpa.free(job.key);
-            c.gpa.free(job.path);
+            job.payload.deinit(c.gpa);
         }
         c.pending_head = 0;
         c.pending_jobs.clearRetainingCapacity();
@@ -254,22 +472,65 @@ pub const Cache = struct {
         c.ready.clearRetainingCapacity();
     }
 
-    fn freeEntries(c: *Cache) void {
-        var it = c.entries.iterator();
+    fn pruneSessionQueuedLocked(c: *Cache) void {
+        var write_job: usize = 0;
+        for (c.pending_jobs.items[c.pending_head..]) |job| {
+            if (job.bucket == .kept_image) {
+                c.pending_jobs.items[write_job] = job;
+                write_job += 1;
+            } else {
+                c.gpa.free(job.key);
+                job.payload.deinit(c.gpa);
+            }
+        }
+        c.pending_head = 0;
+        c.pending_jobs.items.len = write_job;
+
+        var write_res: usize = 0;
+        for (c.ready.items) |res| {
+            if (res.bucket == .kept_image) {
+                c.ready.items[write_res] = res;
+                write_res += 1;
+            } else {
+                c.gpa.free(res.key);
+                if (res.icon) |ic| ic.deinit(c.gpa);
+            }
+        }
+        c.ready.items.len = write_res;
+        if (write_res == 0) c.wake_scheduled = false;
+    }
+
+    fn freeMap(c: *Cache, map: *std.StringHashMapUnmanaged(mac.Icon)) void {
+        var it = map.iterator();
         while (it.next()) |e| {
             c.gpa.free(e.key_ptr.*);
             e.value_ptr.deinit(c.gpa);
         }
     }
 
-    fn freeSeen(c: *Cache) void {
-        var it = c.seen.keyIterator();
+    fn freeTransient(c: *Cache) void {
+        for (c.transient_images.keys(), c.transient_images.values()) |k, v| {
+            c.gpa.free(k);
+            v.deinit(c.gpa);
+        }
+        c.transient_bytes = 0;
+    }
+
+    fn freeSeenMap(c: *Cache, map: *std.StringHashMapUnmanaged(SeenState)) void {
+        var it = map.keyIterator();
         while (it.next()) |k| c.gpa.free(k.*);
+    }
+
+    fn isJobLive(c: *const Cache, bucket: Bucket, seq: u64) bool {
+        return switch (bucket) {
+            .kept_image => true,
+            .icon, .transient_image => seq == c.active_seq,
+        };
     }
 
     fn hasCurrentJobLocked(c: *const Cache) bool {
         for (c.pending_jobs.items[c.pending_head..]) |job| {
-            if (job.seq == c.active_seq) return true;
+            if (c.isJobLive(job.bucket, job.seq)) return true;
         }
         return false;
     }
@@ -291,25 +552,28 @@ pub const Cache = struct {
                     c.pending_head = 0;
                     c.pending_jobs.clearRetainingCapacity();
                 }
-                if (job.seq != c.active_seq) {
+                if (!c.isJobLive(job.bucket, job.seq)) {
                     c.gpa.free(job.key);
-                    c.gpa.free(job.path);
+                    job.payload.deinit(c.gpa);
                     continue;
                 }
             }
-            const icon = c.fetch_fn(c.fetch_ctx, c.gpa, job.path, c.icon_px);
-            c.gpa.free(job.path);
+            const icon = switch (job.payload) {
+                .path => |p| c.fetch_fn(c.fetch_ctx, c.gpa, p, c.icon_px),
+                .encoded => |e| c.decode_fn(c.decode_ctx, c.gpa, e.bytes, e.max_w, e.max_h),
+            };
+            job.payload.deinit(c.gpa);
             var should_wake = false;
             var wake: Wake = .{};
             {
                 c.mutex.lockUncancelable(c.io);
                 defer c.mutex.unlock(c.io);
-                if (c.stopped or job.seq != c.active_seq) {
+                if (c.stopped or !c.isJobLive(job.bucket, job.seq)) {
                     c.gpa.free(job.key);
                     if (icon) |ic| ic.deinit(c.gpa);
                     continue;
                 }
-                c.ready.append(c.gpa, .{ .seq = job.seq, .key = job.key, .icon = icon }) catch {
+                c.ready.append(c.gpa, .{ .bucket = job.bucket, .seq = job.seq, .key = job.key, .icon = icon }) catch {
                     c.gpa.free(job.key);
                     if (icon) |ic| ic.deinit(c.gpa);
                     continue;
@@ -325,6 +589,11 @@ pub const Cache = struct {
         }
     }
 };
+
+fn containsSlice(list: []const []const u8, target: []const u8) bool {
+    for (list) |item| if (std.mem.eql(u8, item, target)) return true;
+    return false;
+}
 
 const t = std.testing;
 

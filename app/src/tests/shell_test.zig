@@ -28,6 +28,7 @@ const HostSpy = struct {
     revealed: std.ArrayList([]u8) = .empty,
     clipboard_writes: usize = 0,
     icon_calls: std.atomic.Value(usize) = .init(0),
+    decode_calls: std.atomic.Value(usize) = .init(0),
     main_thread_calls: std.atomic.Value(usize) = .init(0),
     main_thread_id: ?std.Thread.Id = null,
     entered: ?*std.Io.Semaphore = null,
@@ -141,6 +142,22 @@ const HostSpy = struct {
         return .{ .bgra = bgra, .width = 2, .height = 2 };
     }
 
+    fn decodePixels(ctx: ?*anyopaque, gpa: std.mem.Allocator, _: []const u8, _: u32, _: u32) ?mac.Icon {
+        const spy: *HostSpy = @ptrCast(@alignCast(ctx));
+        const idx = spy.decode_calls.fetchAdd(1, .seq_cst);
+        if (spy.main_thread_id) |tid| {
+            if (std.Thread.getCurrentId() == tid) _ = spy.main_thread_calls.fetchAdd(1, .seq_cst);
+        }
+        if (idx == 0) {
+            if (spy.entered) |sem| sem.post(t.io);
+            if (spy.gate) |sem| sem.waitUncancelable(t.io);
+            if (spy.finished) |sem| sem.post(t.io);
+        }
+        if (spy.null_icons) return null;
+        const bgra = gpa.dupe(u8, &sample_icon_bgra) catch return null;
+        return .{ .bgra = bgra, .width = 2, .height = 2 };
+    }
+
     fn host(spy: *HostSpy) shell_mod.Host {
         return .{
             .ctx = spy,
@@ -154,6 +171,7 @@ const HostSpy = struct {
             .pasteboard_change_count = changeCount,
             .read_pasteboard = readBoard,
             .icon_pixels = iconPixels,
+            .decode_pixels = decodePixels,
         };
     }
 };
@@ -820,4 +838,252 @@ test "icon worker drops results from a forgotten session and null fetches do not
     try t.expectEqual(@as(usize, 0), sh.icons.count());
     try t.expect(!sh.icons.hasPending());
     try t.expectEqual(before_null + 1, spy.icon_calls.load(.seq_cst));
+}
+
+test "board thumbnails decode on the worker in one batch and only the first page survives hide and expiry" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var png_buf: [16]u8 = undefined;
+    for (0..12) |i| {
+        const png = try std.fmt.bufPrint(&png_buf, "img-{d}", .{i});
+        _ = try store.add(.{ .image = .{ .name = "Shot", .png = png, .thumbnail = &h.valid_png, .width = 100, .height = 100 } }, "com.apple.screencaptureui", "Screenshot", @floatFromInt(100 + i));
+    }
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var entered: std.Io.Semaphore = .{ .permits = 0 };
+    var gate: std.Io.Semaphore = .{ .permits = 0 };
+    var spy: HostSpy = .{ .main_thread_id = std.Thread.getCurrentId(), .entered = &entered, .gate = &gate };
+    defer spy.deinit();
+    var wake: WakeCounter = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    defer gate.post(t.io);
+    sh.startIconWorker(t.io, wake.binding());
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height, .scale = 2 });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.clipboard, false);
+    tester.frame();
+    try t.expectEqual(@as(usize, 0), spy.main_thread_calls.load(.seq_cst));
+    try t.expectEqual(@as(u32, 8), tester.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, 0), tester.ctx.text.images.entries.count());
+    try t.expect(sh.icons.hasPending());
+
+    entered.waitUncancelable(t.io);
+    gate.post(t.io);
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        try t.expect(sh.pollIcons().redraw);
+    }
+    try t.expectEqual(@as(usize, 1), wake.count.load(.seq_cst));
+    try t.expectEqual(@as(usize, 0), spy.main_thread_calls.load(.seq_cst));
+
+    tester.frame();
+    try t.expectEqual(@as(u32, 8), tester.ctx.text.images.decodes_left);
+    try t.expect(tester.ctx.text.images.entries.count() >= 8);
+
+    spy.entered = null;
+    spy.gate = null;
+    tester.scroll(150, 300, -1e6);
+    tester.settle(1);
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        _ = sh.pollIcons();
+    }
+    const before_hide = spy.decode_calls.load(.seq_cst);
+    try t.expectEqual(@as(usize, 13), before_hide);
+
+    _ = sh.hotKey(.clipboard, true);
+    spy.clock.advance(6 * 60);
+    const exp = sh.expireRetention();
+    try t.expect(exp.release_idle);
+
+    var fresh: ui.Tester = undefined;
+    try fresh.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height, .scale = 2 });
+    defer fresh.deinit();
+
+    _ = sh.hotKey(.clipboard, false);
+    fresh.frame();
+    try t.expectEqual(@as(u32, 8), fresh.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, chrome.metrics.max_visible_rows), fresh.ctx.text.images.entries.count());
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(before_hide + 1, spy.decode_calls.load(.seq_cst));
+
+    fresh.scroll(150, 300, -1e6);
+    fresh.settle(1);
+    while (sh.icons.hasPending()) {
+        wake.sem.waitUncancelable(t.io);
+        _ = sh.pollIcons();
+    }
+    try t.expectEqual(before_hide + 3, spy.decode_calls.load(.seq_cst));
+}
+
+test "warming the board while hidden prepares first-page rows and thumbnails, refreshes on capture, and loads older rows on scroll" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var text_buf: [32]u8 = undefined;
+    for (0..25) |i| {
+        const line = try std.fmt.bufPrint(&text_buf, "entry {d}", .{i});
+        _ = try store.add(.{ .text = line }, "com.apple.Notes", "Notes", @floatFromInt(100 + i));
+    }
+    _ = try store.add(.{ .image = .{ .name = "Warm One", .png = "w1", .thumbnail = &h.valid_png, .width = 80, .height = 80 } }, "com.apple.Preview", "Preview", 500);
+    _ = try store.add(.{ .image = .{ .name = "Warm Two", .png = "w2", .thumbnail = &h.valid_png, .width = 80, .height = 80 } }, "com.apple.Preview", "Preview", 501);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var wake: h.WakeSignal = .{};
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    sh.syncPasteboardCount();
+    sh.startIconWorker(t.io, wake.iconBinding());
+
+    sh.warmBoard();
+    try t.expect(sh.icons.hasPending());
+    while (sh.icons.hasPending()) {
+        wake.wait();
+        try t.expect(!sh.pollIcons().redraw);
+    }
+
+    var tester: ui.Tester = undefined;
+    try tester.init(t.allocator, sh.view(), .{ .width = board_mod.board_metrics.width, .height = board_mod.board_metrics.height, .scale = 2 });
+    defer tester.deinit();
+
+    _ = sh.hotKey(.clipboard, false);
+    tester.frame();
+    try t.expect(tester.hasText("27 entries"));
+    try t.expect(tester.hasText("Warm Two"));
+    try t.expect(tester.hasText("entry 24"));
+    try t.expectEqual(@as(u32, 8), tester.ctx.text.images.decodes_left);
+    try t.expect(tester.ctx.text.images.entries.count() >= 2);
+
+    tester.scroll(150, 300, -1e6);
+    tester.settle(1);
+    try t.expect(tester.hasText("entry 0"));
+
+    _ = sh.hotKey(.clipboard, true);
+    spy.clock.advance(5);
+    spy.change_count = 2;
+    spy.clip_text = "copied while hidden";
+    const cap = sh.captureTick();
+    try t.expect(!cap.redraw);
+
+    _ = sh.hotKey(.clipboard, false);
+    tester.scroll(150, 300, 1e6);
+    tester.settle(1);
+    try t.expect(tester.hasText("28 entries"));
+    try t.expect(tester.hasText("copied while hidden"));
+}
+
+test "search writes leave warm rows valid, pinned overflow still selects a hidden capture, and clear wakes ready kept images" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    var text_buf: [32]u8 = undefined;
+    for (0..board_mod.board_metrics.first_page_rows) |i| {
+        const line = try std.fmt.bufPrint(&text_buf, "pinned {d}", .{i});
+        _ = try store.add(.{ .text = line }, "com.apple.Notes", "Notes", @floatFromInt(100 + i));
+    }
+    var list_arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer list_arena.deinit();
+    for (try store.list(list_arena.allocator(), ""), 0..) |e, i| {
+        try store.togglePin(e.id, @floatFromInt(200 + i));
+    }
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+    sh.syncPasteboardCount();
+    sh.warmBoard();
+
+    const tok_before = store.changeToken();
+    try store.recordQuery(.search, "cal", 300);
+    try store.recordAppOpen("/Applications/Safari.app", 300);
+    try t.expectEqual(tok_before, store.changeToken());
+    try t.expectEqual(tok_before, sh.panel.board.warm_changes.?);
+
+    _ = sh.hotKey(.clipboard, false);
+    sh.panel.field.set("pinned");
+    sh.panel.refresh();
+    _ = sh.hotKey(.clipboard, true);
+    sh.panel.field.clear();
+    sh.panel.retained_board.query.clearRetainingCapacity();
+
+    spy.clock.advance(5);
+    spy.change_count = 2;
+    spy.clip_text = "unpinned fresh copy";
+    _ = sh.captureTick();
+
+    _ = sh.hotKey(.clipboard, false);
+    try t.expectEqualStrings("unpinned fresh copy", sh.panel.board.list.selection().?.text);
+
+    var entered: std.Io.Semaphore = .{ .permits = 0 };
+    var gate: std.Io.Semaphore = .{ .permits = 0 };
+    var icon_spy: HostSpy = .{ .entered = &entered, .gate = &gate };
+    defer icon_spy.deinit();
+    var wake: WakeCounter = .{};
+    var cache: icons_mod.Cache = .init(t.allocator, 64);
+    defer cache.deinit();
+    defer gate.post(t.io);
+    cache.setDecoder(&icon_spy, HostSpy.decodePixels);
+    cache.startWorker(t.io, &icon_spy, HostSpy.iconPixels, wake.binding());
+
+    _ = cache.decodeOrEnqueue("entry.1", &h.valid_png, 32, 32, true);
+    cache.prefetch("/Applications/Slow.app", .app);
+    entered.waitUncancelable(t.io);
+    gate.post(t.io);
+    entered.waitUncancelable(t.io);
+    cache.clear();
+    gate.post(t.io);
+    wake.sem.waitUncancelable(t.io);
+    try t.expect(cache.poll());
+    try t.expect(cache.lookupImage("entry.1") != null);
+    try t.expectEqual(@as(usize, 1), cache.keptCount());
+    try t.expectEqual(cache.lookupImage("entry.1").?.pixels.bgra.len, cache.keptBytes());
+}
+
+test "decodeOrEnqueue skips a key already queued in the other bucket and retainFirstPage promotes it" {
+    var entered: std.Io.Semaphore = .{ .permits = 0 };
+    var gate: std.Io.Semaphore = .{ .permits = 0 };
+    var spy: HostSpy = .{ .entered = &entered, .gate = &gate };
+    defer spy.deinit();
+    var wake: WakeCounter = .{};
+    var cache: icons_mod.Cache = .init(t.allocator, 64);
+    defer cache.deinit();
+    defer gate.post(t.io);
+    cache.setDecoder(&spy, HostSpy.decodePixels);
+    cache.startWorker(t.io, &spy, HostSpy.iconPixels, wake.binding());
+
+    try t.expect(cache.decodeOrEnqueue("entry.1", &h.valid_png, 32, 32, false) == null);
+    entered.waitUncancelable(t.io);
+    try t.expect(cache.decodeOrEnqueue("entry.1", &h.valid_png, 32, 32, true) == null);
+    gate.post(t.io);
+    wake.sem.waitUncancelable(t.io);
+
+    try t.expect(cache.poll());
+    try t.expectEqual(@as(usize, 1), spy.decode_calls.load(.seq_cst));
+    try t.expectEqual(@as(usize, 0), cache.keptCount());
+    try t.expectEqual(@as(usize, 0), cache.keptBytes());
+
+    cache.retainFirstPage(&.{"entry.1"});
+    try t.expectEqual(@as(usize, 1), cache.keptCount());
+    try t.expectEqual(cache.lookupImage("entry.1").?.pixels.bgra.len, cache.keptBytes());
 }

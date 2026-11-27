@@ -43,10 +43,32 @@ const Stage = struct {
     icons: std.StringHashMapUnmanaged(mac.Icon) = .empty,
 
     fn hooks(s: *Stage) panel_mod.Hooks {
-        return .{ .ctx = s, .request = ignoreRequest, .app_icon = appIcon, .describe_date = describeDate, .detailed_date = detailedDate };
+        return .{ .ctx = s, .request = ignoreRequest, .app_icon = appIcon, .lookup_image = lookupImage, .decode_image = decodeImage, .describe_date = describeDate, .detailed_date = detailedDate };
     }
 
     fn ignoreRequest(_: ?*anyopaque) void {}
+
+    fn lookupImage(ctx: ?*anyopaque, key: []const u8) ?icons_mod.Image {
+        const s: *Stage = @ptrCast(@alignCast(ctx));
+        const e = s.icons.getEntry(key) orelse return null;
+        return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+    }
+
+    fn decodeImage(ctx: ?*anyopaque, key: []const u8, bytes: []const u8, max_w: u32, max_h: u32, _: bool) ?icons_mod.Image {
+        const s: *Stage = @ptrCast(@alignCast(ctx));
+        if (s.icons.getEntry(key)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+        const icon = mac.decodePixels(gpa, bytes, max_w, max_h) orelse return null;
+        const owned = gpa.dupe(u8, key) catch {
+            icon.deinit(gpa);
+            return null;
+        };
+        s.icons.put(gpa, owned, icon) catch {
+            gpa.free(owned);
+            icon.deinit(gpa);
+            return null;
+        };
+        return .{ .key = owned, .pixels = icon.pixels() };
+    }
 
     fn appIcon(ctx: ?*anyopaque, path: []const u8, _: icons_mod.Kind) ?icons_mod.Image {
         const s: *Stage = @ptrCast(@alignCast(ctx));

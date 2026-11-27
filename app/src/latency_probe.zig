@@ -75,7 +75,16 @@ pub const ActionMetric = enum {
     }
 };
 
-const ScalarMetric = enum { summon_placed, summon_built, hide, keystroke_files_shown };
+const ScalarMetric = enum {
+    summon_placed,
+    summon_built,
+    switch_presence,
+    switch_store_query,
+    switch_resize,
+    switch_order_in,
+    hide,
+    keystroke_files_shown,
+};
 
 const Waiting = enum {
     summon,
@@ -124,6 +133,8 @@ pub const State = struct {
     waiting: ?Waiting = null,
     frame_sample: stage_clock.FrameSample = .{},
     action_sample: stage_clock.ActionSample = .{},
+    switch_sample: stage_clock.SwitchSample = .{},
+    switch_decodes: u32 = 0,
     generation: u32 = 0,
     timeouts: u32 = 0,
     frame_counts: [std.enums.values(FrameMetric).len]usize = @splat(0),
@@ -198,7 +209,7 @@ pub fn Runner(comptime Shell: type) type {
         }
 
         /// Call after every frame; a frame that presents ends the interval a step began.
-        pub fn frame(s: *Shell, presenting: bool) void {
+        pub fn frame(s: *Shell, presenting: bool, decodes: u32) void {
             const st = &s.latency;
             if (presenting) if (st.files_key_ns) |t0| for (s.shell.panel.base_rows) |r| {
                 if (r.kind != .file and r.kind != .folder) continue;
@@ -208,6 +219,7 @@ pub fn Runner(comptime Shell: type) type {
             };
             const w = st.waiting orelse return;
             const fm = w.frameMetric() orelse return;
+            if (fm == .switch_to_board) st.switch_decodes += decodes;
             const now = nowNs();
             if (st.frame_sample.built_ns == null) {
                 st.frame_sample.built_ns = now;
@@ -219,6 +231,18 @@ pub fn Runner(comptime Shell: type) type {
             st.waiting = null;
             st.generation +%= 1;
             nanoui.App.after(gap_ms, s, stepFn);
+        }
+
+        pub fn switchResized(s: *Shell) void {
+            const st = &s.latency;
+            if (st.waiting != .switch_to_board) return;
+            st.switch_sample.resized_ns = nowNs();
+        }
+
+        pub fn switchOrderedIn(s: *Shell) void {
+            const st = &s.latency;
+            if (st.waiting != .switch_to_board) return;
+            st.switch_sample.ordered_ns = nowNs();
         }
 
         pub fn applyBegin(s: *Shell) void {
@@ -341,10 +365,18 @@ pub fn Runner(comptime Shell: type) type {
                 3 => {
                     const t0 = nowNs();
                     beginFrame(s, .switch_to_board, t0);
+                    st.switch_sample = .{ .input_ns = t0 };
                     const out = s.shell.hotKey(.clipboard, false);
-                    st.frame_sample.published_ns = nowNs();
+                    const after_hotkey = nowNs();
+                    st.switch_sample.presence_ns = s.shell.panel.board_presence_ns;
+                    st.switch_sample.store_query_ns = after_hotkey;
+                    st.frame_sample.published_ns = after_hotkey;
                     s.apply(out);
-                    s.panel_window.redraw();
+                    const sd = st.switch_sample.deltas();
+                    st.recordScalar(.switch_presence, sd.presence_ns);
+                    st.recordScalar(.switch_store_query, sd.store_query_ns);
+                    st.recordScalar(.switch_resize, sd.resize_ns);
+                    st.recordScalar(.switch_order_in, sd.order_in_ns);
                     armWatchIfWaiting(s);
                 },
                 4 => triggerAction(s, .return_to_hidden),
@@ -407,6 +439,10 @@ pub fn Runner(comptime Shell: type) type {
                     m.budgetP99Us(),
                 );
             }
+            printScalar(st.rounds, "switch_presence", st.scalar_samples[@backingInt(ScalarMetric.switch_presence)][0..st.scalar_counts[@backingInt(ScalarMetric.switch_presence)]]);
+            printScalar(st.rounds, "switch_store_query", st.scalar_samples[@backingInt(ScalarMetric.switch_store_query)][0..st.scalar_counts[@backingInt(ScalarMetric.switch_store_query)]]);
+            printScalar(st.rounds, "switch_resize", st.scalar_samples[@backingInt(ScalarMetric.switch_resize)][0..st.scalar_counts[@backingInt(ScalarMetric.switch_resize)]]);
+            printScalar(st.rounds, "switch_order_in", st.scalar_samples[@backingInt(ScalarMetric.switch_order_in)][0..st.scalar_counts[@backingInt(ScalarMetric.switch_order_in)]]);
             printScalar(st.rounds, "hide", st.scalar_samples[@backingInt(ScalarMetric.hide)][0..st.scalar_counts[@backingInt(ScalarMetric.hide)]]);
             printResize(
                 st.rounds,
@@ -439,7 +475,10 @@ pub fn Runner(comptime Shell: type) type {
                 }
                 printScalar(st.rounds, "open_handoff", &opens);
             }
-            std.debug.print("NANOSPOT_LATENCY done rounds={d} entries={d} timeouts={d}\n", .{ st.rounds, st.index_entries, st.timeouts });
+            std.debug.print(
+                "NANOSPOT_LATENCY done rounds={d} entries={d} timeouts={d} switch_decodes={d} kept_thumbs={d} kept_thumb_bytes={d}\n",
+                .{ st.rounds, st.index_entries, st.timeouts, st.switch_decodes, s.shell.icons.keptCount(), s.shell.icons.keptBytes() },
+            );
             std.process.exit(0);
         }
 
