@@ -6,6 +6,7 @@ const pasteboard = @import("mac/pasteboard.zig");
 const system = @import("mac/system.zig");
 
 pub const setFrameOrigin = window.setFrameOrigin;
+pub const setFrame = window.setFrame;
 pub const frameOf = window.frameOf;
 pub const orderFrontRegardless = window.orderFrontRegardless;
 pub const signpostBegin = window.signpostBegin;

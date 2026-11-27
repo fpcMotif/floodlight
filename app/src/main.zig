@@ -182,9 +182,9 @@ const AppShell = struct {
 
     fn positionOnPointerScreen(s: *AppShell, sz: shell_mod.Size) void {
         const screen = mac.pointerScreenVisibleFrame();
-        s.panel_window.setSize(sz.w, sz.h);
-        const f = mac.frameOf(s.panel_window);
-        mac.setFrameOrigin(s.panel_window, presence.panelFrame(screen, f.w, f.h));
+        const want = presence.panelFrame(screen, sz.w, sz.h);
+        if (presence.sameFrame(mac.frameOf(s.panel_window), want)) return;
+        mac.setFrame(s.panel_window, want);
     }
 
     /// Keeps the top edge and the horizontal centre where they are.

@@ -15,6 +15,14 @@ pub fn setFrameOrigin(window: *nanoui.Window, r: permission.Rect) void {
     objc.msg(void, window.nswindow, "setFrameOrigin:", .{objc.CGPoint{ .x = r.x, .y = r.y }});
 }
 
+pub fn setFrame(window: *nanoui.Window, r: permission.Rect) void {
+    objc.msg(void, window.nswindow, "setFrame:display:animate:", .{
+        objc.CGRect{ .origin = .{ .x = r.x, .y = r.y }, .size = .{ .width = r.w, .height = r.h } },
+        objc.YES,
+        objc.NO,
+    });
+}
+
 pub fn frameOf(window: *nanoui.Window) permission.Rect {
     return toRect(objc.msg(objc.CGRect, window.nswindow, "frame", .{}));
 }

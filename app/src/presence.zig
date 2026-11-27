@@ -12,6 +12,10 @@ pub fn panelFrame(screen: Rect, w: f64, h: f64) Rect {
     return .{ .x = screen.x + (screen.w - w) / 2, .y = @max(screen.y, top - h), .w = w, .h = h };
 }
 
+pub fn sameFrame(a: Rect, b: Rect) bool {
+    return @abs(a.x - b.x) < 0.5 and @abs(a.y - b.y) < 0.5 and @abs(a.w - b.w) < 0.5 and @abs(a.h - b.h) < 0.5;
+}
+
 pub const Phase = enum {
     hidden,
     /// A window ordered out keeps the last frame it presented, and ordered in
