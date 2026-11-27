@@ -83,11 +83,14 @@ const Waiting = enum {
 };
 
 pub const LaunchTimings = struct {
+    app_init_ns: u64 = 0,
     index_open_ns: u64 = 0,
     app_scan_ns: u64 = 0,
     clipboard_open_ns: u64 = 0,
     clipboard_prune_ns: u64 = 0,
+    panel_window_ns: u64 = 0,
     guide_window_ns: u64 = 0,
+    hotkeys_ns: u64 = 0,
     total_ns: u64 = 0,
 };
 
@@ -360,14 +363,17 @@ pub fn Runner(comptime Shell: type) type {
                 st.resize_waited_count,
             );
             std.debug.print(
-                "NANOSPOT_LATENCY metric=launch rounds={d} runs=1 index_open_us={d:.0} app_scan_us={d:.0} clipboard_open_us={d:.0} clipboard_prune_us={d:.0} guide_window_us={d:.0} total_us={d:.0}\n",
+                "NANOSPOT_LATENCY metric=launch rounds={d} runs=1 app_init_us={d:.0} index_open_us={d:.0} app_scan_us={d:.0} clipboard_open_us={d:.0} clipboard_prune_us={d:.0} panel_window_us={d:.0} guide_window_us={d:.0} hotkeys_us={d:.0} total_us={d:.0}\n",
                 .{
                     st.rounds,
+                    us(st.launch.app_init_ns),
                     us(st.launch.index_open_ns),
                     us(st.launch.app_scan_ns),
                     us(st.launch.clipboard_open_ns),
                     us(st.launch.clipboard_prune_ns),
+                    us(st.launch.panel_window_ns),
                     us(st.launch.guide_window_ns),
+                    us(st.launch.hotkeys_ns),
                     us(st.launch.total_ns),
                 },
             );

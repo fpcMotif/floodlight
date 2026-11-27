@@ -25,12 +25,14 @@ const compact_idle_ms = 60 * 60 * 1000;
 const prune_ms = 60 * 60 * 1000;
 
 const AppShell = struct {
+    app: *nanoui.App = undefined,
     catalog: search.Catalog,
     store: clipboard.Store = undefined,
     shell: shell_mod.Shell = undefined,
     panel_window: *nanoui.Window = undefined,
     grant: permission.Grant = .{},
-    guide_window: *nanoui.Window = undefined,
+    guide_window: ?*nanoui.Window = null,
+    guide_icon: ?[]u8 = null,
     drag: ?*mac.FileDragSource = null,
     compacting: bool = false,
     memory_step: u32 = 0,
@@ -71,7 +73,7 @@ const AppShell = struct {
         }
         if (out.release_idle) {
             mac.releaseSurface(s.panel_window);
-            if (!s.guide_window.isVisible()) mac.releaseSurface(s.guide_window);
+            if (s.guide_window) |gw| if (!gw.isVisible()) mac.releaseSurface(gw);
             mac.releaseFreedMemory();
         }
         if (out.entrance_timer) nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut);
@@ -288,18 +290,47 @@ const AppShell = struct {
         s.apply(s.shell.receiveSuggestions(req.seq, req.query, res.body));
     }
 
+    fn ensureGuideWindow(s: *AppShell) ?*nanoui.Window {
+        if (s.guide_window) |w| return w;
+        if (s.guide_icon == null) {
+            s.guide_icon = mac.iconPng(gpa, mac.bundlePath(), permission.metrics.app_icon_size * 2);
+            s.grant.icon_png = s.guide_icon;
+        }
+        const w = s.app.newWindow(.{
+            .title = "Full Disk Access",
+            .width = permission.panel_w,
+            .height = permission.panel_h,
+            .decorations = false,
+            .resizable = false,
+            .kind = .panel,
+            .non_activating = true,
+            .all_spaces = true,
+            .skip_taskbar = true,
+            .visible = false,
+            .content = .{ .view = s.grant.view() },
+        }) catch |err| {
+            std.log.err("guide window: {s}", .{@errorName(err)});
+            return null;
+        };
+        if (mac.installSlab(w, permission.metrics.radius, .floating, .regular)) |guide_host| {
+            s.drag = mac.FileDragSource.create(guide_host, mac.bundlePath());
+        }
+        s.guide_window = w;
+        return w;
+    }
+
     fn applyGrant(s: *AppShell, out: permission.Outcome) void {
         if (out.open_settings) mac.openFullDiskAccessSettings();
         switch (out.window) {
             .keep => {},
-            .show => |r| {
-                mac.setFrameOrigin(s.guide_window, r);
-                mac.orderFrontRegardless(s.guide_window);
-                s.guide_window.redraw();
+            .show => |r| if (s.ensureGuideWindow()) |gw| {
+                mac.setFrameOrigin(gw, r);
+                mac.orderFrontRegardless(gw);
+                gw.redraw();
             },
-            .move => |r| mac.setFrameOrigin(s.guide_window, r),
-            .redraw => s.guide_window.redraw(),
-            .hide => s.guide_window.hide(),
+            .move => |r| if (s.guide_window) |gw| mac.setFrameOrigin(gw, r),
+            .redraw => if (s.guide_window) |gw| gw.redraw(),
+            .hide => if (s.guide_window) |gw| gw.hide(),
         }
         if (out.drag.rect()) |r| if (s.drag) |d| d.place(r);
         if (out.poll_ms) |ms| nanoui.App.after(ms, s, grantPoll);
@@ -345,9 +376,11 @@ pub fn main(init: std.process.Init) !void {
     const index_path = try std.fs.path.joinZ(gpa, &.{ support, "names.flix" });
     defer gpa.free(index_path);
 
+    const t_app_init0 = latency_probe.nowNs();
     const app = try nanoui.App.create(init, .{ .name = "Nanospot", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
+    const app_init_ns = latency_probe.nowNs() -| t_app_init0;
     // Snapshots and hidden runs draw the panel and touch nothing else: no
     // hotkey, no System Settings, no scan of the home folder, no history on disk.
     const headless = app.flags.hidden or app.flags.snapshot != null;
@@ -357,10 +390,11 @@ pub fn main(init: std.process.Init) !void {
     const latency_session = memory_probe.hasFlag(args, latency_probe.session_flag);
     const latency_rounds = if (latency_session) latency_probe.resolveRoundsOrExit() else latency_probe.default_rounds;
 
-    var shell: AppShell = .{ .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
+    var shell: AppShell = .{ .app = app, .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
     shell.latency.rounds = latency_rounds;
     shell.latency.measure_open = memory_probe.hasFlag(args, latency_probe.open_flag);
     defer shell.catalog.deinit();
+    defer if (shell.guide_icon) |p| gpa.free(p);
     const t_index0 = latency_probe.nowNs();
     try shell.catalog.openIndex(index_path, home);
     const index_open_ns = latency_probe.nowNs() -| t_index0;
@@ -389,9 +423,6 @@ pub fn main(init: std.process.Init) !void {
         };
     const clipboard_open_ns = latency_probe.nowNs() -| t_clip_open0;
     defer shell.store.close();
-    const t_prune0 = latency_probe.nowNs();
-    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
-    const clipboard_prune_ns = latency_probe.nowNs() -| t_prune0;
     if (memory_seed) return memory_probe.seedMemoryHistory(gpa, shell.store);
 
     var host = shell_mod.macHost(&shell, AppShell.onRequest, if (headless) shell_mod.noSuggest else AppShell.onSuggest);
@@ -416,6 +447,7 @@ pub fn main(init: std.process.Init) !void {
         metrics.expanded_height
     else
         metrics.search_height;
+    const t_panel0 = latency_probe.nowNs();
     shell.panel_window = try app.newWindow(.{
         .title = "Nanospot",
         .width = metrics.width,
@@ -436,54 +468,41 @@ pub fn main(init: std.process.Init) !void {
         surface.after_frame = AppShell.afterFrame;
         surface.after_frame_ctx = &shell;
     }
+    const panel_window_ns = latency_probe.nowNs() -| t_panel0;
 
-    const t_guide0 = latency_probe.nowNs();
-    const guide_icon = mac.iconPng(gpa, mac.bundlePath(), 44);
-    defer if (guide_icon) |p| gpa.free(p);
     shell.grant = .{
-        .icon_png = guide_icon,
         .read_anchors = AppShell.grantAnchors,
         .on_request = AppShell.onGrantRequest,
         .ctx = &shell,
     };
-    shell.guide_window = try app.newWindow(.{
-        .title = "Full Disk Access",
-        .width = permission.panel_w,
-        .height = permission.panel_h,
-        .decorations = false,
-        .resizable = false,
-        .kind = .panel,
-        .non_activating = true,
-        .all_spaces = true,
-        .skip_taskbar = true,
-        .visible = false,
-        .content = .{ .view = shell.grant.view() },
-    });
-    if (mac.installSlab(shell.guide_window, permission.metrics.radius, .floating, .regular)) |guide_host| shell.drag = mac.FileDragSource.create(guide_host, mac.bundlePath());
-    const guide_window_ns = latency_probe.nowNs() -| t_guide0;
 
+    var hotkeys_ns: u64 = 0;
     if (!headless) {
+        const t_hotkeys0 = latency_probe.nowNs();
         try mac.registerHotKeys(&shell, AppShell.hotKey);
+        hotkeys_ns = latency_probe.nowNs() -| t_hotkeys0;
         shell.shell.syncPasteboardCount();
         nanoui.App.after(clipboard_poll_ms, &shell, AppShell.captureTick);
         nanoui.App.after(compact_next_ms, &shell, AppShell.compactTick);
         nanoui.App.after(prune_ms, &shell, AppShell.pruneTick);
-        shell.applyGrant(shell.grant.begin(mac.fullDiskAccessGranted()));
-        nanoui.App.after(0, &shell, if (memory_session)
-            memory_probe.Runner(AppShell).launched
-        else if (latency_session)
-            latency_probe.Runner(AppShell).launched
-        else
-            AppShell.launched);
+        if (memory_session) {
+            nanoui.App.after(0, &shell, memory_probe.Runner(AppShell).launched);
+        } else if (latency_session) {
+            nanoui.App.after(0, &shell, latency_probe.Runner(AppShell).launched);
+        } else {
+            shell.applyGrant(shell.grant.begin(mac.fullDiskAccessGranted()));
+            nanoui.App.after(0, &shell, AppShell.launched);
+        }
     }
     if (latency_session) {
         shell.latency.index_entries = if (shell.catalog.files) |*fi| if (fi.view()) |v| v.count() else 0 else 0;
         shell.latency.launch = .{
+            .app_init_ns = app_init_ns,
             .index_open_ns = index_open_ns,
             .app_scan_ns = app_scan_ns,
             .clipboard_open_ns = clipboard_open_ns,
-            .clipboard_prune_ns = clipboard_prune_ns,
-            .guide_window_ns = guide_window_ns,
+            .panel_window_ns = panel_window_ns,
+            .hotkeys_ns = hotkeys_ns,
             .total_ns = latency_probe.nowNs() -| t_launch0,
         };
     }
