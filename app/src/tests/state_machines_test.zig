@@ -877,3 +877,13 @@ test "extreme clock and retention values do not overflow expiry or frame keys" {
     p.notePresented();
     try t.expect(p.lastFrameValid());
 }
+
+test "sameFrame matches within half a point and rejects larger moves or resizes" {
+    const base: @import("../permission.zig").Rect = .{ .x = 340, .y = 600, .w = 760, .h = 60 };
+    try t.expect(presence.sameFrame(base, base));
+    try t.expect(presence.sameFrame(base, .{ .x = 340.4, .y = 599.6, .w = 760.49, .h = 59.51 }));
+    try t.expect(!presence.sameFrame(base, .{ .x = 340.5, .y = 600, .w = 760, .h = 60 }));
+    try t.expect(!presence.sameFrame(base, .{ .x = 340, .y = 600.5, .w = 760, .h = 60 }));
+    try t.expect(!presence.sameFrame(base, .{ .x = 340, .y = 600, .w = 760.5, .h = 60 }));
+    try t.expect(!presence.sameFrame(base, .{ .x = 340, .y = 600, .w = 760, .h = 468 }));
+}
