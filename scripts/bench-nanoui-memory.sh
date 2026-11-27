@@ -78,6 +78,7 @@ run_session() {
             echo "NANOSPOT_MEMORY $marker footprint_mb=$1 peak_mb=$2"
             largest_categories
             if [ "$marker" = "phase=idle cycle=$cycles" ]; then
+                rg '^NANOSPOT_MEMORY_THUMBS ' "$log" | tail -n 1 || true
                 idle_mb=$1
                 return 0
             fi

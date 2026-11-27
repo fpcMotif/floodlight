@@ -624,3 +624,60 @@ test "a shorter query asks the store again" {
     try t.expectEqual(expected.len, f.p.board.list.rows.len);
     for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
 }
+
+test "a board frame with undecoded thumbnails runs no decode and still lists every entry" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "first text note" }, "com.apple.Notes", "Notes", 100);
+    _ = try f.store.add(.{ .image = .{ .name = "Alpha Shot", .png = &h.valid_png, .thumbnail = &h.valid_png, .width = 120, .height = 80 } }, "com.apple.Preview", "Preview", 200);
+    _ = try f.store.add(.{ .text = "second text note" }, "com.apple.Safari", "Safari", 300);
+    _ = try f.store.add(.{ .image = .{ .name = "Beta Shot", .png = &h.valid_png, .thumbnail = &h.valid_png, .width = 200, .height = 200 } }, "com.apple.screencaptureui", "Screenshot", 400);
+    try f.show();
+
+    try t.expectEqual(@as(u32, 8), f.tester.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, 0), f.tester.ctx.text.images.decoded.count());
+    try t.expect(f.tester.hasText("4 entries"));
+    try t.expect(f.tester.hasText("Beta Shot"));
+    try t.expect(f.tester.hasText("second text note"));
+    try t.expect(f.tester.hasText("Alpha Shot"));
+    try t.expect(f.tester.hasText("first text note"));
+    var placeholders: usize = 0;
+    const nodes = f.tester.ctx.nodes.items;
+    for (nodes) |n| switch (n.content) {
+        .icon => |ic| if (std.mem.eql(u8, ic.name, "photo") and n.parent < nodes.len) {
+            const tile = nodes[n.parent];
+            if (@abs(tile.rect.w - chrome.metrics.icon_size) < 0.5 and @abs(tile.rect.h - chrome.metrics.icon_size) < 0.5) {
+                placeholders += 1;
+            }
+        },
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 2), placeholders);
+}
+
+test "holding cmd or copying keeps partial first page while switching filter loads all rows" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(board_mod.board_metrics.first_page_rows + 10);
+    _ = f.p.board.warmFirstPage();
+    try f.show();
+
+    try t.expect(f.p.board.hasPartialRows());
+    const partial_len = f.p.board.list.rows.len;
+
+    f.tester.setMods(.{ .cmd = true });
+    f.tester.frame();
+    try t.expect(f.p.board.hasPartialRows());
+    try t.expectEqual(partial_len, f.p.board.list.rows.len);
+
+    _ = f.tester.shortcut(.{ .key = 'c', .cmd = true });
+    try t.expect(f.p.board.hasPartialRows());
+    try t.expectEqual(partial_len, f.p.board.list.rows.len);
+
+    f.tester.setMods(.{});
+    _ = f.tester.shortcut(.{ .key = '2', .cmd = true });
+    try t.expect(!f.p.board.hasPartialRows());
+    try t.expectEqual(board_mod.board_metrics.first_page_rows + 10, f.p.board.list.rows.len);
+}

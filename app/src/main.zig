@@ -14,6 +14,7 @@ const memory_probe = @import("memory_probe.zig");
 const latency_probe = @import("latency_probe.zig");
 
 const metrics = chrome.metrics;
+const max_frame_decodes: u32 = (@FieldType(@FieldType(nanoui.Surface, "text"), "images"){ .gpa = gpa }).decodes_left;
 const gpa = std.heap.c_allocator;
 const clipboard_poll_ms = 500;
 const suggest_debounce_ms = 150;
@@ -44,25 +45,34 @@ const AppShell = struct {
             .none => {},
             .place_unseen => |sz| {
                 s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
                 mac.setAlpha(s.panel_window, entrance_alpha);
                 mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
                 mac.drawBeforeOcclusionUpdate(s.panel_window);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
             },
             .place_seen => |sz| {
                 s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
                 mac.setAlpha(s.panel_window, 1);
                 mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
                 mac.drawBeforeOcclusionUpdate(s.panel_window);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
             },
             .place_front => |sz| {
                 s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
                 mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
             },
             .reveal => mac.setAlpha(s.panel_window, 1),
-            .resize => |sz| s.resizeKeepingTop(sz.w, sz.h),
+            .resize => |sz| {
+                s.resizeKeepingTop(sz.w, sz.h);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
+            },
             .hide => {
                 const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
                 mac.hideWindow(s.panel_window);
@@ -116,7 +126,8 @@ const AppShell = struct {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
         const presenting = surface.renderer.given_drawable != null;
-        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, presenting);
+        const decodes: u32 = max_frame_decodes -| surface.text.images.decodes_left;
+        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, presenting, decodes);
         const out = s.shell.framePresented(presenting);
         if (out.retry_frame) surface.ctx.changed = true;
         if (out.reveal) mac.setAlpha(s.panel_window, 1);
@@ -285,7 +296,7 @@ const AppShell = struct {
     fn pruneTick(ctx: ?*anyopaque) callconv(.c) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         defer nanoui.App.after(prune_ms, s, pruneTick);
-        s.shell.pruneClipboard();
+        s.apply(s.shell.pruneClipboard());
     }
 
     const SuggestRequest = struct {
@@ -517,6 +528,7 @@ pub fn main(init: std.process.Init) !void {
     if (shell.panel_window.surface) |surface| {
         surface.after_frame = AppShell.afterFrame;
         surface.after_frame_ctx = &shell;
+        shell.shell.display_scale = @max(1, surface.scale);
     }
     const panel_window_ns = latency_probe.nowNs() -| t_panel0;
 

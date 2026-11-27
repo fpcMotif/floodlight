@@ -13,6 +13,7 @@ const icons_mod = @import("icons.zig");
 const mac = @import("mac.zig");
 
 const metrics = chrome.metrics;
+const default_display_scale: f32 = 2;
 
 /// Icons drawn per session at most; all go when the session is forgotten.
 pub const max_icons: usize = icons_mod.max_icons;
@@ -98,6 +99,7 @@ pub const Host = struct {
     preview_path: *const fn (ctx: ?*anyopaque, path: []const u8) void = noTarget,
     preview_image: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, id: i64, stored: []const u8, fallback_png: []const u8) void = noPreviewImage,
     icon_pixels: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, path: []const u8, px: f64) ?mac.Icon = noIcon,
+    decode_pixels: *const fn (ctx: ?*anyopaque, gpa: std.mem.Allocator, bytes: []const u8, max_w: u32, max_h: u32) ?mac.Icon = noDecode,
     relative_date: *const fn (ctx: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 = stubDateI64,
     detailed_date: *const fn (ctx: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 = stubDateF64,
     retention_seconds: ?*const fn (ctx: ?*anyopaque, default_seconds: f64) f64 = null,
@@ -124,6 +126,9 @@ fn noReadPasteboard(_: ?*anyopaque, _: ?*anyopaque, _: *const fn (?*anyopaque, c
 }
 fn noPreviewImage(_: ?*anyopaque, _: std.mem.Allocator, _: i64, _: []const u8, _: []const u8) void {}
 fn noIcon(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: f64) ?mac.Icon {
+    return null;
+}
+fn noDecode(_: ?*anyopaque, _: std.mem.Allocator, _: []const u8, _: u32, _: u32) ?mac.Icon {
     return null;
 }
 fn stubDateI64(_: ?*anyopaque, _: i64, _: std.mem.Allocator) []const u8 {
@@ -211,6 +216,11 @@ pub fn macHost(
                 return mac.iconPixels(gpa, path, px);
             }
         }.f,
+        .decode_pixels = struct {
+            fn f(_: ?*anyopaque, gpa: std.mem.Allocator, bytes: []const u8, max_w: u32, max_h: u32) ?mac.Icon {
+                return mac.decodePixels(gpa, bytes, max_w, max_h);
+            }
+        }.f,
         .relative_date = struct {
             fn f(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {
                 return mac.relativeDate(secs, arena);
@@ -237,6 +247,8 @@ pub const Shell = struct {
     presence: presence.Presence,
     icons: icons_mod.Cache,
     paste_target: mac.RunningApp = .{},
+    host_warmed: bool = false,
+    display_scale: f32 = default_display_scale,
     change_count: isize = 0,
     submitting: bool = false,
     menu_arena: std.heap.ArenaAllocator,
@@ -259,6 +271,8 @@ pub const Shell = struct {
                 .clock = host.clock,
                 .request = panelRequest,
                 .app_icon = appIcon,
+                .lookup_image = lookupImage,
+                .decode_image = decodeImage,
                 .describe_date = describeDate,
                 .detailed_date = detailedDate,
                 .suggest = suggestHook,
@@ -270,7 +284,7 @@ pub const Shell = struct {
                     .last_frame_valid = lastFrameValid,
                 },
             },
-            .icons = .init(gpa, metrics.top_hit_icon_size * 2),
+            .icons = .init(gpa, metrics.top_hit_icon_size * default_display_scale),
             .menu_arena = .init(gpa),
         };
     }
@@ -285,7 +299,13 @@ pub const Shell = struct {
     }
 
     pub fn view(s: *Shell) ui.View {
-        return .init(&s.panel, panel_mod.Panel.view);
+        return .init(s, renderView);
+    }
+
+    fn renderView(s: *Shell, c: *ui.Context) void {
+        s.display_scale = @max(1, c.scale);
+        panel_mod.Panel.view(&s.panel, c);
+        if (s.panel.mode == .clipboard) s.syncBoardFirstPage();
     }
 
     pub fn isHidden(s: *const Shell) bool {
@@ -426,8 +446,14 @@ pub const Shell = struct {
                 out.action = .{ .reveal = path };
                 s.presence.settle(.{ .clipboard = .{ .reveal = path } });
             },
-            .toggle_pin => s.panel.board.togglePinId(e.id),
-            .delete => s.panel.board.deleteId(e.id),
+            .toggle_pin => {
+                s.panel.board.togglePinId(e.id);
+                s.syncBoardFirstPage();
+            },
+            .delete => {
+                s.panel.board.deleteId(e.id);
+                s.syncBoardFirstPage();
+            },
         }
         if (!s.isHidden()) out.redraw = true;
         return out;
@@ -453,6 +479,7 @@ pub const Shell = struct {
     }
 
     pub fn startIconWorker(s: *Shell, io: std.Io, wake: icons_mod.Wake) void {
+        s.icons.setDecoder(s.host.ctx, s.host.decode_pixels);
         s.icons.startWorker(io, s.host.ctx, s.host.icon_pixels, wake);
     }
 
@@ -464,6 +491,34 @@ pub const Shell = struct {
 
     pub fn prefetchFrequentIcons(s: *Shell) void {
         for (s.panel.frequentApps()) |row| s.icons.prefetch(row.path, .app);
+    }
+
+    pub fn warmBoard(s: *Shell) void {
+        if (!s.host_warmed) {
+            var date_buf: [128]u8 = undefined;
+            var fba: std.heap.FixedBufferAllocator = .init(&date_buf);
+            _ = s.host.can_deliver_paste(s.host.ctx);
+            _ = s.host.detailed_date(s.host.ctx, s.host.clock.now(), fba.allocator());
+            fba.reset();
+            _ = s.host.detailed_date(s.host.ctx, 0, fba.allocator());
+            s.host_warmed = true;
+        }
+        const store = s.store orelse return;
+        const rows = s.panel.board.warmFirstPage();
+        s.retainRowsThumbnails(rows);
+        if (!s.icons.worker_started) return;
+        const px: u32 = @intFromFloat(@max(1, @ceil(metrics.icon_size * s.display_scale)));
+        var arena: std.heap.ArenaAllocator = .init(s.gpa);
+        defer arena.deinit();
+        for (rows) |e| {
+            if (e.kind != .image) continue;
+            var key_buf: [32]u8 = undefined;
+            const key = board_mod.thumbKey(&key_buf, e.id) orelse continue;
+            if (s.icons.lookupImage(key) != null) continue;
+            _ = arena.reset(.retain_capacity);
+            const thumb = store.thumbnail(arena.allocator(), e.id);
+            if (thumb.len > 0) _ = s.icons.decodeOrEnqueue(key, thumb, px, px, true);
+        }
     }
 
     pub fn shouldSendSuggest(s: *const Shell, seq: u64) bool {
@@ -497,20 +552,34 @@ pub const Shell = struct {
             return out;
         };
         s.change_count = count;
-        if (!stored or s.panel.mode != .clipboard) return out;
+        if (!stored) return out;
         s.panel.board.list.markStale();
-        if (s.isHidden()) return out;
+        if (s.isHidden() or s.panel.mode != .clipboard) {
+            s.warmBoard();
+            return out;
+        }
         s.panel.refresh();
+        _ = s.panel.board.warmFirstPage();
+        s.syncBoardFirstPage();
         out.redraw = true;
         return out;
     }
 
-    pub fn pruneClipboard(s: *Shell) void {
-        const store = s.store orelse return;
+    pub fn pruneClipboard(s: *Shell) Outcome {
+        const store = s.store orelse return .{};
         store.prune(s.host.clock.now(), clipboard.retention_days) catch |err| {
             if (!@import("builtin").is_test) std.log.err("clipboard prune: {s}", .{@errorName(err)});
         };
-        if (s.panel.mode == .clipboard) s.panel.board.list.markStale();
+        s.panel.board.list.markStale();
+        if (s.isHidden() or s.panel.mode != .clipboard) {
+            s.warmBoard();
+            return .{};
+        }
+        s.panel.board.refresh(s.panel.field.text());
+        _ = s.panel.board.warmFirstPage();
+        s.syncBoardFirstPage();
+        s.panel.forgetPresented();
+        return .{ .redraw = true };
     }
 
     pub fn rebuildIndex(s: *Shell) Outcome {
@@ -570,13 +639,16 @@ pub const Shell = struct {
             .note_paste_target => s.notePasteTarget(),
             .place => {},
             .open_search => {
+                const was_board = s.panel.mode == .clipboard;
                 s.syncRetention();
                 s.panel.showSearch();
+                if (was_board) s.warmBoard();
             },
             .open_board => {
                 s.syncRetention();
-                s.panel.showClipboard();
                 s.panel.board.paste_target = if (s.paste_target.pid != 0 and s.host.can_deliver_paste(s.host.ctx)) s.paste_target.name else "";
+                s.panel.showClipboard();
+                s.syncBoardFirstPage();
             },
             .order_in_unseen => if (out) |o| {
                 o.window = .{ .place_unseen = s.panelSize() };
@@ -642,10 +714,12 @@ pub const Shell = struct {
             const release_caches = s.panel.retention_seconds <= 0;
             s.evictIdleSession(false, release_caches);
             if (!release_caches) s.prefetchFrequentIcons();
+            s.warmBoard();
             if (out) |o| o.release_idle = true;
             return;
         }
         s.prefetchFrequentIcons();
+        s.warmBoard();
         const ms = s.panel.armExpiry();
         if (out) |o| o.expiry_ms = ms;
     }
@@ -712,5 +786,35 @@ pub const Shell = struct {
     fn appIcon(ctx: ?*anyopaque, path: []const u8, kind: icons_mod.Kind) ?icons_mod.Image {
         const s: *Shell = @ptrCast(@alignCast(ctx));
         return s.icons.lookupOrEnqueue(path, kind);
+    }
+
+    fn lookupImage(ctx: ?*anyopaque, key: []const u8) ?icons_mod.Image {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        return s.icons.lookupImage(key);
+    }
+
+    fn decodeImage(ctx: ?*anyopaque, key: []const u8, bytes: []const u8, max_w: u32, max_h: u32, keep_across_hide: bool) ?icons_mod.Image {
+        const s: *Shell = @ptrCast(@alignCast(ctx));
+        return s.icons.decodeOrEnqueue(key, bytes, max_w, max_h, keep_across_hide);
+    }
+
+    fn syncBoardFirstPage(s: *Shell) void {
+        const l = &s.panel.board.list;
+        if (l.stale or l.answered().len != 0) return;
+        s.retainRowsThumbnails(l.rows);
+    }
+
+    fn retainRowsThumbnails(s: *Shell, rows: []const clipboard.Entry) void {
+        var bufs: [board_mod.board_metrics.first_page_rows][32]u8 = undefined;
+        var keys: [board_mod.board_metrics.first_page_rows][]const u8 = undefined;
+        var n: usize = 0;
+        const end = @min(rows.len, board_mod.board_metrics.first_page_rows);
+        for (rows[0..end]) |e| {
+            if (e.kind != .image) continue;
+            const k = board_mod.thumbKey(&bufs[n], e.id) orelse continue;
+            keys[n] = k;
+            n += 1;
+        }
+        s.icons.retainFirstPage(keys[0..n]);
     }
 };

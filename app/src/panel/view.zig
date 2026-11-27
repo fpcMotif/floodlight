@@ -19,7 +19,7 @@ pub fn render(p: anytype, c: *ui.Context) void {
     defer root.end();
     searchBar(p, c);
     if (p.mode == .clipboard) {
-        const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
+        const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .lookup_image = p.hooks.lookup_image, .decode_image = p.hooks.decode_image, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
         if (p.board.view(c, cx)) |a| p.ask(.{ .clipboard = a });
     } else if (p.field.text().len > 0 or p.list.visible.len > 0) {
         const well = chrome.well(c);

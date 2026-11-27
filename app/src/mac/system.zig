@@ -411,6 +411,40 @@ pub fn iconPixels(gpa: std.mem.Allocator, path: []const u8, px: f64) ?Icon {
     return .{ .bgra = out, .width = side, .height = side };
 }
 
+pub fn decodePixels(gpa: std.mem.Allocator, bytes: []const u8, max_w: u32, max_h: u32) ?Icon {
+    if (bytes.len == 0 or max_w == 0 or max_h == 0) return null;
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const src = pasteboard.CGImageSourceCreateWithData(pasteboard.nsData(bytes), null) orelse return null;
+    defer pasteboard.CFRelease(src);
+    const cg = pasteboard.CGImageSourceCreateImageAtIndex(src, 0, null) orelse return null;
+    defer pasteboard.CFRelease(cg);
+    const iw = pasteboard.CGImageGetWidth(cg);
+    const ih = pasteboard.CGImageGetHeight(cg);
+    if (iw == 0 or ih == 0) return null;
+    const scale = @min(1.0, @min(
+        @as(f64, @floatFromInt(max_w)) / @as(f64, @floatFromInt(iw)),
+        @as(f64, @floatFromInt(max_h)) / @as(f64, @floatFromInt(ih)),
+    ));
+    const dw: u32 = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(iw)) * scale))));
+    const dh: u32 = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(ih)) * scale))));
+    const out = gpa.alloc(u8, @as(usize, dw) * dh * 4) catch return null;
+    @memset(out, 0);
+    const space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(space);
+    const ctx = pasteboard.CGBitmapContextCreate(out.ptr, dw, dh, 8, @as(usize, dw) * 4, space, bgra_premultiplied) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(ctx);
+    CGContextSetInterpolationQuality(ctx, cg_interpolation_high);
+    pasteboard.CGContextDrawImage(ctx, .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = @floatFromInt(dw), .height = @floatFromInt(dh) } }, cg);
+    return .{ .bgra = out, .width = dw, .height = dh };
+}
+
 /// An app's icon as PNG at `px` pixels square, in `gpa`'s memory.
 pub fn iconPng(gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
     const pool = objc.Pool.push();

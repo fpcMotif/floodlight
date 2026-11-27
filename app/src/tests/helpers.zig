@@ -131,6 +131,32 @@ pub fn picture(png: []const u8) clipboard.Capture {
     return .{ .image = .{ .name = "PNG Image", .png = png, .thumbnail = "thumb", .width = 10, .height = 10 } };
 }
 
+pub const valid_png: [73]u8 = blk: {
+    var out: [73]u8 = undefined;
+    @memcpy(out[0..8], "\x89PNG\r\n\x1a\n");
+    const ihdr = "IHDR" ++ "\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00";
+    std.mem.writeInt(u32, out[8..12], 13, .big);
+    @memcpy(out[12..29], ihdr);
+    std.mem.writeInt(u32, out[29..33], std.hash.Crc32.hash(ihdr), .big);
+    const raw = [_]u8{ 0, 255, 64, 32, 255 };
+    var idat: [4 + 2 + 5 + raw.len + 4]u8 = undefined;
+    @memcpy(idat[0..4], "IDAT");
+    idat[4] = 0x78;
+    idat[5] = 0x01;
+    idat[6] = 0x01;
+    std.mem.writeInt(u16, idat[7..9], raw.len, .little);
+    std.mem.writeInt(u16, idat[9..11], ~@as(u16, raw.len), .little);
+    @memcpy(idat[11..16], &raw);
+    std.mem.writeInt(u32, idat[16..20], std.hash.Adler32.hash(&raw), .big);
+    std.mem.writeInt(u32, out[33..37], idat.len - 4, .big);
+    @memcpy(out[37..57], &idat);
+    std.mem.writeInt(u32, out[57..61], std.hash.Crc32.hash(&idat), .big);
+    std.mem.writeInt(u32, out[61..65], 0, .big);
+    @memcpy(out[65..69], "IEND");
+    std.mem.writeInt(u32, out[69..73], std.hash.Crc32.hash("IEND"), .big);
+    break :blk out;
+};
+
 pub const TmpStore = struct {
     tmp: std.testing.TmpDir,
     images: []const u8,

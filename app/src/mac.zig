@@ -57,6 +57,7 @@ pub const openFullDiskAccessSettings = system.openFullDiskAccessSettings;
 pub const bundlePath = system.bundlePath;
 pub const Icon = system.Icon;
 pub const iconPixels = system.iconPixels;
+pub const decodePixels = system.decodePixels;
 pub const iconPng = system.iconPng;
 pub const retentionSeconds = system.retentionSeconds;
 pub const FileDragSource = system.FileDragSource;

@@ -64,6 +64,7 @@ pub fn Runner(comptime Shell: type) type {
         fn idle(ctx: ?*anyopaque) callconv(.c) void {
             const s: *Shell = @ptrCast(@alignCast(ctx));
             const cycle = s.memory_step / steps;
+            std.debug.print("NANOSPOT_MEMORY_THUMBS cycle={d} kept={d} bytes={d}\n", .{ cycle, s.shell.icons.keptCount(), s.shell.icons.keptBytes() });
             markMemory("idle", cycle);
             if (cycle < cycles) nanoui.App.after(settle_ms, s, stepFn);
         }

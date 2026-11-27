@@ -10,6 +10,7 @@ const chrome = @import("chrome.zig");
 const icons = @import("icons.zig");
 const list = @import("list.zig");
 const mac = @import("mac.zig");
+const stage_clock = @import("stage_clock.zig");
 const panel_completion = @import("panel/completion.zig");
 const panel_suggestions = @import("panel/suggestions.zig");
 const panel_view = @import("panel/view.zig");
@@ -99,6 +100,8 @@ pub const Hooks = struct {
     request: *const fn (?*anyopaque) void,
     /// An app's icon as PNG, cached by the shell; null draws a symbol.
     app_icon: *const fn (?*anyopaque, []const u8, icons.Kind) ?icons.Image,
+    lookup_image: *const fn (?*anyopaque, []const u8) ?icons.Image = board_mod.noLookupImage,
+    decode_image: *const fn (?*anyopaque, []const u8, []const u8, u32, u32, bool) ?icons.Image = board_mod.noDecodeImage,
     describe_date: *const fn (?*anyopaque, i64, std.mem.Allocator) []const u8,
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
@@ -182,6 +185,7 @@ pub const Panel = struct {
     expiry_armed: bool = false,
     keystroke_open: bool = false,
     presented_key: ?u64 = null,
+    board_presence_ns: u64 = 0,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
@@ -432,25 +436,28 @@ pub const Panel = struct {
             p.retained_board.hidden_at = null;
             l.filter = p.retained_board.filter;
             p.restoreField(p.retained_board.query.items);
-            l.markStale();
+            p.board.markStaleIfStoreChanged();
+            p.board_presence_ns = stage_clock.nowNs();
             p.board.refresh(p.field.text());
+            if (p.board.hasPartialRows() and p.board.newestEntryAt() > hidden_at and newestIndexSince(l.visible, hidden_at) == null) {
+                p.board.ensureFullRows();
+            }
             l.selected = 0;
-            var newest_at = hidden_at;
-            var newest: ?usize = null;
-            for (l.visible, 0..) |e, i| if (e.created_at > newest_at) {
-                newest_at = e.created_at;
-                newest = i;
-            };
-            if (newest) |i| {
+            if (newestIndexSince(l.visible, hidden_at)) |i| {
                 l.selected = i;
-            } else if (p.retained_board.selected_id) |id| for (l.visible, 0..) |e, i| if (e.id == id) {
-                l.selected = i;
-                break;
-            };
+            } else if (p.retained_board.selected_id) |id| {
+                if (findEntryIndex(l.visible, id)) |i| {
+                    l.selected = i;
+                } else if (p.board.hasPartialRows()) {
+                    p.board.ensureFullRows();
+                    if (findEntryIndex(l.visible, id)) |i| l.selected = i;
+                }
+            }
             l.reveal = true;
         } else {
             p.forgetBoard();
             p.field.focus();
+            p.board_presence_ns = stage_clock.nowNs();
             p.board.refresh("");
         }
         p.height = p.panelHeight();
@@ -517,6 +524,7 @@ pub const Panel = struct {
                 const l = &p.board.list;
                 hashValue(&h, l.filter);
                 hashValue(&h, l.selected);
+                hashValue(&h, p.board.totalCounts());
                 const now = p.clock.now();
                 const minute_f = if (std.math.isFinite(now)) std.math.clamp(@floor(now / 60), -1e15, 1e15) else 0;
                 hashValue(&h, @as(i64, @intFromFloat(minute_f)));
@@ -527,6 +535,21 @@ pub const Panel = struct {
             },
         }
         return h.final();
+    }
+
+    fn findEntryIndex(visible: []const clipboard.Entry, id: i64) ?usize {
+        for (visible, 0..) |e, i| if (e.id == id) return i;
+        return null;
+    }
+
+    fn newestIndexSince(visible: []const clipboard.Entry, since: f64) ?usize {
+        var newest_at = since;
+        var newest: ?usize = null;
+        for (visible, 0..) |e, i| if (e.created_at > newest_at) {
+            newest_at = e.created_at;
+            newest = i;
+        };
+        return newest;
     }
 
     pub fn panelHeight(p: *const Panel) f32 {
