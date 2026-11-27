@@ -240,7 +240,7 @@ pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
     for (0..8) |_| {
         const before = spy.submitted;
         tester.key(.enter);
-        _ = sh.applyPending();
+        dispatchAction(&sh, sh.applyPending());
         if (spy.submitted == before) return error.NoActionSubmitted;
     }
 
@@ -251,11 +251,19 @@ pub fn measureReturnToAction(gpa: std.mem.Allocator, runs: usize) !Stats {
         const t0 = nowNs();
         tester.key(.enter);
         const t1 = nowNs();
-        _ = sh.applyPending();
+        dispatchAction(&sh, sh.applyPending());
         if (spy.submitted == before) return error.NoActionSubmitted;
         s.* = (spy.requested_ns - t0) + (spy.handed_ns - t1);
     }
     return summarize(samples);
+}
+
+fn dispatchAction(sh: *shell_mod.Shell, out: shell_mod.Outcome) void {
+    switch (out.action) {
+        .none => {},
+        .open => |path| sh.host.open(sh.host.ctx, path),
+        .reveal => |path| sh.host.reveal(sh.host.ctx, path),
+    }
 }
 
 pub const file_count: usize = 750_000;

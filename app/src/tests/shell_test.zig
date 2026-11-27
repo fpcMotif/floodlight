@@ -23,16 +23,31 @@ const HostSpy = struct {
     front_name: []const u8 = "Safari",
     own_pid_val: i32 = 42,
     opened: std.ArrayList([]u8) = .empty,
+    revealed: std.ArrayList([]u8) = .empty,
+    clipboard_writes: usize = 0,
 
     fn deinit(spy: *HostSpy) void {
         for (spy.opened.items) |s| t.allocator.free(s);
         spy.opened.deinit(t.allocator);
+        for (spy.revealed.items) |s| t.allocator.free(s);
+        spy.revealed.deinit(t.allocator);
     }
 
     fn openTarget(ctx: ?*anyopaque, target: []const u8) void {
         const spy: *HostSpy = @ptrCast(@alignCast(ctx));
         const copy = t.allocator.dupe(u8, target) catch return;
         spy.opened.append(t.allocator, copy) catch t.allocator.free(copy);
+    }
+
+    fn revealTarget(ctx: ?*anyopaque, path: []const u8) void {
+        const spy: *HostSpy = @ptrCast(@alignCast(ctx));
+        const copy = t.allocator.dupe(u8, path) catch return;
+        spy.revealed.append(t.allocator, copy) catch t.allocator.free(copy);
+    }
+
+    fn writeClipboard(ctx: ?*anyopaque, _: clipboard.Kind, _: []const u8, _: ?[]const u8) void {
+        const spy: *HostSpy = @ptrCast(@alignCast(ctx));
+        spy.clipboard_writes += 1;
     }
 
     fn frontmost(ctx: ?*anyopaque, arena: std.mem.Allocator) mac.RunningApp {
@@ -111,6 +126,8 @@ const HostSpy = struct {
             .ctx = spy,
             .clock = spy.clock.binding(),
             .open = openTarget,
+            .reveal = revealTarget,
+            .write_clipboard = writeClipboard,
             .frontmost_app = frontmost,
             .own_pid = ownPid,
             .can_deliver_paste = canDeliver,
@@ -363,4 +380,97 @@ test "app icons pack from raw pixels with zero decodes and release on expiry" {
     spy.clock.advance(6 * 60);
     _ = sh.expireRetention();
     try t.expectEqual(@as(usize, 0), sh.icons.count());
+}
+
+test "open and reveal request hide before handing the target to the host" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    _ = try store.add(.{ .text = "https://example.com" }, "com.apple.Safari", "Safari", 900);
+    _ = try store.add(.{ .file = "/tmp/sample.txt" }, "com.apple.Finder", "Finder", 901);
+
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const entries = try store.list(arena.allocator(), "");
+    const file_entry = entries[0];
+    const url_entry = entries[1];
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.ask(.{ .open = "/Applications/Calendar.app" });
+    const search_open = sh.applyPending();
+    try t.expectEqual(shell_mod.WindowOp.hide, search_open.window);
+    try t.expectEqualStrings("/Applications/Calendar.app", search_open.action.open);
+    try t.expectEqual(@as(usize, 0), spy.opened.items.len);
+
+    _ = sh.hotKey(.search, false);
+    sh.panel.ask(.{ .reveal = "/tmp/sample.txt" });
+    const search_reveal = sh.applyPending();
+    try t.expectEqual(shell_mod.WindowOp.hide, search_reveal.window);
+    try t.expectEqualStrings("/tmp/sample.txt", search_reveal.action.reveal);
+    try t.expectEqual(@as(usize, 0), spy.revealed.items.len);
+
+    _ = sh.hotKey(.clipboard, false);
+    sh.panel.ask(.{ .clipboard = .{ .open = url_entry.text } });
+    const board_open = sh.applyPending();
+    try t.expectEqual(shell_mod.WindowOp.hide, board_open.window);
+    try t.expectEqualStrings(url_entry.text, board_open.action.open);
+    try t.expectEqual(@as(usize, 0), spy.opened.items.len);
+
+    _ = sh.hotKey(.clipboard, false);
+    sh.panel.ask(.{ .clipboard = .{ .reveal = file_entry.filePath().? } });
+    const board_reveal = sh.applyPending();
+    try t.expectEqual(shell_mod.WindowOp.hide, board_reveal.window);
+    try t.expectEqualStrings(file_entry.filePath().?, board_reveal.action.reveal);
+    try t.expectEqual(@as(usize, 0), spy.revealed.items.len);
+
+    _ = sh.hotKey(.clipboard, false);
+    sh.panel.ask(.{ .clipboard = .{ .actions = file_entry } });
+    const menu_entry = sh.applyPending().actions_menu orelse return error.ExpectedActionsMenu;
+    const menu_reveal = sh.applyBoardMenu(menu_entry, .reveal);
+    try t.expectEqual(shell_mod.WindowOp.hide, menu_reveal.window);
+    try t.expectEqualStrings(file_entry.filePath().?, menu_reveal.action.reveal);
+    try t.expectEqual(@as(usize, 0), spy.revealed.items.len);
+}
+
+test "board paste writes the clipboard before hiding and delivering" {
+    var ts = try h.TmpStore.init();
+    defer ts.deinit();
+    var store = try h.openMemory(&ts);
+    defer store.close();
+    _ = try store.add(.{ .text = "paste ordered" }, "com.apple.Notes", "Notes", 900);
+
+    var cat: search.Catalog = .{ .gpa = t.allocator };
+    defer cat.deinit();
+    var spy: HostSpy = .{};
+    defer spy.deinit();
+    var sh: shell_mod.Shell = undefined;
+    sh.init(t.allocator, &cat, &store, spy.host());
+    defer sh.deinit();
+
+    _ = sh.hotKey(.clipboard, false);
+    const entry = sh.panel.board.list.selection().?;
+    sh.panel.ask(.{ .clipboard = .{ .paste = entry } });
+    const pending_paste = sh.applyPending();
+    try t.expectEqual(@as(usize, 1), spy.clipboard_writes);
+    try t.expectEqual(shell_mod.WindowOp.hide, pending_paste.window);
+    try t.expectEqual(shell_mod.ActionOp.none, pending_paste.action);
+    try t.expectEqual(shell_mod.PasteOp{ .deliver = 77 }, pending_paste.paste);
+
+    _ = sh.hotKey(.clipboard, false);
+    sh.panel.ask(.{ .clipboard = .{ .actions = entry } });
+    const menu_entry = sh.applyPending().actions_menu orelse return error.ExpectedActionsMenu;
+    const menu_paste = sh.applyBoardMenu(menu_entry, .paste);
+    try t.expectEqual(@as(usize, 2), spy.clipboard_writes);
+    try t.expectEqual(shell_mod.WindowOp.hide, menu_paste.window);
+    try t.expectEqual(shell_mod.ActionOp.none, menu_paste.action);
+    try t.expectEqual(shell_mod.PasteOp{ .deliver = 77 }, menu_paste.paste);
 }
