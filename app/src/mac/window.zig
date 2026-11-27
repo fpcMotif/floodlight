@@ -244,7 +244,19 @@ pub fn releaseFreedMemory() void {
     _ = malloc_zone_pressure_relief(null, 0);
 }
 
+pub fn hideWindow(window: *nanoui.Window) void {
+    if (window.surface) |s| {
+        s.setPaced(false);
+        s.ctx.focus = 0;
+        s.last_focus = 0;
+        s.is_visible = false;
+    }
+    window.hide();
+}
+
 pub fn releaseSurface(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
     const s = window.surface orelse return;
     if (s.is_visible) return;
     if (!s.released) {
@@ -255,9 +267,44 @@ pub fn releaseSurface(window: *nanoui.Window) void {
     s.text.images.trimDecoded();
     s.renderer.waitIdle();
     forgetImageAtlas(s);
+    forgetGlyphAtlas(s);
     forgetFrameBuffers(s);
     forgetFrameStorage(s);
-    _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+    forgetSessionContextStorage(&s.ctx);
+    _ = s.ctx.arena.reset(.free_all);
+}
+
+const idle_glyph_atlas_size: u32 = 16;
+const live_glyph_atlas_size: u32 = 2048;
+
+fn makeGlyphTexture(device: objc.Object, side: u32) objc.Object {
+    const desc = objc.msg(objc.Object, objc.class("MTLTextureDescriptor"), "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", .{
+        @as(objc.NSUInteger, 10), @as(objc.NSUInteger, side), @as(objc.NSUInteger, side), objc.NO,
+    });
+    return objc.msg(objc.Object, device, "newTextureWithDescriptor:", .{desc});
+}
+
+fn resetGlyphMaps(a: anytype) void {
+    a.sprites.clearAndFree(a.gpa);
+    a.symbols.clearAndFree(a.gpa);
+    a.pixels.clearAndFree(a.gpa);
+    a.shelf_x = 0;
+    a.shelf_y = 0;
+    a.shelf_h = 0;
+}
+
+fn setGlyphAtlasSize(s: *nanoui.Surface, side: u32) void {
+    const a = &s.text.atlas;
+    if (a.size == side) return;
+    objc.release(a.texture);
+    a.texture = makeGlyphTexture(a.device, side);
+    a.size = side;
+    resetGlyphMaps(a);
+}
+
+fn forgetGlyphAtlas(s: *nanoui.Surface) void {
+    setGlyphAtlasSize(s, idle_glyph_atlas_size);
+    resetGlyphMaps(&s.text.atlas);
 }
 
 fn forgetFrameBuffers(s: *nanoui.Surface) void {
@@ -280,6 +327,31 @@ pub fn forgetContextStorage(c: *nanoui.ui.Context) void {
     c.helps.clearAndFree(c.gpa);
     c.motion.entries.clearAndFree(c.gpa);
     c.anims.clearAndFree(c.gpa);
+    c.truncates.clearAndFree(c.gpa);
+    c.selection.deinit(c.gpa);
+    c.selection = .{};
+}
+
+fn forgetSessionContextStorage(c: *nanoui.ui.Context) void {
+    c.edits.clearAndFree(c.gpa);
+    c.scroll.clearAndFree(c.gpa);
+    c.scroll_x.clearAndFree(c.gpa);
+    c.overscroll.clearAndFree(c.gpa);
+    c.scrollbars.clearAndFree(c.gpa);
+    c.scroll_max.clearAndFree(c.gpa);
+    c.scroll_follow.clearAndFree(c.gpa);
+    c.scroll_seen.clearAndFree(c.gpa);
+    c.overlay_bars.clearAndFree(c.gpa);
+    c.scroll_cap.clearAndFree(c.gpa);
+    c.scroll_moved.clearAndFree(c.gpa);
+    c.motion_store.map.clearAndFree(c.gpa);
+    c.memory.clearAndFree(c.gpa);
+    c.textures.clearAndFree(c.gpa);
+    c.layers.clearAndFree(c.gpa);
+    c.hot_path.clearAndFree(c.gpa);
+    c.focusable_ids.clearAndFree(c.gpa);
+    c.last_focusable_ids.clearAndFree(c.gpa);
+    c.drop_targets.clearAndFree(c.gpa);
 }
 
 fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
@@ -290,30 +362,53 @@ fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
 
 fn forgetFrameStorage(s: *nanoui.Surface) void {
     forgetContextStorage(&s.ctx);
+    s.pasted.clearAndFree(s.gpa);
     freeTextLayouts(s.text.gpa, &s.text.layouts);
     freeTextLayouts(s.text.gpa, &s.text.previous);
     s.text.wraps.deinit(s.text.gpa);
     s.text.wraps = .{};
+    s.text.scratch_glyphs.clearAndFree(s.text.gpa);
+    s.text.scratch_points.clearAndFree(s.text.gpa);
+    s.text.scratch_bytes_of.clearAndFree(s.text.gpa);
+    s.text.scratch_indices.clearAndFree(s.text.gpa);
 }
 
 fn forgetImageAtlas(s: *nanoui.Surface) void {
-    const texture = s.renderer.images_texture orelse return;
-    objc.release(texture);
-    s.renderer.images_texture = null;
-    s.renderer.images_generation = std.math.maxInt(u64);
+    if (s.renderer.images_texture) |texture| {
+        objc.release(texture);
+        s.renderer.images_texture = null;
+        s.renderer.images_generation = std.math.maxInt(u64);
+    }
     const im = &s.text.images;
+    if (im.pixels.len > 0) {
+        im.gpa.free(im.pixels);
+        im.pixels = &.{};
+    }
+    im.headers.clearAndFree(im.gpa);
+    im.decoded.clearAndFree(im.gpa);
     im.entries.clearAndFree(im.gpa);
+    im.svgs.clearAndFree(im.gpa);
     im.shelf_x = 0;
     im.shelf_y = 0;
     im.shelf_h = 0;
     im.resets +%= 1;
 }
 
+pub fn restoreGlyphAtlas(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const s = window.surface orelse return;
+    if (s.text.atlas.size < live_glyph_atlas_size) setGlyphAtlasSize(s, live_glyph_atlas_size);
+}
+
 pub fn drawBeforeOcclusionUpdate(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
     const s = window.surface orelse return;
     if (s.released) {
         s.released = false;
         s.renderer.resize(s.size, s.scale);
     }
+    if (s.text.atlas.size < live_glyph_atlas_size) setGlyphAtlasSize(s, live_glyph_atlas_size);
     s.is_visible = true;
 }

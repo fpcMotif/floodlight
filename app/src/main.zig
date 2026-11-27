@@ -45,24 +45,27 @@ const AppShell = struct {
             .place_unseen => |sz| {
                 s.positionOnPointerScreen(sz);
                 mac.setAlpha(s.panel_window, entrance_alpha);
+                mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
                 mac.drawBeforeOcclusionUpdate(s.panel_window);
             },
             .place_seen => |sz| {
                 s.positionOnPointerScreen(sz);
                 mac.setAlpha(s.panel_window, 1);
+                mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
                 mac.drawBeforeOcclusionUpdate(s.panel_window);
             },
             .place_front => |sz| {
                 s.positionOnPointerScreen(sz);
+                mac.restoreGlyphAtlas(s.panel_window);
                 s.panel_window.show();
             },
             .reveal => mac.setAlpha(s.panel_window, 1),
             .resize => |sz| s.resizeKeepingTop(sz.w, sz.h),
             .hide => {
                 const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
-                s.panel_window.hide();
+                mac.hideWindow(s.panel_window);
                 if (s.latency_session) latency_probe.Runner(AppShell).hidden(s, t0);
             },
         }
@@ -83,9 +86,8 @@ const AppShell = struct {
             .deliver => |pid| if (!mac.deliverPaste(pid)) std.log.err("paste: ⌘V not delivered to pid {d}", .{pid}),
         }
         if (out.release_idle) {
-            mac.releaseSurface(s.panel_window);
-            if (s.guide_window) |gw| if (!gw.isVisible()) mac.releaseSurface(gw);
-            mac.releaseFreedMemory();
+            s.releaseIdle();
+            nanoui.App.after(20, s, releaseIdleSettled);
         }
         if (out.entrance_timer) nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut);
         if (out.expiry_ms) |ms| nanoui.App.after(ms, s, expireRetention);
@@ -203,7 +205,20 @@ const AppShell = struct {
     fn redrawPanel(ctx: ?*anyopaque) callconv(.c) void {
         const s: *AppShell = @ptrCast(@alignCast(ctx));
         if (s.latency_session) latency_probe.Runner(AppShell).resizeRedrawFired(s);
-        s.panel_window.redraw();
+        if (!s.shell.isHidden()) s.panel_window.redraw();
+    }
+
+    fn releaseIdle(s: *AppShell) void {
+        s.shell.releaseIdleArenas();
+        mac.releaseSurface(s.panel_window);
+        if (s.guide_window) |gw| if (!gw.isVisible()) mac.releaseSurface(gw);
+        s.store.releaseMemory();
+        mac.releaseFreedMemory();
+    }
+
+    fn releaseIdleSettled(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.shell.isHidden() and s.shell.panel.nextExpiryMs() == null) s.releaseIdle();
     }
 
     fn actionsMenu(s: *AppShell, e: clipboard.Entry) void {
@@ -353,7 +368,9 @@ const AppShell = struct {
             .keep => {},
             .show => |r| if (s.ensureGuideWindow()) |gw| {
                 mac.setFrameOrigin(gw, r);
+                mac.restoreGlyphAtlas(gw);
                 mac.orderFrontRegardless(gw);
+                mac.drawBeforeOcclusionUpdate(gw);
                 gw.redraw();
             },
             .move => |r| if (s.guide_window) |gw| mac.setFrameOrigin(gw, r),

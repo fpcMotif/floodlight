@@ -439,7 +439,7 @@ pub const Shell = struct {
         s.syncRetention();
         if (s.panel.expire()) {
             if (s.isHidden()) {
-                s.evictIdleSession();
+                s.evictIdleSession(true, true);
                 out.release_idle = true;
             }
         } else {
@@ -639,8 +639,9 @@ pub const Shell = struct {
         s.syncRetention();
         s.panel.hide();
         if (s.panel.nextExpiryMs() == null) {
-            s.evictIdleSession();
-            if (s.panel.retention_seconds > 0) s.prefetchFrequentIcons();
+            const release_caches = s.panel.retention_seconds <= 0;
+            s.evictIdleSession(false, release_caches);
+            if (!release_caches) s.prefetchFrequentIcons();
             if (out) |o| o.release_idle = true;
             return;
         }
@@ -649,9 +650,16 @@ pub const Shell = struct {
         if (out) |o| o.expiry_ms = ms;
     }
 
-    fn evictIdleSession(s: *Shell) void {
+    fn evictIdleSession(s: *Shell, release_ephemeral: bool, release_caches: bool) void {
         s.panel.forgetPresented();
         s.clearIcons();
+        s.panel.releaseIdle(release_ephemeral, release_caches);
+        if (release_ephemeral) s.freePasteTarget();
+    }
+
+    pub fn releaseIdleArenas(s: *Shell) void {
+        s.panel.releaseAction();
+        s.freePasteTarget();
     }
 
     fn clearIcons(s: *Shell) void {

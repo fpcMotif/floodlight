@@ -244,6 +244,29 @@ pub const Panel = struct {
         p.width = p.panelWidth();
     }
 
+    pub fn releaseAction(p: *Panel) void {
+        p.pending = null;
+        _ = p.action_arena.reset(.free_all);
+    }
+
+    pub fn releaseIdle(p: *Panel, reset_action_arena: bool, release_caches: bool) void {
+        const gpa = p.list.arena.child_allocator;
+        p.retained_search.deinit(gpa);
+        p.retained_board.deinit(gpa);
+        p.board.paste_target = "";
+        p.completer.deinit(gpa);
+        p.completer = .{};
+        if (release_caches) {
+            p.web.deinit(gpa);
+            p.web = .{ .enabled = p.web.enabled, .seq = p.web.seq };
+            _ = p.frequent_arena.reset(.free_all);
+            p.frequent_rows = &.{};
+            p.frequent_dirty = true;
+        }
+        if (reset_action_arena) p.releaseAction();
+        p.field.deinit();
+    }
+
     /// Clears the field and forgets the active surface's retained session.
     pub fn clearField(p: *Panel) void {
         p.field.clear();

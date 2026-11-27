@@ -18,8 +18,10 @@ pub const mainScreenVisibleFrame = window.mainScreenVisibleFrame;
 pub const pointerScreenVisibleFrame = window.pointerScreenVisibleFrame;
 pub const systemSettingsWindow = window.systemSettingsWindow;
 pub const releaseFreedMemory = window.releaseFreedMemory;
+pub const hideWindow = window.hideWindow;
 pub const releaseSurface = window.releaseSurface;
 pub const forgetContextStorage = window.forgetContextStorage;
+pub const restoreGlyphAtlas = window.restoreGlyphAtlas;
 pub const drawBeforeOcclusionUpdate = window.drawBeforeOcclusionUpdate;
 
 pub const writeClipboard = pasteboard.writeClipboard;
