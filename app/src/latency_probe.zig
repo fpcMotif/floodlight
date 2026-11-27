@@ -75,7 +75,7 @@ pub const ActionMetric = enum {
     }
 };
 
-const ScalarMetric = enum { summon_placed, summon_built, hide };
+const ScalarMetric = enum { summon_placed, summon_built, hide, keystroke_files_shown };
 
 const Waiting = enum {
     summon,
@@ -137,6 +137,7 @@ pub const State = struct {
     action_action: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
     action_hide: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
     action_handoff: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
+    files_key_ns: ?u64 = null,
     scalar_counts: [std.enums.values(ScalarMetric).len]usize = @splat(0),
     scalar_samples: [std.enums.values(ScalarMetric).len][max_rounds * std.enums.values(ActionMetric).len]u64 = undefined,
     resize_runs: usize = 0,
@@ -199,6 +200,12 @@ pub fn Runner(comptime Shell: type) type {
         /// Call after every frame; a frame that presents ends the interval a step began.
         pub fn frame(s: *Shell, presenting: bool) void {
             const st = &s.latency;
+            if (presenting) if (st.files_key_ns) |t0| for (s.shell.panel.base_rows) |r| {
+                if (r.kind != .file and r.kind != .folder) continue;
+                st.recordScalar(.keystroke_files_shown, nowNs() -| t0);
+                st.files_key_ns = null;
+                break;
+            };
             const w = st.waiting orelse return;
             const fm = w.frameMetric() orelse return;
             const now = nowNs();
@@ -360,6 +367,7 @@ pub fn Runner(comptime Shell: type) type {
         fn key(s: *Shell, w: Waiting, text: []const u8) void {
             const t0 = nowNs();
             beginFrame(s, w, t0);
+            s.latency.files_key_ns = if (w == .keystroke_new_rows) t0 else null;
             s.shell.panel.field.set(text);
             s.shell.panel.refresh();
             s.latency.frame_sample.published_ns = nowNs();
@@ -371,6 +379,7 @@ pub fn Runner(comptime Shell: type) type {
             const st = &s.latency;
             printScalar(st.rounds, "summon_placed", st.scalar_samples[@backingInt(ScalarMetric.summon_placed)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_placed)]]);
             printScalar(st.rounds, "summon_built", st.scalar_samples[@backingInt(ScalarMetric.summon_built)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_built)]]);
+            printScalar(st.rounds, "keystroke_files_shown", st.scalar_samples[@backingInt(ScalarMetric.keystroke_files_shown)][0..st.scalar_counts[@backingInt(ScalarMetric.keystroke_files_shown)]]);
             for (std.enums.values(FrameMetric)) |m| {
                 const i = @backingInt(m);
                 const n = st.frame_counts[i];
