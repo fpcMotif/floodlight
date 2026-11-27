@@ -14,6 +14,7 @@ pub const Budgets = struct {
     pub const keystroke_p99_us: u64 = 16000;
     pub const switch_to_board_p99_us: u64 = 8300;
     pub const return_to_hidden_p99_us: u64 = 8300;
+    pub const reveal_to_hidden_p99_us: u64 = 8300;
 };
 
 pub const max_rounds: usize = 30;
@@ -62,6 +63,18 @@ pub const FrameMetric = enum {
     }
 };
 
+pub const ActionMetric = enum {
+    return_to_hidden,
+    reveal_to_hidden,
+
+    pub fn budgetP99Us(m: ActionMetric) u64 {
+        return switch (m) {
+            .return_to_hidden => Budgets.return_to_hidden_p99_us,
+            .reveal_to_hidden => Budgets.reveal_to_hidden_p99_us,
+        };
+    }
+};
+
 const ScalarMetric = enum { summon_placed, summon_built, hide };
 
 const Waiting = enum {
@@ -70,6 +83,7 @@ const Waiting = enum {
     keystroke_same_rows,
     switch_to_board,
     return_to_hidden,
+    reveal_to_hidden,
 
     fn frameMetric(w: Waiting) ?FrameMetric {
         return switch (w) {
@@ -77,7 +91,15 @@ const Waiting = enum {
             .keystroke_new_rows => .keystroke_new_rows,
             .keystroke_same_rows => .keystroke_same_rows,
             .switch_to_board => .switch_to_board,
-            .return_to_hidden => null,
+            .return_to_hidden, .reveal_to_hidden => null,
+        };
+    }
+
+    fn actionMetric(w: Waiting) ?ActionMetric {
+        return switch (w) {
+            .return_to_hidden => .return_to_hidden,
+            .reveal_to_hidden => .reveal_to_hidden,
+            else => null,
         };
     }
 };
@@ -109,14 +131,14 @@ pub const State = struct {
     frame_publish: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     frame_build: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     frame_present: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
-    action_count: usize = 0,
-    action_total: [max_rounds]u64 = undefined,
-    action_publish: [max_rounds]u64 = undefined,
-    action_action: [max_rounds]u64 = undefined,
-    action_hide: [max_rounds]u64 = undefined,
-    action_handoff: [max_rounds]u64 = undefined,
+    action_counts: [std.enums.values(ActionMetric).len]usize = @splat(0),
+    action_total: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
+    action_publish: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
+    action_action: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
+    action_hide: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
+    action_handoff: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
     scalar_counts: [std.enums.values(ScalarMetric).len]usize = @splat(0),
-    scalar_samples: [std.enums.values(ScalarMetric).len][max_rounds]u64 = undefined,
+    scalar_samples: [std.enums.values(ScalarMetric).len][max_rounds * std.enums.values(ActionMetric).len]u64 = undefined,
     resize_runs: usize = 0,
     resize_samples: [max_rounds * 4]u64 = undefined,
     resize_delay_runs: usize = 0,
@@ -139,23 +161,30 @@ pub const State = struct {
         st.frame_counts[i] = k + 1;
     }
 
-    fn recordAction(st: *State, d: stage_clock.ActionDeltas) void {
-        const k = st.action_count;
+    fn recordAction(st: *State, m: ActionMetric, d: stage_clock.ActionDeltas) void {
+        const i = @backingInt(m);
+        const k = st.action_counts[i];
         if (k >= st.rounds) return;
-        st.action_total[k] = d.total_ns;
-        st.action_publish[k] = d.publish_ns;
-        st.action_action[k] = d.action_ns;
-        st.action_hide[k] = d.hide_ns;
-        st.action_handoff[k] = d.handoff_ns;
-        st.action_count = k + 1;
+        st.action_total[i][k] = d.total_ns;
+        st.action_publish[i][k] = d.publish_ns;
+        st.action_action[i][k] = d.action_ns;
+        st.action_hide[i][k] = d.hide_ns;
+        st.action_handoff[i][k] = d.handoff_ns;
+        st.action_counts[i] = k + 1;
     }
 
     fn recordScalar(st: *State, m: ScalarMetric, ns: u64) void {
         const i = @backingInt(m);
         const k = st.scalar_counts[i];
-        if (k >= st.rounds) return;
+        const limit = if (m == .hide) st.rounds * std.enums.values(ActionMetric).len else st.rounds;
+        if (k >= limit) return;
         st.scalar_samples[i][k] = ns;
         st.scalar_counts[i] = k + 1;
+    }
+
+    fn waitingActionMetric(st: *const State) ?ActionMetric {
+        const w = st.waiting orelse return null;
+        return w.actionMetric();
     }
 };
 
@@ -187,13 +216,13 @@ pub fn Runner(comptime Shell: type) type {
 
         pub fn applyBegin(s: *Shell) void {
             const st = &s.latency;
-            if (st.waiting != .return_to_hidden) return;
+            if (st.waitingActionMetric() == null) return;
             st.action_sample.apply_ns = nowNs();
         }
 
         pub fn actionHanded(s: *Shell, t_start: u64, t_end: u64) void {
             const st = &s.latency;
-            if (st.waiting != .return_to_hidden) return;
+            if (st.waitingActionMetric() == null) return;
             st.action_sample.action_start_ns = t_start;
             st.action_sample.action_end_ns = t_end;
         }
@@ -202,19 +231,19 @@ pub fn Runner(comptime Shell: type) type {
             const st = &s.latency;
             const now = nowNs();
             st.recordScalar(.hide, now -| t_start);
-            if (st.waiting != .return_to_hidden) return;
+            if (st.waitingActionMetric() == null) return;
             st.action_sample.hide_start_ns = t_start;
             st.action_sample.hide_end_ns = now;
         }
 
         pub fn applyEnd(s: *Shell) void {
             const st = &s.latency;
-            if (st.waiting != .return_to_hidden) return;
+            const am = st.waitingActionMetric() orelse return;
             const d = st.action_sample.deltas() orelse return;
-            st.recordAction(d);
+            st.recordAction(am, d);
             st.waiting = null;
             st.generation +%= 1;
-            nanoui.App.after(idleMs(), s, stepFn);
+            nanoui.App.after(if (am == .reveal_to_hidden) idleMs() else gap_ms, s, stepFn);
         }
 
         pub fn resized(s: *Shell, t_start: u64, t_end: u64) void {
@@ -248,9 +277,9 @@ pub fn Runner(comptime Shell: type) type {
             st.generation +%= 1;
         }
 
-        fn beginAction(s: *Shell, t0: u64) void {
+        fn beginAction(s: *Shell, w: Waiting, t0: u64) void {
             const st = &s.latency;
-            st.waiting = .return_to_hidden;
+            st.waiting = w;
             st.action_sample = .{ .input_ns = t0 };
             st.generation +%= 1;
         }
@@ -280,8 +309,9 @@ pub fn Runner(comptime Shell: type) type {
         fn stepFn(ctx: ?*anyopaque) callconv(.c) void {
             const s: *Shell = @ptrCast(@alignCast(ctx));
             const st = &s.latency;
-            const round = st.step / 5;
-            const step = st.step % 5;
+            const steps_per_round = 7;
+            const round = st.step / steps_per_round;
+            const step = st.step % steps_per_round;
             st.step += 1;
             if (round >= st.rounds) return finish(s);
             const q = queries[round % queries.len];
@@ -310,14 +340,21 @@ pub fn Runner(comptime Shell: type) type {
                     s.panel_window.redraw();
                     armWatchIfWaiting(s);
                 },
-                else => {
-                    const t0 = nowNs();
-                    beginAction(s, t0);
-                    const home = std.mem.span(std.c.getenv("HOME") orelse "/tmp");
-                    s.shell.panel.ask(.{ .open = home });
-                    armWatchIfWaiting(s);
+                4 => triggerAction(s, .return_to_hidden),
+                5 => {
+                    s.apply(s.shell.hotKey(.search, false));
+                    nanoui.App.after(gap_ms, s, stepFn);
                 },
+                else => triggerAction(s, .reveal_to_hidden),
             }
+        }
+
+        fn triggerAction(s: *Shell, w: Waiting) void {
+            const t0 = nowNs();
+            beginAction(s, w, t0);
+            const home = std.mem.span(std.c.getenv("HOME") orelse "/tmp");
+            s.shell.panel.ask(if (w == .reveal_to_hidden) .{ .reveal = home } else .{ .open = home });
+            armWatchIfWaiting(s);
         }
 
         fn key(s: *Shell, w: Waiting, text: []const u8) void {
@@ -347,14 +384,20 @@ pub fn Runner(comptime Shell: type) type {
                     m.budgetP99Us(),
                 );
             }
-            printAction(
-                st.rounds,
-                st.action_total[0..st.action_count],
-                st.action_publish[0..st.action_count],
-                st.action_action[0..st.action_count],
-                st.action_hide[0..st.action_count],
-                st.action_handoff[0..st.action_count],
-            );
+            for (std.enums.values(ActionMetric)) |m| {
+                const i = @backingInt(m);
+                const n = st.action_counts[i];
+                printAction(
+                    st.rounds,
+                    @tagName(m),
+                    st.action_total[i][0..n],
+                    st.action_publish[i][0..n],
+                    st.action_action[i][0..n],
+                    st.action_hide[i][0..n],
+                    st.action_handoff[i][0..n],
+                    m.budgetP99Us(),
+                );
+            }
             printScalar(st.rounds, "hide", st.scalar_samples[@backingInt(ScalarMetric.hide)][0..st.scalar_counts[@backingInt(ScalarMetric.hide)]]);
             printResize(
                 st.rounds,
@@ -425,18 +468,27 @@ pub fn Runner(comptime Shell: type) type {
             );
         }
 
-        fn printAction(rounds: usize, total: []u64, publish: []u64, action: []u64, hide: []u64, handoff: []u64) void {
+        fn printAction(
+            rounds: usize,
+            name: []const u8,
+            total: []u64,
+            publish: []u64,
+            action: []u64,
+            hide: []u64,
+            handoff: []u64,
+            budget_p99_us: u64,
+        ) void {
             const tot = stage_clock.summarize(total);
             if (tot.runs == 0) {
-                return std.debug.print("NANOSPOT_LATENCY metric=return_to_hidden rounds={d} runs=0 budget_p99_us={d}\n", .{ rounds, Budgets.return_to_hidden_p99_us });
+                return std.debug.print("NANOSPOT_LATENCY metric={s} rounds={d} runs=0 budget_p99_us={d}\n", .{ name, rounds, budget_p99_us });
             }
             const pub_s = stage_clock.summarize(publish);
             const act_s = stage_clock.summarize(action);
             const hid_s = stage_clock.summarize(hide);
             const hnd_s = stage_clock.summarize(handoff);
             std.debug.print(
-                "NANOSPOT_LATENCY metric=return_to_hidden rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} action_p50_us={d:.0} hide_p50_us={d:.0} handoff_p50_us={d:.0} budget_p99_us={d}\n",
-                .{ rounds, tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(act_s.p50_ns), us(hid_s.p50_ns), us(hnd_s.p50_ns), Budgets.return_to_hidden_p99_us },
+                "NANOSPOT_LATENCY metric={s} rounds={d} runs={d} p50_us={d:.0} p99_us={d:.0} max_us={d:.0} publish_p50_us={d:.0} action_p50_us={d:.0} hide_p50_us={d:.0} handoff_p50_us={d:.0} budget_p99_us={d}\n",
+                .{ name, rounds, tot.runs, us(tot.p50_ns), us(tot.p99_ns), us(tot.max_ns), us(pub_s.p50_ns), us(act_s.p50_ns), us(hid_s.p50_ns), us(hnd_s.p50_ns), budget_p99_us },
             );
         }
 
@@ -462,4 +514,37 @@ test "parseRounds defaults to 30 and rejects out-of-range or invalid values" {
     try t.expectError(error.InvalidRounds, parseRounds("abc"));
     try t.expectError(error.InvalidRounds, parseRounds(""));
     try t.expectError(error.InvalidRounds, parseRounds("-1"));
+}
+
+test "ActionMetric exposes 8.3 ms p99 budgets and State records open and reveal independently" {
+    const t = std.testing;
+    try t.expectEqual(@as(u64, 8300), ActionMetric.return_to_hidden.budgetP99Us());
+    try t.expectEqual(@as(u64, 8300), ActionMetric.reveal_to_hidden.budgetP99Us());
+
+    var st: State = .{ .rounds = 2 };
+    st.recordAction(.return_to_hidden, .{
+        .publish_ns = 10,
+        .action_ns = 20,
+        .hide_ns = 30,
+        .handoff_ns = 40,
+        .total_ns = 50,
+    });
+    st.recordAction(.reveal_to_hidden, .{
+        .publish_ns = 110,
+        .action_ns = 120,
+        .hide_ns = 130,
+        .handoff_ns = 140,
+        .total_ns = 150,
+    });
+    for (0..5) |k| st.recordScalar(.hide, @intCast(100 + k));
+
+    const ret_i = @backingInt(ActionMetric.return_to_hidden);
+    const rev_i = @backingInt(ActionMetric.reveal_to_hidden);
+    try t.expectEqual(@as(usize, 1), st.action_counts[ret_i]);
+    try t.expectEqual(@as(usize, 1), st.action_counts[rev_i]);
+    try t.expectEqual(@as(u64, 50), st.action_total[ret_i][0]);
+    try t.expectEqual(@as(u64, 150), st.action_total[rev_i][0]);
+    try t.expectEqual(@as(u64, 40), st.action_handoff[ret_i][0]);
+    try t.expectEqual(@as(u64, 140), st.action_handoff[rev_i][0]);
+    try t.expectEqual(@as(usize, 4), st.scalar_counts[@backingInt(ScalarMetric.hide)]);
 }
