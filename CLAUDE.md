@@ -1,6 +1,6 @@
 # Nanospot
 
-Nanospot is a Zig 0.17 and nanoui macOS launcher (`app/`) over a memory-mapped Zig file index (`core/`). `GLOSSARY.md` defines the domain terms, and `docs/adr/` records the architectural decisions.
+Nanospot is a Zig 0.17 and nanoui macOS launcher (`app/`) over a memory-mapped Zig file index (`core/`). `GLOSSARY.md` defines the domain terms, and `docs/adr/` records the architectural decisions. The nanoui source that the build pins is unpacked in `app/zig-pkg/<hash>/`, with the hash from `app/build.zig.zon`.
 
 ## Tooling rules
 
@@ -20,6 +20,11 @@ make docs         # build the Astro documentation site with bun
 ```
 
 Every change must leave `make check` green. `make test-nanoui` runs `zig build bench --release` in `app/` and prints `NANOSPOT_BENCH` latency lines. `make bench-nanoui-memory` checks the idle and retained memory budgets (`NANOSPOT_MEMORY`).
+
+## Issue gates
+
+- **Reachable gate.** When writing an issue, set a gate that changes inside that issue's scope can meet. A cause that another open issue owns stays out of the gate.
+- **Foreign cause.** When the measurements blame a cause that another open issue owns, post the numbers on that issue, report this gate as blocked, and stop.
 
 ## Comments
 
