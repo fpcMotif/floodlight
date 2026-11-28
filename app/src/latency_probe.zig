@@ -168,6 +168,30 @@ pub const LaunchTimings = struct {
 
 const queries = [_][]const u8{ "a", "s", "c", "m", "t", "p", "n", "f", "d", "r" };
 
+const max_presented_slots: usize = max_rounds * std.enums.values(FrameMetric).len;
+
+const PresentedSlot = struct {
+    presented_time_bits: std.atomic.Value(u64) = .init(0),
+    handler_fired: std.atomic.Value(bool) = .init(false),
+
+    fn reset(slot: *PresentedSlot) void {
+        slot.presented_time_bits.store(0, .monotonic);
+        slot.handler_fired.store(false, .monotonic);
+    }
+
+    fn read(slot: *const PresentedSlot) struct { fired: bool, presented_time: f64 } {
+        const fired = slot.handler_fired.load(.acquire);
+        const bits = slot.presented_time_bits.load(.acquire);
+        return .{ .fired = fired, .presented_time = @bitCast(bits) };
+    }
+};
+
+fn onDrawablePresented(slot: *PresentedSlot, drawable: objc.Object) void {
+    const presented_time = objc.msg(f64, drawable, "presentedTime", .{});
+    slot.presented_time_bits.store(@bitCast(presented_time), .release);
+    slot.handler_fired.store(true, .release);
+}
+
 const PendingDisplay = struct {
     metric: FrameMetric,
     total_ns: u64,
@@ -175,7 +199,16 @@ const PendingDisplay = struct {
     target_media: f64,
     refresh_hz: f32,
     drawable: objc.Object,
+    slot: ?*PresentedSlot,
 };
+
+pub fn displaySource(runs: usize, display_runs: usize, fallback_runs: u32) []const u8 {
+    std.debug.assert(display_runs + fallback_runs <= runs);
+    if (runs == 0) return "none";
+    if (fallback_runs == 0) return "presented";
+    if (display_runs == 0) return "at_target_fallback";
+    return "mixed";
+}
 
 pub const State = struct {
     rounds: usize = default_rounds,
@@ -199,6 +232,10 @@ pub const State = struct {
     frame_at_display: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     frame_missed: [std.enums.values(FrameMetric).len]u32 = @splat(0),
     frame_display_runs: [std.enums.values(FrameMetric).len]usize = @splat(0),
+    frame_display_fallback: [std.enums.values(FrameMetric).len]u32 = @splat(0),
+    frame_handler_nonzero: [std.enums.values(FrameMetric).len]u32 = @splat(0),
+    presented_slots: [max_presented_slots]PresentedSlot = @splat(.{}),
+    presented_slot_next: usize = 0,
     default_frame_latency: f32 = 0,
     preferred_frame_latency: f32 = 0,
     refresh_hz: f32 = 60,
@@ -244,13 +281,20 @@ pub const State = struct {
     }
 
     fn recordDisplay(st: *State, m: FrameMetric, total_ns: u64, now_media: f64, target_media: f64, presented_time: f64, refresh_hz: f32) void {
+        std.debug.assert(st.rounds > 0);
+        std.debug.assert(st.rounds <= max_rounds);
+        std.debug.assert(refresh_hz > 0);
         const i = @backingInt(m);
-        if (presented_time <= 0) return;
         const k = st.frame_at_display_counts[i];
         if (k >= st.rounds) return;
-        st.frame_display_runs[i] += 1;
-        if (isMissedFrame(presented_time, target_media, refresh_hz)) st.frame_missed[i] += 1;
-        st.frame_at_display[i][k] = addLagNs(total_ns, presented_time - now_media);
+        if (presented_time > 0) {
+            st.frame_display_runs[i] += 1;
+            if (isMissedFrame(presented_time, target_media, refresh_hz)) st.frame_missed[i] += 1;
+            st.frame_at_display[i][k] = addLagNs(total_ns, presented_time - now_media);
+        } else {
+            st.frame_display_fallback[i] += 1;
+            st.frame_at_display[i][k] = addLagNs(total_ns, target_media - now_media);
+        }
         st.frame_at_display_counts[i] = k + 1;
     }
 
@@ -314,6 +358,7 @@ pub fn Runner(comptime Shell: type) type {
                 st.recordFrame(fm, d);
                 if (surface.renderer.given_drawable) |drawable| {
                     settlePendingDisplay(s);
+                    const slot = attachPresentedHandler(st, drawable);
                     st.pending_display = .{
                         .metric = fm,
                         .total_ns = d.total_ns,
@@ -321,6 +366,7 @@ pub fn Runner(comptime Shell: type) type {
                         .target_media = 0,
                         .refresh_hz = surface.max_fps,
                         .drawable = objc.retain(drawable),
+                        .slot = slot,
                     };
                     objc.dispatchMain(s, captureTarget);
                 }
@@ -328,6 +374,18 @@ pub fn Runner(comptime Shell: type) type {
             st.waiting = null;
             st.generation +%= 1;
             nanoui.App.after(gap_ms, s, stepFn);
+        }
+
+        fn attachPresentedHandler(st: *State, drawable: objc.Object) ?*PresentedSlot {
+            std.debug.assert(st.presented_slot_next <= st.presented_slots.len);
+            if (st.presented_slot_next >= st.presented_slots.len) return null;
+            if (!objc.msg(objc.BOOL, drawable, "respondsToSelector:", .{objc.sel("addPresentedHandler:")})) return null;
+            const slot = &st.presented_slots[st.presented_slot_next];
+            st.presented_slot_next += 1;
+            slot.reset();
+            var block = objc.Block(PresentedSlot, &.{objc.Object}).init(slot, onDrawablePresented);
+            objc.msg(void, drawable, "addPresentedHandler:", .{@as(*anyopaque, @ptrCast(&block))});
+            return slot;
         }
 
         fn captureTarget(ctx: ?*anyopaque) callconv(.c) void {
@@ -353,7 +411,17 @@ pub fn Runner(comptime Shell: type) type {
                 }
                 st.recordAtTarget(pending.metric, pending.total_ns, pending.now_media, target);
             }
-            const presented_time = objc.msg(f64, pending.drawable, "presentedTime", .{});
+            const metric_idx = @backingInt(pending.metric);
+            var handler_time: f64 = 0;
+            if (pending.slot) |slot| {
+                const res = slot.read();
+                if (res.fired and res.presented_time > 0) {
+                    st.frame_handler_nonzero[metric_idx] += 1;
+                    handler_time = res.presented_time;
+                }
+            }
+            const direct_time = objc.msg(f64, pending.drawable, "presentedTime", .{});
+            const presented_time = if (handler_time > 0) handler_time else direct_time;
             st.recordDisplay(pending.metric, pending.total_ns, pending.now_media, target, presented_time, pending.refresh_hz);
         }
 
@@ -543,11 +611,14 @@ pub fn Runner(comptime Shell: type) type {
                 const i = @backingInt(m);
                 printDisplay(
                     @tagName(m),
+                    st.refresh_hz,
                     st.frame_handed[i][0..st.frame_counts[i]],
                     st.frame_at_target[i][0..st.frame_at_target_counts[i]],
                     st.frame_at_display[i][0..st.frame_at_display_counts[i]],
                     st.frame_missed[i],
                     st.frame_display_runs[i],
+                    st.frame_display_fallback[i],
+                    st.frame_handler_nonzero[i],
                 );
             }
             printScalar(st.rounds, "summon_placed", st.scalar_samples[@backingInt(ScalarMetric.summon_placed)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_placed)]]);
@@ -683,26 +754,36 @@ pub fn Runner(comptime Shell: type) type {
 
         fn printDisplay(
             name: []const u8,
+            refresh_hz: f32,
             handed: []u64,
             at_target: []u64,
             at_display: []u64,
             missed: u32,
             display_runs: usize,
+            fallback_runs: u32,
+            handler_nonzero: u32,
         ) void {
             const hnd = stage_clock.summarize(handed);
             const tgt = stage_clock.summarize(at_target);
             const dsp = stage_clock.summarize(at_display);
+            const src = displaySource(hnd.runs, display_runs, fallback_runs);
             std.debug.print(
-                "NANOSPOT_DISPLAY metric={s} runs={d} handed_p50_us={d:.0} handed_p99_us={d:.0} at_target_p50_us={d:.0} at_target_p99_us={d:.0} at_display_p50_us={d:.0} at_display_p99_us={d:.0} missed={d}/{d}\n",
+                "NANOSPOT_DISPLAY metric={s} runs={d} refresh_hz={d:.0} handed_p50_us={d:.0} handed_p99_us={d:.0} at_target_p50_us={d:.0} at_target_p99_us={d:.0} at_display_p50_us={d:.0} at_display_p99_us={d:.0} at_display_source={s} fallback={d}/{d} handler_nonzero={d}/{d} missed={d}/{d}\n",
                 .{
                     name,
                     hnd.runs,
+                    refresh_hz,
                     us(hnd.p50_ns),
                     us(hnd.p99_ns),
                     us(tgt.p50_ns),
                     us(tgt.p99_ns),
                     us(dsp.p50_ns),
                     us(dsp.p99_ns),
+                    src,
+                    fallback_runs,
+                    hnd.runs,
+                    handler_nonzero,
+                    hnd.runs,
                     missed,
                     display_runs,
                 },
@@ -790,4 +871,36 @@ test "addLagNs and isMissedFrame compute at-target, at-display, and half-refresh
     try t.expect(!isMissedFrame(100.004, 100.000, 120.0));
     try t.expect(isMissedFrame(100.005, 100.000, 120.0));
     try t.expect(!isMissedFrame(0.0, 100.000, 120.0));
+}
+
+test "displaySource and State.recordDisplay handle presented times and at-target fallback" {
+    const t = std.testing;
+    try t.expectEqualStrings("none", displaySource(0, 0, 0));
+    try t.expectEqualStrings("presented", displaySource(3, 3, 0));
+    try t.expectEqualStrings("at_target_fallback", displaySource(3, 0, 3));
+    try t.expectEqualStrings("mixed", displaySource(3, 1, 2));
+
+    var st: State = .{ .rounds = 3 };
+    const sum_i = @backingInt(FrameMetric.summon);
+    const same_i = @backingInt(FrameMetric.keystroke_same_rows);
+
+    st.recordDisplay(.summon, 10_000_000, 100.000, 100.050, 0.0, 60.0);
+    st.recordDisplay(.summon, 10_000_000, 101.000, 101.045, 0.0, 60.0);
+    try t.expectEqual(@as(usize, 2), st.frame_at_display_counts[sum_i]);
+    try t.expectEqual(@as(usize, 0), st.frame_display_runs[sum_i]);
+    try t.expectEqual(@as(u32, 2), st.frame_display_fallback[sum_i]);
+    try t.expectEqual(@as(u32, 0), st.frame_missed[sum_i]);
+    try t.expectEqual(@as(u64, 60_000_000), st.frame_at_display[sum_i][0]);
+    try t.expectEqual(@as(u64, 55_000_000), st.frame_at_display[sum_i][1]);
+
+    st.recordDisplay(.keystroke_same_rows, 5_000_000, 200.000, 200.050, 200.050, 60.0);
+    st.recordDisplay(.keystroke_same_rows, 5_000_000, 201.000, 201.050, 201.067, 60.0);
+    st.recordDisplay(.keystroke_same_rows, 5_000_000, 202.000, 202.050, 0.0, 60.0);
+    try t.expectEqual(@as(usize, 3), st.frame_at_display_counts[same_i]);
+    try t.expectEqual(@as(usize, 2), st.frame_display_runs[same_i]);
+    try t.expectEqual(@as(u32, 1), st.frame_display_fallback[same_i]);
+    try t.expectEqual(@as(u32, 1), st.frame_missed[same_i]);
+    try t.expectEqual(@as(u64, 55_000_000), st.frame_at_display[same_i][0]);
+    try t.expectEqual(@as(u64, 72_000_000), st.frame_at_display[same_i][1]);
+    try t.expectEqual(@as(u64, 55_000_000), st.frame_at_display[same_i][2]);
 }
