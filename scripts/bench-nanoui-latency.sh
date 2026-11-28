@@ -29,7 +29,7 @@ run_session() {
     log="$scratch_home/latency.log"
     echo "NANOSPOT_LATENCY retention_seconds=$ret"
     HOME="$scratch_home" "$bin" --nanospot-latency-session "$@" -sessionRetentionSeconds "$ret" >"$log" 2>&1 || true
-    rg -N '^NANOSPOT_LATENCY ' "$log" || true
+    rg -N '^NANOSPOT_(LATENCY|DISPLAY) ' "$log" || true
 
     if ! rg -q '^NANOSPOT_LATENCY done ' "$log"; then
         echo "bench-nanoui-latency: session (retention=${ret}s) did not finish:" >&2

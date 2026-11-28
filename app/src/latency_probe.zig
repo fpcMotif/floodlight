@@ -2,8 +2,11 @@
 //! panel and times each input to the frame that presents it.
 const std = @import("std");
 const nanoui = @import("nanoui");
+const objc = nanoui.objc;
 const mac = @import("mac.zig");
 const stage_clock = @import("stage_clock.zig");
+
+extern "c" fn CACurrentMediaTime() f64;
 
 pub const session_flag = "--nanospot-latency-session";
 pub const open_flag = "--nanospot-latency-open";
@@ -24,6 +27,7 @@ const gap_ms = 250;
 const frame_timeout_ms = 1000;
 
 pub const ParseRoundsError = error{InvalidRounds};
+pub const ParseFrameLatencyError = error{InvalidFrameLatency};
 
 pub fn parseRounds(raw: ?[]const u8) ParseRoundsError!usize {
     const slice = raw orelse return default_rounds;
@@ -39,6 +43,43 @@ pub fn resolveRoundsOrExit() usize {
         std.debug.print("NANOSPOT_LATENCY error invalid NANOSPOT_LATENCY_ROUNDS={s} (expected 1..{d})\n", .{ slice orelse "", max_rounds });
         std.process.exit(1);
     };
+}
+
+pub fn parseFrameLatency(raw: ?[]const u8) ParseFrameLatencyError!?f32 {
+    const slice = raw orelse return null;
+    if (slice.len == 0) return error.InvalidFrameLatency;
+    const v = std.fmt.parseFloat(f32, slice) catch return error.InvalidFrameLatency;
+    if (!std.math.isFinite(v) or v <= 0) return error.InvalidFrameLatency;
+    return v;
+}
+
+pub fn resolveFrameLatencyOrExit() ?f32 {
+    const raw = std.c.getenv("NANOSPOT_FRAME_LATENCY");
+    const slice: ?[]const u8 = if (raw) |p| std.mem.span(p) else null;
+    return parseFrameLatency(slice) catch {
+        std.debug.print("NANOSPOT_DISPLAY error invalid NANOSPOT_FRAME_LATENCY={s} (expected positive float)\n", .{slice orelse ""});
+        std.process.exit(1);
+    };
+}
+
+pub fn addLagNs(base_ns: u64, lag_sec: f64) u64 {
+    if (!std.math.isFinite(lag_sec) or lag_sec <= 0) return base_ns;
+    const lag_ns: u64 = @intFromFloat(@round(lag_sec * 1e9));
+    return base_ns +| lag_ns;
+}
+
+pub fn isMissedFrame(presented_time: f64, target_time: f64, refresh_hz: f32) bool {
+    if (presented_time <= 0 or target_time <= 0) return false;
+    const hz: f64 = @max(60.0, @as(f64, refresh_hz));
+    return presented_time > target_time + (0.5 / hz);
+}
+
+pub fn configureDisplayLink(st: *State, surface: *nanoui.Surface, override: ?f32) void {
+    st.refresh_hz = surface.max_fps;
+    const link = surface.display_link orelse return;
+    st.default_frame_latency = objc.msg(f32, link, "preferredFrameLatency", .{});
+    if (override) |v| objc.msg(void, link, "setPreferredFrameLatency:", .{v});
+    st.preferred_frame_latency = objc.msg(f32, link, "preferredFrameLatency", .{});
 }
 
 /// How long the panel stays hidden before the next summon
@@ -127,6 +168,15 @@ pub const LaunchTimings = struct {
 
 const queries = [_][]const u8{ "a", "s", "c", "m", "t", "p", "n", "f", "d", "r" };
 
+const PendingDisplay = struct {
+    metric: FrameMetric,
+    total_ns: u64,
+    now_media: f64,
+    target_media: f64,
+    refresh_hz: f32,
+    drawable: objc.Object,
+};
+
 pub const State = struct {
     rounds: usize = default_rounds,
     step: u32 = 0,
@@ -142,6 +192,17 @@ pub const State = struct {
     frame_publish: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     frame_build: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
     frame_present: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_handed: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_at_target_counts: [std.enums.values(FrameMetric).len]usize = @splat(0),
+    frame_at_target: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_at_display_counts: [std.enums.values(FrameMetric).len]usize = @splat(0),
+    frame_at_display: [std.enums.values(FrameMetric).len][max_rounds]u64 = undefined,
+    frame_missed: [std.enums.values(FrameMetric).len]u32 = @splat(0),
+    frame_display_runs: [std.enums.values(FrameMetric).len]usize = @splat(0),
+    default_frame_latency: f32 = 0,
+    preferred_frame_latency: f32 = 0,
+    refresh_hz: f32 = 60,
+    pending_display: ?PendingDisplay = null,
     action_counts: [std.enums.values(ActionMetric).len]usize = @splat(0),
     action_total: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
     action_publish: [std.enums.values(ActionMetric).len][max_rounds]u64 = undefined,
@@ -167,10 +228,30 @@ pub const State = struct {
         const k = st.frame_counts[i];
         if (k >= st.rounds) return;
         st.frame_total[i][k] = d.total_ns;
+        st.frame_handed[i][k] = d.total_ns;
         st.frame_publish[i][k] = d.publish_ns;
         st.frame_build[i][k] = d.build_ns;
         st.frame_present[i][k] = d.present_ns;
         st.frame_counts[i] = k + 1;
+    }
+
+    fn recordAtTarget(st: *State, m: FrameMetric, total_ns: u64, now_media: f64, target_media: f64) void {
+        const i = @backingInt(m);
+        const k = st.frame_at_target_counts[i];
+        if (k >= st.rounds) return;
+        st.frame_at_target[i][k] = addLagNs(total_ns, target_media - now_media);
+        st.frame_at_target_counts[i] = k + 1;
+    }
+
+    fn recordDisplay(st: *State, m: FrameMetric, total_ns: u64, now_media: f64, target_media: f64, presented_time: f64, refresh_hz: f32) void {
+        const i = @backingInt(m);
+        if (presented_time <= 0) return;
+        const k = st.frame_at_display_counts[i];
+        if (k >= st.rounds) return;
+        st.frame_display_runs[i] += 1;
+        if (isMissedFrame(presented_time, target_media, refresh_hz)) st.frame_missed[i] += 1;
+        st.frame_at_display[i][k] = addLagNs(total_ns, presented_time - now_media);
+        st.frame_at_display_counts[i] = k + 1;
     }
 
     fn recordAction(st: *State, m: ActionMetric, d: stage_clock.ActionDeltas) void {
@@ -209,8 +290,9 @@ pub fn Runner(comptime Shell: type) type {
         }
 
         /// Call after every frame; a frame that presents ends the interval a step began.
-        pub fn frame(s: *Shell, presenting: bool, decodes: u32) void {
+        pub fn frame(s: *Shell, surface: *nanoui.Surface, presenting: bool, decodes: u32) void {
             const st = &s.latency;
+            st.refresh_hz = surface.max_fps;
             if (presenting) if (st.files_key_ns) |t0| for (s.shell.panel.base_rows) |r| {
                 if (r.kind != .file and r.kind != .folder) continue;
                 st.recordScalar(.keystroke_files_shown, nowNs() -| t0);
@@ -226,11 +308,53 @@ pub fn Runner(comptime Shell: type) type {
                 if (fm == .summon) st.recordScalar(.summon_built, now -| st.frame_sample.input_ns);
             }
             if (!presenting) return;
+            const now_media = CACurrentMediaTime();
             st.frame_sample.presented_ns = now;
-            if (st.frame_sample.deltas()) |d| st.recordFrame(fm, d);
+            if (st.frame_sample.deltas()) |d| {
+                st.recordFrame(fm, d);
+                if (surface.renderer.given_drawable) |drawable| {
+                    settlePendingDisplay(s);
+                    st.pending_display = .{
+                        .metric = fm,
+                        .total_ns = d.total_ns,
+                        .now_media = now_media,
+                        .target_media = 0,
+                        .refresh_hz = surface.max_fps,
+                        .drawable = objc.retain(drawable),
+                    };
+                    objc.dispatchMain(s, captureTarget);
+                }
+            }
             st.waiting = null;
             st.generation +%= 1;
             nanoui.App.after(gap_ms, s, stepFn);
+        }
+
+        fn captureTarget(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *Shell = @ptrCast(@alignCast(ctx));
+            const st = &s.latency;
+            const pending = &(st.pending_display orelse return);
+            if (pending.target_media != 0) return;
+            const surface = s.panel_window.surface orelse return;
+            const target = if (surface.last_present_target > 0) surface.last_present_target else surface.last_frame_time;
+            pending.target_media = target;
+            st.recordAtTarget(pending.metric, pending.total_ns, pending.now_media, target);
+        }
+
+        fn settlePendingDisplay(s: *Shell) void {
+            const st = &s.latency;
+            const pending = st.pending_display orelse return;
+            st.pending_display = null;
+            defer objc.release(pending.drawable);
+            var target = pending.target_media;
+            if (target == 0) {
+                if (s.panel_window.surface) |surface| {
+                    target = if (surface.last_present_target > 0) surface.last_present_target else surface.last_frame_time;
+                }
+                st.recordAtTarget(pending.metric, pending.total_ns, pending.now_media, target);
+            }
+            const presented_time = objc.msg(f64, pending.drawable, "presentedTime", .{});
+            st.recordDisplay(pending.metric, pending.total_ns, pending.now_media, target, presented_time, pending.refresh_hz);
         }
 
         pub fn switchResized(s: *Shell) void {
@@ -339,6 +463,7 @@ pub fn Runner(comptime Shell: type) type {
 
         fn stepFn(ctx: ?*anyopaque) callconv(.c) void {
             const s: *Shell = @ptrCast(@alignCast(ctx));
+            settlePendingDisplay(s);
             const st = &s.latency;
             const steps_per_round = 7;
             const round = st.step / steps_per_round;
@@ -408,7 +533,23 @@ pub fn Runner(comptime Shell: type) type {
         }
 
         fn finish(s: *Shell) void {
+            settlePendingDisplay(s);
             const st = &s.latency;
+            std.debug.print(
+                "NANOSPOT_DISPLAY link preferred_frame_latency={d:.2} default_frame_latency={d:.2} refresh_hz={d:.0}\n",
+                .{ st.preferred_frame_latency, st.default_frame_latency, st.refresh_hz },
+            );
+            for (std.enums.values(FrameMetric)) |m| {
+                const i = @backingInt(m);
+                printDisplay(
+                    @tagName(m),
+                    st.frame_handed[i][0..st.frame_counts[i]],
+                    st.frame_at_target[i][0..st.frame_at_target_counts[i]],
+                    st.frame_at_display[i][0..st.frame_at_display_counts[i]],
+                    st.frame_missed[i],
+                    st.frame_display_runs[i],
+                );
+            }
             printScalar(st.rounds, "summon_placed", st.scalar_samples[@backingInt(ScalarMetric.summon_placed)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_placed)]]);
             printScalar(st.rounds, "summon_built", st.scalar_samples[@backingInt(ScalarMetric.summon_built)][0..st.scalar_counts[@backingInt(ScalarMetric.summon_built)]]);
             printScalar(st.rounds, "keystroke_files_shown", st.scalar_samples[@backingInt(ScalarMetric.keystroke_files_shown)][0..st.scalar_counts[@backingInt(ScalarMetric.keystroke_files_shown)]]);
@@ -540,6 +681,34 @@ pub fn Runner(comptime Shell: type) type {
             );
         }
 
+        fn printDisplay(
+            name: []const u8,
+            handed: []u64,
+            at_target: []u64,
+            at_display: []u64,
+            missed: u32,
+            display_runs: usize,
+        ) void {
+            const hnd = stage_clock.summarize(handed);
+            const tgt = stage_clock.summarize(at_target);
+            const dsp = stage_clock.summarize(at_display);
+            std.debug.print(
+                "NANOSPOT_DISPLAY metric={s} runs={d} handed_p50_us={d:.0} handed_p99_us={d:.0} at_target_p50_us={d:.0} at_target_p99_us={d:.0} at_display_p50_us={d:.0} at_display_p99_us={d:.0} missed={d}/{d}\n",
+                .{
+                    name,
+                    hnd.runs,
+                    us(hnd.p50_ns),
+                    us(hnd.p99_ns),
+                    us(tgt.p50_ns),
+                    us(tgt.p99_ns),
+                    us(dsp.p50_ns),
+                    us(dsp.p99_ns),
+                    missed,
+                    display_runs,
+                },
+            );
+        }
+
         fn printResize(rounds: usize, resize_samples: []u64, delay_samples: []u64, waited_count: u32) void {
             const res_s = stage_clock.summarize(resize_samples);
             const del_s = stage_clock.summarize(delay_samples);
@@ -595,4 +764,30 @@ test "ActionMetric exposes 8.3 ms p99 budgets and State records open and reveal 
     try t.expectEqual(@as(u64, 40), st.action_handoff[ret_i][0]);
     try t.expectEqual(@as(u64, 140), st.action_handoff[rev_i][0]);
     try t.expectEqual(@as(usize, 4), st.scalar_counts[@backingInt(ScalarMetric.hide)]);
+}
+
+test "parseFrameLatency accepts positive floats and rejects invalid values" {
+    const t = std.testing;
+    try t.expectEqual(@as(?f32, null), try parseFrameLatency(null));
+    try t.expectEqual(@as(?f32, 1.0), try parseFrameLatency("1.0"));
+    try t.expectEqual(@as(?f32, 1.5), try parseFrameLatency("1.5"));
+    try t.expectEqual(@as(?f32, 2.0), try parseFrameLatency("2"));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency(""));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency("0"));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency("-1.0"));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency("nan"));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency("inf"));
+    try t.expectError(error.InvalidFrameLatency, parseFrameLatency("abc"));
+}
+
+test "addLagNs and isMissedFrame compute at-target, at-display, and half-refresh threshold" {
+    const t = std.testing;
+    try t.expectEqual(@as(u64, 5_000_000), addLagNs(5_000_000, -0.002));
+    try t.expectEqual(@as(u64, 5_000_000), addLagNs(5_000_000, 0));
+    try t.expectEqual(@as(u64, 25_000_000), addLagNs(5_000_000, 0.020));
+
+    try t.expect(!isMissedFrame(100.000, 100.000, 120.0));
+    try t.expect(!isMissedFrame(100.004, 100.000, 120.0));
+    try t.expect(isMissedFrame(100.005, 100.000, 120.0));
+    try t.expect(!isMissedFrame(0.0, 100.000, 120.0));
 }
