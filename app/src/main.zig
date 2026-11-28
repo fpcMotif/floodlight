@@ -127,7 +127,7 @@ const AppShell = struct {
         mac.keepLinkAtDisplayRate(&surface.ctx);
         const presenting = surface.renderer.given_drawable != null;
         const decodes: u32 = max_frame_decodes -| surface.text.images.decodes_left;
-        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, presenting, decodes);
+        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, surface, presenting, decodes);
         const out = s.shell.framePresented(presenting);
         if (out.retry_frame) surface.ctx.changed = true;
         if (out.reveal) mac.setAlpha(s.panel_window, 1);
@@ -445,6 +445,7 @@ pub fn main(init: std.process.Init) !void {
     const memory_seed = memory_probe.hasFlag(args, memory_probe.seed_flag);
     const latency_session = memory_probe.hasFlag(args, latency_probe.session_flag);
     const latency_rounds = if (latency_session) latency_probe.resolveRoundsOrExit() else latency_probe.default_rounds;
+    const frame_latency_override = if (latency_session) latency_probe.resolveFrameLatencyOrExit() else null;
 
     var shell: AppShell = .{ .app = app, .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
     shell.latency.rounds = latency_rounds;
@@ -529,6 +530,7 @@ pub fn main(init: std.process.Init) !void {
         surface.after_frame = AppShell.afterFrame;
         surface.after_frame_ctx = &shell;
         shell.shell.display_scale = @max(1, surface.scale);
+        if (latency_session) latency_probe.configureDisplayLink(&shell.latency, surface, frame_latency_override);
     }
     const panel_window_ns = latency_probe.nowNs() -| t_panel0;
 
