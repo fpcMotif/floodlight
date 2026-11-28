@@ -11,7 +11,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 . "$SCRIPT_DIR/tools.sh"
 
-zig=$(resolve_tool zig "$FLOODLIGHT_ZIG_VERSION" version)
+zig=$(resolve_tool zig "$NANOSPOT_ZIG_VERSION" version)
 cd "$PROJECT_DIR/core"
 
 "$zig" fmt --check build.zig src
@@ -24,8 +24,8 @@ esac
 "$zig" build --release -Dtarget="$other" --prefix "$PROJECT_DIR/.build/core-$other"
 "$zig" build --release --prefix "$PROJECT_DIR/.build/core"
 
-flcore="$PROJECT_DIR/.build/core/bin/flcore"
+nscore="$PROJECT_DIR/.build/core/bin/nscore"
 index="$PROJECT_DIR/.build/core/smoke.flix"
-"$flcore" index "$PROJECT_DIR" "$index"
-"$flcore" search "$index" Package swift
-"$flcore" bench "$index"
+"$nscore" index "$PROJECT_DIR" "$index"
+"$nscore" search "$index" build zig
+"$nscore" bench "$index"

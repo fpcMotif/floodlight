@@ -1,11 +1,11 @@
-//! Memory probe CLI flags (`--floodlight-memory-session` and `--floodlight-memory-seed`).
+//! Memory probe CLI flags (`--nanospot-memory-session` and `--nanospot-memory-seed`).
 const std = @import("std");
 const nanoui = @import("nanoui");
 const clipboard = @import("clipboard.zig");
 const mac = @import("mac.zig");
 
-pub const session_flag = "--floodlight-memory-session";
-pub const seed_flag = "--floodlight-memory-seed";
+pub const session_flag = "--nanospot-memory-session";
+pub const seed_flag = "--nanospot-memory-seed";
 
 const cycles = 3;
 const step_ms = 400;
@@ -19,12 +19,14 @@ pub fn hasFlag(args: []const [:0]const u8, flag: []const u8) bool {
 }
 
 fn markMemory(phase: []const u8, cycle: u32) void {
-    std.debug.print("FLOODLIGHT_MEMORY phase={s} cycle={d}\n", .{ phase, cycle });
+    std.debug.print("NANOSPOT_MEMORY phase={s} cycle={d}\n", .{ phase, cycle });
 }
 
 pub fn Runner(comptime Shell: type) type {
     return struct {
         pub fn launched(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *Shell = @ptrCast(@alignCast(ctx));
+            std.debug.print("NANOSPOT_CATALOG apps={d} file_entries={d}\n", .{ s.catalog.apps.items.len, s.catalog.fileEntryCount() });
             markMemory("launched", 0);
             nanoui.App.after(settle_ms, ctx, stepFn);
         }
@@ -35,23 +37,23 @@ pub fn Runner(comptime Shell: type) type {
             const step = s.memory_step % steps;
             s.memory_step += 1;
             switch (step) {
-                0 => s.presence.search(false, s.panel.mode == .clipboard),
+                0 => s.apply(s.shell.hotKey(.search, false)),
                 1 => {
-                    s.panel.field.set("cal");
-                    s.panel.refresh();
+                    s.shell.panel.field.set("cal");
+                    s.shell.panel.refresh();
                 },
-                2 => s.presence.board(false, s.panel.mode == .clipboard),
+                2 => s.apply(s.shell.hotKey(.clipboard, false)),
                 3 => {
-                    s.panel.field.set("meeting");
-                    s.panel.refresh();
+                    s.shell.panel.field.set("meeting");
+                    s.shell.panel.refresh();
                 },
-                4 => for (0..board_moves) |_| s.panel.board.list.move(true),
+                4 => for (0..board_moves) |_| s.shell.panel.board.list.move(true),
                 5 => {
                     markMemory("open", cycle);
                     return nanoui.App.after(settle_ms, s, stepFn);
                 },
                 else => {
-                    s.presence.settle(.hide);
+                    s.apply(s.shell.settle(.hide));
                     return nanoui.App.after(settle_ms, s, idle);
                 },
             }
@@ -62,6 +64,7 @@ pub fn Runner(comptime Shell: type) type {
         fn idle(ctx: ?*anyopaque) callconv(.c) void {
             const s: *Shell = @ptrCast(@alignCast(ctx));
             const cycle = s.memory_step / steps;
+            std.debug.print("NANOSPOT_MEMORY_THUMBS cycle={d} kept={d} bytes={d}\n", .{ cycle, s.shell.icons.keptCount(), s.shell.icons.keptBytes() });
             markMemory("idle", cycle);
             if (cycle < cycles) nanoui.App.after(settle_ms, s, stepFn);
         }
@@ -74,7 +77,7 @@ pub fn seedMemoryHistory(gpa: std.mem.Allocator, store: clipboard.Store) void {
         "https://developer.apple.com/documentation/metal/mtldevice",
         "const index = try FileIndex.open(gpa, path, home, .{});",
         "#3478f6",
-        "/Users/shared/Projects/floodlight/README.md",
+        "/Users/shared/Projects/nanospot/README.md",
     };
     const pictures = [_][]const u8{ "/System/Applications/Calendar.app", "/System/Applications/Notes.app", "/System/Applications/Maps.app", "/System/Applications/Photos.app" };
     const now = clipboard.wallClock();

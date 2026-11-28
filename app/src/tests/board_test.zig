@@ -46,30 +46,14 @@ fn addPicture(store: *clipboard.Store, png: []const u8, at: f64) !void {
     _ = try store.add(.{ .image = .{ .name = "", .png = png, .thumbnail = "", .width = 3840, .height = 2160 } }, "com.apple.Preview", "Preview", at);
 }
 
-fn fillAlphaBehind(tester: *ui.Tester, label: []const u8) ?f32 {
-    const nodes = tester.ctx.nodes.items;
-    for (nodes) |n| switch (n.content) {
-        .text => |tx| if (std.mem.eql(u8, tx.str, label)) {
-            var at = n.parent;
-            while (at < nodes.len) : (at = nodes[at].parent) {
-                if (nodes[at].style.background) |fill| return fill.a;
-            }
-        },
-        else => {},
-    };
-    return null;
-}
-
-fn pointAt(tester: *ui.Tester, label: []const u8) !void {
-    const at = tester.findText(label) orelse return error.TextNotDrawn;
-    tester.moveTo(at.x + at.w / 2, at.y + at.h / 2);
-}
+const fillAlphaBehind = h.fillAlphaBehind;
+const pointAt = h.pointAt;
 
 test "the board lists history, inspects the selection, and filters" {
     var f: BoardFixture = undefined;
     try f.init();
     defer f.deinit();
-    _ = try f.store.add(.{ .file = "/tmp/floodlight-nano-test.pdf" }, "com.apple.finder", "Finder", 500);
+    _ = try f.store.add(.{ .file = "/tmp/nanospot-test.pdf" }, "com.apple.finder", "Finder", 500);
     _ = try f.store.add(.{ .text = "hello there world" }, "com.apple.Notes", "Notes", 1000);
     _ = try f.store.add(.{ .text = "https://www.example.com/page" }, "com.apple.Safari", "Safari", 2000);
     f.hooks.clock.advance(2060);
@@ -112,7 +96,6 @@ test "the board lists history, inspects the selection, and filters" {
 
     try t.expect(tester.shortcut(.{ .key = 'o', .cmd = true }));
     try t.expectEqualStrings("https://www.example.com/page", p.pending.?.clipboard.open);
-    try t.expect(p.pending.?.clipboard.hides());
     p.pending = null;
 
     _ = tester.shortcut(.{ .key = ui.Shortcut.down });
@@ -155,9 +138,9 @@ test "⌫ on an empty board filter switches to search, and with text it edits th
     try t.expectEqualStrings("", p.field.text());
     try t.expect(p.pending == null);
 
-    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .alt = true }));
+    try t.expect(!tester.shortcut(.{ .key = chrome.backspace, .alt = true }));
     tester.textOps(&.{.{ .command = .delete_word_backward }});
-    try t.expect(!tester.shortcut(.{ .key = board_mod.backspace, .cmd = true }));
+    try t.expect(!tester.shortcut(.{ .key = chrome.backspace, .cmd = true }));
     tester.textOps(&.{.{ .command = .delete_to_line_start }});
     try t.expect(p.pending == null);
     // Unfocused, AppKit hands ⌥⌫ and ⌘⌫ over as the bare key, modifiers held.
@@ -418,7 +401,7 @@ test "the inspector types a file by the extensions the board's tiles use" {
     const a = arena.allocator();
     try t.expectEqualStrings("Image", clipboard.fileType(a, "/x.bmp", false));
     try t.expectEqualStrings("Video", clipboard.fileType(a, "/x.wmv", false));
-    // `.ts` is TypeScript to the Swift inspector, not a video stream.
+    // `.ts` classifies as TypeScript, not a video stream.
     try t.expectEqualStrings("Source Code", clipboard.fileType(a, "/x.ts", false));
     try t.expectEqualStrings("ZZZ", clipboard.fileType(a, "/x.zzz", false));
 }
@@ -640,4 +623,61 @@ test "a shorter query asks the store again" {
     const expected = try f.store.list(arena.allocator(), "he");
     try t.expectEqual(expected.len, f.p.board.list.rows.len);
     for (expected, f.p.board.list.rows) |a, b| try t.expectEqual(a.id, b.id);
+}
+
+test "a board frame with undecoded thumbnails runs no decode and still lists every entry" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    _ = try f.store.add(.{ .text = "first text note" }, "com.apple.Notes", "Notes", 100);
+    _ = try f.store.add(.{ .image = .{ .name = "Alpha Shot", .png = &h.valid_png, .thumbnail = &h.valid_png, .width = 120, .height = 80 } }, "com.apple.Preview", "Preview", 200);
+    _ = try f.store.add(.{ .text = "second text note" }, "com.apple.Safari", "Safari", 300);
+    _ = try f.store.add(.{ .image = .{ .name = "Beta Shot", .png = &h.valid_png, .thumbnail = &h.valid_png, .width = 200, .height = 200 } }, "com.apple.screencaptureui", "Screenshot", 400);
+    try f.show();
+
+    try t.expectEqual(@as(u32, 8), f.tester.ctx.text.images.decodes_left);
+    try t.expectEqual(@as(usize, 0), f.tester.ctx.text.images.decoded.count());
+    try t.expect(f.tester.hasText("4 entries"));
+    try t.expect(f.tester.hasText("Beta Shot"));
+    try t.expect(f.tester.hasText("second text note"));
+    try t.expect(f.tester.hasText("Alpha Shot"));
+    try t.expect(f.tester.hasText("first text note"));
+    var placeholders: usize = 0;
+    const nodes = f.tester.ctx.nodes.items;
+    for (nodes) |n| switch (n.content) {
+        .icon => |ic| if (std.mem.eql(u8, ic.name, "photo") and n.parent < nodes.len) {
+            const tile = nodes[n.parent];
+            if (@abs(tile.rect.w - chrome.metrics.icon_size) < 0.5 and @abs(tile.rect.h - chrome.metrics.icon_size) < 0.5) {
+                placeholders += 1;
+            }
+        },
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 2), placeholders);
+}
+
+test "holding cmd or copying keeps partial first page while switching filter loads all rows" {
+    var f: BoardFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.seed(board_mod.board_metrics.first_page_rows + 10);
+    _ = f.p.board.warmFirstPage();
+    try f.show();
+
+    try t.expect(f.p.board.hasPartialRows());
+    const partial_len = f.p.board.list.rows.len;
+
+    f.tester.setMods(.{ .cmd = true });
+    f.tester.frame();
+    try t.expect(f.p.board.hasPartialRows());
+    try t.expectEqual(partial_len, f.p.board.list.rows.len);
+
+    _ = f.tester.shortcut(.{ .key = 'c', .cmd = true });
+    try t.expect(f.p.board.hasPartialRows());
+    try t.expectEqual(partial_len, f.p.board.list.rows.len);
+
+    f.tester.setMods(.{});
+    _ = f.tester.shortcut(.{ .key = '2', .cmd = true });
+    try t.expect(!f.p.board.hasPartialRows());
+    try t.expectEqual(board_mod.board_metrics.first_page_rows + 10, f.p.board.list.rows.len);
 }

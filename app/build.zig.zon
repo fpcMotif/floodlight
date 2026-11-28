@@ -1,12 +1,12 @@
 .{
-    .name = .floodlight_nanoui,
+    .name = .nanospot,
     .version = "0.1.0",
-    .fingerprint = 0xc6d6999d4b5ffed7,
+    .fingerprint = 0x3c6801682af08c24,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .nanoui = .{
-            .url = "https://github.com/justrach/nanoui/archive/refs/tags/v0.9.2.tar.gz",
-            .hash = "nanoui-0.9.2-we0KMYdXIQD03skiJj43xJJz1xeSHpIotMktAGhDbT9v",
+            .url = "https://github.com/fpcMotif/nanoui/archive/f12290cf4a1f71d08bcb08c4c34e931c4615bc6c.tar.gz",
+            .hash = "nanoui-0.9.2-we0KMd2CIQBL6fXovJJXJzDhS99bME9LiMVCuJbw6s3-",
         },
     },
     .paths = .{

@@ -1,7 +1,7 @@
 .{
-    .name = .floodlight_core,
+    .name = .nanospot_core,
     .version = "0.1.0",
-    .fingerprint = 0xbb22a0e508312860,
+    .fingerprint = 0x12614ddaa8b3c77d,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{

@@ -1,12 +1,15 @@
 ---
 title: Filters
-description: See when each result family is ready and narrow the list instantly.
+description: Narrow search results and Clipboard History by kind with chips or keyboard shortcuts.
 ---
 
-The filter row sits directly above results so slower file matches cannot arrive
-silently below the fold.
+The filter bar sits directly between the search field and the result list. Filter
+chips let you switch result families with one shortcut without losing your
+query.
 
-## Always-visible filters
+## Search filters
+
+### Always visible
 
 | Filter | Contents | Shortcut |
 | --- | --- | --- |
@@ -15,33 +18,31 @@ silently below the fold.
 | **Files** | Regular files | <kbd>⌘ 3</kbd> |
 | **Folders** | Directories | <kbd>⌘ 4</kbd> |
 
-Each chip shows either a compact count or a spinner while that source is still
-loading.
+While the background File Index scan is running, non-app filter chips display a
+loading spinner instead of a count.
 
-## Dynamic filters
+### Dynamic filters
 
-A filter appears only when the current results make it useful:
+When the current result list contains matching items, Nanospot appends these
+chips after **Folders**:
 
-- **Settings**
 - **PDFs**
 - **Images**
 - **Documents**
 
-This keeps the control row short for simple app searches while making richer
-file searches easier to inspect. Dynamic filters appear after the four stable
-filters in the order above. <kbd>⌘ 5</kbd> selects the first visible dynamic
-filter; any others remain available by clicking their chips.
+<kbd>⌘ 5</kbd> selects the first visible dynamic filter. Click any chip directly
+to select it, or scroll horizontally when many chips appear.
 
-## Clipboard mode
+## Clipboard History filters
 
-Clipboard history replaces the local chips with **All**, **Text**, **Files**,
-and **Images**. <kbd>⌘ 1</kbd>–<kbd>⌘ 4</kbd> still map to those four slots.
-A query typed while a type chip is selected matches only that type.
+Clipboard History (<kbd>⌥ ⇧ C</kbd>) shows four chips: **All**, **Text**,
+**Files**, and **Images**, bound to <kbd>⌘ 1</kbd>–<kbd>⌘ 4</kbd>. Typing filters
+only within the selected chip.
 
 ## Pointer and keyboard behavior
 
-- Hovering a result gives immediate visual feedback without changing the
-  keyboard selection.
-- Single-clicking selects a result; double-clicking opens it.
-- Clicking a filter keeps the insertion point in the search field.
-- Arrow-key selection never animates the result stack or changes panel position.
+- Hovering a row highlights it without moving the keyboard selection.
+- Single-clicking a row selects it; double-clicking runs its primary action.
+- Clicking a filter chip keeps keyboard focus in the search field.
+- Pressing <kbd>Escape</kbd> or switching surfaces keeps your session for five
+  minutes by default.

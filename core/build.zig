@@ -12,21 +12,20 @@ pub fn build(b: *std.Build) void {
         .link_libc = target.result.os.tag == .macos,
     });
 
-    // The C ABI as one static archive plus the header, for a Swift adapter
-    // that does not link it yet.
+    // The C ABI as one static archive plus the header, for embedders outside Zig.
     const lib = b.addLibrary(.{
-        .name = "floodlight_core",
+        .name = "nanospot_core",
         .linkage = .static,
         .root_module = core,
     });
     b.installArtifact(lib);
     b.getInstallStep().dependOn(&b.addInstallHeaderFile(
-        b.path("include/floodlight_core.h"),
-        "floodlight_core.h",
+        b.path("include/nanospot_core.h"),
+        "nanospot_core.h",
     ).step);
 
     const exe = b.addExecutable(.{
-        .name = "flcore",
+        .name = "nscore",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

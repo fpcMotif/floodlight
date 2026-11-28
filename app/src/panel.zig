@@ -3,18 +3,19 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
-const core = @import("floodlight_core");
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const board_mod = @import("board.zig");
 const chrome = @import("chrome.zig");
+const icons = @import("icons.zig");
 const list = @import("list.zig");
 const mac = @import("mac.zig");
+const stage_clock = @import("stage_clock.zig");
+const panel_completion = @import("panel/completion.zig");
 const panel_suggestions = @import("panel/suggestions.zig");
 const panel_view = @import("panel/view.zig");
 
 const metrics = chrome.metrics;
-const space = chrome.space;
 
 pub const summon_label = panel_view.summon_label;
 
@@ -55,15 +56,14 @@ pub const Filter = enum {
     }
 
     pub fn includes(f: Filter, r: search.Row) bool {
-        const ext = r.extension();
         return switch (f) {
             .all => true,
             .apps => r.kind == .app,
             .files => r.kind == .file,
             .folders => r.kind == .folder,
-            .pdfs => r.kind == .file and std.ascii.eqlIgnoreCase(ext, "pdf"),
-            .images => r.kind == .file and clipboard.inSet(ext, &clipboard.image_extensions),
-            .documents => r.kind == .file and clipboard.inSet(ext, &document_extensions),
+            .pdfs => r.kind == .file and std.ascii.eqlIgnoreCase(r.extension(), "pdf"),
+            .images => r.kind == .file and clipboard.inSet(r.extension(), &clipboard.image_extensions),
+            .documents => r.kind == .file and clipboard.inSet(r.extension(), &document_extensions),
         };
     }
 };
@@ -89,12 +89,8 @@ pub const Mode = enum { search, clipboard };
 
 pub const Clock = clipboard.Clock;
 
-pub const CompletionSource = enum { history, top_hit, web_suggestion };
-
-pub const Completion = struct {
-    suffix: []const u8,
-    source: CompletionSource,
-};
+pub const CompletionSource = panel_completion.Source;
+pub const Completion = panel_completion.Completion;
 
 /// What the panel asks of the window, handled after the frame.
 pub const Hooks = struct {
@@ -103,20 +99,18 @@ pub const Hooks = struct {
     /// An action, or a new height to fit the rows.
     request: *const fn (?*anyopaque) void,
     /// An app's icon as PNG, cached by the shell; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?[]const u8,
+    app_icon: *const fn (?*anyopaque, []const u8, icons.Kind) ?icons.Image,
+    lookup_image: *const fn (?*anyopaque, []const u8) ?icons.Image = board_mod.noLookupImage,
+    decode_image: *const fn (?*anyopaque, []const u8, []const u8, u32, u32, bool) ?icons.Image = board_mod.noDecodeImage,
     describe_date: *const fn (?*anyopaque, i64, std.mem.Allocator) []const u8,
     /// "Today at 3:03 PM": the board inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     suggest: *const fn (?*anyopaque, u64, []const u8) void = noSuggest,
-    search_files: *const fn (?*anyopaque, u64, []const u8) void = noSearchFiles,
 };
 
 fn noSuggest(_: ?*anyopaque, _: u64, _: []const u8) void {}
 
-fn noSearchFiles(_: ?*anyopaque, _: u64, _: []const u8) void {}
-
-pub const min_suggest_bytes = 2;
-pub const suggestion_cache_ttl: f64 = panel_suggestions.ttl;
+pub const min_suggest_bytes = panel_suggestions.min_bytes;
 
 pub const default_retention_seconds: f64 = 5 * 60;
 
@@ -174,39 +168,24 @@ pub const Panel = struct {
     list: Results,
     /// The catalog's rows for the answered query, before web suggestions.
     base_rows: []const search.Row = &.{},
-    suggestions: []const []const u8 = &.{},
     /// The apps listed on an empty query, ready before the hot key lands;
     /// rebuilt only when a count or the app catalog changes.
     frequent_rows: []const search.Row = &.{},
     frequent_arena: std.heap.ArenaAllocator,
     frequent_dirty: bool = true,
     frequent_catalog_len: usize = 0,
-    suggest_seq: u64 = 0,
-    pending_suggest_seq: u64 = 0,
-    pending_suggest_query: std.ArrayList(u8) = .empty,
-    suggestion_cache: panel_suggestions.Cache = .{},
-    web_suggestions_enabled: bool = true,
-    indexing: bool = false,
-    file_seq: u64 = 0,
-    async_files: bool = false,
-    files_due: bool = false,
-    suppressed_by_backspace: bool = false,
-    caret_at_end: bool = true,
-    composing: bool = false,
-    completion: ?Completion = null,
-    completion_buf: [512]u8 = undefined,
-    history_query: std.ArrayList(u8) = .empty,
-    history_scope: clipboard.QueryScope = .search,
-    history_buf: [512]u8 = undefined,
-    history_len: ?usize = null,
-    history_valid: bool = false,
+    web: panel_suggestions.State = .{},
+    completer: panel_completion.Completer = .{},
+    pending_select_key: ?u64 = null,
     /// Its bytes live in `action_arena`, not the rows': the shell runs it on
     /// a later turn, after a capture or an index swap may have queried again.
     pending: ?Action = null,
     action_arena: std.heap.ArenaAllocator,
     /// The shell's expiry timer is pending; it keeps at most one.
     expiry_armed: bool = false,
+    keystroke_open: bool = false,
     presented_key: ?u64 = null,
+    board_presence_ns: u64 = 0,
     height: f32 = metrics.search_height,
     width: f32 = metrics.width,
 
@@ -215,6 +194,7 @@ pub const Panel = struct {
     }
 
     pub fn deinit(p: *Panel) void {
+        p.endKeystroke();
         const gpa = p.list.arena.child_allocator;
         p.frequent_arena.deinit();
         p.action_arena.deinit();
@@ -222,22 +202,20 @@ pub const Panel = struct {
         p.retained_board.deinit(gpa);
         p.board.deinit();
         p.field.deinit();
-        p.pending_suggest_query.deinit(gpa);
-        p.history_query.deinit(gpa);
-        p.suggestion_cache.deinit(gpa);
+        p.web.deinit(gpa);
+        p.completer.deinit(gpa);
         p.list.deinit();
     }
 
     fn forgetSearch(p: *Panel) void {
         p.retained_search.clear();
         p.list.reset();
-        p.files_due = false;
-        p.file_seq += 1;
+        p.catalog.cancel();
+        p.pending_select_key = null;
         p.base_rows = &.{};
-        p.suggestions = &.{};
-        p.cancelPendingSuggest();
-        p.invalidateHistoryCache();
-        p.resetCompletion();
+        p.web.clear();
+        p.completer.invalidateHistory();
+        p.completer.reset();
         if (p.mode == .search) {
             p.field.clear();
             p.height = p.panelHeight();
@@ -248,7 +226,7 @@ pub const Panel = struct {
     fn forgetBoard(p: *Panel) void {
         p.retained_board.clear();
         p.board.forget();
-        p.invalidateHistoryCache();
+        p.completer.invalidateHistory();
         if (p.mode == .clipboard) {
             p.field.clear();
             p.height = p.panelHeight();
@@ -259,6 +237,7 @@ pub const Panel = struct {
     /// Drops both surfaces' retained sessions: queries, rows, and the
     /// memory behind them.
     pub fn forget(p: *Panel) void {
+        p.endKeystroke();
         p.forgetSearch();
         p.forgetBoard();
         p.field.clear();
@@ -269,8 +248,27 @@ pub const Panel = struct {
         p.width = p.panelWidth();
     }
 
-    pub fn reset(p: *Panel) void {
-        p.forget();
+    pub fn releaseAction(p: *Panel) void {
+        p.pending = null;
+        _ = p.action_arena.reset(.free_all);
+    }
+
+    pub fn releaseIdle(p: *Panel, reset_action_arena: bool, release_caches: bool) void {
+        const gpa = p.list.arena.child_allocator;
+        p.retained_search.deinit(gpa);
+        p.retained_board.deinit(gpa);
+        p.board.paste_target = "";
+        p.completer.deinit(gpa);
+        p.completer = .{};
+        if (release_caches) {
+            p.web.deinit(gpa);
+            p.web = .{ .enabled = p.web.enabled, .seq = p.web.seq };
+            _ = p.frequent_arena.reset(.free_all);
+            p.frequent_rows = &.{};
+            p.frequent_dirty = true;
+        }
+        if (reset_action_arena) p.releaseAction();
+        p.field.deinit();
     }
 
     /// Clears the field and forgets the active surface's retained session.
@@ -329,7 +327,7 @@ pub const Panel = struct {
     /// neither surface remains retained.
     pub fn expire(p: *Panel) bool {
         p.expireAt(p.clock.now());
-        p.invalidateHistoryCache();
+        p.completer.invalidateHistory();
         return p.retained_search.hidden_at == null and p.retained_board.hidden_at == null;
     }
 
@@ -344,8 +342,13 @@ pub const Panel = struct {
             earliest = if (earliest) |e| @min(e, due) else due;
         }
         const due = earliest orelse return null;
-        const rem_s = @max(0.0, due - p.clock.now());
-        return @intFromFloat(@ceil(rem_s * 1000.0) + 1.0);
+        if (!std.math.isFinite(due)) return null;
+        const now = p.clock.now();
+        if (!std.math.isFinite(now)) return null;
+        const rem_s = @max(0.0, due - now);
+        const ms_f = @ceil(rem_s * 1000.0) + 1.0;
+        if (!std.math.isFinite(ms_f) or ms_f >= @as(f64, std.math.maxInt(u32))) return std.math.maxInt(u32);
+        return @intFromFloat(ms_f);
     }
 
     /// The delay for the shell's expiry timer; null when one is already
@@ -365,8 +368,9 @@ pub const Panel = struct {
     /// Records the active surface's state for the retention window, or
     /// forgets at once when retention is off or the field was cleared.
     pub fn hide(p: *Panel) void {
+        p.endKeystroke();
         p.pending = null;
-        p.invalidateHistoryCache();
+        p.completer.invalidateHistory();
         const now = p.clock.now();
         p.expireAt(now);
         // Rebuilt while hidden, so the next summon only copies it.
@@ -392,13 +396,21 @@ pub const Panel = struct {
             p.retained_search.hidden_at = null;
             p.list.filter = p.retained_search.filter;
             p.restoreField(p.retained_search.query.items);
-            p.caret_at_end = p.field.text().len == 0;
+            p.completer.setCaretAtEnd(p.field.text().len == 0);
             p.refresh();
+            p.pending_select_key = null;
             const path = p.retained_search.path.items;
-            if (path.len > 0) for (p.list.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, path)) {
-                p.list.selected = i;
-                break;
-            };
+            if (path.len > 0) {
+                var found = false;
+                for (p.list.visible, 0..) |r, i| if (std.mem.eql(u8, r.path, path)) {
+                    p.list.selected = i;
+                    found = true;
+                    break;
+                };
+                if (!found and p.catalog.hasPending()) {
+                    p.pending_select_key = std.hash.Wyhash.hash(0, path);
+                }
+            }
             p.list.reveal = true;
         } else {
             p.forgetSearch();
@@ -417,33 +429,35 @@ pub const Panel = struct {
         p.expireAt(now);
         p.hidden = false;
         p.mode = .clipboard;
-        p.cancelPendingSuggest();
-        p.suggestions = &.{};
-        p.resetCompletion();
+        p.web.clear();
+        p.completer.reset();
         const l = &p.board.list;
         if (p.retained_board.hidden_at) |hidden_at| {
             p.retained_board.hidden_at = null;
             l.filter = p.retained_board.filter;
             p.restoreField(p.retained_board.query.items);
-            l.markStale();
+            p.board.markStaleIfStoreChanged();
+            p.board_presence_ns = stage_clock.nowNs();
             p.board.refresh(p.field.text());
+            if (p.board.hasPartialRows() and p.board.newestEntryAt() > hidden_at and newestIndexSince(l.visible, hidden_at) == null) {
+                p.board.ensureFullRows();
+            }
             l.selected = 0;
-            var newest_at = hidden_at;
-            var newest: ?usize = null;
-            for (l.visible, 0..) |e, i| if (e.created_at > newest_at) {
-                newest_at = e.created_at;
-                newest = i;
-            };
-            if (newest) |i| {
+            if (newestIndexSince(l.visible, hidden_at)) |i| {
                 l.selected = i;
-            } else if (p.retained_board.selected_id) |id| for (l.visible, 0..) |e, i| if (e.id == id) {
-                l.selected = i;
-                break;
-            };
+            } else if (p.retained_board.selected_id) |id| {
+                if (findEntryIndex(l.visible, id)) |i| {
+                    l.selected = i;
+                } else if (p.board.hasPartialRows()) {
+                    p.board.ensureFullRows();
+                    if (findEntryIndex(l.visible, id)) |i| l.selected = i;
+                }
+            }
             l.reveal = true;
         } else {
             p.forgetBoard();
             p.field.focus();
+            p.board_presence_ns = stage_clock.nowNs();
             p.board.refresh("");
         }
         p.height = p.panelHeight();
@@ -456,10 +470,27 @@ pub const Panel = struct {
         p.field.want_caret = null;
         p.field.want_selection = .{ 0, p.field.text().len };
         p.field.focus();
-        p.resetCompletion();
+        p.completer.reset();
+    }
+
+    pub fn keystrokePending(p: *const Panel) bool {
+        return p.keystroke_open;
+    }
+
+    fn beginKeystroke(p: *Panel) void {
+        if (p.keystroke_open) return;
+        p.keystroke_open = true;
+        mac.signpostBegin(.keystroke);
+    }
+
+    fn endKeystroke(p: *Panel) void {
+        if (!p.keystroke_open) return;
+        p.keystroke_open = false;
+        mac.signpostEnd(.keystroke);
     }
 
     pub fn notePresented(p: *Panel) void {
+        p.endKeystroke();
         p.presented_key = p.frameKey();
     }
 
@@ -475,7 +506,8 @@ pub const Panel = struct {
     fn frameKey(p: *const Panel) u64 {
         var h: std.hash.Wyhash = .init(0);
         hashValue(&h, p.mode);
-        hashValue(&h, p.indexing);
+        hashValue(&h, p.catalog.indexing());
+        hashValue(&h, p.catalog.hasFileIndex());
         hashValue(&h, p.panelWidth());
         hashValue(&h, p.panelHeight());
         hashBytes(&h, p.field.text());
@@ -492,7 +524,10 @@ pub const Panel = struct {
                 const l = &p.board.list;
                 hashValue(&h, l.filter);
                 hashValue(&h, l.selected);
-                hashValue(&h, @as(i64, @intFromFloat(@floor(p.clock.now() / 60))));
+                hashValue(&h, p.board.totalCounts());
+                const now = p.clock.now();
+                const minute_f = if (std.math.isFinite(now)) std.math.clamp(@floor(now / 60), -1e15, 1e15) else 0;
+                hashValue(&h, @as(i64, @intFromFloat(minute_f)));
                 for (l.visible) |e| {
                     hashValue(&h, e.id);
                     hashValue(&h, e.pinned_at orelse std.math.inf(f64));
@@ -500,6 +535,21 @@ pub const Panel = struct {
             },
         }
         return h.final();
+    }
+
+    fn findEntryIndex(visible: []const clipboard.Entry, id: i64) ?usize {
+        for (visible, 0..) |e, i| if (e.id == id) return i;
+        return null;
+    }
+
+    fn newestIndexSince(visible: []const clipboard.Entry, since: f64) ?usize {
+        var newest_at = since;
+        var newest: ?usize = null;
+        for (visible, 0..) |e, i| if (e.created_at > newest_at) {
+            newest_at = e.created_at;
+            newest = i;
+        };
+        return newest;
     }
 
     pub fn panelHeight(p: *const Panel) f32 {
@@ -516,96 +566,123 @@ pub const Panel = struct {
         const text = p.field.text();
         if (p.mode == .clipboard) {
             if (!p.board.list.needsQuery(text)) return;
-            mac.signpostBegin(.keystroke);
-            defer mac.signpostEnd(.keystroke);
+            p.beginKeystroke();
             if (text.len == 0 and p.board.list.answered().len > 0) {
                 p.board.list.filter = .all;
                 p.retained_board.clear();
             }
-            if (text.len == 0 or text.len > p.board.list.answered().len) p.suppressed_by_backspace = false;
+            p.completer.onQueryChanged(text.len, p.board.list.answered().len);
             p.board.refresh(text);
-            p.completion = p.computeCompletion();
+            p.refreshCompletion();
             return;
         }
         if (!p.list.needsQuery(text)) return;
-        mac.signpostBegin(.keystroke);
-        defer mac.signpostEnd(.keystroke);
-        if (text.len == 0 or text.len > p.list.answered().len) p.suppressed_by_backspace = false;
+        p.beginKeystroke();
+        p.completer.onQueryChanged(text.len, p.list.answered().len);
         if (text.len == 0) {
             p.list.filter = .all;
             p.retained_search.clear();
         }
         const need_fetch = p.answer(text) catch |err| return p.failSearch(err);
         const l = &p.list;
-        if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
-        p.completion = p.computeCompletion();
+        if (!p.catalog.hasPending() and l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) l.selectFilter(.all);
+        p.refreshCompletion();
         if (need_fetch) {
-            p.suggest_seq += 1;
-            p.pending_suggest_seq = p.suggest_seq;
-            p.pending_suggest_query.clearRetainingCapacity();
-            p.pending_suggest_query.appendSlice(p.list.arena.child_allocator, text) catch {};
-            p.hooks.suggest(p.hooks.ctx, p.pending_suggest_seq, text);
+            const seq = p.web.beginFetch(p.list.arena.child_allocator, text);
+            p.hooks.suggest(p.hooks.ctx, seq, text);
         }
-        if (p.files_due) p.hooks.search_files(p.hooks.ctx, p.file_seq, text);
     }
 
-    pub fn landFiles(p: *Panel, seq: u64, file_view: core.index.View, hits: []const core.search.Hit) void {
-        if (!p.files_due or seq != p.file_seq) return;
-        p.files_due = false;
+    pub fn poll(p: *Panel) bool {
         const text = p.field.text();
-        if (p.mode != .search or !std.mem.eql(u8, text, p.list.answered())) return;
-        p.base_rows = p.catalog.queryWithHits(p.list.allocator(), text, file_view, hits) catch |err| return p.failSearch(err);
-        const composed = p.composeRows();
-        if (p.list.selected != 0) {
-            p.list.replaceRows(composed);
-        } else {
-            p.list.setRows(text, composed) catch |err| return p.failSearch(err);
+        const trimmed = std.mem.trim(u8, text, " ");
+        const session: search.Session = if (!p.hidden and p.mode == .search and trimmed.len > 0 and !p.list.needsQuery(text))
+            .{ .live = .{ .arena = p.list.allocator(), .query = text } }
+        else if ((!p.hidden and p.mode == .search and trimmed.len > 0) or p.retained_search.hidden_at != null)
+            .retained
+        else
+            .idle;
+
+        switch (p.catalog.poll(session)) {
+            .none => return false,
+            .redraw => return !p.hidden and p.mode == .search,
+            .stale => {
+                p.list.markStale();
+                if (p.hidden or p.mode != .search) return false;
+                p.refresh();
+                return true;
+            },
+            .merged => |rows| {
+                p.base_rows = rows;
+                const composed = p.composeRows();
+                const want_key = p.pending_select_key;
+                p.pending_select_key = null;
+                if (p.list.selected != 0) {
+                    p.list.replaceRows(composed);
+                } else {
+                    p.list.setRows(text, composed) catch |err| {
+                        p.failSearch(err);
+                        return !p.hidden and p.mode == .search;
+                    };
+                    if (want_key) |k| {
+                        for (p.list.visible, 0..) |r, i| if (rowKey(r) == k) {
+                            p.list.selected = i;
+                            p.list.reveal = true;
+                            break;
+                        };
+                    }
+                }
+                const l = &p.list;
+                if (l.filter != .all and l.count(l.filter) == 0 and std.mem.indexOfScalar(Filter, &Filter.dynamic, l.filter) != null) {
+                    l.selectFilter(.all);
+                }
+                p.refreshCompletion();
+                return true;
+            },
+            .failed => |err| {
+                p.failSearch(err);
+                return !p.hidden and p.mode == .search;
+            },
         }
-        p.completion = p.computeCompletion();
     }
 
     fn failSearch(p: *Panel, err: anyerror) void {
         std.log.err("search: {s}", .{@errorName(err)});
         p.base_rows = &.{};
-        p.suggestions = &.{};
-        p.cancelPendingSuggest();
-        p.completion = null;
+        p.web.clear();
+        p.pending_select_key = null;
+        p.completer.clearCurrent();
         p.list.fail();
     }
 
     /// True when web suggestions for `text` must be fetched.
     fn answer(p: *Panel, text: []const u8) !bool {
+        const same_stale = p.list.stale and std.mem.eql(u8, text, p.list.answered());
+        const prior_key: ?u64 = if (same_stale)
+            (p.pending_select_key orelse if (p.list.selection()) |r| rowKey(r) else null)
+        else
+            null;
         const a = p.list.beginQuery(text);
-        p.files_due = false;
-        p.file_seq += 1;
         if (text.len == 0) {
+            p.catalog.cancel();
             p.base_rows = try copyRows(a, p.frequentApps());
-        } else if (p.async_files and p.catalog.files != null) {
-            p.base_rows = try p.catalog.queryApps(a, text);
-            p.files_due = true;
         } else {
             p.base_rows = try p.catalog.query(a, text);
         }
-        p.suggestions = &.{};
-        var need_fetch = false;
-        if (p.shouldSuggest(text)) {
-            if (p.suggestion_cache.get(p.list.arena.child_allocator, text, p.clock.now())) |cached| {
-                p.cancelPendingSuggest();
-                p.suggestions = p.dupeSuggestions(cached);
-            } else need_fetch = true;
-        } else p.cancelPendingSuggest();
+        const need_fetch = p.web.lookupOrNeedFetch(p.list.arena.child_allocator, a, text, p.shouldSuggest(text), p.clock.now());
         try p.list.setRows(text, p.composeRows());
+        const current_key: ?u64 = if (p.list.selection()) |r| rowKey(r) else null;
+        p.pending_select_key = if (p.catalog.hasPending() and prior_key != null and current_key != prior_key) prior_key else null;
         return need_fetch;
     }
 
     pub fn setWebSuggestionsEnabled(p: *Panel, enabled: bool) void {
-        if (p.web_suggestions_enabled == enabled) return;
-        p.web_suggestions_enabled = enabled;
+        if (p.web.enabled == enabled) return;
+        p.web.enabled = enabled;
         if (!enabled) {
-            p.cancelPendingSuggest();
-            p.suggestions = &.{};
+            p.web.clear();
             p.list.replaceRows(p.composeRows());
-            p.completion = p.computeCompletion();
+            p.refreshCompletion();
             return;
         }
         if (p.mode == .search and p.field.text().len > 0) {
@@ -615,51 +692,29 @@ pub const Panel = struct {
     }
 
     fn shouldSuggest(p: *Panel, text: []const u8) bool {
-        if (!p.web_suggestions_enabled or p.mode != .search) return false;
+        if (!p.web.enabled or p.mode != .search) return false;
         const trimmed = std.mem.trim(u8, text, " \t\r\n");
         if (trimmed.len < min_suggest_bytes) return false;
-        if (isPathLike(text) or isPathLike(trimmed)) return false;
+        if (isPathLike(trimmed)) return false;
         return !hasLinkRow(p.base_rows);
     }
 
-    fn cancelPendingSuggest(p: *Panel) void {
-        p.pending_suggest_seq = 0;
-        p.pending_suggest_query.clearRetainingCapacity();
+    pub fn pendingSuggestSeq(p: *const Panel) u64 {
+        return p.web.pendingSeq();
     }
 
     pub fn receiveSuggestions(p: *Panel, query: []const u8, items: []const []const u8) void {
-        _ = p.receiveSuggestionsFor(p.pending_suggest_seq, query, items);
+        _ = p.receiveSuggestionsFor(p.web.pendingSeq(), query, items);
     }
 
     /// False for a late reply: an old query, a superseded request, or a
     /// panel that has left search.
     pub fn receiveSuggestionsFor(p: *Panel, seq: u64, query: []const u8, items: []const []const u8) bool {
-        if (!p.web_suggestions_enabled or p.mode != .search) return false;
-        if (p.pending_suggest_seq == 0 or seq != p.pending_suggest_seq) return false;
-        if (!std.mem.eql(u8, query, p.pending_suggest_query.items)) return false;
-        if (!std.mem.eql(u8, query, p.field.text())) return false;
-        p.cancelPendingSuggest();
-        p.suggestion_cache.put(p.list.arena.child_allocator, query, items, p.clock.now());
-        p.suggestions = p.dupeSuggestions(items);
+        if (p.mode != .search) return false;
+        if (!p.web.accept(p.list.arena.child_allocator, p.list.allocator(), seq, query, p.field.text(), items, p.clock.now())) return false;
         p.list.replaceRows(p.composeRows());
-        p.completion = p.computeCompletion();
+        p.refreshCompletion();
         return true;
-    }
-
-    /// Copies up to `search.max_suggestions` non-empty items into the rows' memory.
-    fn dupeSuggestions(p: *Panel, items: []const []const u8) []const []const u8 {
-        const a = p.list.allocator();
-        const kept = panel_suggestions.nonEmpty(items);
-        if (kept == 0) return &.{};
-        const out = a.alloc([]const u8, kept) catch return &.{};
-        var n: usize = 0;
-        for (items) |s| {
-            if (n == kept) break;
-            if (s.len == 0) continue;
-            out[n] = a.dupe(u8, s) catch return out[0..n];
-            n += 1;
-        }
-        return out[0..n];
     }
 
     /// The catalog's rows, a Google row per suggestion, then one row per
@@ -670,11 +725,11 @@ pub const Panel = struct {
         const query = std.mem.trim(u8, p.field.text(), " \t\r\n");
         const engines = p.mode == .search and query.len > 0 and !isPathLike(query) and !hasLinkRow(p.base_rows);
         const engine_count = if (engines) search.web_engines.len else 0;
-        if (p.suggestions.len == 0 and engine_count == 0) return p.base_rows;
+        if (p.web.items.len == 0 and engine_count == 0) return p.base_rows;
         const a = p.list.allocator();
-        const out = a.alloc(search.Row, p.base_rows.len + p.suggestions.len + engine_count) catch return p.base_rows;
+        const out = a.alloc(search.Row, p.base_rows.len + p.web.items.len + engine_count) catch return p.base_rows;
         @memcpy(out[0..p.base_rows.len], p.base_rows);
-        for (p.suggestions, p.base_rows.len..) |s, i| out[i] = .{
+        for (p.web.items, p.base_rows.len..) |s, i| out[i] = .{
             .kind = .web,
             .title = s,
             .subtitle = "google.com",
@@ -682,7 +737,7 @@ pub const Panel = struct {
             .score = 0,
             .suggestion = true,
         };
-        if (engines) for (search.web_engines, p.base_rows.len + p.suggestions.len..) |e, i| {
+        if (engines) for (search.web_engines, p.base_rows.len + p.web.items.len..) |e, i| {
             out[i] = .{
                 .kind = .web,
                 .title = e.title,
@@ -709,66 +764,59 @@ pub const Panel = struct {
     }
 
     pub fn selectFilter(p: *Panel, f: Filter) void {
+        p.pending_select_key = null;
         p.list.selectFilter(f);
-        p.completion = p.computeCompletion();
+        p.refreshCompletion();
         p.field.focus();
     }
 
-    fn invalidateHistoryCache(p: *Panel) void {
-        p.history_valid = false;
-        if (p.completion) |comp| if (comp.source == .history) {
-            p.completion = null;
-        };
+    pub fn currentCompletion(p: *const Panel) ?Completion {
+        return p.completer.current;
     }
 
-    fn historyCompletion(p: *Panel, scope: clipboard.QueryScope, query: []const u8) ?[]const u8 {
-        if (p.history_valid and p.history_scope == scope and std.mem.eql(u8, p.history_query.items, query)) {
-            return if (p.history_len) |n| p.history_buf[0..n] else null;
-        }
-        const store = p.store orelse return null;
-        const match = store.completeQuery(&p.history_buf, scope, query, p.clock.now());
-        const gpa = p.list.arena.child_allocator;
-        p.history_query.clearRetainingCapacity();
-        p.history_query.appendSlice(gpa, query) catch {
-            p.history_valid = false;
-            return match;
-        };
-        p.history_scope = scope;
-        p.history_len = if (match) |m| m.len else null;
-        p.history_valid = true;
-        return match;
+    pub fn completionSuffix(p: *const Panel) []const u8 {
+        return p.completer.suffix();
+    }
+
+    pub fn observeInput(p: *Panel, c: *const ui.Context) void {
+        p.completer.observeInput(c);
+    }
+
+    pub fn acceptCompletionHint(p: *Panel) void {
+        p.completer.onAccepted();
+    }
+
+    pub fn syncFieldState(p: *Panel, c: *ui.Context, caret: usize) void {
+        p.completer.syncFieldState(p.list.arena.child_allocator, c, &p.field, caret, p.completionInputs());
     }
 
     /// Query history first, then the top hit's title, then the first web suggestion.
     pub fn computeCompletion(p: *Panel) ?Completion {
-        if (p.suppressed_by_backspace or !p.caret_at_end or p.composing) return null;
-        const query = p.field.text();
-        if (query.len == 0) return null;
-        if (p.mode == .clipboard) {
-            const match = p.historyCompletion(.clipboard, query) orelse return null;
-            return .{ .suffix = match[query.len..], .source = .history };
-        }
-        if (hasLinkRow(p.list.rows)) return null;
-        if (p.historyCompletion(.search, query)) |match| {
-            return .{ .suffix = match[query.len..], .source = .history };
-        }
-        if (p.isTopHit(0)) {
-            const top = p.list.visible[0];
-            if (top.kind != .web and top.title.len > query.len and std.ascii.startsWithIgnoreCase(top.title, query)) {
-                return .{ .suffix = top.title[query.len..], .source = .top_hit };
-            }
-        }
-        if (p.web_suggestions_enabled and p.suggestions.len > 0) {
-            const first = p.suggestions[0];
-            if (first.len > query.len and std.ascii.startsWithIgnoreCase(first, query)) {
-                return .{ .suffix = first[query.len..], .source = .web_suggestion };
-            }
-        }
-        return null;
+        return p.completer.compute(p.list.arena.child_allocator, p.completionInputs());
+    }
+
+    fn refreshCompletion(p: *Panel) void {
+        p.completer.refresh(p.list.arena.child_allocator, p.completionInputs());
+    }
+
+    fn completionInputs(p: *const Panel) panel_completion.Inputs {
+        const top_hit_title: ?[]const u8 = if (p.isTopHit(0) and p.list.visible[0].kind != .web)
+            p.list.visible[0].title
+        else
+            null;
+        return .{
+            .store = p.store,
+            .now = p.clock.now(),
+            .is_clipboard = p.mode == .clipboard,
+            .query = p.field.text(),
+            .has_link_row = hasLinkRow(p.list.rows),
+            .top_hit_title = top_hit_title,
+            .web_suggestion = p.web.first(),
+        };
     }
 
     /// Up to `search.max_suggested_apps` most-opened apps still in the catalog.
-    fn frequentApps(p: *Panel) []const search.Row {
+    pub fn frequentApps(p: *Panel) []const search.Row {
         const store = p.store orelse return &.{};
         if (!p.frequent_dirty and p.frequent_catalog_len == p.catalog.apps.items.len) return p.frequent_rows;
         _ = p.frequent_arena.reset(.retain_capacity);
@@ -822,20 +870,13 @@ pub const Panel = struct {
 
     pub fn clearQueryHistory(p: *Panel) void {
         if (p.store) |store| store.clearQueries() catch |err| std.log.err("query history: {s}", .{@errorName(err)});
-        p.invalidateHistoryCache();
-        p.completion = p.computeCompletion();
-    }
-
-    fn resetCompletion(p: *Panel) void {
-        p.suppressed_by_backspace = false;
-        p.caret_at_end = true;
-        p.composing = false;
-        p.completion = null;
+        p.completer.invalidateHistory();
+        p.refreshCompletion();
     }
 
     fn acceptSlice(p: *Panel, part: []const u8) void {
         if (part.len == 0) return;
-        p.resetCompletion();
+        p.completer.reset();
         _ = p.field.insert(p.field.text().len, part);
         p.field.want_caret = p.field.text().len;
         p.refresh();
@@ -867,7 +908,7 @@ pub const Panel = struct {
             .hide, .show_search => return,
         };
         store.recordQuery(scope, p.field.text(), p.clock.now()) catch |err| std.log.err("query history: {s}", .{@errorName(err)});
-        p.invalidateHistoryCache();
+        p.completer.invalidateHistory();
     }
 
     /// A query that matched a password manager's copy is never remembered.
@@ -884,17 +925,11 @@ pub const Panel = struct {
     fn keys(p: *Panel, c: *ui.Context) void {
         const S = ui.Shortcut;
         if (c.shortcut(.{ .key = S.escape })) return p.ask(.hide);
-        if (c.shortcut(.{ .key = 0x7f, .cmd = true, .shift = true })) return p.clearQueryHistory();
-        if (c.shortcut(.{ .key = 0x7f, .cmd = true, .alt = true })) return p.clearAppOpens();
-        if (p.completion) |comp| {
-            if (c.shortcut(.{ .key = S.right }) or c.shortcut(.{ .key = S.tab }) or takeFieldKey(c, .right, false, .move_right) or takeFieldKey(c, .tab, false, .insert_tab)) {
-                p.acceptSlice(comp.suffix);
-                return;
-            }
-            if (c.shortcut(.{ .key = S.right, .alt = true }) or takeFieldKey(c, .right, true, .move_word_right)) {
-                p.acceptSlice(comp.suffix[0..nextWordEnd(comp.suffix)]);
-                return;
-            }
+        if (c.shortcut(.{ .key = chrome.backspace, .cmd = true, .shift = true })) return p.clearQueryHistory();
+        if (c.shortcut(.{ .key = chrome.backspace, .cmd = true, .alt = true })) return p.clearAppOpens();
+        if (p.completer.takeAcceptKey(c)) |part| {
+            p.acceptSlice(part);
+            return;
         }
         if (p.mode == .clipboard) {
             if (p.field.text().len == 0 and hasPlainBackspace(c)) return p.leaveBoard();
@@ -910,7 +945,10 @@ pub const Panel = struct {
         }
         var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
         const options = p.filterOptions(&buf);
+        const prev_sel = p.list.selected;
+        const prev_filter = p.list.filter;
         if (chrome.listKeys(c, &p.list, options[0..@min(options.len, 5)])) p.field.focus();
+        if (p.list.selected != prev_sel or p.list.filter != prev_filter) p.pending_select_key = null;
         const row = p.list.selection() orelse return;
         if (c.shortcut(.{ .key = S.enter, .cmd = true }) or c.shortcut(.{ .key = 'r', .cmd = true })) {
             if (row.kind != .web) p.ask(.{ .reveal = row.path });
@@ -918,8 +956,7 @@ pub const Panel = struct {
         if (c.shortcut(.{ .key = S.enter, .alt = true }) or c.shortcut(.{ .key = 'c', .cmd = true })) p.ask(.{ .copy = row });
     }
 
-    /// ⌫ on an empty filter, as the Swift board's: the board's session is
-    /// dropped, and the shell switches to search in place.
+    /// ⌫ on an empty filter drops the board's session and switches to search in place.
     fn leaveBoard(p: *Panel) void {
         p.forgetBoard();
         p.board.refresh("");
@@ -931,32 +968,6 @@ pub const Panel = struct {
         panel_view.render(p, c);
     }
 };
-
-fn takeFieldKey(c: *ui.Context, key: anytype, alt: bool, cmd: anytype) bool {
-    if (c.input.shift or c.input.cmd or c.input.ctrl) return false;
-    if (c.input.alt == alt and c.input.key == key) {
-        c.input.key = null;
-        c.changed = true;
-        return true;
-    }
-    if (c.input.ops.len == 1 and c.input.ops[0] == .command and c.input.ops[0].command == cmd) {
-        c.input.ops = &.{};
-        c.changed = true;
-        return true;
-    }
-    return false;
-}
-
-fn isWordByte(b: u8) bool {
-    return std.ascii.isAlphanumeric(b) or b == '_' or b >= 0x80;
-}
-
-fn nextWordEnd(s: []const u8) usize {
-    var i: usize = 0;
-    while (i < s.len and !isWordByte(s[i])) i += 1;
-    while (i < s.len and isWordByte(s[i])) i += 1;
-    return i;
-}
 
 /// ⌫ alone, never ⌥⌫ or ⌘⌫. AppKit never offers a bare ⌫ as a shortcut:
 /// a focused field gets `deleteBackward:`, an unfocused window the key.
@@ -996,10 +1007,10 @@ fn ownedAction(arena: std.mem.Allocator, a: Action) !Action {
         .copy => |row| .{ .copy = try ownedRow(arena, row) },
         .hide, .show_search => a,
         .clipboard => |b| .{ .clipboard = switch (b) {
-            .paste => |e| .{ .paste = try ownedEntry(arena, e) },
-            .copy => |e| .{ .copy = try ownedEntry(arena, e) },
-            .preview => |e| .{ .preview = try ownedEntry(arena, e) },
-            .actions => |e| .{ .actions = try ownedEntry(arena, e) },
+            .paste => |e| .{ .paste = try e.dupe(arena) },
+            .copy => |e| .{ .copy = try e.dupe(arena) },
+            .preview => |e| .{ .preview = try e.dupe(arena) },
+            .actions => |e| .{ .actions = try e.dupe(arena) },
             .open => |url| .{ .open = try arena.dupe(u8, url) },
             .reveal => |path| .{ .reveal = try arena.dupe(u8, path) },
         } },
@@ -1011,21 +1022,6 @@ fn ownedRow(arena: std.mem.Allocator, r: search.Row) !search.Row {
     out.title = try arena.dupe(u8, r.title);
     out.subtitle = try arena.dupe(u8, r.subtitle);
     out.path = try arena.dupe(u8, r.path);
-    return out;
-}
-
-fn ownedEntry(arena: std.mem.Allocator, e: clipboard.Entry) !clipboard.Entry {
-    var out = e;
-    out.text = try arena.dupe(u8, e.text);
-    out.source = try arena.dupe(u8, e.source);
-    out.source_name = try arena.dupe(u8, e.source_name);
-    out.thumbnail = try arena.dupe(u8, e.thumbnail);
-    out.content = switch (e.content) {
-        .plain, .color => e.content,
-        .link => |d| .{ .link = try arena.dupe(u8, d) },
-        .code => |lang| .{ .code = try arena.dupe(u8, lang) },
-        .path => |path| .{ .path = try arena.dupe(u8, path) },
-    };
     return out;
 }
 

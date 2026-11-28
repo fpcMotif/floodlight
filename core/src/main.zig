@@ -1,9 +1,9 @@
-//! `flcore`: build, query, and measure an index from the command line.
+//! `nscore`: build, query, and measure an index from the command line.
 //!
-//!   flcore index <root> <out.flix>
-//!   flcore search <in.flix> <query...>
-//!   flcore bench <in.flix> [query ...]
-//!   flcore synth <out.flix> <count>
+//!   nscore index <root> <out.flix>
+//!   nscore search <in.flix> <query...>
+//!   nscore bench <in.flix> [query ...]
+//!   nscore synth <out.flix> <count>
 //!
 //! `bench` exists so a latency or memory claim about the engine is a number
 //! someone can reproduce, not a sentence in an issue.
@@ -39,10 +39,10 @@ fn run(gpa: std.mem.Allocator, out: *std.Io.Writer, args: []const [:0]const u8) 
 fn usage(out: *std.Io.Writer) !void {
     try out.writeAll(
         \\usage:
-        \\  flcore index <root> <out.flix>
-        \\  flcore search <in.flix> <query...>
-        \\  flcore bench <in.flix> [query ...]
-        \\  flcore synth <out.flix> <count>
+        \\  nscore index <root> <out.flix>
+        \\  nscore search <in.flix> <query...>
+        \\  nscore bench <in.flix> [query ...]
+        \\  nscore synth <out.flix> <count>
         \\
     );
 }
@@ -102,21 +102,37 @@ fn cmdBench(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, given
     // One untimed pass faults the mapping in, so the numbers below are the
     // warm, every-keystroke cost rather than first-touch disk reads.
     var hits: [60]search.Hit = undefined;
-    for (queries.items) |q| _ = search.search(m.view, q, &hits);
+    for (queries.items) |q| {
+        _ = search.searchSingleThread(m.view, q, &hits);
+        _ = search.search(m.view, q, &hits);
+    }
 
     const runs = 50;
-    var samples: [runs]u64 = undefined;
+    var single_samples: [runs]u64 = undefined;
+    var par_samples: [runs]u64 = undefined;
     try out.print("entries={d} open_us={d:.1}\n", .{ m.view.count(), us(open_ns) });
     for (queries.items) |q| {
-        var n: usize = 0;
-        for (&samples) |*s| {
+        var n_single: usize = 0;
+        var n_par: usize = 0;
+        for (&single_samples, &par_samples) |*s1, *sp| {
             timer.reset();
-            n = search.search(m.view, q, &hits);
-            s.* = timer.read();
+            n_single = search.searchSingleThread(m.view, q, &hits);
+            s1.* = timer.read();
+
+            timer.reset();
+            n_par = search.search(m.view, q, &hits);
+            sp.* = timer.read();
+            if (n_single != n_par) return error.SearchMismatch;
         }
-        std.sort.pdq(u64, &samples, {}, std.sort.asc(u64));
-        try out.print("query={s: <10} hits={d: >2} p50_us={d: >8.1} p99_us={d: >8.1}\n", .{
-            q, n, us(samples[runs / 2]), us(samples[runs - 1]),
+        std.sort.pdq(u64, &single_samples, {}, std.sort.asc(u64));
+        std.sort.pdq(u64, &par_samples, {}, std.sort.asc(u64));
+        const p50_1t = us(single_samples[runs / 2]);
+        const p99_1t = us(single_samples[runs - 1]);
+        const p50_par = us(par_samples[runs / 2]);
+        const p99_par = us(par_samples[runs - 1]);
+        const speedup = if (p50_par > 0) p50_1t / p50_par else 0;
+        try out.print("query={s: <10} hits={d: >2} 1t_p50_us={d: >8.1} 1t_p99_us={d: >8.1} par_p50_us={d: >8.1} par_p99_us={d: >8.1} speedup={d: >4.2}x\n", .{
+            q, n_par, p50_1t, p99_1t, p50_par, p99_par, speedup,
         });
     }
     const rss_after = residentBytes();
@@ -135,43 +151,9 @@ fn writeKb(out: *std.Io.Writer, bytes: ?usize) !void {
 /// a long tail of deep ones, names drawn from words people actually type.
 fn cmdSynth(gpa: std.mem.Allocator, out: *std.Io.Writer, path: []const u8, count_text: []const u8) !void {
     const want = try std.fmt.parseInt(u32, count_text, 10);
-    var b = index.Builder.init(gpa);
-    defer b.deinit();
-    try b.setRoot("/Users/synthetic");
-    var prng = std.Random.DefaultPrng.init(0x5eed);
-    const r = prng.random();
-    const words = [_][]const u8{
-        "readme",  "notes",  "budget", "report", "invoice", "photo",  "main",   "index",
-        "config",  "test",   "draft",  "final",  "backup",  "music",  "album",  "track",
-        "project", "source", "lib",    "util",   "server",  "client", "design", "mock",
-        "tax",     "2024",   "2025",   "q3",     "meeting", "resume", "letter", "scan",
-    };
-    const exts = [_][]const u8{ ".md", ".txt", ".pdf", ".png", ".jpg", ".swift", ".zig", ".json", ".xlsx", "" };
-
-    var dirs: std.ArrayList(u32) = .empty;
-    defer dirs.deinit(gpa);
-    var name_buf: [96]u8 = undefined;
-    while (b.count() < want) {
-        const parent = if (dirs.items.len == 0 or r.uintLessThan(u32, 16) == 0)
-            index.no_parent
-        else
-            dirs.items[r.uintLessThan(usize, dirs.items.len)];
-        const is_dir = r.uintLessThan(u32, 10) == 0;
-        const w1 = words[r.uintLessThan(usize, words.len)];
-        const w2 = words[r.uintLessThan(usize, words.len)];
-        const ext = if (is_dir) "" else exts[r.uintLessThan(usize, exts.len)];
-        const sep: []const u8 = switch (r.uintLessThan(u32, 3)) {
-            0 => "-",
-            1 => "_",
-            else => "",
-        };
-        const nm = try std.fmt.bufPrint(&name_buf, "{s}{s}{s}{d}{s}", .{ w1, sep, w2, r.uintLessThan(u32, 1000), ext });
-        const id = try b.add(parent, nm, .{ .dir = is_dir });
-        if (is_dir) try dirs.append(gpa, id);
-    }
-    try b.writeFile(sys.cwd, path);
+    const written = try index.writeSynthetic(gpa, path, "/Users/synthetic", want);
     const size = try fileSize(path);
-    try out.print("entries={d} file_bytes={d}\n", .{ b.count(), size });
+    try out.print("entries={d} file_bytes={d}\n", .{ written, size });
 }
 
 fn ms(ns: u64) f64 {

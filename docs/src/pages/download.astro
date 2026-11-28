@@ -14,28 +14,28 @@ const docs = (slug: string) => `${root}${slug}/`;
 ---
 
 <Landing
-  title="Download Floodlight for Mac"
-  description="Download Floodlight.dmg, the fast, native, open-source Spotlight alternative for macOS. Search apps, files, and your clipboard history from one panel."
+  title="Download Nanospot for Mac"
+  description="Download Nanospot.dmg, the fast, native, open-source Spotlight alternative for macOS. Search apps, files, and your clipboard history from one panel."
 >
   <div class="dl">
     <header class="dl-hero">
       <div class="wrap wrap--wide dl-hero__grid">
         <div class="dl-hero__copy">
-          <h1 class="h1">Download Floodlight</h1>
+          <h1 class="h1">Download Nanospot</h1>
           <p class="lede">Find apps, files, and everything you copied from one panel.</p>
           <div class="dl-actions">
-            <DownloadButton label="Download Floodlight.dmg" />
-            <a class="btn btn--ghost" href={docs("development/building")}>Build from source</a>
+            <DownloadButton label="Download Nanospot.dmg" />
+            <a class="link" href={docs("development/building")}>Build from source</a>
           </div>
-          <p class="fine">Requires macOS 14 or later on an Apple-silicon Mac.</p>
+          <p class="fine">1.5 MB binary · 3.1 MB app · macOS 14+ · Apple silicon</p>
         </div>
 
         <div class="dl-hero__stage" data-ss-fill>
           <div
             class="dl-demo"
-            data-floodlight-demo
+            data-nanospot-demo
             role="img"
-            aria-label="Floodlight answering the query cal, then opening the clipboard board."
+            aria-label="Nanospot answering the query cal, then opening the clipboard board."
           >
             <Image
               src={listDark}
@@ -49,38 +49,37 @@ const docs = (slug: string) => `${root}${slug}/`;
       </div>
     </header>
 
-    <section class="dl-sec" aria-labelledby="dl-search">
-      <div class="wrap wrap--wide dl-split">
+    <section class="dl-sec" aria-labelledby="dl-dark">
+      <div class="wrap wrap--wide">
         <div class="dl-copy">
-          <h2 class="h2" id="dl-search">Results while you type</h2>
-          <p>Apps, files, folders, and settings rank in one list. Return opens the top hit.</p>
-        </div>
-        <Image
-          class="dl-shot"
-          src={listDark}
-          alt="The Floodlight panel showing results for the query cal, with Calendar as the top hit."
-          widths={[760, 1520]}
-          sizes="(min-width: 62rem) 55vw, 100vw"
-        />
-      </div>
-    </section>
-
-    <section class="dl-sec" aria-labelledby="dl-board">
-      <div class="wrap wrap--wide dl-split dl-split--flip">
-        <div class="dl-copy">
-          <h2 class="h2" id="dl-board">Your clipboard, kept on your Mac</h2>
+          <h2 class="h2" id="dl-dark">Search and clipboard, native to macOS</h2>
           <p>
-            <kbd class="dl-kbd" aria-hidden="true">⌥⇧C</kbd><span class="sr-only">Option Shift C</span> opens the board. Type to find text, links, colors, code,
-            and files.
+            Apps, files, folders, and settings rank in one list on <kbd class="dl-kbd" aria-hidden="true">⌥Space</kbd><span class="sr-only">Option Space</span>.
+            <kbd class="dl-kbd" aria-hidden="true">⌥⇧C</kbd><span class="sr-only">Option Shift C</span> opens the split clipboard board.
           </p>
         </div>
-        <Image
-          class="dl-shot"
-          src={boardDark}
-          alt="The Floodlight clipboard board: copied entries on the left and a preview of the selected entry on the right."
-          widths={[760, 1520]}
-          sizes="(min-width: 62rem) 55vw, 100vw"
-        />
+        <div class="dl-pair">
+          <figure class="dl-figure">
+            <Image
+              class="dl-shot"
+              src={listDark}
+              alt="The Nanospot panel showing results for the query cal, with Calendar as the top hit."
+              widths={[600, 1200, 1520]}
+              sizes="(min-width: 46rem) 45vw, 100vw"
+            />
+            <figcaption>Search panel — ranked apps and files</figcaption>
+          </figure>
+          <figure class="dl-figure">
+            <Image
+              class="dl-shot"
+              src={boardDark}
+              alt="The Nanospot clipboard board: copied entries on the left and a preview of the selected entry on the right."
+              widths={[600, 1200, 1520]}
+              sizes="(min-width: 46rem) 45vw, 100vw"
+            />
+            <figcaption>Clipboard board — ⌥⇧C history with live inspector</figcaption>
+          </figure>
+        </div>
       </div>
     </section>
 
@@ -91,20 +90,26 @@ const docs = (slug: string) => `${root}${slug}/`;
           <p>The panel follows the macOS appearance.</p>
         </div>
         <div class="dl-pair">
-          <Image
-            class="dl-shot"
-            src={listLight}
-            alt="The search panel in the light appearance."
-            widths={[600, 1200, 1520]}
-            sizes="(min-width: 46rem) 45vw, 100vw"
-          />
-          <Image
-            class="dl-shot"
-            src={boardLight}
-            alt="The clipboard board in the light appearance."
-            widths={[600, 1200, 1520]}
-            sizes="(min-width: 46rem) 45vw, 100vw"
-          />
+          <figure class="dl-figure">
+            <Image
+              class="dl-shot"
+              src={listLight}
+              alt="The search panel in the light appearance."
+              widths={[600, 1200, 1520]}
+              sizes="(min-width: 46rem) 45vw, 100vw"
+            />
+            <figcaption>Search panel — light appearance</figcaption>
+          </figure>
+          <figure class="dl-figure">
+            <Image
+              class="dl-shot"
+              src={boardLight}
+              alt="The clipboard board in the light appearance."
+              widths={[600, 1200, 1520]}
+              sizes="(min-width: 46rem) 45vw, 100vw"
+            />
+            <figcaption>Clipboard board — light appearance</figcaption>
+          </figure>
         </div>
       </div>
     </section>
@@ -114,10 +119,10 @@ const docs = (slug: string) => `${root}${slug}/`;
         <div>
           <h2 class="h2" id="dl-install">Install in four steps</h2>
           <ol class="dl-steps" role="list">
-            <li>Open Floodlight.dmg.</li>
-            <li>Drag Floodlight to Applications.</li>
-            <li>Eject the Floodlight disk image.</li>
-            <li>Open Floodlight from Applications.</li>
+            <li>Open Nanospot.dmg.</li>
+            <li>Drag Nanospot to Applications.</li>
+            <li>Eject the Nanospot disk image.</li>
+            <li>Open Nanospot from Applications.</li>
           </ol>
         </div>
         <div class="dl-needs">
@@ -125,9 +130,9 @@ const docs = (slug: string) => `${root}${slug}/`;
           <ul>
             <li>An Apple-silicon Mac</li>
             <li>macOS 14 Sonoma or later</li>
-            <li>10 MB of free disk space</li>
+            <li>4 MB of free disk space (3.1 MB app, 1.5 MB binary)</li>
           </ul>
-          <DownloadButton label="Download Floodlight.dmg" />
+          <DownloadButton label="Download Nanospot.dmg" />
           <a class="dl-link" href={docs("getting-started/install")}>Install and permissions guide</a>
         </div>
       </div>

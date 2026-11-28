@@ -4,7 +4,7 @@ const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 
-/// The Swift shell's `FloodlightMetrics`, so both panels measure the same.
+/// Shared layout metrics for the search panel and the clipboard board.
 pub const metrics = struct {
     pub const width: f32 = 760;
     pub const search_height: f32 = 60;
@@ -60,7 +60,7 @@ pub const space = struct {
     pub const gutter: f32 = 40;
 };
 
-/// The Swift shell's `FloodlightMetrics.Typography`, in points.
+/// Type scale across the panel and the clipboard board, in points.
 pub const type_size = struct {
     pub const input: f32 = 24;
     pub const top_hit_title: f32 = 19;
@@ -81,7 +81,6 @@ pub const fill = struct {
     pub const inspector: f32 = 0.03;
     pub const footer: f32 = 0.04;
     pub const top_hit: f32 = 0.045;
-    pub const chip: f32 = 0.055;
     pub const badge: f32 = 0.07;
     pub const code: f32 = 0.08;
     pub const key: f32 = 0.1;
@@ -109,12 +108,12 @@ pub fn tone(th: ui.Theme) Tone {
 }
 
 /// A symbol color that holds 3:1 on the well and on its own tile.
-pub const Hue = enum { blue, purple, cyan, green };
+pub const Hue = enum { blue, amber, cyan, green };
 
 pub fn hue(th: ui.Theme, h: Hue) ui.Color {
     return .hex(switch (h) {
         .blue => if (th.dark) 0x0a84ff else 0x0071e3,
-        .purple => if (th.dark) 0xbf5af2 else 0x8944ab,
+        .amber => if (th.dark) 0xffb020 else 0xb3660f,
         .cyan => if (th.dark) 0x32ade6 else 0x0071a4,
         .green => if (th.dark) 0x30d158 else 0x248a3d,
     });
@@ -170,7 +169,7 @@ pub fn footerChip(c: *ui.Context, title: []const u8, key: []const u8, enabled: b
         .opacity(if (enabled) 1 else metrics.footer_chip_disabled_opacity).control();
     defer chip.end();
     const it = c.interact(chip.index, .{});
-    _ = chip.bg(th.muted.alpha(if (enabled) pointerAlpha(fill.card, it) else fill.card));
+    _ = chip.bg(th.muted.alpha(if (enabled) pointerAlpha(0, it) else 0));
     ui.text(c, title, .{ .size = type_size.chip, .weight = .medium });
     {
         const k = ui.div(c).px(space.snug).py(space.hair).rounded(metrics.key_glyph_radius).bg(th.muted.alpha(fill.key_glyph));
@@ -205,6 +204,14 @@ pub fn listKeys(c: *ui.Context, l: anytype, options: anytype) bool {
     if (c.shortcut(.{ .key = S.down })) l.move(true);
     if (c.shortcut(.{ .key = S.up })) l.move(false);
     return picked;
+}
+
+pub const backspace: u21 = 0x7f;
+
+pub fn rowSpacer(c: *ui.Context, name: []const u8, rows: usize) void {
+    if (rows == 0) return;
+    ui.key(c, name);
+    ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
 }
 
 /// Scrolls a list box `view_h` tall so its selection shows, when asked to.
@@ -277,7 +284,7 @@ pub fn rowLead(c: *ui.Context, top_hit: bool) ui.Div {
 pub const ChipSlot = union(enum) { count: usize, loading };
 
 /// A filter chip with its count; returns whether it was clicked.
-pub fn filterChip(c: *ui.Context, bar: ui.Div, title: []const u8, symbol: []const u8, selected: bool, slot: ChipSlot) bool {
+pub fn filterChip(c: *ui.Context, bar: ui.Div, title: []const u8, selected: bool, slot: ChipSlot) bool {
     const th = c.theme;
     ui.key(c, title);
     const empty = !selected and slot == .count and slot.count == 0;
@@ -286,14 +293,13 @@ pub fn filterChip(c: *ui.Context, bar: ui.Div, title: []const u8, symbol: []cons
         .opacity(if (empty) metrics.empty_chip_opacity else 1).control();
     defer chip.end();
     const it = c.interact(chip.index, .{});
-    _ = chip.bg(th.text.alpha(pointerAlpha(if (selected) fill.chip_selected else fill.chip, it)));
+    _ = chip.bg(th.text.alpha(pointerAlpha(if (selected) fill.chip_selected else 0, it)));
     const clicked = it.clicked;
     if (clicked) {
         c.changed = true;
         revealChipInBar(c, bar, it.rect);
     }
-    ui.icon(c, symbol, .{ .size = type_size.key_chip, .weight = .semibold, .color = if (selected) th.text else quiet });
-    ui.text(c, title, .{ .size = type_size.chip, .weight = .semibold });
+    ui.text(c, title, .{ .size = type_size.chip, .weight = .semibold, .color = if (selected) th.text else quiet });
     const box = ui.div(c).w(metrics.chip_count_width).h(metrics.chip_count_height).center();
     defer box.end();
     switch (slot) {

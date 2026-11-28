@@ -15,6 +15,14 @@ pub fn setFrameOrigin(window: *nanoui.Window, r: permission.Rect) void {
     objc.msg(void, window.nswindow, "setFrameOrigin:", .{objc.CGPoint{ .x = r.x, .y = r.y }});
 }
 
+pub fn setFrame(window: *nanoui.Window, r: permission.Rect) void {
+    objc.msg(void, window.nswindow, "setFrame:display:animate:", .{
+        objc.CGRect{ .origin = .{ .x = r.x, .y = r.y }, .size = .{ .width = r.w, .height = r.h } },
+        objc.YES,
+        objc.NO,
+    });
+}
+
 pub fn frameOf(window: *nanoui.Window) permission.Rect {
     return toRect(objc.msg(objc.CGRect, window.nswindow, "frame", .{}));
 }
@@ -55,7 +63,7 @@ var signpost_dso: ?*const anyopaque = null;
 
 fn signpostLog() OsLog {
     if (signpost_log) |l| return l;
-    const l = os_log_create("com.floodlight.nano", "PointsOfInterest");
+    const l = os_log_create("com.nanospot.app", "PointsOfInterest");
     signpost_log = l;
     signpost_dso = _dyld_get_prog_image_header();
     return l;
@@ -63,21 +71,22 @@ fn signpostLog() OsLog {
 
 // `logd` resolves signpost strings only from `__TEXT,__oslogstring`; `export`
 // keeps ReleaseFast from merging them into `__TEXT,__const`.
-export const fl_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
-export const fl_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
-export const fl_signpost_keystroke: [31:0]u8 align(1) linksection("__TEXT,__oslogstring") = "keystroke → Panel publication".*;
-export const fl_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
+export const ns_signpost_fmt: [0:0]u8 align(1) linksection("__TEXT,__oslogstring") = "".*;
+export const ns_signpost_summon: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "hot key → first presented frame".*;
+const signpost_keystroke_name = "keystroke → presented frame";
+export const ns_signpost_keystroke: [signpost_keystroke_name.len:0]u8 align(1) linksection("__TEXT,__oslogstring") = signpost_keystroke_name.*;
+export const ns_signpost_submit: [33:0]u8 align(1) linksection("__TEXT,__oslogstring") = "Return → action handed to macOS".*;
 
 fn signpostEmit(s: Signpost, kind: u8) void {
     const log = signpostLog();
     if (!os_signpost_enabled(log)) return;
     var buf: [2]u8 align(16) = .{ 0, 0 };
     const name: [*:0]const u8 = switch (s) {
-        .summon => &fl_signpost_summon,
-        .keystroke => &fl_signpost_keystroke,
-        .submit => &fl_signpost_submit,
+        .summon => &ns_signpost_summon,
+        .keystroke => &ns_signpost_keystroke,
+        .submit => &ns_signpost_submit,
     };
-    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &fl_signpost_fmt, &buf, buf.len);
+    _os_signpost_emit_with_name_impl(signpost_dso.?, log, kind, signpost_exclusive_id, name, &ns_signpost_fmt, &buf, buf.len);
 }
 
 pub fn signpostBegin(s: Signpost) void {
@@ -111,8 +120,8 @@ fn hostIsFlipped(_: objc.Object, _: objc.SEL) callconv(.c) objc.BOOL {
 }
 
 /// Puts the panel's content on a clear Liquid Glass slab (NSGlassEffectView,
-/// macOS 26) that refracts the desktop behind it, as the Swift panel does;
-/// a HUD material where glass isn't available or transparency is reduced.
+/// macOS 26) that refracts the desktop behind it; a HUD material where glass
+/// isn't available or transparency is reduced.
 /// Returns the flipped view the surface fills: native views go in it, over
 /// the surface, because nanoui's surface takes every click inside it.
 pub fn installSlab(window: *nanoui.Window, radius: f64, level: Level, style: GlassStyle) ?objc.Object {
@@ -134,7 +143,7 @@ pub fn installSlab(window: *nanoui.Window, radius: f64, level: Level, style: Gla
     objc.msg(void, content, "retain", .{});
     defer objc.msg(void, content, "release", .{});
     const frame = objc.msg(objc.CGRect, content, "frame", .{});
-    const host_class = objc.defineClass(.{ .name = "FloodlightHostView", .superclass = "NSView", .methods = &.{
+    const host_class = objc.defineClass(.{ .name = "NanospotHostView", .superclass = "NSView", .methods = &.{
         .{ .name = "isFlipped", .imp = &hostIsFlipped, .types = "c@:" },
     } });
     const host = objc.msg(objc.Object, objc.msg(objc.Object, host_class, "alloc", .{}), "initWithFrame:", .{frame});
@@ -235,7 +244,19 @@ pub fn releaseFreedMemory() void {
     _ = malloc_zone_pressure_relief(null, 0);
 }
 
+pub fn hideWindow(window: *nanoui.Window) void {
+    if (window.surface) |s| {
+        s.setPaced(false);
+        s.ctx.focus = 0;
+        s.last_focus = 0;
+        s.is_visible = false;
+    }
+    window.hide();
+}
+
 pub fn releaseSurface(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
     const s = window.surface orelse return;
     if (s.is_visible) return;
     if (!s.released) {
@@ -246,9 +267,44 @@ pub fn releaseSurface(window: *nanoui.Window) void {
     s.text.images.trimDecoded();
     s.renderer.waitIdle();
     forgetImageAtlas(s);
+    forgetGlyphAtlas(s);
     forgetFrameBuffers(s);
     forgetFrameStorage(s);
-    _ = s.ctx.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+    forgetSessionContextStorage(&s.ctx);
+    _ = s.ctx.arena.reset(.free_all);
+}
+
+const idle_glyph_atlas_size: u32 = 16;
+const live_glyph_atlas_size: u32 = 2048;
+
+fn makeGlyphTexture(device: objc.Object, side: u32) objc.Object {
+    const desc = objc.msg(objc.Object, objc.class("MTLTextureDescriptor"), "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", .{
+        @as(objc.NSUInteger, 10), @as(objc.NSUInteger, side), @as(objc.NSUInteger, side), objc.NO,
+    });
+    return objc.msg(objc.Object, device, "newTextureWithDescriptor:", .{desc});
+}
+
+fn resetGlyphMaps(a: anytype) void {
+    a.sprites.clearAndFree(a.gpa);
+    a.symbols.clearAndFree(a.gpa);
+    a.pixels.clearAndFree(a.gpa);
+    a.shelf_x = 0;
+    a.shelf_y = 0;
+    a.shelf_h = 0;
+}
+
+fn setGlyphAtlasSize(s: *nanoui.Surface, side: u32) void {
+    const a = &s.text.atlas;
+    if (a.size == side) return;
+    objc.release(a.texture);
+    a.texture = makeGlyphTexture(a.device, side);
+    a.size = side;
+    resetGlyphMaps(a);
+}
+
+fn forgetGlyphAtlas(s: *nanoui.Surface) void {
+    setGlyphAtlasSize(s, idle_glyph_atlas_size);
+    resetGlyphMaps(&s.text.atlas);
 }
 
 fn forgetFrameBuffers(s: *nanoui.Surface) void {
@@ -271,6 +327,31 @@ pub fn forgetContextStorage(c: *nanoui.ui.Context) void {
     c.helps.clearAndFree(c.gpa);
     c.motion.entries.clearAndFree(c.gpa);
     c.anims.clearAndFree(c.gpa);
+    c.truncates.clearAndFree(c.gpa);
+    c.selection.deinit(c.gpa);
+    c.selection = .{};
+}
+
+fn forgetSessionContextStorage(c: *nanoui.ui.Context) void {
+    c.edits.clearAndFree(c.gpa);
+    c.scroll.clearAndFree(c.gpa);
+    c.scroll_x.clearAndFree(c.gpa);
+    c.overscroll.clearAndFree(c.gpa);
+    c.scrollbars.clearAndFree(c.gpa);
+    c.scroll_max.clearAndFree(c.gpa);
+    c.scroll_follow.clearAndFree(c.gpa);
+    c.scroll_seen.clearAndFree(c.gpa);
+    c.overlay_bars.clearAndFree(c.gpa);
+    c.scroll_cap.clearAndFree(c.gpa);
+    c.scroll_moved.clearAndFree(c.gpa);
+    c.motion_store.map.clearAndFree(c.gpa);
+    c.memory.clearAndFree(c.gpa);
+    c.textures.clearAndFree(c.gpa);
+    c.layers.clearAndFree(c.gpa);
+    c.hot_path.clearAndFree(c.gpa);
+    c.focusable_ids.clearAndFree(c.gpa);
+    c.last_focusable_ids.clearAndFree(c.gpa);
+    c.drop_targets.clearAndFree(c.gpa);
 }
 
 fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
@@ -281,30 +362,53 @@ fn freeTextLayouts(gpa: std.mem.Allocator, map: anytype) void {
 
 fn forgetFrameStorage(s: *nanoui.Surface) void {
     forgetContextStorage(&s.ctx);
+    s.pasted.clearAndFree(s.gpa);
     freeTextLayouts(s.text.gpa, &s.text.layouts);
     freeTextLayouts(s.text.gpa, &s.text.previous);
     s.text.wraps.deinit(s.text.gpa);
     s.text.wraps = .{};
+    s.text.scratch_glyphs.clearAndFree(s.text.gpa);
+    s.text.scratch_points.clearAndFree(s.text.gpa);
+    s.text.scratch_bytes_of.clearAndFree(s.text.gpa);
+    s.text.scratch_indices.clearAndFree(s.text.gpa);
 }
 
 fn forgetImageAtlas(s: *nanoui.Surface) void {
-    const texture = s.renderer.images_texture orelse return;
-    objc.release(texture);
-    s.renderer.images_texture = null;
-    s.renderer.images_generation = std.math.maxInt(u64);
+    if (s.renderer.images_texture) |texture| {
+        objc.release(texture);
+        s.renderer.images_texture = null;
+        s.renderer.images_generation = std.math.maxInt(u64);
+    }
     const im = &s.text.images;
+    if (im.pixels.len > 0) {
+        im.gpa.free(im.pixels);
+        im.pixels = &.{};
+    }
+    im.headers.clearAndFree(im.gpa);
+    im.decoded.clearAndFree(im.gpa);
     im.entries.clearAndFree(im.gpa);
+    im.svgs.clearAndFree(im.gpa);
     im.shelf_x = 0;
     im.shelf_y = 0;
     im.shelf_h = 0;
     im.resets +%= 1;
 }
 
+pub fn restoreGlyphAtlas(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const s = window.surface orelse return;
+    if (s.text.atlas.size < live_glyph_atlas_size) setGlyphAtlasSize(s, live_glyph_atlas_size);
+}
+
 pub fn drawBeforeOcclusionUpdate(window: *nanoui.Window) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
     const s = window.surface orelse return;
     if (s.released) {
         s.released = false;
         s.renderer.resize(s.size, s.scale);
     }
+    if (s.text.atlas.size < live_glyph_atlas_size) setGlyphAtlasSize(s, live_glyph_atlas_size);
     s.is_visible = true;
 }

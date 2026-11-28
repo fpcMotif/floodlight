@@ -35,9 +35,11 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
     if (needle.len > hay.len) return null;
 
     var j: usize = 0;
+    var first: usize = 0;
     var end: usize = 0;
     for (hay, 0..) |c, i| {
         if (std.ascii.toLower(c) == needle[j]) {
+            if (j == 0) first = i;
             j += 1;
             if (j == needle.len) {
                 end = i;
@@ -48,16 +50,18 @@ pub fn score(hay: []const u8, needle: []const u8, name_start: usize) ?i32 {
 
     // Walk back from the end so the window starts at the last possible
     // place: "abc" in "a_xx_abc" scores the tight "abc", not the spread one.
-    var start = end;
-    j = needle.len;
-    var i = end + 1;
-    while (i > 0) {
-        i -= 1;
-        if (std.ascii.toLower(hay[i]) == needle[j - 1]) {
-            j -= 1;
-            if (j == 0) {
-                start = i;
-                break;
+    var start = first;
+    if (needle.len > 1) {
+        j = needle.len;
+        var i = end + 1;
+        while (i > 0) {
+            i -= 1;
+            if (std.ascii.toLower(hay[i]) == needle[j - 1]) {
+                j -= 1;
+                if (j == 0) {
+                    start = i;
+                    break;
+                }
             }
         }
     }

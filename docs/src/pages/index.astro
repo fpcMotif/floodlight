@@ -1,6 +1,6 @@
 ---
 import Landing from "../layouts/Landing.astro";
-import FloodlightPanel from "../components/FloodlightPanel.astro";
+import NanospotPanel from "../components/NanospotPanel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import BoardScene from "../components/BoardScene.astro";
 
@@ -10,134 +10,66 @@ const docs = (slug: string) => `${root}${slug}/`;
 ---
 
 <Landing
-  title="Floodlight — a fast, native Spotlight alternative for macOS"
-  description="Floodlight is a fast, native, open-source Spotlight alternative. It finds apps, files, folders, and settings from one keyboard-first panel and keeps every index on your Mac."
+  title="Nanospot — a fast, native Spotlight alternative for macOS"
+  description="Nanospot is a fast, native, open-source Spotlight alternative. It finds apps, files, folders, and settings from one keyboard-first panel and keeps every index on your Mac."
 >
   <header class="hero">
-    <div class="wrap wrap--wide hero__copy">
-      <h1 class="h1">Fast local search on Mac</h1>
-      <p class="lede">A fast, native, open-source Spotlight alternative.</p>
-      <div class="cta-row">
-        <DownloadButton />
-        <a class="btn btn--ghost btn--glass" href={docs("getting-started/quickstart")}>
-          Read the docs <span class="btn__arrow" aria-hidden="true">›</span>
-        </a>
-      </div>
-      <div class="hero__meta">
-        <p class="fine">macOS 14 or later · Apple silicon · MIT</p>
-        <p class="credit">
-          Created by <a href="https://vmg.dev" rel="author">Victor Garcia</a>
+    <div class="wrap wrap--wide hero__grid">
+      <div class="hero__copy">
+        <h1 class="h1">Local search for Mac, built in Zig.</h1>
+        <p class="lede">
+          Press <kbd class="clip__kbd">⌥Space</kbd> for apps and files, or
+          <kbd class="clip__kbd">⌥⇧C</kbd> for clipboard history. Every index stays on your Mac.
         </p>
-      </div>
-    </div>
-
-    <div class="hero__stage">
-      <div class="stage">
-        <div class="stage__light" data-light aria-hidden="true">
-          <span class="stage__beam"></span>
-          <span class="stage__flare"></span>
+        <div class="cta-row">
+          <DownloadButton label="Download Nanospot.dmg" />
+          <a class="link" href={docs("getting-started/quickstart")}>Read the docs</a>
         </div>
-        <FloodlightPanel />
+        <div class="hero__meta">
+          <p class="fine">1.5 MB binary · macOS 14+ · Apple silicon · MIT</p>
+          <p class="credit">
+            Created by <a href="https://vmg.dev" rel="author">Victor Garcia</a>
+          </p>
+        </div>
       </div>
 
-      <ul class="claims">
-        <li>
-          <span class="claims__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="m12 14 4-4"></path>
-              <path d="M3.34 19a10 10 0 1 1 17.32 0"></path>
-            </svg>
-          </span>
-          <span class="claims__copy">
-            <span class="claims__lead">Instant results</span>
-            <span>Results in less than a millisecond</span>
-          </span>
-        </li>
-        <li>
-          <span class="claims__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M14 4.1 12 6"></path>
-              <path d="m5.1 8-2.9-.8"></path>
-              <path d="m6 12-1.9 2"></path>
-              <path d="M7.2 2.2 8 5.1"></path>
-              <path
-                d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"
-              ></path>
-            </svg>
-          </span>
-          <span class="claims__copy">
-            <span class="claims__lead">Stop clicking the wrong thing</span>
-            <span>Your selection stays put</span>
-          </span>
-        </li>
-        <li>
-          <span class="claims__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 22V12"></path>
-              <path d="m16 17 2 2 4-4"></path>
-              <path
-                d="M21 11.127V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.729l7 4a2 2 0 0 0 2 .001l1.32-.753"
-              ></path>
-              <path d="M3.29 7 12 12l8.71-5"></path>
-              <path d="m7.5 4.27 8.997 5.148"></path>
-            </svg>
-          </span>
-          <span class="claims__copy">
-            <span class="claims__lead">Small install size</span>
-            <span>6.2 MB binary</span>
-          </span>
-        </li>
-        <li>
-          <span class="claims__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="11" cy="11" r="8"></circle>
-              <path d="m21 21-4.3-4.3"></path>
-              <path d="m8 11 2 2 4-4"></path>
-            </svg>
-          </span>
-          <span class="claims__copy">
-            <span class="claims__lead">Just search</span>
-            <span>No bundled JS, no cloud, no ads</span>
-          </span>
-        </li>
-      </ul>
+      <div class="hero__stage">
+        <div class="stage">
+          <NanospotPanel />
+        </div>
+      </div>
     </div>
   </header>
 
+  <section class="specs-band" aria-label="Measured characteristics">
+    <div class="wrap wrap--wide">
+      <dl class="specs">
+        <div class="specs__item">
+          <dt class="specs__val">1.5 MB</dt>
+          <dd class="specs__desc">Single Zig binary. No Electron, no web view.</dd>
+        </div>
+        <div class="specs__item">
+          <dt class="specs__val">&lt; 1 ms</dt>
+          <dd class="specs__desc">Memory-mapped file index, ranked in memory.</dd>
+        </div>
+        <div class="specs__item">
+          <dt class="specs__val">0 ms</dt>
+          <dd class="specs__desc">Instant panel toggle and arrow navigation.</dd>
+        </div>
+        <div class="specs__item">
+          <dt class="specs__val">Local</dt>
+          <dd class="specs__desc">Index and clipboard history stay on disk.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
   <section class="clip" aria-labelledby="clip-title">
     <div class="wrap wrap--wide clip__copy">
-      <h2 class="h2" id="clip-title">Everything you copied, one keystroke away</h2>
+      <h2 class="h2" id="clip-title">Your clipboard, searchable offline</h2>
       <p class="lede">
-        <kbd class="clip__kbd">⌥⇧C</kbd> opens your clipboard history. Type to find text, links,
-        colors, code, and files.
+        <kbd class="clip__kbd">⌥⇧C</kbd> opens text, links, colors, code, and files in one split board.
+        Password managers are skipped.
       </p>
     </div>
     <div class="wrap wrap--wide">

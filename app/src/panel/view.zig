@@ -5,6 +5,7 @@ const ui = nanoui.ui;
 const search = @import("../search.zig");
 const board_mod = @import("../board.zig");
 const chrome = @import("../chrome.zig");
+const icons = @import("../icons.zig");
 const list = @import("../list.zig");
 
 const metrics = chrome.metrics;
@@ -18,7 +19,7 @@ pub fn render(p: anytype, c: *ui.Context) void {
     defer root.end();
     searchBar(p, c);
     if (p.mode == .clipboard) {
-        const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
+        const cx: board_mod.Context = .{ .ctx = p.hooks.ctx, .app_icon = p.hooks.app_icon, .lookup_image = p.hooks.lookup_image, .decode_image = p.hooks.decode_image, .detailed_date = p.hooks.detailed_date, .query = p.field.text() };
         if (p.board.view(c, cx)) |a| p.ask(.{ .clipboard = a });
     } else if (p.field.text().len > 0 or p.list.visible.len > 0) {
         const well = chrome.well(c);
@@ -42,8 +43,7 @@ pub fn render(p: anytype, c: *ui.Context) void {
     }
 }
 
-/// Return on the board pastes; a Space typed into an empty filter
-/// previews, as the Swift board's.
+/// Return on the board pastes; Space on an empty filter triggers Quick Look.
 fn boardField(p: anytype, r: anytype) void {
     if (r.changed) {
         if (std.mem.eql(u8, p.field.text(), " ")) if (p.board.list.selection()) |e| if (p.board.previewable(e)) {
@@ -63,17 +63,17 @@ fn searchBar(p: anytype, c: *ui.Context) void {
     ui.icon(c, "magnifyingglass", .{ .size = metrics.search_icon_size, .weight = .medium, .color = tone.secondary, .frame = metrics.search_icon_size });
     if (p.field.text().len == 0) p.field.focus();
     const board = p.mode == .clipboard;
-    observeInput(p, c);
-    const suggestion = if (p.completion) |comp| comp.suffix else "";
+    p.observeInput(c);
+    const suggestion = p.completionSuffix();
     const r = ui.textField(c, &p.field, .{ .placeholder = if (board) "Filter clipboard" else "Nanospot", .size = type_size.input, .width = .fill, .bare = true, .suggestion = suggestion, .placeholder_color = tone.tertiary });
-    if (r.accepted) p.suppressed_by_backspace = false;
+    if (r.accepted) p.acceptCompletionHint();
     if (board) {
         boardField(p, r);
     } else {
         if (r.changed) p.refresh();
         if (r.submitted) if (p.list.selection()) |row| p.ask(.{ .open = row.path });
     }
-    syncFieldState(p, c, r.caret);
+    p.syncFieldState(c, r.caret);
     if (p.field.text().len > 0) {
         const clear = ui.div(c).w(metrics.clear_hit_size).h(metrics.clear_hit_size).center().control();
         defer clear.end();
@@ -84,41 +84,14 @@ fn searchBar(p: anytype, c: *ui.Context) void {
     } else chrome.keyChip(c, .{ .label = if (board) board_mod.summon_label else summon_label });
 }
 
-fn observeInput(p: anytype, c: *const ui.Context) void {
-    if (hasBackspace(c)) {
-        p.suppressed_by_backspace = true;
-        p.completion = null;
-    } else if (hasInsertion(c)) {
-        p.suppressed_by_backspace = false;
-    }
-    if (hasMarkedText(c)) {
-        p.composing = true;
-        p.completion = null;
-    }
-}
-
-fn syncFieldState(p: anytype, c: *ui.Context, caret: usize) void {
-    const len = p.field.text().len;
-    const edit = c.edits.get(p.field.last_id);
-    const at_end = if (edit) |e| (e.caret == len and e.anchor == len) else (caret == len);
-    const marked = if (edit) |e| (e.marked != null) else false;
-    p.caret_at_end = at_end;
-    p.composing = marked;
-    const next = p.computeCompletion();
-    if (!sameCompletion(p.completion, next)) {
-        p.completion = next;
-        c.changed = true;
-    }
-}
-
 fn filterBar(p: anytype, c: *ui.Context) void {
     const Filter = @TypeOf(p.list.filter);
     const bar = chrome.filterBar(c);
     defer bar.end();
     var buf: [Filter.primary.len + Filter.dynamic.len]Filter = undefined;
     for (p.filterOptions(&buf)) |f| {
-        const slot: chrome.ChipSlot = if (p.indexing and f != .apps) .loading else .{ .count = p.list.count(f) };
-        if (chrome.filterChip(c, bar, f.title(), f.symbol(), p.list.filter == f, slot)) p.selectFilter(f);
+        const slot: chrome.ChipSlot = if (p.catalog.indexing() and f != .apps) .loading else .{ .count = p.list.count(f) };
+        if (chrome.filterChip(c, bar, f.title(), p.list.filter == f, slot)) p.selectFilter(f);
     }
 }
 
@@ -127,6 +100,19 @@ fn resultList(p: anytype, c: *ui.Context) void {
         const f = p.list.filter;
         const message: chrome.Empty = if (p.list.failed)
             .{ .symbol = "exclamationmark.triangle", .title = c.print("Could not search for \u{201C}{s}\u{201D}", .{p.field.text()}) }
+        else if (f != .all and f != .apps and !p.catalog.hasFileIndex())
+            if (p.catalog.indexing())
+                .{
+                    .symbol = f.symbol(),
+                    .title = "Indexing your files\u{2026}",
+                    .hint = "Press \u{2318}1 to search everything.",
+                }
+            else
+                .{
+                    .symbol = "folder.badge.questionmark",
+                    .title = "No File Index yet",
+                    .hint = "Grant Full Disk Access so Nanospot can index your files.",
+                }
         else
             .{
                 .symbol = f.symbol(),
@@ -142,15 +128,9 @@ fn resultList(p: anytype, c: *ui.Context) void {
     chrome.revealSelection(c, &p.list, box.id(), view_h);
     const visible = p.list.visible;
     const shown = list.rowsInView(c.scroll.get(box.id()) orelse 0, visible.len, metrics.row_height, view_h, 2);
-    spacer(c, "above", shown.first);
+    chrome.rowSpacer(c, "above", shown.first);
     for (shown.first..shown.end) |i| rowView(p, c, i);
-    spacer(c, "below", visible.len - shown.end);
-}
-
-fn spacer(c: *ui.Context, name: []const u8, rows: usize) void {
-    if (rows == 0) return;
-    ui.key(c, name);
-    ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
+    chrome.rowSpacer(c, "below", visible.len - shown.end);
 }
 
 fn footer(p: anytype, c: *ui.Context) void {
@@ -172,14 +152,16 @@ fn rowView(p: anytype, c: *ui.Context, i: usize) void {
         if (r.modified) |secs| r.modified_label = p.hooks.describe_date(p.hooks.ctx, secs, a);
     }
     const row = r.*;
-    const th = c.theme;
     ui.keyInt(c, i);
     const selected = i == p.list.selected;
     const top_hit = p.isTopHit(i);
     const row_box = chrome.rowBox(c, selected, top_hit);
     defer row_box.box.end();
     const it = row_box.it;
-    if (it.clicked) p.list.selected = i;
+    if (it.clicked) {
+        p.list.selected = i;
+        p.pending_select_key = null;
+    }
     if (it.double_clicked) p.ask(.{ .open = row.path });
     {
         const lead = chrome.rowLead(c, top_hit);
@@ -187,21 +169,12 @@ fn rowView(p: anytype, c: *ui.Context, i: usize) void {
         iconView(p, c, row, if (top_hit) metrics.top_hit_icon_size else metrics.icon_size);
         const text = ui.div(c).column().grow().gap(space.text);
         defer text.end();
-        {
-            const head = ui.div(c).row().gap(space.pad).itemsCenter();
-            defer head.end();
-            if (top_hit) {
-                ui.text(c, row.title, .{ .size = type_size.top_hit_title, .weight = .semibold, .truncate = .ellipsis });
-            } else {
-                if (row.suggestion) {
-                    suggestionTitle(p, c, row.title);
-                } else {
-                    ui.text(c, row.title, .{ .size = type_size.row_title, .weight = .medium, .truncate = .ellipsis });
-                }
-                const badge = ui.div(c).px(space.snug).py(space.hair).roundedFull().bg(th.muted.alpha(chrome.fill.badge));
-                defer badge.end();
-                ui.text(c, row.kind.label(), .{ .size = type_size.micro, .weight = .semibold, .color = chrome.tone(th).secondary });
-            }
+        if (top_hit) {
+            ui.text(c, row.title, .{ .size = type_size.top_hit_title, .weight = .semibold, .truncate = .ellipsis });
+        } else if (row.suggestion) {
+            suggestionTitle(p, c, row.title);
+        } else {
+            ui.text(c, row.title, .{ .size = type_size.row_title, .weight = .medium, .truncate = .ellipsis });
         }
         subtitleLine(c, row, top_hit);
     }
@@ -247,46 +220,28 @@ fn subtitleLine(c: *ui.Context, row: search.Row, top_hit: bool) void {
     if (top_hit) {
         ui.text(c, "·", style);
         ui.text(c, "Top Hit", style);
+    } else {
+        ui.text(c, "·", style);
+        ui.text(c, row.kind.label(), style);
     }
 }
 
+fn iconKind(kind: search.Kind) icons.Kind {
+    return switch (kind) {
+        .app => .app,
+        .file => .file,
+        .folder => .folder,
+        .web => .unknown,
+    };
+}
+
 fn iconView(p: anytype, c: *ui.Context, row: search.Row, size: f32) void {
-    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path)) |png| {
-        _ = ui.image(c, .{ .key = row.path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
+    if (row.kind != .web) if (p.hooks.app_icon(p.hooks.ctx, row.path, iconKind(row.kind))) |img| {
+        _ = ui.image(c, .{ .key = img.key, .source = .{ .pixels = img.pixels }, .max_width = size, .max_height = size, .radius = 0 });
         return;
     };
     const blue = chrome.hue(c.theme, .blue);
     const tile = ui.div(c).w(size).h(size).center().rounded(metrics.icon_tile_radius).bg(blue.alpha(chrome.fill.tile));
     defer tile.end();
     ui.icon(c, row.kind.symbol(), .{ .size = size * metrics.tile_symbol_scale, .color = blue });
-}
-
-fn sameCompletion(a: anytype, b: anytype) bool {
-    if (a == null and b == null) return true;
-    const x = a orelse return false;
-    const y = b orelse return false;
-    return x.source == y.source and std.mem.eql(u8, x.suffix, y.suffix);
-}
-
-fn hasBackspace(c: *const ui.Context) bool {
-    if (c.input.key == .backspace) return true;
-    for (c.input.ops) |op| {
-        if (op == .command and (op.command == .delete_backward or op.command == .delete_word_backward or op.command == .delete_to_line_start)) return true;
-    }
-    return false;
-}
-
-fn hasInsertion(c: *const ui.Context) bool {
-    if (c.input.chars.len > 0) return true;
-    for (c.input.ops) |op| {
-        if (op == .insert and op.insert.len > 0) return true;
-    }
-    return false;
-}
-
-fn hasMarkedText(c: *const ui.Context) bool {
-    for (c.input.ops) |op| {
-        if (op == .set_marked and op.set_marked.text.len > 0) return true;
-    }
-    return false;
 }

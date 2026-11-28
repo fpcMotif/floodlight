@@ -5,13 +5,13 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
-const core = @import("floodlight_core");
 const search = @import("search.zig");
 const clipboard = @import("clipboard.zig");
 const panel_mod = @import("panel.zig");
 const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const chrome = @import("chrome.zig");
+const icons_mod = @import("icons.zig");
 
 const gpa = std.heap.c_allocator;
 const metrics = chrome.metrics;
@@ -22,7 +22,7 @@ const home_files = [_][]const u8{
     "Documents/Call Notes.md",
     "Desktop/Calgary Itinerary.pdf",
     "Pictures/calibration-chart.png",
-    "Projects/floodlight/calendar.zig",
+    "Projects/nanospot/calendar.zig",
     "Projects/calc/README.md",
 };
 
@@ -40,20 +40,59 @@ const Stage = struct {
     out: []const u8,
     cat: search.Catalog,
     store: clipboard.Store,
-    icons: std.StringHashMapUnmanaged([]u8) = .empty,
+    icons: std.StringHashMapUnmanaged(mac.Icon) = .empty,
 
     fn hooks(s: *Stage) panel_mod.Hooks {
-        return .{ .ctx = s, .request = ignoreRequest, .app_icon = appIcon, .describe_date = describeDate, .detailed_date = detailedDate };
+        return .{ .ctx = s, .request = ignoreRequest, .app_icon = appIcon, .lookup_image = lookupImage, .decode_image = decodeImage, .describe_date = describeDate, .detailed_date = detailedDate };
     }
 
     fn ignoreRequest(_: ?*anyopaque) void {}
 
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
+    fn lookupImage(ctx: ?*anyopaque, key: []const u8) ?icons_mod.Image {
         const s: *Stage = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |png| return png;
-        const png = mac.iconPng(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
-        s.icons.put(gpa, gpa.dupe(u8, path) catch return png, png) catch {};
-        return png;
+        const e = s.icons.getEntry(key) orelse return null;
+        return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+    }
+
+    fn decodeImage(ctx: ?*anyopaque, key: []const u8, bytes: []const u8, max_w: u32, max_h: u32, _: bool) ?icons_mod.Image {
+        const s: *Stage = @ptrCast(@alignCast(ctx));
+        if (s.icons.getEntry(key)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+        const icon = mac.decodePixels(gpa, bytes, max_w, max_h) orelse return null;
+        const owned = gpa.dupe(u8, key) catch {
+            icon.deinit(gpa);
+            return null;
+        };
+        s.icons.put(gpa, owned, icon) catch {
+            gpa.free(owned);
+            icon.deinit(gpa);
+            return null;
+        };
+        return .{ .key = owned, .pixels = icon.pixels() };
+    }
+
+    fn appIcon(ctx: ?*anyopaque, path: []const u8, _: icons_mod.Kind) ?icons_mod.Image {
+        const s: *Stage = @ptrCast(@alignCast(ctx));
+        if (s.icons.getEntry(path)) |e| return .{ .key = e.key_ptr.*, .pixels = e.value_ptr.pixels() };
+        const icon = mac.iconPixels(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
+        const key = gpa.dupe(u8, path) catch {
+            icon.deinit(gpa);
+            return null;
+        };
+        s.icons.put(gpa, key, icon) catch {
+            gpa.free(key);
+            icon.deinit(gpa);
+            return null;
+        };
+        return .{ .key = key, .pixels = icon.pixels() };
+    }
+
+    fn deinitIcons(s: *Stage) void {
+        var it = s.icons.iterator();
+        while (it.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            e.value_ptr.deinit(gpa);
+        }
+        s.icons.deinit(gpa);
     }
 
     fn describeDate(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {
@@ -86,16 +125,13 @@ const Stage = struct {
     }
 
     fn grant(s: *Stage, dark: bool, phase: permission.Phase, name: []const u8) !void {
-        var now = phase;
-        var g: permission.Guidance = .{ .phase = &now, .app_name = "Nanospot", .icon_png = appIcon(s, "/System/Applications/Utilities/Terminal.app") };
+        var g: permission.Grant = .{ .phase = phase, .icon_png = @embedFile("app_icon_png") };
         var t: ui.Tester = undefined;
-        try t.init(gpa, .init(&g, permission.Guidance.view), .{ .width = permission.panel_w, .height = permission.panel_h, .dark = dark });
+        try t.init(gpa, g.view(), .{ .width = permission.panel_w, .height = permission.panel_h, .dark = dark });
         defer t.deinit();
         try s.write(&t, name, dark);
     }
 };
-
-fn ignoreOutcome(_: ?*anyopaque, _: core.file_index.Outcome) void {}
 
 fn seedClipboard(store: clipboard.Store) !void {
     const now = clipboard.wallClock();
@@ -122,31 +158,34 @@ pub fn main(init: std.process.Init) !void {
     try cwd.createDirPath(io, args[1]);
 
     const tmp = std.mem.trimEnd(u8, std.mem.span(std.c.getenv("TMPDIR") orelse "/tmp"), "/");
-    const home = try std.fmt.allocPrint(gpa, "{s}/floodlight-screens-{d}", .{ tmp, std.c.getpid() });
+    const home = try std.fmt.allocPrint(gpa, "{s}/nanospot-screens-{d}", .{ tmp, std.c.getpid() });
+    defer gpa.free(home);
     defer cwd.deleteTree(io, home) catch {};
     for (home_files) |file| {
         const path = try std.fs.path.join(gpa, &.{ home, file });
+        defer gpa.free(path);
         try cwd.createDirPath(io, std.fs.path.dirname(path).?);
         try cwd.writeFile(io, .{ .sub_path = path, .data = "fixture" });
     }
 
-    var files: core.file_index.FileIndex = try .open(gpa, try std.fs.path.joinZ(gpa, &.{ home, "names.flix" }), home, .{});
-    defer files.close();
-    files.rebuild(.{ .ready = ignoreOutcome });
-    if (!files.adopt()) return error.NoFileIndex;
-
+    const images_dir = try std.fs.path.join(gpa, &.{ home, "images" });
+    defer gpa.free(images_dir);
     var stage: Stage = .{
         .out = args[1],
         .cat = .{ .gpa = gpa },
-        .store = try clipboard.Store.open(":memory:", try std.fs.path.join(gpa, &.{ home, "images" })),
+        .store = try clipboard.Store.open(":memory:", images_dir),
     };
     defer stage.store.close();
     defer stage.cat.deinit();
-    stage.cat.files = &files;
+    defer stage.deinitIcons();
+    const idx_path = try std.fs.path.join(gpa, &.{ home, "names.flix" });
+    defer gpa.free(idx_path);
+    try stage.cat.buildIndex(idx_path, home);
     for ([_][]const u8{ "/System/Applications", "/System/Applications/Utilities" }) |folder| try search.scanApps(&stage.cat, io, folder);
     try seedClipboard(stage.store);
     for (frequent_apps, 0..) |app, i| {
         const path = try std.fmt.allocPrint(gpa, "/System/Applications/{s}.app", .{app});
+        defer gpa.free(path);
         for (0..frequent_apps.len - i) |_| try stage.store.recordAppOpen(path, clipboard.wallClock());
     }
 

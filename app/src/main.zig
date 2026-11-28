@@ -1,22 +1,20 @@
-//! Floodlight on nanoui: a menu-bar agent with a search panel on ⌥Space and
+//! Nanospot on nanoui: a menu-bar agent with a search panel on ⌥Space and
 //! the Full Disk Access grant flow, over the Zig core's file index.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;
 const search = @import("search.zig");
-const panel_mod = @import("panel.zig");
+const shell_mod = @import("shell.zig");
 const permission = @import("permission.zig");
 const mac = @import("mac.zig");
 const clipboard = @import("clipboard.zig");
-const board_mod = @import("board.zig");
 const chrome = @import("chrome.zig");
-const file_index = @import("floodlight_core").file_index;
-const FileIndex = file_index.FileIndex;
 const presence = @import("presence.zig");
-const Presence = presence.Presence;
 const memory_probe = @import("memory_probe.zig");
+const latency_probe = @import("latency_probe.zig");
 
 const metrics = chrome.metrics;
+const max_frame_decodes: u32 = (@FieldType(@FieldType(nanoui.Surface, "text"), "images"){ .gpa = gpa }).decodes_left;
 const gpa = std.heap.c_allocator;
 const clipboard_poll_ms = 500;
 const suggest_debounce_ms = 150;
@@ -27,354 +25,254 @@ const compact_next_ms = 2000;
 const compact_idle_ms = 60 * 60 * 1000;
 const prune_ms = 60 * 60 * 1000;
 
-/// Icons drawn per session at most; all go when the session is forgotten.
-const max_icons = 64;
-
-const Shell = struct {
-    files: FileIndex,
+const AppShell = struct {
+    app: *nanoui.App = undefined,
     catalog: search.Catalog,
-    panel: panel_mod.Panel = undefined,
-    panel_window: *nanoui.Window = undefined,
-    guidance: permission.Guidance = undefined,
-    guide_window: *nanoui.Window = undefined,
-    flow: permission.Flow = undefined,
-    drag: ?*mac.FileDragSource = null,
-    icons: std.StringHashMapUnmanaged([]u8) = .empty,
-    polling: bool = false,
     store: clipboard.Store = undefined,
-    change_count: objc.NSInteger = 0,
-    /// The app that was frontmost when the panel opened: Return pastes there.
-    paste_target: mac.RunningApp = .{},
-    presence: Presence = undefined,
-    submitting: bool = false,
+    shell: shell_mod.Shell = undefined,
+    panel_window: *nanoui.Window = undefined,
+    grant: permission.Grant = .{},
+    guide_window: ?*nanoui.Window = null,
+    guide_icon: ?[]u8 = null,
+    drag: ?*mac.FileDragSource = null,
     compacting: bool = false,
-    searcher: search.FileSearcher,
-    adopt_gate: search.AdoptGate = .{},
-    headless: bool = false,
     memory_step: u32 = 0,
+    latency: latency_probe.State = .{},
+    latency_session: bool = false,
+
+    pub fn apply(s: *AppShell, out: shell_mod.Outcome) void {
+        switch (out.window) {
+            .none => {},
+            .place_unseen => |sz| {
+                s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
+                mac.setAlpha(s.panel_window, entrance_alpha);
+                mac.restoreGlyphAtlas(s.panel_window);
+                s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
+            },
+            .place_seen => |sz| {
+                s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
+                mac.setAlpha(s.panel_window, 1);
+                mac.restoreGlyphAtlas(s.panel_window);
+                s.panel_window.show();
+                mac.drawBeforeOcclusionUpdate(s.panel_window);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
+            },
+            .place_front => |sz| {
+                s.positionOnPointerScreen(sz);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
+                mac.restoreGlyphAtlas(s.panel_window);
+                s.panel_window.show();
+                if (s.latency_session) latency_probe.Runner(AppShell).switchOrderedIn(s);
+            },
+            .reveal => mac.setAlpha(s.panel_window, 1),
+            .resize => |sz| {
+                s.resizeKeepingTop(sz.w, sz.h);
+                if (s.latency_session) latency_probe.Runner(AppShell).switchResized(s);
+            },
+            .hide => {
+                const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
+                mac.hideWindow(s.panel_window);
+                if (s.latency_session) latency_probe.Runner(AppShell).hidden(s, t0);
+            },
+        }
+        switch (out.action) {
+            .none => {},
+            .open => |target| {
+                s.shell.host.open(s.shell.host.ctx, target);
+                s.shell.finishSubmit();
+            },
+            .reveal => |path| {
+                s.shell.host.reveal(s.shell.host.ctx, path);
+                s.shell.finishSubmit();
+            },
+        }
+        switch (out.paste) {
+            .none => {},
+            .prompt_accessibility => mac.promptAccessibility(),
+            .deliver => |pid| if (!mac.deliverPaste(pid)) std.log.err("paste: ⌘V not delivered to pid {d}", .{pid}),
+        }
+        if (out.release_idle) {
+            s.releaseIdle();
+            nanoui.App.after(20, s, releaseIdleSettled);
+        }
+        if (out.entrance_timer) nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut);
+        if (out.expiry_ms) |ms| nanoui.App.after(ms, s, expireRetention);
+        if (out.actions_menu) |e| s.actionsMenu(e);
+        if (out.redraw) s.panel_window.redraw();
+    }
 
     fn hotKey(ctx: ?*anyopaque, which: mac.HotKey) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        const focused = s.panel_window.isFocused();
-        switch (which) {
-            .search => {
-                s.presence.search(focused, s.panel.mode == .clipboard);
-                if (!s.presence.isHidden()) s.panel_window.redraw();
-            },
-            .clipboard => {
-                s.presence.board(focused, s.panel.mode == .clipboard);
-                if (!s.presence.isHidden()) s.panel_window.redraw();
-            },
-        }
-    }
-
-    fn runPresence(ctx: ?*anyopaque, e: presence.Effect) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        switch (e) {
-            .note_paste_target => s.notePasteTarget(),
-            .place => s.positionOnPointerScreen(),
-            .open_search => {
-                s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-                s.panel.showSearch();
-            },
-            .open_board => s.openBoard(),
-            .order_in_unseen => {
-                mac.setAlpha(s.panel_window, entrance_alpha);
-                s.panel_window.show();
-                mac.drawBeforeOcclusionUpdate(s.panel_window);
-            },
-            .order_in_seen => {
-                mac.setAlpha(s.panel_window, 1);
-                s.panel_window.show();
-                mac.drawBeforeOcclusionUpdate(s.panel_window);
-            },
-            .order_front => s.panel_window.show(),
-            .start_entrance_timer => nanoui.App.after(entrance_timeout_ms, s, entranceTimedOut),
-            .reveal => mac.setAlpha(s.panel_window, 1),
-            .hide_window => s.panel_window.hide(),
-            .end_session => s.endSession(),
-            .deliver_paste => deliverPaste(s.paste_target.pid),
-        }
-    }
-
-    fn openBoard(s: *Shell) void {
-        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-        s.panel.showClipboard();
-        s.panel.board.paste_target = if (s.paste_target.pid != 0 and mac.canDeliverPaste()) s.paste_target.name else "";
-    }
-
-    fn deliverPaste(pid: i32) void {
-        if (pid == 0) return;
-        if (!mac.canDeliverPaste()) return mac.promptAccessibility();
-        if (!mac.deliverPaste(pid)) std.log.err("paste: ⌘V not delivered to pid {d}", .{pid});
-    }
-
-    fn notePasteTarget(s: *Shell) void {
-        const front = mac.frontmostApp(gpa);
-        if (front.pid == 0 or front.pid == mac.ownPid()) return;
-        gpa.free(s.paste_target.bundle_id);
-        gpa.free(s.paste_target.name);
-        s.paste_target = front;
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.hotKey(which, s.panel_window.isFocused()));
     }
 
     fn reopened(ctx: ?*anyopaque) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.presence.reopened();
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.reopened());
     }
 
     fn launched(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
         mac.handleReopen(s, reopened);
-        s.presence.launched(s.flow.phase == .guiding);
+        s.apply(s.shell.launched(s.grant.isGuiding()));
     }
 
     /// In the frame's own transaction: alpha and pixels land together.
     fn afterFrame(ctx: ?*anyopaque, surface: *nanoui.Surface) bool {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
         mac.keepLinkAtDisplayRate(&surface.ctx);
         const presenting = surface.renderer.given_drawable != null;
-        if (presenting) s.panel.notePresented();
-        if (!presenting and s.presence.wantsPresentedFrame()) surface.ctx.changed = true;
-        return s.presence.framePresented(presenting);
+        const decodes: u32 = max_frame_decodes -| surface.text.images.decodes_left;
+        if (s.latency_session) latency_probe.Runner(AppShell).frame(s, surface, presenting, decodes);
+        const out = s.shell.framePresented(presenting);
+        if (out.retry_frame) surface.ctx.changed = true;
+        if (out.reveal) mac.setAlpha(s.panel_window, 1);
+        return out.reveal;
     }
 
-    fn lastFrameValid(ctx: ?*anyopaque) bool {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        return s.panel.lastFrameValid();
+    fn searchWake(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, searchLanded);
     }
 
-    fn searchFiles(ctx: ?*anyopaque, seq: u64, text: []const u8) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        const view = s.files.view() orelse return;
-        s.searcher.submit(seq, view, text);
+    fn searchLanded(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.pollSearch());
     }
 
-    fn filesReady(ctx: ?*anyopaque) void {
-        objc.dispatchMain(ctx, filesLanded);
+    fn iconsWake(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, iconsLanded);
     }
 
-    fn filesLanded(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        const taken = s.searcher.takeResult();
-        if (taken.result) |res| {
-            s.panel.landFiles(res.seq, res.view, res.slice());
-            if (!s.presence.isHidden()) s.panel_window.redraw();
-        }
-        if (s.adopt_gate.takeAfterSearch(taken.active)) s.finishAdopt();
+    fn iconsLanded(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.pollIcons());
     }
 
     fn entranceTimedOut(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.presence.entranceTimedOut();
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.entranceTimedOut());
     }
 
-    fn positionOnPointerScreen(s: *Shell) void {
+    fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.apply(s.shell.expireRetention());
+    }
+
+    fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (!w.isFocused() and !s.latency_session) s.apply(s.shell.focusLost(mac.previewVisible()));
+    }
+
+    fn onRequest(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, applyPanel);
+    }
+
+    fn applyPanel(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.latency_session) latency_probe.Runner(AppShell).applyBegin(s);
+        s.apply(s.shell.applyPending());
+        if (s.latency_session) latency_probe.Runner(AppShell).applyEnd(s);
+    }
+
+    fn timedOpen(ctx: ?*anyopaque, target: []const u8) void {
+        timedHostAction(ctx, target, mac.open);
+    }
+
+    fn timedReveal(ctx: ?*anyopaque, path: []const u8) void {
+        timedHostAction(ctx, path, mac.reveal);
+    }
+
+    fn timedHostAction(ctx: ?*anyopaque, target: []const u8, comptime run: *const fn ([]const u8) void) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        const t0 = latency_probe.nowNs();
+        run(target);
+        latency_probe.Runner(AppShell).actionHanded(s, t0, latency_probe.nowNs());
+    }
+
+    fn positionOnPointerScreen(s: *AppShell, sz: shell_mod.Size) void {
         const screen = mac.pointerScreenVisibleFrame();
-        s.panel_window.setSize(s.panel.panelWidth(), s.panel.panelHeight());
-        const f = mac.frameOf(s.panel_window);
-        mac.setFrameOrigin(s.panel_window, presence.panelFrame(screen, f.w, f.h));
+        const want = presence.panelFrame(screen, sz.w, sz.h);
+        if (presence.sameFrame(mac.frameOf(s.panel_window), want)) return;
+        mac.setFrame(s.panel_window, want);
     }
 
     /// Keeps the top edge and the horizontal centre where they are.
-    fn resizeKeepingTop(s: *Shell, w: f32, h: f32) void {
+    fn resizeKeepingTop(s: *AppShell, w: f32, h: f32) void {
         const f = mac.frameOf(s.panel_window);
         if (@abs(f.h - h) < 0.5 and @abs(f.w - w) < 0.5) return;
+        const t0 = if (s.latency_session) latency_probe.nowNs() else 0;
         const top = f.y + f.h;
         const mid = f.x + f.w / 2;
         s.panel_window.setSize(w, h);
         mac.setFrameOrigin(s.panel_window, .{ .x = mid - w / 2, .y = top - h, .w = w, .h = h });
         nanoui.App.after(resize_redraw_ms, s, redrawPanel);
+        if (s.latency_session) latency_probe.Runner(AppShell).resized(s, t0, latency_probe.nowNs());
     }
 
     fn redrawPanel(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel_window.redraw();
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.latency_session) latency_probe.Runner(AppShell).resizeRedrawFired(s);
+        if (!s.shell.isHidden()) s.panel_window.redraw();
     }
 
-    fn endSession(s: *Shell) void {
-        s.endSubmit();
-        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-        s.panel.hide();
-        if (s.panel.nextExpiryMs() == null) return s.releaseIdleMemory();
-        if (s.panel.armExpiry()) |ms| nanoui.App.after(ms, s, expireRetention);
-    }
-
-    fn expireRetention(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel.disarmExpiry();
-        s.panel.retention_seconds = mac.retentionSeconds(panel_mod.default_retention_seconds);
-        if (s.panel.expire()) {
-            if (s.presence.isHidden()) s.releaseIdleMemory();
-        } else if (s.panel.armExpiry()) |ms| {
-            nanoui.App.after(ms, s, expireRetention);
-        }
-    }
-
-    fn releaseIdleMemory(s: *Shell) void {
-        s.panel.forgetPresented();
+    fn releaseIdle(s: *AppShell) void {
+        s.shell.releaseIdleArenas();
         mac.releaseSurface(s.panel_window);
-        if (!s.guide_window.isVisible()) mac.releaseSurface(s.guide_window);
-        var it = s.icons.iterator();
-        while (it.next()) |e| gpa.free(e.value_ptr.*);
-        s.icons.clearRetainingCapacity();
+        if (s.guide_window) |gw| if (!gw.isVisible()) mac.releaseSurface(gw);
+        s.store.releaseMemory();
         mac.releaseFreedMemory();
     }
 
-    fn endSubmit(s: *Shell) void {
-        if (!s.submitting) return;
-        s.submitting = false;
-        mac.signpostEnd(.submit);
+    fn releaseIdleSettled(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (s.shell.isHidden() and s.shell.panel.nextExpiryMs() == null) s.releaseIdle();
     }
 
-    fn panelKeyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!w.isFocused()) s.presence.focusLost(mac.previewVisible());
-    }
-
-    fn panelRequest(ctx: ?*anyopaque) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.panel.pending) |a| {
-            if (a != .hide and a != .show_search and !s.submitting) {
-                s.submitting = true;
-                mac.signpostBegin(.submit);
-            } else if (a == .hide or a == .show_search) {
-                s.endSubmit();
-            }
-        }
-        objc.dispatchMain(ctx, applyPanel);
-    }
-
-    fn applyPanel(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.panel.pending) |a| {
-            s.panel.pending = null;
-            switch (a) {
-                .open => |path| mac.open(path),
-                .reveal => |path| mac.reveal(path),
-                .copy => |row| mac.copy(row.path),
-                .hide, .show_search => {},
-                .clipboard => |b| s.applyBoard(b),
-            }
-            s.endSubmit();
-            s.presence.settle(a);
-            if (!s.presence.isHidden()) s.panel_window.redraw();
-            return;
-        }
-        s.resizeKeepingTop(s.panel.width, s.panel.height);
-    }
-
-    /// Carries out a board action; `Presence.settle` decides whether the panel hides.
-    fn applyBoard(s: *Shell, a: board_mod.Action) void {
-        switch (a) {
-            .paste, .copy => |e| s.writeEntry(e),
-            .open => |url| mac.open(url),
-            .reveal => |path| mac.reveal(path),
-            .preview => |e| s.preview(e),
-            .actions => |e| s.actionsMenu(e),
-        }
-    }
-
-    fn applyAndSettle(s: *Shell, a: board_mod.Action) void {
-        s.applyBoard(a);
-        s.presence.settle(.{ .clipboard = a });
-    }
-
-    fn writeEntry(s: *Shell, e: clipboard.Entry) void {
+    fn actionsMenu(s: *AppShell, e: clipboard.Entry) void {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
-        const png = if (e.kind == .image) s.store.image(arena.allocator(), e.id) else null;
-        mac.writeClipboard(e.kind, e.filePath() orelse e.text, png);
-        // The marker keeps capture from storing it again; this keeps the count current.
-        s.change_count = mac.pasteboardChangeCount();
-    }
-
-    fn preview(s: *Shell, e: clipboard.Entry) void {
-        if (e.filePath()) |path| return mac.togglePreview(path);
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const stored = s.store.image(arena.allocator(), e.id) orelse s.store.thumbnail(arena.allocator(), e.id);
-        const png = mac.pngBytes(arena.allocator(), stored) orelse s.store.thumbnail(arena.allocator(), e.id);
-        const path = mac.previewFile(gpa, e.id, png) orelse return;
-        defer gpa.free(path);
-        mac.togglePreview(path);
-    }
-
-    fn actionsMenu(s: *Shell, e: clipboard.Entry) void {
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const cmd = mac.command_modifier;
-        const items = [_]mac.MenuItem{
-            .{ .title = s.panel.board.pasteLabel(arena.allocator()), .key = "\r", .modifiers = 0 },
-            .{ .title = "Copy", .key = "c", .modifiers = cmd },
-            .{ .title = "Quick Look", .key = " ", .modifiers = 0, .enabled = s.panel.board.previewable(e), .separator_before = true },
-            .{ .title = "Show in Finder", .key = "r", .modifiers = cmd, .enabled = e.filePath() != null },
-            .{ .title = if (e.pinned_at != null) "Unpin" else "Pin", .key = ".", .modifiers = cmd, .separator_before = true },
-            .{ .title = "Delete", .key = "d", .modifiers = cmd },
-        };
+        const items = s.shell.boardMenuItems(arena.allocator(), e);
         const f = mac.frameOf(s.panel_window);
         const at = [2]f64{ f.w - metrics.well_inset - 110, f.h - metrics.well_inset - metrics.footer_height };
-        const choice = mac.popUpMenu(s.panel_window, &items, at) orelse return;
-        switch (choice) {
-            0 => s.applyAndSettle(.{ .paste = e }),
-            1 => s.writeEntry(e),
-            2 => s.preview(e),
-            3 => if (e.filePath()) |p| s.applyAndSettle(.{ .reveal = p }),
-            4 => s.panel.board.togglePin(),
-            5 => s.panel.board.delete(),
-            else => {},
-        }
-        s.panel_window.redraw();
+        const idx = mac.popUpMenu(s.panel_window, &items, at) orelse return;
+        const choice = shell_mod.BoardMenuChoice.fromIndex(idx) orelse return;
+        s.apply(s.shell.applyBoardMenu(e, choice));
     }
 
-    // Clipboard capture: the pasteboard's change count, every half second.
-
     fn captureTick(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
         defer nanoui.App.after(clipboard_poll_ms, s, captureTick);
-        const count = mac.pasteboardChangeCount();
-        if (count == s.change_count) return;
-        s.change_count = count;
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const front = mac.frontmostApp(arena.allocator());
-        var reader = mac.PasteboardReader.begin();
-        defer reader.end();
-        const app: clipboard.App = .{ .bundle_id = front.bundle_id, .name = front.name };
-        const stored = s.store.capture(arena.allocator(), reader.pasteboard(), app, clipboard.wallClock()) catch |err| blk: {
-            std.log.err("clipboard capture: {s}", .{@errorName(err)});
-            break :blk false;
-        };
-        if (!stored or s.panel.mode != .clipboard) return;
-        s.panel.board.list.markStale();
-        if (s.presence.isHidden()) return;
-        s.panel.refresh();
-        s.panel_window.redraw();
+        s.apply(s.shell.captureTick());
     }
 
     const CompactJob = struct {
-        shell: *Shell,
+        app: *AppShell,
         images: []const u8,
         job: clipboard.Compaction,
         avif_bytes: ?usize = null,
     };
 
     fn compactTick(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.presence.isHidden() or s.compacting) return nanoui.App.after(compact_next_ms, s, compactTick);
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        if (!s.shell.isHidden() or s.compacting) return nanoui.App.after(compact_next_ms, s, compactTick);
         const job = s.store.nextCompaction(clipboard.wallClock()) orelse return nanoui.App.after(compact_idle_ms, s, compactTick);
         const state = gpa.create(CompactJob) catch {
             std.log.err("clipboard compaction: out of memory", .{});
             return nanoui.App.after(compact_idle_ms, s, compactTick);
         };
-        state.* = .{ .shell = s, .images = s.store.images, .job = job };
+        state.* = .{ .app = s, .images = s.store.images, .job = job };
         s.compacting = true;
-        const t = std.Thread.spawn(.{}, compactWorker, .{state}) catch |err| {
+        const th = std.Thread.spawn(.{}, compactWorker, .{state}) catch |err| {
             s.compacting = false;
             gpa.destroy(state);
             std.log.err("clipboard compaction: no worker thread: {s}", .{@errorName(err)});
             return nanoui.App.after(compact_idle_ms, s, compactTick);
         };
-        t.detach();
+        th.detach();
     }
 
     fn compactWorker(state: *CompactJob) void {
@@ -386,7 +284,7 @@ const Shell = struct {
 
     fn compactionLanded(ctx: ?*anyopaque) callconv(.c) void {
         const state: *CompactJob = @ptrCast(@alignCast(ctx));
-        const s = state.shell;
+        const s = state.app;
         const job = state.job;
         const avif_bytes = state.avif_bytes;
         gpa.destroy(state);
@@ -396,52 +294,32 @@ const Shell = struct {
     }
 
     fn pruneTick(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
         defer nanoui.App.after(prune_ms, s, pruneTick);
-        s.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
-        if (s.panel.mode == .clipboard) s.panel.board.list.markStale();
-    }
-
-    fn detailedDate(_: ?*anyopaque, secs: f64, arena: std.mem.Allocator) []const u8 {
-        return mac.detailedDate(secs, arena);
-    }
-
-    fn describeDate(_: ?*anyopaque, secs: i64, arena: std.mem.Allocator) []const u8 {
-        return mac.relativeDate(secs, arena);
-    }
-
-    fn appIcon(ctx: ?*anyopaque, path: []const u8) ?[]const u8 {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.icons.get(path)) |png| return png;
-        if (s.icons.count() >= max_icons) return null;
-        const png = mac.iconPng(gpa, path, metrics.top_hit_icon_size * 2) orelse return null;
-        const key = gpa.dupe(u8, path) catch return png;
-        s.icons.put(gpa, key, png) catch {};
-        return png;
+        s.apply(s.shell.pruneClipboard());
     }
 
     const SuggestRequest = struct {
-        shell: *Shell,
+        app: *AppShell,
         seq: u64,
         query: []u8,
     };
 
-    fn suggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.headless) return;
+    fn onSuggest(ctx: ?*anyopaque, seq: u64, query: []const u8) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
         const q_copy = gpa.dupe(u8, query) catch return;
         const req = gpa.create(SuggestRequest) catch {
             gpa.free(q_copy);
             return;
         };
-        req.* = .{ .shell = s, .seq = seq, .query = q_copy };
+        req.* = .{ .app = s, .seq = seq, .query = q_copy };
         nanoui.App.after(suggest_debounce_ms, req, sendSuggest);
     }
 
     fn sendSuggest(ctx: ?*anyopaque) callconv(.c) void {
         const req: *SuggestRequest = @ptrCast(@alignCast(ctx));
-        const s = req.shell;
-        if (req.seq != s.panel.pending_suggest_seq) {
+        const s = req.app;
+        if (!s.shell.shouldSendSuggest(req.seq)) {
             gpa.free(req.query);
             gpa.destroy(req);
             return;
@@ -453,151 +331,146 @@ const Shell = struct {
             gpa.destroy(req);
             return;
         };
-        nanoui.http.fetch(gpa, .{ .url = url }, req, onSuggest);
+        nanoui.http.fetch(gpa, .{ .url = url }, req, receiveSuggest);
     }
 
-    fn onSuggest(req: *SuggestRequest, res: nanoui.http.Response) void {
+    fn receiveSuggest(req: *SuggestRequest, res: nanoui.http.Response) void {
         defer {
             gpa.free(req.query);
             gpa.destroy(req);
         }
-        const s = req.shell;
         if (res.err.len > 0 or res.status != 200) return;
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const items = search.parseSuggestions(arena.allocator(), res.body);
-        if (s.panel.receiveSuggestionsFor(req.seq, req.query, items)) s.panel_window.redraw();
+        const s = req.app;
+        s.apply(s.shell.receiveSuggestions(req.seq, req.query, res.body));
     }
 
-    // The grant flow's effects.
-
-    fn isGranted(_: ?*anyopaque) bool {
-        return mac.fullDiskAccessGranted();
-    }
-
-    fn openSettings(_: ?*anyopaque) void {
-        mac.openFullDiskAccessSettings();
-    }
-
-    fn present(ctx: ?*anyopaque) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.guidance.dismissed = false;
-        const parent: ?permission.Rect = if (s.panel_window.isVisible()) mac.frameOf(s.panel_window) else null;
-        const want = permission.anchorFrame(mac.systemSettingsWindow(), parent, mac.mainScreenVisibleFrame());
-        if (!s.guide_window.isVisible() or permission.shouldMove(mac.frameOf(s.guide_window), want)) mac.setFrameOrigin(s.guide_window, want);
-        if (!s.guide_window.isVisible()) mac.orderFrontRegardless(s.guide_window);
-        s.guide_window.redraw();
-        if (!s.polling) {
-            s.polling = true;
-            nanoui.App.after(s.flow.pollDelayMs(), s, pollTick);
+    fn ensureGuideWindow(s: *AppShell) ?*nanoui.Window {
+        if (s.guide_window) |w| return w;
+        if (s.guide_icon == null) {
+            s.guide_icon = mac.iconPng(gpa, mac.bundlePath(), permission.metrics.app_icon_size * 2);
+            s.grant.icon_png = s.guide_icon;
         }
-    }
-
-    fn close(ctx: ?*anyopaque) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.guide_window.hide();
-        if (s.drag) |d| d.place(null);
-    }
-
-    fn granted(ctx: ?*anyopaque) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (!s.guide_window.isVisible()) return s.rebuildIndex();
-        s.guide_window.redraw();
-        nanoui.App.after(permission.granted_linger_ms, s, lingerDone);
-        // Folders that were closed to the scan are open now.
-        s.rebuildIndex();
-    }
-
-    fn lingerDone(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.flow.phase == .granted) s.flow.dismiss();
-    }
-
-    fn pollTick(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.polling = false;
-        s.flow.poll();
-    }
-
-    fn guidanceRequest(ctx: ?*anyopaque) void {
-        objc.dispatchMain(ctx, applyGuidance);
-    }
-
-    fn applyGuidance(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        if (s.guidance.dismissed) {
-            s.guidance.dismissed = false;
-            return s.flow.dismiss();
+        const w = s.app.newWindow(.{
+            .title = "Full Disk Access",
+            .width = permission.panel_w,
+            .height = permission.panel_h,
+            .decorations = false,
+            .resizable = false,
+            .kind = .panel,
+            .non_activating = true,
+            .all_spaces = true,
+            .skip_taskbar = true,
+            .visible = false,
+            .content = .{ .view = s.grant.view() },
+        }) catch |err| {
+            std.log.err("guide window: {s}", .{@errorName(err)});
+            return null;
+        };
+        if (mac.installSlab(w, permission.metrics.radius, .floating, .regular)) |guide_host| {
+            s.drag = mac.FileDragSource.create(guide_host, mac.bundlePath());
         }
-        const d = s.drag orelse return;
-        const r = s.guidance.card orelse return d.place(null);
-        d.place(.{ r.x, r.y, r.w, r.h });
+        s.guide_window = w;
+        return w;
     }
 
-    // The file index: the last run's opens at once, a fresh one replaces it.
-
-    fn rebuildIndex(s: *Shell) void {
-        const t = std.Thread.spawn(.{}, FileIndex.rebuild, .{ &s.files, file_index.Notify{ .ctx = s, .ready = indexReady } }) catch |err|
-            return std.log.err("file index: no rebuild thread: {s}", .{@errorName(err)});
-        s.panel.indexing = true;
-        t.detach();
-    }
-
-    fn indexReady(ctx: ?*anyopaque, outcome: file_index.Outcome) void {
-        if (outcome == .failed) std.log.err("file index: {s}", .{@errorName(outcome.failed)});
-        objc.dispatchMain(ctx, indexLanded);
-    }
-
-    fn indexLanded(ctx: ?*anyopaque) callconv(.c) void {
-        const s: *Shell = @ptrCast(@alignCast(ctx));
-        s.panel.indexing = s.files.busy();
-        if (s.adopt_gate.requestAdopt(s.searcher.isActive())) s.finishAdopt();
-        if (!s.presence.isHidden()) s.panel_window.redraw();
-    }
-
-    fn finishAdopt(s: *Shell) void {
-        if (s.files.adopt()) {
-            // The rows answer the old index: ask again.
-            s.panel.list.markStale();
-            if (!s.presence.isHidden()) {
-                s.panel.refresh();
-                s.panel_window.redraw();
-            }
+    fn applyGrant(s: *AppShell, out: permission.Outcome) void {
+        if (out.open_settings) mac.openFullDiskAccessSettings();
+        switch (out.window) {
+            .keep => {},
+            .show => |r| if (s.ensureGuideWindow()) |gw| {
+                mac.setFrameOrigin(gw, r);
+                mac.restoreGlyphAtlas(gw);
+                mac.orderFrontRegardless(gw);
+                mac.drawBeforeOcclusionUpdate(gw);
+                gw.redraw();
+            },
+            .move => |r| if (s.guide_window) |gw| mac.setFrameOrigin(gw, r),
+            .redraw => if (s.guide_window) |gw| gw.redraw(),
+            .hide => if (s.guide_window) |gw| gw.hide(),
         }
+        if (out.drag.rect()) |r| if (s.drag) |d| d.place(r);
+        if (out.poll_ms) |ms| nanoui.App.after(ms, s, grantPoll);
+        if (out.linger_ms) |ms| nanoui.App.after(ms, s, grantLinger);
+        if (out.rebuild_index) s.apply(s.shell.rebuildIndex());
+    }
+
+    fn grantAnchors(ctx: ?*anyopaque) permission.Anchors {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        return .{
+            .settings = mac.systemSettingsWindow(),
+            .parent = if (s.panel_window.isVisible()) mac.frameOf(s.panel_window) else null,
+            .screen = mac.mainScreenVisibleFrame(),
+        };
+    }
+
+    fn onGrantRequest(ctx: ?*anyopaque) void {
+        objc.dispatchMain(ctx, flushGrant);
+    }
+
+    fn flushGrant(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.applyGrant(s.grant.applyPending());
+    }
+
+    fn grantPoll(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.applyGrant(s.grant.poll(mac.fullDiskAccessGranted()));
+    }
+
+    fn grantLinger(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *AppShell = @ptrCast(@alignCast(ctx));
+        s.applyGrant(s.grant.lingerTimedOut());
     }
 };
 
 pub fn main(init: std.process.Init) !void {
+    const t_launch0 = latency_probe.nowNs();
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
-    const support = try std.fs.path.join(gpa, &.{ home, "Library/Application Support/Floodlight Nano" });
+    const support = try std.fs.path.join(gpa, &.{ home, "Library/Application Support/Nanospot" });
+    defer gpa.free(support);
     try std.Io.Dir.cwd().createDirPath(init.io, support);
     const index_path = try std.fs.path.joinZ(gpa, &.{ support, "names.flix" });
+    defer gpa.free(index_path);
 
+    const t_app_init0 = latency_probe.nowNs();
     const app = try nanoui.App.create(init, .{ .name = "Nanospot", .quit_on_last_window_closed = false });
     defer app.destroy();
     mac.becomeAccessory(app.nsapp);
+    const app_init_ns = latency_probe.nowNs() -| t_app_init0;
     // Snapshots and hidden runs draw the panel and touch nothing else: no
     // hotkey, no System Settings, no scan of the home folder, no history on disk.
     const headless = app.flags.hidden or app.flags.snapshot != null;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const memory_session = memory_probe.hasFlag(args, memory_probe.session_flag);
     const memory_seed = memory_probe.hasFlag(args, memory_probe.seed_flag);
+    const latency_session = memory_probe.hasFlag(args, latency_probe.session_flag);
+    const latency_rounds = if (latency_session) latency_probe.resolveRoundsOrExit() else latency_probe.default_rounds;
+    const frame_latency_override = if (latency_session) latency_probe.resolveFrameLatencyOrExit() else null;
 
-    var shell: Shell = .{ .files = try .open(gpa, index_path, home, .{}), .catalog = .{ .gpa = gpa }, .searcher = .{ .io = init.io }, .headless = headless };
-    defer shell.files.close();
-    shell.searcher.ready_ctx = &shell;
-    shell.searcher.ready_fn = Shell.filesReady;
-    defer shell.searcher.stop();
-    shell.catalog.files = &shell.files;
+    var shell: AppShell = .{ .app = app, .catalog = .{ .gpa = gpa }, .latency_session = latency_session };
+    shell.latency.rounds = latency_rounds;
+    shell.latency.measure_open = memory_probe.hasFlag(args, latency_probe.open_flag);
     defer shell.catalog.deinit();
+    defer if (shell.guide_icon) |p| gpa.free(p);
+    const t_index0 = latency_probe.nowNs();
+    try shell.catalog.openIndex(index_path, home);
+    const index_open_ns = latency_probe.nowNs() -| t_index0;
+    const t_apps0 = latency_probe.nowNs();
     for (search.app_folders) |f| try search.scanApps(&shell.catalog, init.io, f);
-    try search.scanApps(&shell.catalog, init.io, try std.fs.path.join(gpa, &.{ home, "Applications" }));
+    const user_apps = try std.fs.path.join(gpa, &.{ home, "Applications" });
+    defer gpa.free(user_apps);
+    try search.scanApps(&shell.catalog, init.io, user_apps);
+    const app_scan_ns = latency_probe.nowNs() -| t_apps0;
 
     const store_path = try std.fs.path.joinZ(gpa, &.{ support, "clipboard.sqlite3" });
+    defer gpa.free(store_path);
     const images_path = try std.fs.path.join(gpa, &.{ support, "clipboard-images" });
+    defer gpa.free(images_path);
     const tmp = std.mem.trimEnd(u8, std.mem.span(std.c.getenv("TMPDIR") orelse "/tmp"), "/");
-    const scratch_images = try std.fmt.allocPrint(gpa, "{s}/floodlight-nano-{d}-images", .{ tmp, std.c.getpid() });
+    const scratch_images = try std.fmt.allocPrint(gpa, "{s}/nanospot-{d}-images", .{ tmp, std.c.getpid() });
+    defer gpa.free(scratch_images);
     defer std.Io.Dir.cwd().deleteTree(init.io, scratch_images) catch {};
+    const t_clip_open0 = latency_probe.nowNs();
     shell.store = if (headless)
         try clipboard.Store.open(":memory:", scratch_images)
     else
@@ -605,38 +478,42 @@ pub fn main(init: std.process.Init) !void {
             std.log.err("clipboard history: {s} at {s}; keeping this session's in memory", .{ @errorName(err), store_path });
             break :fallback try clipboard.Store.open(":memory:", scratch_images);
         };
+    const clipboard_open_ns = latency_probe.nowNs() -| t_clip_open0;
     defer shell.store.close();
-    shell.store.prune(clipboard.wallClock(), clipboard.retention_days) catch |err| std.log.err("clipboard prune: {s}", .{@errorName(err)});
     if (memory_seed) return memory_probe.seedMemoryHistory(gpa, shell.store);
 
-    shell.panel = .init(gpa, &shell.catalog, &shell.store, .{
-        .ctx = &shell,
-        .clock = .wall_clock,
-        .request = Shell.panelRequest,
-        .app_icon = Shell.appIcon,
-        .describe_date = Shell.describeDate,
-        .detailed_date = Shell.detailedDate,
-        .suggest = Shell.suggest,
-        .search_files = Shell.searchFiles,
-    });
-    defer shell.panel.deinit();
+    var host = shell_mod.macHost(&shell, AppShell.onRequest, if (headless) shell_mod.noSuggest else AppShell.onSuggest);
+    if (latency_session) {
+        host.open = AppShell.timedOpen;
+        host.reveal = AppShell.timedReveal;
+    }
+    shell.shell.init(
+        gpa,
+        &shell.catalog,
+        &shell.store,
+        host,
+    );
+    defer shell.shell.deinit();
     if (!headless) {
-        if (shell.searcher.start()) |_| {
-            shell.panel.async_files = true;
-        } else |err| {
-            std.log.err("file search: no worker thread: {s}", .{@errorName(err)});
-        }
+        shell.catalog.startWorker(init.io, .{ .ctx = &shell, .wake = AppShell.searchWake });
+        shell.shell.startIconWorker(init.io, .{ .ctx = &shell, .wake = AppShell.iconsWake });
+        shell.shell.prefetchFrequentIcons();
     }
     if (nanoui.kv.standard().get(gpa, "web_suggestions") catch null) |v| {
         defer gpa.free(v);
         if (std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false")) {
-            shell.panel.setWebSuggestionsEnabled(false);
+            shell.shell.panel.setWebSuggestionsEnabled(false);
         }
     }
+    const initial_height: f32 = if (app.flags.snapshot != null and app.flags.script.len > 0)
+        metrics.expanded_height
+    else
+        metrics.search_height;
+    const t_panel0 = latency_probe.nowNs();
     shell.panel_window = try app.newWindow(.{
         .title = "Nanospot",
         .width = metrics.width,
-        .height = metrics.search_height,
+        .height = initial_height,
         .min_height = metrics.search_height,
         .decorations = false,
         .resizable = false,
@@ -645,51 +522,53 @@ pub fn main(init: std.process.Init) !void {
         .all_spaces = true,
         .skip_taskbar = true,
         .visible = false,
-        .on_key = .{ .ctx = &shell, .func = Shell.panelKeyChanged },
-        .content = .{ .view = .init(&shell.panel, panel_mod.Panel.view) },
+        .on_key = .{ .ctx = &shell, .func = AppShell.panelKeyChanged },
+        .content = .{ .view = shell.shell.view() },
     });
     _ = mac.installSlab(shell.panel_window, metrics.corner_radius, .status, .clear);
     if (shell.panel_window.surface) |surface| {
-        surface.after_frame = Shell.afterFrame;
+        surface.after_frame = AppShell.afterFrame;
         surface.after_frame_ctx = &shell;
+        shell.shell.display_scale = @max(1, surface.scale);
+        if (latency_session) latency_probe.configureDisplayLink(&shell.latency, surface, frame_latency_override);
     }
+    const panel_window_ns = latency_probe.nowNs() -| t_panel0;
 
-    shell.flow = .{ .effects = .{
+    shell.grant = .{
+        .read_anchors = AppShell.grantAnchors,
+        .on_request = AppShell.onGrantRequest,
         .ctx = &shell,
-        .is_granted = Shell.isGranted,
-        .open_settings = Shell.openSettings,
-        .present = Shell.present,
-        .close = Shell.close,
-        .on_granted = Shell.granted,
-    } };
-    shell.guidance = .{ .phase = &shell.flow.phase, .app_name = "Nanospot", .request = Shell.guidanceRequest, .ctx = &shell };
-    shell.guidance.icon_png = mac.iconPng(gpa, mac.bundlePath(), 44);
-    shell.guide_window = try app.newWindow(.{
-        .title = "Full Disk Access",
-        .width = permission.panel_w,
-        .height = permission.panel_h,
-        .decorations = false,
-        .resizable = false,
-        .kind = .panel,
-        .non_activating = true,
-        .all_spaces = true,
-        .skip_taskbar = true,
-        .visible = false,
-        .content = .{ .view = .init(&shell.guidance, permission.Guidance.view) },
-    });
-    if (mac.installSlab(shell.guide_window, permission.metrics.radius, .floating, .regular)) |host| shell.drag = mac.FileDragSource.create(host, mac.bundlePath());
+    };
 
-    shell.presence = .{ .effects = .{ .ctx = &shell, .run = Shell.runPresence, .last_frame_valid = Shell.lastFrameValid } };
-
+    var hotkeys_ns: u64 = 0;
     if (!headless) {
-        try mac.registerHotKeys(&shell, Shell.hotKey);
-        shell.change_count = mac.pasteboardChangeCount();
-        nanoui.App.after(clipboard_poll_ms, &shell, Shell.captureTick);
-        nanoui.App.after(compact_next_ms, &shell, Shell.compactTick);
-        nanoui.App.after(prune_ms, &shell, Shell.pruneTick);
-        // First launch without access: start where the Swift onboarding does.
-        if (mac.fullDiskAccessGranted()) shell.rebuildIndex() else shell.flow.begin();
-        nanoui.App.after(0, &shell, if (memory_session) memory_probe.Runner(Shell).launched else Shell.launched);
+        const t_hotkeys0 = latency_probe.nowNs();
+        try mac.registerHotKeys(&shell, AppShell.hotKey);
+        hotkeys_ns = latency_probe.nowNs() -| t_hotkeys0;
+        shell.shell.syncPasteboardCount();
+        nanoui.App.after(clipboard_poll_ms, &shell, AppShell.captureTick);
+        nanoui.App.after(compact_next_ms, &shell, AppShell.compactTick);
+        nanoui.App.after(prune_ms, &shell, AppShell.pruneTick);
+        if (memory_session) {
+            nanoui.App.after(0, &shell, memory_probe.Runner(AppShell).launched);
+        } else if (latency_session) {
+            nanoui.App.after(0, &shell, latency_probe.Runner(AppShell).launched);
+        } else {
+            shell.applyGrant(shell.grant.begin(mac.fullDiskAccessGranted()));
+            nanoui.App.after(0, &shell, AppShell.launched);
+        }
+    }
+    if (latency_session) {
+        shell.latency.index_entries = if (shell.catalog.files) |*fi| if (fi.view()) |v| v.count() else 0 else 0;
+        shell.latency.launch = .{
+            .app_init_ns = app_init_ns,
+            .index_open_ns = index_open_ns,
+            .app_scan_ns = app_scan_ns,
+            .clipboard_open_ns = clipboard_open_ns,
+            .panel_window_ns = panel_window_ns,
+            .hotkeys_ns = hotkeys_ns,
+            .total_ns = latency_probe.nowNs() -| t_launch0,
+        };
     }
     try app.run();
 }

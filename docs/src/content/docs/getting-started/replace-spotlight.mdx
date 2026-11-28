@@ -1,80 +1,37 @@
 ---
-title: Replace Spotlight
-description: Make Command-Space open Floodlight reliably on the first press.
+title: Shortcuts & Spotlight
+description: How Nanospot shortcuts avoid conflicting with Spotlight on Command-Space.
 ---
 
-import { Image } from "astro:assets";
-import settingsScreenshot from "../../../assets/screenshots/settings.png";
-import spotlightDisabledScreenshot from "../../../assets/screenshots/spotlight-shortcuts-disabled.jpg";
-import spotlightEnabledScreenshot from "../../../assets/screenshots/spotlight-shortcuts-enabled.jpg";
+Nanospot uses <kbd>⌥ Space</kbd> for search and <kbd>⌥ ⇧ C</kbd> for Clipboard
+History, so macOS Spotlight keeps <kbd>⌘ Space</kbd> without a conflict.
 
-Floodlight tries <kbd>⌘ Space</kbd> first. If another macOS feature already owns
-that global shortcut, Floodlight registers <kbd>⌥ Space</kbd> instead.
+## Default global shortcuts
 
-## Disable Spotlight’s shortcut
+- **Search panel**: <kbd>⌥ Space</kbd>
+- **Clipboard History**: <kbd>⌥ ⇧ C</kbd>
 
-1. Select **Replace Spotlight…** in the setup window. After setup, the same
-   action is available from the menu-bar flashlight under **Settings…**.
-2. In the macOS shortcut controls, select **Spotlight**.
-3. Turn off **Show Spotlight search**.
-4. Return to Floodlight. It retries <kbd>⌘ Space</kbd> automatically.
+Both hotkeys register through Carbon on launch, so pressing the active hotkey
+summons that surface or hides it if it is already focused.
 
-If the shortcut does not switch, select <kbd>⌘ Space</kbd> once. No restart is
-required.
+## Turning off Spotlight (optional)
 
-<figure class="fl-doc-shot">
-  <Image
-    src={settingsScreenshot}
-    alt="Floodlight settings window showing the Replace Spotlight action beside the Option-Space shortcut."
-  />
-  <figcaption><strong>Replace Spotlight…</strong> appears while <kbd>⌥ Space</kbd> is active.</figcaption>
-</figure>
+If you want to stop Spotlight from opening on <kbd>⌘ Space</kbd> so another tool
+can use that key combination:
 
-<figure class="fl-doc-shot fl-doc-shot--system">
-  <Image
-    src={spotlightDisabledScreenshot}
-    alt="The Spotlight section of macOS Keyboard Shortcuts with Show Spotlight search turned off."
-  />
-  <figcaption>Turn off <strong>Show Spotlight search</strong> to make <kbd>⌘ Space</kbd> available to Floodlight.</figcaption>
-</figure>
+1. Open **System Settings → Keyboard → Keyboard Shortcuts → Spotlight**.
+2. Turn off **Show Spotlight search**.
+3. Open **System Settings → Keyboard → Keyboard Shortcuts → Input Sources** if
+   language switching also binds <kbd>⌘ Space</kbd>.
 
-## Check Input Sources
+## Confirming Nanospot shortcuts work
 
-If <kbd>⌘ Space</kbd> still does not work:
+Press <kbd>⌥ Space</kbd> from another app. Nanospot opens centered on the screen
+holding the pointer with focus in the search field. Press <kbd>⌥ Space</kbd>,
+<kbd>Escape</kbd>, or click outside the panel to dismiss it.
 
-1. Open **System Settings → Keyboard → Keyboard Shortcuts → Input Sources**.
-2. Disable or change any language-switching action using <kbd>⌘ Space</kbd>.
-3. Return to **Settings…** and select <kbd>⌘ Space</kbd> again.
+## What Nanospot leaves unchanged
 
-## Confirm it is working
-
-Press <kbd>⌘ Space</kbd> once from another application. Floodlight should appear
-above the current app with the insertion point already in the search field.
-Press it again, press <kbd>Escape</kbd>, or click outside the panel to dismiss.
-
-## Re-enable Spotlight later
-
-Disabling the shortcut does not remove Spotlight. To restore it:
-
-1. Click the Floodlight menu-bar flashlight and choose **Settings…**.
-2. Select <kbd>⌥ Space</kbd> so <kbd>⌘ Space</kbd> is free.
-3. Open **System Settings → Keyboard → Keyboard Shortcuts → Spotlight**.
-4. Turn on **Show Spotlight search**, then select **Done**.
-
-<figure class="fl-doc-shot fl-doc-shot--system">
-  <Image
-    src={spotlightEnabledScreenshot}
-    alt="The Spotlight section of macOS Keyboard Shortcuts with Show Spotlight search turned on."
-  />
-  <figcaption>Turn on <strong>Show Spotlight search</strong> to restore Spotlight on <kbd>⌘ Space</kbd>.</figcaption>
-</figure>
-
-Afterward, <kbd>⌘ Space</kbd> will open Spotlight and <kbd>⌥ Space</kbd> will
-open Floodlight.
-
-## What this changes
-
-Floodlight does not depend on Spotlight for filenames, folders, applications, or
-settings; it maintains its own local index. Disabling the **keyboard shortcut**
-does not disable macOS metadata indexing. Leave Spotlight indexing enabled if
-other apps use it for content search.
+Nanospot builds and queries its own local File Index under `$HOME` (`names.flix`).
+It does not touch macOS Spotlight indexing (`mds` / `mdworker`). Leave Spotlight
+indexing enabled if Finder or other apps rely on it.

@@ -2,7 +2,6 @@
 import magnifier from "../assets/symbols/magnifyingglass.png?url";
 import docText from "../assets/symbols/doc-text.png?url";
 import linkGlyph from "../assets/symbols/link.png?url";
-import palette from "../assets/symbols/paintpalette-fill.png?url";
 import braces from "../assets/symbols/curlybraces.png?url";
 import returnGlyph from "../assets/symbols/return.png?url";
 import markdown from "../assets/icons/markdown.png?url";
@@ -21,7 +20,7 @@ interface Entry {
 }
 
 const meeting = "Meeting moved to 3pm, room 4B. Bring the Q3 numbers and the draft plan.";
-const code = "struct Theme {\n  let accent = Color(hex: 0x3478F6)\n}";
+const code = "const accent = ui.Color.hex(0x3478F6);\nconst well = chrome.well(c);";
 
 const entries: Entry[] = [
   { id: "meeting", kind: "text", text: meeting, title: meeting, sub: "Messages · 1m", source: "Messages", copied: "Today at 9:41" },
@@ -35,7 +34,7 @@ const entries: Entry[] = [
     source: "Safari",
     copied: "Today at 9:30",
   },
-  { id: "notes", kind: "file", text: "~/Developer/floodlight/docs/release-notes.md", title: "release-notes.md", sub: "Finder · 18m · docs", source: "Finder", copied: "Today at 9:24" },
+  { id: "notes", kind: "file", text: "~/Developer/nanospot/docs/release-notes.md", title: "release-notes.md", sub: "Finder · 18m · docs", source: "Finder", copied: "Today at 9:24" },
   { id: "code", kind: "code", text: code, title: code.replace(/\s*\n\s*/g, " "), sub: "Xcode · 25m", source: "Xcode", copied: "Today at 9:17" },
   { id: "q3", kind: "text", text: "Q3 numbers: revenue up 12%, churn flat", title: "Q3 numbers: revenue up 12%, churn flat", sub: "Notes · 1h", source: "Notes", copied: "Today at 8:42" },
   { id: "pickup", kind: "text", text: "Pickup at 6:30 from the north entrance", title: "Pickup at 6:30 from the north entrance", sub: "Messages · 2h", source: "Messages", copied: "Today at 7:40" },
@@ -44,7 +43,7 @@ const entries: Entry[] = [
 const tile: Record<Kind, { glyph: string; tone: string } | null> = {
   text: { glyph: docText, tone: "gray" },
   link: { glyph: linkGlyph, tone: "blue" },
-  color: { glyph: palette, tone: "purple" },
+  color: null,
   code: { glyph: braces, tone: "cyan" },
   file: null,
 };
@@ -83,7 +82,9 @@ const mask = (url: string) => `--glyph: url(${url})`;
                 <div class="board__track" data-row={e.id} data-kind={e.kind} data-text={e.text.toLowerCase()}>
                   <div class="board__clip">
                     <div class="board__row">
-                      {tile[e.kind] ? (
+                      {e.kind === "color" ? (
+                        <span class="board__tile board__tile--swatch" />
+                      ) : tile[e.kind] ? (
                         <span class={`board__tile board__tile--${tile[e.kind]!.tone}`}>
                           <span class="board__glyph" style={mask(tile[e.kind]!.glyph)} />
                         </span>
@@ -358,14 +359,9 @@ const mask = (url: string) => `--glyph: url(${url})`;
     left: 100px;
     width: 760px;
     height: 560px;
-    border: 1px solid var(--fl-panel-line);
+    border: var(--fl-hairline-w) solid var(--fl-panel-line);
     border-radius: 30px;
     background: var(--fl-panel-bg);
-    box-shadow:
-      0 2.5rem 5rem rgb(0 0 0 / 55%),
-      inset 0 1px rgb(255 255 255 / 8%);
-    backdrop-filter: blur(2.5rem) saturate(150%);
-    -webkit-backdrop-filter: blur(2.5rem) saturate(150%);
   }
 
   [data-compact] .board__panel {
@@ -482,7 +478,8 @@ const mask = (url: string) => `--glyph: url(${url})`;
     height: 26px;
     padding: 0 11px;
     border-radius: 999px;
-    background: rgb(255 255 255 / 5.5%);
+    background: transparent;
+    color: rgb(245 245 247 / 62%);
     font-size: 11.5px;
     font-weight: 600;
     transition: opacity 200ms;
@@ -490,6 +487,7 @@ const mask = (url: string) => `--glyph: url(${url})`;
 
   .board__chip[data-on] {
     background: rgb(255 255 255 / 14%);
+    color: #f5f5f7;
   }
 
   .board__chip[data-empty] {
@@ -649,9 +647,10 @@ const mask = (url: string) => `--glyph: url(${url})`;
     color: #0a84ff;
   }
 
-  .board__tile--purple {
-    background: rgb(191 90 242 / 14%);
-    color: #bf5af2;
+  .board__tile--swatch {
+    background: #3478f6;
+    outline: 1px solid rgb(255 255 255 / 0.1);
+    outline-offset: -1px;
   }
 
   .board__tile--cyan {
@@ -876,6 +875,10 @@ const mask = (url: string) => `--glyph: url(${url})`;
   @media (prefers-reduced-motion: reduce) {
     .board__caret {
       animation: none;
+    }
+
+    .board__stage * {
+      transition: none !important;
     }
   }
 </style>

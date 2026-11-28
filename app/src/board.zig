@@ -6,6 +6,7 @@ const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const clipboard = @import("clipboard.zig");
 const chrome = @import("chrome.zig");
+const icons = @import("icons.zig");
 const list = @import("list.zig");
 
 const Entry = clipboard.Entry;
@@ -25,14 +26,32 @@ pub const History = list.List(Entry, Filter, i64, entryKey);
 pub const Context = struct {
     ctx: ?*anyopaque,
     /// An app's icon as PNG; null draws a symbol.
-    app_icon: *const fn (?*anyopaque, []const u8) ?[]const u8,
+    app_icon: *const fn (?*anyopaque, []const u8, icons.Kind) ?icons.Image,
+    lookup_image: *const fn (?*anyopaque, []const u8) ?icons.Image = noLookupImage,
+    decode_image: *const fn (?*anyopaque, []const u8, []const u8, u32, u32, bool) ?icons.Image = noDecodeImage,
     /// "Today at 3:03 PM": the inspector's Copied and Pinned.
     detailed_date: *const fn (?*anyopaque, f64, std.mem.Allocator) []const u8,
     /// The text in the search field, filtering history.
     query: []const u8,
 };
 
-/// The Swift shell's `FloodlightMetrics` clipboard values.
+pub fn noLookupImage(_: ?*anyopaque, _: []const u8) ?icons.Image {
+    return null;
+}
+
+pub fn noDecodeImage(_: ?*anyopaque, _: []const u8, _: []const u8, _: u32, _: u32, _: bool) ?icons.Image {
+    return null;
+}
+
+pub fn thumbKey(buf: *[32]u8, id: i64) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "entry.{d}", .{id}) catch null;
+}
+
+pub fn fullImageKey(buf: *[40]u8, id: i64) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "entry.full.{d}", .{id}) catch null;
+}
+
+/// Clipboard board layout and inspector metrics.
 pub const board_metrics = struct {
     pub const list_width: f32 = 320;
     pub const width: f32 = metrics.width;
@@ -51,12 +70,11 @@ pub const board_metrics = struct {
     pub const gutter_widths = [_]f32{ 10, 18, 26 };
     /// The plain text preview's line, as a multiple of its size plus leading.
     pub const body_line_height: f32 = type_size.body * 1.2 + space.text;
+    pub const first_page_rows: usize = @as(usize, @intFromFloat(@ceil(list_height / metrics.row_height))) + margin_rows;
 };
 
 pub const summon_label = "⌥⇧ C";
 
-/// ⌫ as a shortcut key; `ui.Shortcut` names no constant for it.
-pub const backspace: u21 = 0x7f;
 const held_key_gap_seconds = 0.15;
 const detail_kept_bytes = 1 << 20;
 /// The bytes `shownHead` allows each line.
@@ -66,7 +84,7 @@ const max_link_lines = 6;
 const max_thumbnails = 256;
 
 pub fn shownHead(text: []const u8, lines: usize) []const u8 {
-    var end = lines * max_line_bytes;
+    var end = lines *| max_line_bytes;
     if (text.len <= end) return text;
     while (end > 0 and text[end] & 0xC0 == 0x80) end -= 1;
     return text[0..end];
@@ -80,18 +98,12 @@ pub const Action = union(enum) {
     reveal: []const u8,
     preview: Entry,
     actions: Entry,
-
-    pub fn hides(a: Action) bool {
-        return switch (a) {
-            .paste, .open, .reveal => true,
-            .copy, .preview, .actions => false,
-        };
-    }
 };
 
 pub const Board = struct {
     store: ?*const clipboard.Store,
     list: History,
+    scratch_arena: std.heap.ArenaAllocator,
     /// The selection's payload: a full image, a file's head.
     detail_arena: std.heap.ArenaAllocator,
     clock: clipboard.Clock = .wall_clock,
@@ -107,24 +119,36 @@ pub const Board = struct {
     facts_id: ?i64 = null,
     thumbnails: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
     thumb_arena: std.heap.ArenaAllocator,
+    warm_arena: std.heap.ArenaAllocator,
+    warm_rows: []const Entry = &.{},
+    warm_counts: [Filter.options.len]usize = @splat(0),
+    warm_newest_at: f64 = -std.math.inf(f64),
+    warm_changes: ?u64 = null,
+    answered_changes: ?u64 = null,
+    total_counts: ?[Filter.options.len]usize = null,
     truncated: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, store: ?*const clipboard.Store, clock: clipboard.Clock) Board {
-        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa) };
+        var b: Board = .{ .store = store, .clock = clock, .list = .init(gpa), .scratch_arena = .init(gpa), .detail_arena = .init(gpa), .thumb_arena = .init(gpa), .warm_arena = .init(gpa) };
         b.list.markStale();
         return b;
     }
 
     pub fn deinit(b: *Board) void {
         b.list.deinit();
+        b.scratch_arena.deinit();
         b.detail_arena.deinit();
         b.thumbnails.deinit(b.thumb_arena.child_allocator);
         b.thumb_arena.deinit();
+        b.warm_arena.deinit();
     }
 
     pub fn forget(b: *Board) void {
         b.list.reset();
+        _ = b.scratch_arena.reset(.free_all);
         b.list.markStale();
+        b.answered_changes = null;
+        b.total_counts = null;
         b.truncated = false;
         b.releaseDetail();
         b.thumbnails.clearAndFree(b.thumb_arena.child_allocator);
@@ -142,35 +166,135 @@ pub const Board = struct {
         if (!b.list.needsQuery(query)) return;
         b.answer(query) catch |err| {
             std.log.err("clipboard history: {s}", .{@errorName(err)});
+            b.total_counts = null;
             b.list.fail();
         };
     }
 
+    pub fn markStaleIfStoreChanged(b: *Board) void {
+        const s = b.store orelse return b.list.markStale();
+        if (b.answered_changes != s.changeToken()) b.list.markStale();
+    }
+
+    pub fn warmFirstPage(b: *Board) []const Entry {
+        const s = b.store orelse return &.{};
+        const tok = s.changeToken();
+        if (b.warm_changes == tok) return b.warm_rows;
+        _ = b.warm_arena.reset(.retain_capacity);
+        const fp = s.firstPage(b.warm_arena.allocator(), board_metrics.first_page_rows) catch {
+            b.warm_rows = &.{};
+            b.warm_counts = @splat(0);
+            b.warm_newest_at = -std.math.inf(f64);
+            b.warm_changes = null;
+            return &.{};
+        };
+        b.warm_rows = fp.rows;
+        b.warm_counts = fp.counts;
+        b.warm_newest_at = fp.newest_at;
+        b.warm_changes = tok;
+        return b.warm_rows;
+    }
+
+    pub fn newestEntryAt(b: *const Board) f64 {
+        return b.warm_newest_at;
+    }
+
+    pub fn totalCounts(b: *const Board) ?[Filter.options.len]usize {
+        return b.total_counts;
+    }
+
+    pub fn hasPartialRows(b: *const Board) bool {
+        return b.total_counts != null and b.total_counts.?[0] > b.list.rows.len;
+    }
+
+    pub fn ensureFullRows(b: *Board) void {
+        if (b.total_counts == null) return;
+        const s = b.store orelse {
+            b.total_counts = null;
+            return;
+        };
+        if (b.total_counts.?[0] <= b.list.rows.len) {
+            b.total_counts = null;
+            return;
+        }
+        const selected_id: ?i64 = if (b.list.selection()) |e| e.id else null;
+        const selected_idx = b.list.selected;
+        const reveal = b.list.reveal;
+        const filter = b.list.filter;
+        b.total_counts = null;
+        const tok = s.changeToken();
+        const a = b.list.beginQuery("");
+        const rows = s.list(a, "") catch |err| {
+            std.log.err("clipboard history: {s}", .{@errorName(err)});
+            b.list.fail();
+            return;
+        };
+        b.answered_changes = tok;
+        b.truncated = rows.len >= clipboard.search_limit;
+        b.list.filter = filter;
+        b.list.setRows("", rows) catch {
+            b.list.fail();
+            return;
+        };
+        b.list.selected = @min(selected_idx, b.list.visible.len -| 1);
+        if (selected_id) |id| for (b.list.visible, 0..) |e, i| if (e.id == id) {
+            b.list.selected = i;
+            break;
+        };
+        b.list.reveal = reveal;
+    }
+
+    fn totalVisibleCount(b: *const Board) usize {
+        if (b.list.filter == .all) {
+            if (b.total_counts) |tc| return tc[0];
+        }
+        return b.list.visible.len;
+    }
+
     fn canNarrow(b: *const Board, query: []const u8) bool {
-        if (b.list.stale or b.list.failed or b.truncated or b.list.rows.len >= clipboard.search_limit) return false;
+        if (b.total_counts != null or b.list.stale or b.list.failed or b.truncated or b.list.rows.len >= clipboard.search_limit) return false;
         const prev = std.mem.trim(u8, b.list.answered(), " ");
         const next = std.mem.trim(u8, query, " ");
         return prev.len > 0 and std.mem.startsWith(u8, next, prev);
     }
 
     fn answer(b: *Board, query: []const u8) !void {
-        if (b.canNarrow(query)) {
-            const gpa = b.list.arena.child_allocator;
-            var tmp: std.heap.ArenaAllocator = .init(gpa);
-            defer tmp.deinit();
-            const ta = tmp.allocator();
-            var kept: std.ArrayList(Entry) = .empty;
-            for (b.list.rows) |e| {
-                if (e.matches(query)) try kept.append(ta, try e.dupe(ta));
+        if (std.mem.trim(u8, query, " ").len == 0 and b.list.filter == .all) {
+            if (b.store) |s| {
+                const tok = s.changeToken();
+                if (b.warm_changes == tok) {
+                    const a = b.list.beginQuery(query);
+                    const copied = try a.alloc(Entry, b.warm_rows.len);
+                    for (b.warm_rows, 0..) |e, i| copied[i] = try e.dupe(a);
+                    b.answered_changes = tok;
+                    b.truncated = b.warm_counts[0] >= clipboard.search_limit;
+                    try b.list.setRows(query, copied);
+                    b.total_counts = if (b.warm_counts[0] > copied.len) b.warm_counts else null;
+                    return;
+                }
             }
-            const a = b.list.beginQuery(query);
-            const rows = try a.alloc(Entry, kept.items.len);
-            for (kept.items, 0..) |e, i| rows[i] = try e.dupe(a);
-            try b.list.setRows(query, rows);
+        }
+        b.total_counts = null;
+        if (b.canNarrow(query)) {
+            _ = b.scratch_arena.reset(.retain_capacity);
+            const ta = b.scratch_arena.allocator();
+            const kept = try ta.alloc(Entry, b.list.rows.len);
+            var n: usize = 0;
+            for (b.list.rows) |e| {
+                if (e.matches(query)) {
+                    kept[n] = try e.dupe(ta);
+                    n += 1;
+                }
+            }
+            _ = b.list.beginQuery(query);
+            std.mem.swap(std.heap.ArenaAllocator, &b.list.arena, &b.scratch_arena);
+            try b.list.setRows(query, kept[0..n]);
             return;
         }
+        const tok: ?u64 = if (b.store) |s| s.changeToken() else null;
         const a = b.list.beginQuery(query);
         const rows = if (b.store) |s| try s.list(a, query) else &.{};
+        b.answered_changes = tok;
         b.truncated = rows.len >= clipboard.search_limit;
         try b.list.setRows(query, rows);
     }
@@ -187,17 +311,33 @@ pub const Board = struct {
 
     pub fn togglePin(b: *Board) void {
         const e = b.list.selection() orelse return;
+        b.togglePinId(e.id);
+    }
+
+    pub fn togglePinId(b: *Board, id: i64) void {
+        if (b.hasPartialRows()) b.ensureFullRows();
         const store = b.store orelse return;
-        store.togglePin(e.id, b.clock.now()) catch return;
+        store.togglePin(id, b.clock.now()) catch return;
+        b.warm_changes = null;
         b.list.markStale();
         b.refresh(b.list.answered());
     }
 
     pub fn delete(b: *Board) void {
         const e = b.list.selection() orelse return;
+        b.deleteId(e.id);
+    }
+
+    pub fn deleteId(b: *Board, id: i64) void {
+        if (b.hasPartialRows()) b.ensureFullRows();
         const store = b.store orelse return;
-        store.delete(e.id) catch return;
-        _ = b.thumbnails.remove(e.id);
+        store.delete(id) catch return;
+        b.warm_changes = null;
+        b.answered_changes = store.changeToken();
+        _ = b.thumbnails.remove(id);
+        if (b.detail_id == id) b.releaseDetail();
+        if (b.facts_id == id) b.facts_id = null;
+        const selected_id: ?i64 = if (b.list.selection()) |sel| sel.id else null;
         const at = b.list.selected;
         const next = b.list.allocator().alloc(Entry, b.list.rows.len -| 1) catch {
             b.list.markStale();
@@ -206,12 +346,14 @@ pub const Board = struct {
             return;
         };
         var n: usize = 0;
-        for (b.list.rows) |r| if (r.id != e.id) {
+        for (b.list.rows) |r| if (r.id != id) {
             next[n] = r;
             n += 1;
         };
         b.list.replaceRows(next[0..n]);
-        b.list.clampSelection(at);
+        if (selected_id == null or selected_id == id) {
+            b.list.clampSelection(at);
+        }
     }
 
     fn thumbnailOf(b: *Board, e: Entry) []const u8 {
@@ -254,7 +396,15 @@ pub const Board = struct {
 
     pub fn keys(b: *Board, c: *ui.Context, field_empty: bool) ?Action {
         const S = ui.Shortcut;
+        if (b.hasPartialRows()) {
+            if (c.input.shortcut) |sc| {
+                if (sc.key == S.down and !sc.cmd and !sc.alt and !sc.ctrl and !sc.shift and b.list.selected + 1 >= b.list.visible.len) {
+                    b.ensureFullRows();
+                }
+            }
+        }
         _ = chrome.listKeys(c, &b.list, &Filter.options);
+        if (b.hasPartialRows() and b.list.filter != .all) b.ensureFullRows();
         const e = b.list.selection() orelse return null;
         if (c.shortcut(.{ .key = 'o', .cmd = true })) {
             if (e.linkUrl()) |u| return .{ .open = u };
@@ -305,8 +455,23 @@ pub const Board = struct {
     fn filterBar(b: *Board, c: *ui.Context) void {
         const bar = chrome.filterBar(c);
         defer bar.end();
-        for (Filter.options) |f| {
-            if (chrome.filterChip(c, bar, f.title(), f.symbol(), b.list.filter == f, .{ .count = b.list.count(f) })) b.list.selectFilter(f);
+        const counts = b.total_counts orelse blk: {
+            var out: [Filter.options.len]usize = @splat(0);
+            out[0] = b.list.rows.len;
+            for (b.list.rows) |e| {
+                switch (e.kind) {
+                    .text => out[1] += 1,
+                    .file => out[2] += 1,
+                    .image => out[3] += 1,
+                }
+            }
+            break :blk out;
+        };
+        for (Filter.options, 0..) |f, i| {
+            if (chrome.filterChip(c, bar, f.title(), b.list.filter == f, .{ .count = counts[i] })) {
+                if (f != .all) b.ensureFullRows();
+                b.list.selectFilter(f);
+            }
         }
     }
 
@@ -316,21 +481,19 @@ pub const Board = struct {
         defer col.end();
         chrome.boundOverscroll(c, col.id());
         chrome.revealSelection(c, &b.list, col.id(), m.list_height - 2 * metrics.row_padding);
+        const total_len = b.totalVisibleCount();
+        const shown = list.rowsInView(c.scroll.get(col.id()) orelse 0, total_len, metrics.row_height, m.list_height, margin_rows);
+        if (b.hasPartialRows() and shown.end > b.list.visible.len) b.ensureFullRows();
         const visible = b.list.visible;
-        const shown = list.rowsInView(c.scroll.get(col.id()) orelse 0, visible.len, metrics.row_height, m.list_height, margin_rows);
-        spacer(c, "above", shown.first);
+        const clamped_end = @min(shown.end, visible.len);
+        const clamped_first = @min(shown.first, clamped_end);
+        chrome.rowSpacer(c, "above", clamped_first);
         var asked: ?Action = null;
-        for (visible[shown.first..shown.end], shown.first..) |e, i| if (b.rowView(c, host, e, i)) |a| {
+        for (visible[clamped_first..clamped_end], clamped_first..) |e, i| if (b.rowView(c, host, e, i)) |a| {
             asked = a;
         };
-        spacer(c, "below", visible.len - shown.end);
+        chrome.rowSpacer(c, "below", b.totalVisibleCount() -| clamped_end);
         return asked;
-    }
-
-    fn spacer(c: *ui.Context, name: []const u8, rows: usize) void {
-        if (rows == 0) return;
-        ui.key(c, name);
-        ui.div(c).wFull().h(@as(f32, @floatFromInt(rows)) * metrics.row_height).end();
     }
 
     fn rowView(b: *Board, c: *ui.Context, host: Context, e: Entry, i: usize) ?Action {
@@ -341,7 +504,7 @@ pub const Board = struct {
         defer row_box.box.end();
         const it = row_box.it;
         if (it.clicked) b.list.selected = i;
-        b.iconView(c, host, e);
+        b.iconView(c, host, e, i);
         {
             const text = ui.div(c).column().grow().gap(space.text);
             defer text.end();
@@ -357,16 +520,21 @@ pub const Board = struct {
         return if (it.double_clicked) .{ .paste = e } else null;
     }
 
-    fn iconView(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
+    fn iconView(b: *Board, c: *ui.Context, host: Context, e: Entry, i: usize) void {
         const size = metrics.icon_size;
         const th = c.theme;
         const blue = chrome.hue(th, .blue);
-        const purple = chrome.hue(th, .purple);
+        const amber = chrome.hue(th, .amber);
         const cyan = chrome.hue(th, .cyan);
         const gray = chrome.tone(th).secondary;
         if (e.kind == .image) {
-            const thumb = b.thumbnailOf(e);
-            if (thumb.len > 0 and ui.image(c, .{ .key = c.print("clip.{d}", .{e.id}), .bytes = thumb, .max_width = size, .max_height = size, .radius = metrics.media_radius })) return;
+            const keep = b.list.filter == .all and host.query.len == 0 and i < board_metrics.first_page_rows;
+            if (b.rowThumbnail(c, host, e, size, keep)) |img| {
+                const slot = ui.div(c).w(size).h(size).center();
+                defer slot.end();
+                _ = ui.image(c, .{ .key = img.key, .source = .{ .pixels = img.pixels }, .max_width = size, .max_height = size, .radius = metrics.media_radius });
+                return;
+            }
         }
         const tile = struct {
             fn draw(cx: *ui.Context, symbol: []const u8, color: ui.Color) void {
@@ -379,7 +547,10 @@ pub const Board = struct {
             .image => return tile(c, "photo", gray),
             .text => switch (e.content) {
                 .link => return tile(c, "link", blue),
-                .color => return tile(c, "paintpalette.fill", purple),
+                .color => |rgba| {
+                    ui.div(c).w(size).h(size).rounded(metrics.icon_tile_radius).bg(swatchColor(rgba)).border(chrome.outline(th)).borderW(metrics.hairline).end();
+                    return;
+                },
                 .code => return tile(c, "curlybraces", cyan),
                 .plain => return tile(c, "doc.text", gray),
                 .path => {},
@@ -389,12 +560,18 @@ pub const Board = struct {
         const path = e.filePath().?;
         const ext = clipboard.extension(path);
         if (e.kind == .text and clipboard.inSet(ext, &clipboard.board_image_extensions)) return tile(c, "photo", cyan);
-        if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", purple);
-        if (host.app_icon(host.ctx, path)) |png| {
-            _ = ui.image(c, .{ .key = path, .bytes = png, .max_width = size, .max_height = size, .radius = 0 });
+        if (e.kind == .text and clipboard.inSet(ext, &clipboard.video_extensions)) return tile(c, "video.fill", amber);
+        if (host.app_icon(host.ctx, path, boardIconKind(path, ext))) |img| {
+            _ = ui.image(c, .{ .key = img.key, .source = .{ .pixels = img.pixels }, .max_width = size, .max_height = size, .radius = 0 });
             return;
         }
         tile(c, "doc", gray);
+    }
+
+    fn boardIconKind(path: []const u8, ext: []const u8) icons.Kind {
+        if (path.len > 0 and path[path.len - 1] == '/') return .folder;
+        if (ext.len > 0) return .file;
+        return .unknown;
     }
 
     fn inspector(b: *Board, c: *ui.Context, host: Context) void {
@@ -407,28 +584,50 @@ pub const Board = struct {
             return;
         };
         b.loadDetail(c, e);
-        b.preview(c, e);
+        b.preview(c, host, e);
         chrome.divider(c, .across);
         b.information(c, host, e);
     }
 
-    fn preview(b: *Board, c: *ui.Context, e: Entry) void {
+    fn rowThumbnail(b: *Board, c: *ui.Context, host: Context, e: Entry, size: f32, keep: bool) ?icons.Image {
+        var key_buf: [32]u8 = undefined;
+        const key = thumbKey(&key_buf, e.id) orelse return null;
+        if (host.lookup_image(host.ctx, key)) |img| return img;
+        const thumb = b.thumbnailOf(e);
+        if (thumb.len == 0) return null;
+        const px: u32 = @intFromFloat(@max(1, @ceil(size * c.scale)));
+        return host.decode_image(host.ctx, key, thumb, px, px, keep);
+    }
+
+    fn preview(b: *Board, c: *ui.Context, host: Context, e: Entry) void {
         const th = c.theme;
         const quiet = chrome.tone(th).secondary;
         const title_style: ui.TextStyle = .{ .size = type_size.row_title, .weight = .semibold, .wrap = true, .max_lines = 2 };
         const width = board_metrics.inspector_width - 2 * space.edge;
+        const max_w: u32 = @intFromFloat(@max(1, @ceil(width * c.scale)));
+        const max_h: u32 = @intFromFloat(@max(1, @ceil(board_metrics.media_height * c.scale)));
         const col = ui.div(c).column().wFull().gap(space.pad);
         defer col.end();
         if (e.kind == .image) {
-            switch (b.payload) {
-                .picture => |full| mediaBox(c, c.print("clip.full.{d}", .{e.id}), full, width),
-                else => mediaBox(c, c.print("clip.{d}", .{e.id}), b.thumbnailOf(e), width),
-            }
+            const full_img: ?icons.Image = switch (b.payload) {
+                .picture => |full| blk: {
+                    if (full.len == 0) break :blk null;
+                    var full_buf: [40]u8 = undefined;
+                    const key = fullImageKey(&full_buf, e.id) orelse break :blk null;
+                    break :blk host.lookup_image(host.ctx, key) orelse host.decode_image(host.ctx, key, full, max_w, max_h, false);
+                },
+                else => null,
+            };
+            const keep = b.list.filter == .all and host.query.len == 0 and b.list.selected < board_metrics.first_page_rows;
+            mediaBox(c, full_img orelse b.rowThumbnail(c, host, e, metrics.icon_size, keep), width);
             return ui.text(c, e.title(c.arena.allocator()), title_style);
         }
         if (e.filePath()) |path| {
             switch (b.payload) {
-                .picture => |bytes| mediaBox(c, path, bytes, width),
+                .picture => |bytes| {
+                    const img = if (bytes.len > 0) (host.lookup_image(host.ctx, path) orelse host.decode_image(host.ctx, path, bytes, max_w, max_h, false)) else null;
+                    mediaBox(c, img, width);
+                },
                 .text => |bytes| codeLines(c, bytes),
                 .none => {},
             }
@@ -447,8 +646,7 @@ pub const Board = struct {
                 ui.text(c, shownHead(e.text, max_link_lines), .{ .size = type_size.inspector_row, .mono = true, .color = quiet, .wrap = true, .max_lines = max_link_lines });
             },
             .color => |rgba| {
-                const swatch: ui.Color = .{ .r = @as(f32, @floatFromInt(rgba.r)) / 255, .g = @as(f32, @floatFromInt(rgba.g)) / 255, .b = @as(f32, @floatFromInt(rgba.b)) / 255, .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1 };
-                ui.div(c).wFull().h(board_metrics.swatch_height).rounded(metrics.row_radius).bg(swatch).border(chrome.outline(th)).borderW(metrics.hairline).end();
+                ui.div(c).wFull().h(board_metrics.swatch_height).rounded(metrics.row_radius).bg(swatchColor(rgba)).border(chrome.outline(th)).borderW(metrics.hairline).end();
                 const line = ui.div(c).row().gap(space.gap).itemsCenter();
                 defer line.end();
                 ui.text(c, std.mem.trim(u8, e.text, " \t\r\n"), .{ .size = type_size.value, .weight = .medium, .mono = true });
@@ -510,7 +708,7 @@ pub const Board = struct {
     }
 
     fn footer(b: *Board, c: *ui.Context) ?Action {
-        const n = b.list.visible.len;
+        const n = b.totalVisibleCount();
         const bar = chrome.footerBar(c, c.print("{d} {s}", .{ n, if (n == 1) "entry" else "entries" }));
         defer bar.end();
         const e = b.list.selection();
@@ -524,6 +722,15 @@ pub const Board = struct {
 };
 
 const max_code_lines = 40;
+
+fn swatchColor(rgba: anytype) ui.Color {
+    return .{
+        .r = @as(f32, @floatFromInt(rgba.r)) / 255,
+        .g = @as(f32, @floatFromInt(rgba.g)) / 255,
+        .b = @as(f32, @floatFromInt(rgba.b)) / 255,
+        .a = if (rgba.a) |a| @as(f32, @floatFromInt(a)) / 255 else 1,
+    };
+}
 
 const margin_rows = 1 + @as(usize, @intFromFloat(@ceil(metrics.max_overscroll / metrics.row_height)));
 
@@ -540,22 +747,21 @@ fn infoRow(c: *ui.Context, label: []const u8, value: []const u8) void {
     ui.text(c, value, .{ .size = type_size.inspector_row, .wrap = true });
 }
 
-fn mediaBox(c: *ui.Context, key: []const u8, bytes: []const u8, width: f32) void {
+fn mediaBox(c: *ui.Context, img: ?icons.Image, width: f32) void {
     const th = c.theme;
     const h = board_metrics.media_height;
     const box = ui.div(c).wFull().h(h).center().rounded(metrics.row_radius).bg(th.muted.alpha(fill.badge)).border(chrome.outline(th)).borderW(metrics.hairline).clip();
     defer box.end();
-    if (bytes.len == 0 or !ui.image(c, .{ .key = key, .bytes = bytes, .max_width = width, .max_height = h, .radius = 0 }))
+    if (img == null or !ui.image(c, .{ .key = img.?.key, .source = .{ .pixels = img.?.pixels }, .max_width = width, .max_height = h, .radius = 0 }))
         ui.icon(c, "photo", .{ .size = board_metrics.media_placeholder_size, .color = chrome.tone(th).tertiary });
 }
 
-/// Numbered lines, as the Swift board's code block.
 fn codeLines(c: *ui.Context, text: []const u8) void {
     const th = c.theme;
     const quiet = chrome.tone(th).secondary;
     const total = std.mem.count(u8, text, "\n") + 1;
     const shown = @min(total, max_code_lines);
-    const gutter = board_metrics.gutter_widths[std.math.log10_int(shown)];
+    const gutter = board_metrics.gutter_widths[@min(board_metrics.gutter_widths.len - 1, std.math.log10_int(@max(1, shown)))];
     const box = ui.div(c).column().wFull().p(space.pad).gap(space.text).rounded(metrics.media_radius).bg(th.muted.alpha(fill.code));
     defer box.end();
     var it = std.mem.splitScalar(u8, text, '\n');

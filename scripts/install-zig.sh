@@ -1,38 +1,37 @@
 #!/bin/sh
 # Downloads the pinned Zig toolchain into .tools and links .tools/bin/zig.
 #
-# Same rule as install-tools.sh: pinned by version and SHA-256, verified
-# before anything is unpacked. A Zig already on PATH at the pinned version is
-# used as-is.
+# Pinned by version and SHA-256, verified before anything is unpacked. A Zig
+# already on PATH at the pinned version is used as-is.
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 . "$SCRIPT_DIR/tools.sh"
 
-if tool_at_version zig "$FLOODLIGHT_ZIG_VERSION" version; then
-    echo "install-zig: zig $FLOODLIGHT_ZIG_VERSION already present"
+if tool_at_version zig "$NANOSPOT_ZIG_VERSION" version; then
+    echo "install-zig: zig $NANOSPOT_ZIG_VERSION already present"
     exit 0
 fi
 
 case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) platform=aarch64-macos sha=$FLOODLIGHT_ZIG_SHA256_MACOS_ARM64 ;;
-    Darwin-x86_64) platform=x86_64-macos sha=$FLOODLIGHT_ZIG_SHA256_MACOS_X86_64 ;;
-    Linux-x86_64) platform=x86_64-linux sha=$FLOODLIGHT_ZIG_SHA256_LINUX_X86_64 ;;
+    Darwin-arm64) platform=aarch64-macos sha=$NANOSPOT_ZIG_SHA256_MACOS_ARM64 ;;
+    Darwin-x86_64) platform=x86_64-macos sha=$NANOSPOT_ZIG_SHA256_MACOS_X86_64 ;;
+    Linux-x86_64) platform=x86_64-linux sha=$NANOSPOT_ZIG_SHA256_LINUX_X86_64 ;;
     *)
         echo "install-zig: no pinned Zig for $(uname -s)-$(uname -m)" >&2
         exit 1
         ;;
 esac
 
-name=zig-$platform-$FLOODLIGHT_ZIG_VERSION
+name=zig-$platform-$NANOSPOT_ZIG_VERSION
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT INT TERM
 archive="$work_dir/$name.tar.xz"
 
 echo "install-zig: fetching $name"
 curl --fail --location --silent --show-error \
-    "https://ziglang.org/download/$FLOODLIGHT_ZIG_VERSION/$name.tar.xz" --output "$archive"
+    "https://ziglang.org/download/$NANOSPOT_ZIG_VERSION/$name.tar.xz" --output "$archive"
 
 # macOS ships shasum, most Linux images ship sha256sum; either answers.
 if command -v shasum >/dev/null 2>&1; then

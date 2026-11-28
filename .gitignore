@@ -1,25 +1,14 @@
 .DS_Store
 .build/
-.swiftpm/
-# Pinned gate binaries, fetched by `make install-tools`. No trailing slash:
-# with one, the pattern matches only a directory, and a `.tools` symlink —
-# which is how you share one checkout's binaries with a second worktree —
-# slips past it into a commit.
+# Pinned Zig toolchain, fetched by `make install-zig`. No trailing slash so a
+# `.tools` symlink shared across checkouts is ignored too.
 .tools
-# Written by scripts/check-rules.sh to prove the rules are armed, and removed
-# again on the way out. Ignored so an interrupted run cannot leave a file that
-# looks like source.
-Sources/*/GateSelfTest.swift
-Tests/*/GateSelfTest.swift
-DerivedData/
 docs/.astro/
 docs/dist/
 docs/node_modules/
-Floodlight.xcodeproj/xcuserdata/
-*.xcuserstate
-*.bc
+docs/demo/node_modules/
 
-# Local vendored checkouts (fff-swift etc.) that Package.swift does not reference.
+# Local vendored checkouts.
 Vendor/
 
 # Zig build output for core/ and app/.
@@ -29,8 +18,7 @@ app/.zig-cache/
 app/zig-out/
 app/zig-pkg/
 
-# Docs demo and ephemeral agent/tool artifacts.
-docs/demo/node_modules/
+# Ephemeral agent/tool artifacts.
 .scratch/
 .hallmark/
 .impeccable/

@@ -83,9 +83,15 @@ pub fn close(fd: fd_t) void {
 pub fn pwriteAll(fd: fd_t, bytes: []const u8, offset: u64) Error!void {
     var done: usize = 0;
     while (done < bytes.len) {
-        const rc = system.pwrite(fd, bytes.ptr + done, bytes.len - done, @intCast(offset + done));
+        const pos = std.math.add(u64, offset, done) catch return error.Unexpected;
+        const off_t = std.math.cast(posix.off_t, pos) orelse return error.Unexpected;
+        const rc = system.pwrite(fd, bytes.ptr + done, bytes.len - done, off_t);
         switch (posix.errno(rc)) {
-            .SUCCESS => done += @intCast(rc),
+            .SUCCESS => {
+                const wrote = std.math.cast(usize, rc) orelse return error.Unexpected;
+                if (wrote == 0) return error.Unexpected;
+                done += wrote;
+            },
             .INTR => continue,
             else => |e| return fail(e),
         }
@@ -93,7 +99,8 @@ pub fn pwriteAll(fd: fd_t, bytes: []const u8, offset: u64) Error!void {
 }
 
 pub fn ftruncate(fd: fd_t, len: u64) Error!void {
-    while (true) switch (posix.errno(system.ftruncate(fd, @intCast(len)))) {
+    const off_t = std.math.cast(posix.off_t, len) orelse return error.Unexpected;
+    while (true) switch (posix.errno(system.ftruncate(fd, off_t))) {
         .SUCCESS => return,
         .INTR => continue,
         else => |e| return fail(e),
@@ -103,7 +110,7 @@ pub fn ftruncate(fd: fd_t, len: u64) Error!void {
 pub fn size(fd: fd_t) Error!u64 {
     const rc = system.lseek(fd, 0, posix.SEEK.END);
     return switch (posix.errno(rc)) {
-        .SUCCESS => @intCast(rc),
+        .SUCCESS => std.math.cast(u64, rc) orelse error.Unexpected,
         else => |e| fail(e),
     };
 }
@@ -141,7 +148,9 @@ pub fn pid() i32 {
 pub fn monotonicNs() u64 {
     var ts: posix.timespec = undefined;
     _ = system.clock_gettime(.MONOTONIC, &ts);
-    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+    const sec: u64 = @intCast(@max(0, ts.sec));
+    const nsec: u64 = @intCast(@max(0, ts.nsec));
+    return sec *| std.time.ns_per_s +| nsec;
 }
 
 test "a mapping larger than the address space reports OutOfMemory" {

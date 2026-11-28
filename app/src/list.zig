@@ -123,6 +123,7 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
         }
 
         pub fn count(l: *const Self, f: Filter) usize {
+            if (f == .all) return l.rows.len;
             var n: usize = 0;
             for (l.rows) |x| n += @intFromBool(f.includes(x));
             return n;
@@ -135,6 +136,13 @@ pub fn List(comptime Item: type, comptime Filter: type, comptime Key: type, comp
 
         fn applyFilter(l: *Self) void {
             const out = l.arena.allocator().alloc(Item, l.rows.len) catch return;
+            if (l.filter == .all) {
+                @memcpy(out, l.rows);
+                l.visible = out;
+                l.selected = 0;
+                l.reveal = true;
+                return;
+            }
             var n: usize = 0;
             for (l.rows) |x| if (l.filter.includes(x)) {
                 out[n] = x;
@@ -179,7 +187,11 @@ pub const RowRange = struct { first: usize, end: usize };
 /// The rows a view `view_h` tall scrolled to `offset` shows, with `margin`
 /// rows either side so an overscroll never reveals a gap.
 pub fn rowsInView(offset: f32, len: usize, row_h: f32, view_h: f32, margin: usize) RowRange {
-    const top_row: usize = @intFromFloat(@max(0, @floor(offset / row_h)));
-    const in_view: usize = @intFromFloat(@ceil(view_h / row_h));
-    return .{ .first = @min(len, top_row -| margin), .end = @min(len, top_row + in_view + margin) };
+    if (len == 0 or !(row_h > 0)) return .{ .first = 0, .end = 0 };
+    const top_f = if (std.math.isFinite(offset)) @max(0, @floor(offset / row_h)) else 0;
+    const len_f: f32 = @floatFromInt(len);
+    const top_row: usize = if (top_f >= len_f) len else @intFromFloat(top_f);
+    const view_f = if (std.math.isFinite(view_h)) @max(0, @ceil(view_h / row_h)) else len_f;
+    const in_view: usize = if (view_f >= len_f) len else @intFromFloat(view_f);
+    return .{ .first = @min(len, top_row -| margin), .end = @min(len, top_row +| in_view +| margin) };
 }

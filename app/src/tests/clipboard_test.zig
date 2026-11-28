@@ -11,10 +11,7 @@ const picture = h.picture;
 const TmpStore = h.TmpStore;
 const openMemory = h.openMemory;
 
-// The clipboard board. Expected values are the Swift suite's
-// (ClipboardTextContentTests, ClipboardHistoryStoreTests, SearchResultProjectionClipboardTests).
-
-test "copied text is classified as the Swift store classifies it" {
+test "copied text classifies links, colors, code, paths, and plain text" {
     try t.expectEqualStrings("example.com", clipboard.classify("https://www.example.com/a?b").link);
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
@@ -388,7 +385,7 @@ const FakePasteboard = struct {
 const pasted_png: clipboard.PastedImage = .{ .png = "\x89PNG pasted", .thumbnail = "thumb", .width = 4, .height = 3, .format = .png };
 const notes_app: clipboard.App = .{ .bundle_id = "com.apple.Notes", .name = "Notes" };
 
-test "a copy marked private, transient, auto-generated or Floodlight's own is not recorded" {
+test "a copy marked private, transient, auto-generated or Nanospot's own is not recorded" {
     var ts = try TmpStore.init();
     defer ts.deinit();
     var store = try openMemory(&ts);
@@ -845,4 +842,75 @@ test "a copy of exactly the cap records every file" {
 
     const rows = try store.list(a, "");
     try t.expectEqual(clipboard.max_file_count, rows.len);
+}
+
+test "pngBytes, compactImage, age, SIMD matching, and corrupt SQLite sizes handle edge cases" {
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try t.expect(mac.pngBytes(a, "") == null);
+    try t.expect(mac.compactImage(a, "") == null);
+
+    try t.expectEqualStrings("just now", clipboard.age(a, std.math.nan(f64)));
+    try t.expectEqualStrings("just now", clipboard.age(a, std.math.inf(f64)));
+    try t.expectEqualStrings("just now", clipboard.age(a, -50));
+    try t.expect(clipboard.age(a, 1e20).len > 0);
+
+    var ts = try TmpStore.init();
+    defer ts.deinit();
+    var store = try clipboard.Store.open(ts.db, ts.images);
+    defer store.close();
+
+    _ = try store.add(.{ .text = "0123456789abcdef_AlphaBetaGammaDelta_end" }, "x", "Notes", 10);
+    _ = try store.add(.{ .text = "0123456789abcdef_OnlyShort_x" }, "x", "Notes", 11);
+    _ = try store.add(.{ .text = "\u{00C9}lan vital" }, "x", "Notes", 12);
+    _ = try store.add(.{ .image = .{ .name = long_text[0..600], .png = "png", .thumbnail = "", .width = 1920, .height = 1080 } }, "x", "Preview", 13);
+
+    for ([_][]const u8{ "Z", "a", "A", "alphabetagammadelta", "ALPHABETAGAMMADELTA_END", "\u{00E9}", "1920\u{00D7}1080", "word " }) |q| {
+        const all = try store.list(a, "");
+        const got = try store.list(a, q);
+        var count: usize = 0;
+        for (all) |e| {
+            const m = e.matches(q);
+            if (m) count += 1;
+            const found = for (got) |g| {
+                if (g.id == e.id) break true;
+            } else false;
+            try t.expectEqual(m, found);
+        }
+        try t.expectEqual(count, got.len);
+    }
+
+    try raw_sqlite.run(ts.db, "INSERT INTO entries(kind, text, created_at, width, height, byte_count, hash, image_format, stored_bytes) VALUES('image', 'corrupt', 50, -5, 9999999999, -10, zeroblob(32), 'png', -1);");
+    const listed = try store.list(a, "corrupt");
+    try t.expectEqual(@as(usize, 1), listed.len);
+    try t.expectEqual(@as(u32, 0), listed[0].width);
+    try t.expectEqual(std.math.maxInt(u32), listed[0].height);
+    try t.expectEqual(@as(u64, 0), listed[0].byte_count);
+    try t.expect(store.image(a, listed[0].id) == null);
+}
+
+test "changeToken is per Store and ignores failed compaction" {
+    var ts1 = try TmpStore.init();
+    defer ts1.deinit();
+    var ts2 = try TmpStore.init();
+    defer ts2.deinit();
+    var store1 = try clipboard.Store.open(ts1.db, ts1.images);
+    defer store1.close();
+    var store2 = try clipboard.Store.open(ts2.db, ts2.images);
+    defer store2.close();
+
+    const png = "\x89PNG isolated store token";
+    _ = try store1.add(picture(png), "", "Preview", 0);
+    const tok1_after_add = store1.changeToken();
+    const tok2_before = store2.changeToken();
+    _ = try store2.add(.{ .text = "other store" }, "", "Notes", 10);
+    try t.expectEqual(tok1_after_add, store1.changeToken());
+    try t.expect(store2.changeToken() != tok2_before);
+
+    const job = store1.nextCompaction(8 * day) orelse return error.ExpectedCompaction;
+    store1.finishCompaction(job, null);
+    try t.expectEqual(tok1_after_add, store1.changeToken());
+    try t.expect(store1.nextCompaction(8 * day) == null);
 }

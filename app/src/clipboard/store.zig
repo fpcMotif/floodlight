@@ -24,8 +24,13 @@ const window = 1000;
 const lite = struct {
     const Db = opaque {};
     const Stmt = opaque {};
+    const Context = opaque {};
+    const Value = opaque {};
+    const Function = *const fn (*Context, c_int, [*]*Value) callconv(.c) void;
     extern "c" fn sqlite3_open_v2(path: [*:0]const u8, db: *?*Db, flags: c_int, vfs: ?[*:0]const u8) c_int;
     extern "c" fn sqlite3_close_v2(db: *Db) c_int;
+    extern "c" fn sqlite3_db_release_memory(db: *Db) c_int;
+    extern "c" fn sqlite3_release_memory(n: c_int) c_int;
     extern "c" fn sqlite3_exec(db: *Db, sql: [*:0]const u8, cb: ?*anyopaque, arg: ?*anyopaque, err: ?*?[*:0]u8) c_int;
     extern "c" fn sqlite3_prepare_v2(db: *Db, sql: [*]const u8, n: c_int, stmt: *?*Stmt, tail: ?*?[*]const u8) c_int;
     extern "c" fn sqlite3_finalize(stmt: *Stmt) c_int;
@@ -42,11 +47,17 @@ const lite = struct {
     extern "c" fn sqlite3_column_type(stmt: *Stmt, i: c_int) c_int;
     extern "c" fn sqlite3_busy_timeout(db: *Db, ms: c_int) c_int;
     extern "c" fn sqlite3_changes(db: *Db) c_int;
+    extern "c" fn sqlite3_create_function(db: *Db, name: [*:0]const u8, n_arg: c_int, text_rep: c_int, app: ?*anyopaque, func: ?Function, step: ?Function, final: ?*const fn (*Context) callconv(.c) void) c_int;
+    extern "c" fn sqlite3_value_text(val: *Value) ?[*]const u8;
+    extern "c" fn sqlite3_value_bytes(val: *Value) c_int;
+    extern "c" fn sqlite3_value_int64(val: *Value) i64;
+    extern "c" fn sqlite3_result_int(ctx: *Context, v: c_int) void;
     const ok = 0;
     const row = 100;
     const done = 101;
     const null_type = 5;
     const open_flags = 0x2 | 0x4; // READWRITE | CREATE
+    const utf8_deterministic_directonly: c_int = 1 | 0x800 | 0x80000;
     /// SQLITE_TRANSIENT: SQLite copies the bound bytes.
     const transient: isize = -1;
 };
@@ -55,6 +66,7 @@ const schema =
     \\PRAGMA auto_vacuum=INCREMENTAL;
     \\PRAGMA journal_mode=WAL;
     \\PRAGMA synchronous=NORMAL;
+    \\PRAGMA cache_size=-256;
     \\CREATE TABLE IF NOT EXISTS entries(
     \\  id INTEGER PRIMARY KEY,
     \\  kind TEXT NOT NULL,
@@ -77,6 +89,7 @@ const schema =
     \\  sensitive INTEGER NOT NULL DEFAULT 0);
     \\CREATE INDEX IF NOT EXISTS entries_created ON entries(created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_pinned ON entries(pinned_at);
+    \\CREATE INDEX IF NOT EXISTS entries_board ON entries(pinned_at IS NULL, pinned_at, created_at DESC);
     \\CREATE INDEX IF NOT EXISTS entries_hash ON entries(hash);
     \\CREATE TABLE IF NOT EXISTS queries(
     \\  id INTEGER PRIMARY KEY,
@@ -108,11 +121,18 @@ const stored_bytes_sql =
     " + coalesce((SELECT sum(b) FROM (SELECT max(stored_bytes) AS b FROM entries WHERE image_format != '' GROUP BY hash, image_format)), 0)";
 
 const columns = "id, kind, text, created_at, source, source_name, pinned_at, width, height, byte_count, content_kind, content_detail, sensitive";
+const active_where = " FROM entries WHERE pinned_at IS NOT NULL OR id IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT " ++ std.fmt.comptimePrint("{d}", .{window}) ++ ")";
 const board_order = " ORDER BY pinned_at IS NULL, pinned_at, created_at DESC";
 
 pub const Compaction = struct {
     hash: [32]u8,
     size: usize,
+};
+
+pub const FirstPage = struct {
+    rows: []Entry,
+    counts: [model.Filter.options.len]usize,
+    newest_at: f64,
 };
 
 fn imagePathIn(images: []const u8, buf: *[std.posix.PATH_MAX]u8, hash: []const u8, format: []const u8) ?[:0]const u8 {
@@ -131,6 +151,7 @@ fn writeImageIn(images: []const u8, hash: []const u8, format: []const u8, bytes:
     var written: usize = 0;
     while (written < bytes.len) {
         const n = std.c.write(fd, bytes[written..].ptr, bytes.len - written);
+        if (n < 0 and std.c.errno(n) == .INTR) continue;
         if (n <= 0) break;
         written += @intCast(n);
     }
@@ -163,6 +184,7 @@ pub const Store = struct {
     db: *lite.Db,
     /// The folder that holds full pictures, one file per picture.
     images: []const u8,
+    generation: *std.atomic.Value(u64),
     budget: Budget = .{},
 
     /// `path` may be `:memory:`; pictures still go to `images`.
@@ -172,9 +194,15 @@ pub const Store = struct {
             if (db) |d| _ = lite.sqlite3_close_v2(d);
             return error.ClipboardStore;
         }
-        const s: Store = .{ .db = db.?, .images = images };
+        const gen = std.heap.c_allocator.create(std.atomic.Value(u64)) catch {
+            _ = lite.sqlite3_close_v2(db.?);
+            return error.ClipboardStore;
+        };
+        gen.* = .init(1);
+        const s: Store = .{ .db = db.?, .images = images, .generation = gen };
         errdefer s.close();
         _ = lite.sqlite3_busy_timeout(s.db, 2000);
+        if (lite.sqlite3_create_function(s.db, "ns_match", 5, lite.utf8_deterministic_directonly, null, nsMatch, null, null) != lite.ok) return error.ClipboardStore;
         if (lite.sqlite3_exec(s.db, schema, null, null, null) != lite.ok) return error.ClipboardStore;
         for (columns_added_since_first_schema) |sql| _ = lite.sqlite3_exec(s.db, sql, null, null, null);
         try s.classifyUnclassified();
@@ -225,10 +253,6 @@ pub const Store = struct {
         return writeImageIn(s.images, hash, format, bytes);
     }
 
-    fn readImage(s: Store, arena: std.mem.Allocator, hash: []const u8, format: []const u8, size: usize) ?[]const u8 {
-        return readImageIn(s.images, arena, hash, format, size);
-    }
-
     fn unlinkImage(s: Store, hash: []const u8, format: []const u8) void {
         unlinkImageIn(s.images, hash, format);
     }
@@ -245,6 +269,7 @@ pub const Store = struct {
             std.crypto.hash.sha2.Sha256.hash(png, &hash, .{});
             try s.writeImage(&hash, "png", png);
             try s.run("UPDATE entries SET png = NULL, hash = ?, image_format = 'png', stored_bytes = ? WHERE id = ?", .{ Blob{ .bytes = &hash }, @as(i64, @intCast(png.len)), id });
+            s.bumpGeneration();
             moved = true;
         }
     }
@@ -272,6 +297,7 @@ pub const Store = struct {
     fn removeWhere(s: Store, comptime condition: []const u8, args: anytype, defer_release: bool) !void {
         try s.run("INSERT INTO released SELECT DISTINCT hash FROM entries WHERE (" ++ condition ++ ") AND hash IS NOT NULL AND image_format != ''", args);
         try s.run("DELETE FROM entries WHERE " ++ condition, args);
+        s.bumpGeneration();
         if (!defer_release) s.releaseFiles();
     }
 
@@ -310,13 +336,17 @@ pub const Store = struct {
     }
 
     pub fn nextCompaction(s: Store, now: f64) ?Compaction {
-        const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return null;
+        const stmt = s.prepare("SELECT hash, stored_bytes FROM entries WHERE image_format = 'png' AND compacted = 0 AND stored_bytes > 0 AND length(hash) = 32 AND created_at < ? LIMIT 1") catch return null;
         defer _ = lite.sqlite3_finalize(stmt);
         bindAll(stmt, .{now - model.compact_after_days * 86400});
         if (lite.sqlite3_step(stmt) != lite.row) return null;
         var hash: [32]u8 = undefined;
-        @memcpy(&hash, columnBlob(stmt, 0));
-        return .{ .hash = hash, .size = @intCast(lite.sqlite3_column_int64(stmt, 1)) };
+        const blob = columnBlob(stmt, 0);
+        if (blob.len != 32) return null;
+        @memcpy(&hash, blob);
+        const size = std.math.cast(usize, lite.sqlite3_column_int64(stmt, 1)) orelse return null;
+        if (size == 0 or size > model.max_image_bytes) return null;
+        return .{ .hash = hash, .size = size };
     }
 
     pub fn finishCompaction(s: Store, job: Compaction, avif_bytes: ?usize) void {
@@ -345,8 +375,22 @@ pub const Store = struct {
 
     pub fn close(s: Store) void {
         _ = lite.sqlite3_close_v2(s.db);
+        std.heap.c_allocator.destroy(s.generation);
     }
 
+    pub fn releaseMemory(s: Store) void {
+        _ = lite.sqlite3_exec(s.db, "PRAGMA cache_size=0; PRAGMA shrink_memory; PRAGMA cache_size=-256;", null, null, null);
+        _ = lite.sqlite3_db_release_memory(s.db);
+        _ = lite.sqlite3_release_memory(std.math.maxInt(c_int));
+    }
+
+    pub fn changeToken(s: Store) u64 {
+        return s.generation.load(.monotonic);
+    }
+
+    fn bumpGeneration(s: Store) void {
+        _ = s.generation.fetchAdd(1, .monotonic);
+    }
     fn prepare(s: Store, sql: []const u8) !*lite.Stmt {
         var stmt: ?*lite.Stmt = null;
         if (lite.sqlite3_prepare_v2(s.db, sql.ptr, @intCast(sql.len), &stmt, null) != lite.ok) return error.ClipboardStore;
@@ -387,6 +431,7 @@ pub const Store = struct {
             if (cap == .image) "png" else "", @as(i64, @intCast(img.png.len)), @tagName(content),               model.storedDetail(&detail_buf, content),            sensitive,
         });
         try s.keepWithinBudget(defer_release);
+        s.bumpGeneration();
         return true;
     }
 
@@ -438,29 +483,48 @@ pub const Store = struct {
     pub fn list(s: Store, arena: std.mem.Allocator, query: []const u8) ![]Entry {
         const q = std.mem.trim(u8, query, " ");
         const stmt = if (q.len == 0)
-            try s.prepare("SELECT " ++ columns ++ " FROM entries WHERE pinned_at IS NOT NULL OR id IN (SELECT id FROM entries WHERE pinned_at IS NULL ORDER BY created_at DESC LIMIT " ++ std.fmt.comptimePrint("{d}", .{window}) ++ ")" ++ board_order)
+            try s.prepare("SELECT " ++ columns ++ active_where ++ board_order)
         else
-            try s.prepare("SELECT " ++ columns ++ " FROM entries WHERE instr(lower(text || CASE kind WHEN 'image' THEN ' ' || width || '\u{00D7}' || height ELSE '' END), lower(?)) > 0" ++ board_order ++ " LIMIT " ++ std.fmt.comptimePrint("{d}", .{model.search_limit}));
+            try s.prepare("SELECT " ++ columns ++ " FROM entries WHERE ns_match(text, kind, width, height, ?) != 0" ++ board_order ++ " LIMIT " ++ std.fmt.comptimePrint("{d}", .{model.search_limit}));
         defer _ = lite.sqlite3_finalize(stmt);
         if (q.len > 0) bindAll(stmt, .{q});
         var out: std.ArrayList(Entry) = .empty;
         while (lite.sqlite3_step(stmt) == lite.row) {
-            try out.append(arena, .{
-                .id = lite.sqlite3_column_int64(stmt, 0),
-                .kind = std.meta.stringToEnum(Kind, columnText(stmt, 1)) orelse .text,
-                .text = try arena.dupe(u8, columnText(stmt, 2)),
-                .created_at = lite.sqlite3_column_double(stmt, 3),
-                .source = try arena.dupe(u8, columnText(stmt, 4)),
-                .source_name = try arena.dupe(u8, columnText(stmt, 5)),
-                .pinned_at = if (lite.sqlite3_column_type(stmt, 6) == lite.null_type) null else lite.sqlite3_column_double(stmt, 6),
-                .width = @intCast(lite.sqlite3_column_int64(stmt, 7)),
-                .height = @intCast(lite.sqlite3_column_int64(stmt, 8)),
-                .byte_count = @intCast(lite.sqlite3_column_int64(stmt, 9)),
-                .content = model.storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
-                .sensitive = lite.sqlite3_column_int64(stmt, 12) != 0,
-            });
+            try out.append(arena, try readEntry(stmt, arena));
         }
         return out.items;
+    }
+
+    pub fn firstPage(s: Store, arena: std.mem.Allocator, limit: usize) !FirstPage {
+        var out: std.ArrayList(Entry) = .empty;
+        {
+            const stmt = try s.prepare("SELECT " ++ columns ++ active_where ++ board_order ++ " LIMIT ?");
+            defer _ = lite.sqlite3_finalize(stmt);
+            bindAll(stmt, .{@as(i64, @intCast(limit))});
+            while (lite.sqlite3_step(stmt) == lite.row) {
+                try out.append(arena, try readEntry(stmt, arena));
+            }
+        }
+        var counts: [model.Filter.options.len]usize = @splat(0);
+        var newest_at: f64 = -std.math.inf(f64);
+        {
+            const stmt = try s.prepare("SELECT kind, count(*), max(created_at) FROM (SELECT kind, created_at" ++ active_where ++ ") GROUP BY kind");
+            defer _ = lite.sqlite3_finalize(stmt);
+            while (lite.sqlite3_step(stmt) == lite.row) {
+                const kind = std.meta.stringToEnum(Kind, columnText(stmt, 0)) orelse .text;
+                const n = std.math.cast(usize, @max(0, lite.sqlite3_column_int64(stmt, 1))) orelse 0;
+                if (lite.sqlite3_column_type(stmt, 2) != lite.null_type) {
+                    newest_at = @max(newest_at, lite.sqlite3_column_double(stmt, 2));
+                }
+                switch (kind) {
+                    .text => counts[1] += n,
+                    .file => counts[2] += n,
+                    .image => counts[3] += n,
+                }
+            }
+        }
+        counts[0] = counts[1] + counts[2] + counts[3];
+        return .{ .rows = out.items, .counts = counts, .newest_at = newest_at };
     }
 
     /// The full image an entry holds, in `arena`'s memory.
@@ -469,7 +533,9 @@ pub const Store = struct {
         defer _ = lite.sqlite3_finalize(stmt);
         bindAll(stmt, .{id});
         if (lite.sqlite3_step(stmt) != lite.row) return null;
-        return s.readImage(arena, columnBlob(stmt, 0), columnText(stmt, 1), @intCast(lite.sqlite3_column_int64(stmt, 2)));
+        const size = std.math.cast(usize, lite.sqlite3_column_int64(stmt, 2)) orelse return null;
+        if (size == 0 or size > model.max_image_bytes) return null;
+        return readImageIn(s.images, arena, columnBlob(stmt, 0), columnText(stmt, 1), size);
     }
 
     pub fn thumbnail(s: Store, arena: std.mem.Allocator, id: i64) []const u8 {
@@ -482,6 +548,7 @@ pub const Store = struct {
 
     pub fn togglePin(s: Store, id: i64, now: f64) !void {
         try s.run("UPDATE entries SET pinned_at = CASE WHEN pinned_at IS NULL THEN ? ELSE NULL END WHERE id = ?", .{ now, id });
+        s.bumpGeneration();
     }
 
     pub fn delete(s: Store, id: i64) !void {
@@ -514,12 +581,37 @@ pub const Store = struct {
 
     pub fn completeQuery(s: Store, buf: []u8, scope: QueryScope, prefix: []const u8, now: f64) ?[]const u8 {
         if (prefix.len == 0 or prefix.len >= buf.len) return null;
-        const stmt = s.prepare(
-            "SELECT query FROM queries WHERE scope = ? AND length(norm) > length(?) AND substr(norm, 1, length(?)) = lower(?) " ++
-                "ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT 1",
-        ) catch return null;
+        var lo_buf: [512]u8 = undefined;
+        var hi_buf: [512]u8 = undefined;
+        var ranged = prefix.len <= lo_buf.len;
+        if (ranged) {
+            for (prefix, 0..) |c, i| {
+                const lc = std.ascii.toLower(c);
+                lo_buf[i] = lc;
+                hi_buf[i] = lc;
+            }
+            if (hi_buf[prefix.len - 1] < 0xff) {
+                hi_buf[prefix.len - 1] += 1;
+            } else {
+                ranged = false;
+            }
+        }
+        const stmt = if (ranged)
+            (s.prepare(
+                "SELECT query FROM queries WHERE scope = ? AND norm > ? AND norm < ? " ++
+                    "ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT 1",
+            ) catch return null)
+        else
+            (s.prepare(
+                "SELECT query FROM queries WHERE scope = ? AND length(norm) > length(?) AND substr(norm, 1, length(?)) = lower(?) " ++
+                    "ORDER BY (CAST(uses AS REAL) / (1.0 + max(0.0, ? - last_used) / 3600.0)) DESC, last_used DESC, id DESC LIMIT 1",
+            ) catch return null);
         defer _ = lite.sqlite3_finalize(stmt);
-        bindAll(stmt, .{ @tagName(scope), prefix, prefix, prefix, now });
+        if (ranged) {
+            bindAll(stmt, .{ @tagName(scope), lo_buf[0..prefix.len], hi_buf[0..prefix.len], now });
+        } else {
+            bindAll(stmt, .{ @tagName(scope), prefix, prefix, prefix, now });
+        }
         if (lite.sqlite3_step(stmt) != lite.row) return null;
         const q = columnText(stmt, 0);
         if (q.len <= prefix.len or q.len > buf.len or !std.ascii.startsWithIgnoreCase(q, prefix)) return null;
@@ -559,11 +651,28 @@ pub const Store = struct {
     }
 
     pub fn queryCount(s: Store) usize {
-        return @intCast(s.int("SELECT count(*) FROM queries", .{}) orelse 0);
+        return std.math.cast(usize, @max(0, s.int("SELECT count(*) FROM queries", .{}) orelse 0)) orelse 0;
     }
 };
 
 const Blob = struct { bytes: ?[]const u8 };
+
+fn readEntry(stmt: *lite.Stmt, arena: std.mem.Allocator) !Entry {
+    return .{
+        .id = lite.sqlite3_column_int64(stmt, 0),
+        .kind = std.meta.stringToEnum(Kind, columnText(stmt, 1)) orelse .text,
+        .text = try arena.dupe(u8, columnText(stmt, 2)),
+        .created_at = lite.sqlite3_column_double(stmt, 3),
+        .source = try arena.dupe(u8, columnText(stmt, 4)),
+        .source_name = try arena.dupe(u8, columnText(stmt, 5)),
+        .pinned_at = if (lite.sqlite3_column_type(stmt, 6) == lite.null_type) null else lite.sqlite3_column_double(stmt, 6),
+        .width = std.math.cast(u32, @max(0, lite.sqlite3_column_int64(stmt, 7))) orelse std.math.maxInt(u32),
+        .height = std.math.cast(u32, @max(0, lite.sqlite3_column_int64(stmt, 8))) orelse std.math.maxInt(u32),
+        .byte_count = std.math.cast(u64, @max(0, lite.sqlite3_column_int64(stmt, 9))) orelse 0,
+        .content = model.storedContent(columnText(stmt, 10), try arena.dupe(u8, columnText(stmt, 11))),
+        .sensitive = lite.sqlite3_column_int64(stmt, 12) != 0,
+    };
+}
 
 fn bindAll(stmt: *lite.Stmt, args: anytype) void {
     inline for (args, 1..) |a, i| {
@@ -579,10 +688,32 @@ fn bindAll(stmt: *lite.Stmt, args: anytype) void {
 
 fn columnText(stmt: *lite.Stmt, i: c_int) []const u8 {
     const p = lite.sqlite3_column_text(stmt, i) orelse return "";
-    return p[0..@intCast(lite.sqlite3_column_bytes(stmt, i))];
+    const n = lite.sqlite3_column_bytes(stmt, i);
+    if (n <= 0) return "";
+    return p[0..@intCast(n)];
 }
 
 fn columnBlob(stmt: *lite.Stmt, i: c_int) []const u8 {
     const p = lite.sqlite3_column_blob(stmt, i) orelse return "";
-    return p[0..@intCast(lite.sqlite3_column_bytes(stmt, i))];
+    const n = lite.sqlite3_column_bytes(stmt, i);
+    if (n <= 0) return "";
+    return p[0..@intCast(n)];
+}
+
+fn valueText(val: *lite.Value) []const u8 {
+    const p = lite.sqlite3_value_text(val) orelse return "";
+    const n = lite.sqlite3_value_bytes(val);
+    if (n <= 0) return "";
+    return p[0..@intCast(n)];
+}
+
+fn nsMatch(ctx: *lite.Context, argc: c_int, argv: [*]*lite.Value) callconv(.c) void {
+    if (argc != 5) return lite.sqlite3_result_int(ctx, 0);
+    const kind = valueText(argv[1]);
+    const is_image = kind.len == 5 and std.mem.eql(u8, kind, "image");
+    const text = valueText(argv[0]);
+    const query = valueText(argv[4]);
+    const width: u32 = if (is_image) (std.math.cast(u32, @max(0, lite.sqlite3_value_int64(argv[2]))) orelse std.math.maxInt(u32)) else 0;
+    const height: u32 = if (is_image) (std.math.cast(u32, @max(0, lite.sqlite3_value_int64(argv[3]))) orelse std.math.maxInt(u32)) else 0;
+    lite.sqlite3_result_int(ctx, @intFromBool(model.matchesFields(text, is_image, width, height, query)));
 }

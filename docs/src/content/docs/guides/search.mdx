@@ -1,145 +1,89 @@
 ---
 title: Search
-description: Find applications, files, folders, settings, calculations, and web results.
+description: Find applications, files, folders, direct links, and web results from one panel.
 ---
 
-The search field is focused when the panel opens. Start typing immediately; the
-highest-ranked result is ready for <kbd>Return</kbd>.
+Nanospot focuses the search field when the panel opens on <kbd>⌥ Space</kbd>.
+Start typing at once. Press <kbd>Return</kbd> to open the selected row.
+
+When the search field is empty, Nanospot lists your most-opened apps. Press
+<kbd>⌘ 2</kbd> through <kbd>⌘ 6</kbd> to launch rows 2 to 6 directly, or press
+<kbd>Return</kbd> for the top row.
 
 ## Applications
 
-Apps in standard macOS locations and inside your selected search folder are
-searchable. Each `.app` bundle appears as one launchable result, and newly
-installed applications become searchable without a restart.
+Nanospot indexes apps in `/Applications`, `/Applications/Utilities`,
+`/System/Applications`, `/System/Applications/Utilities`, and `~/Applications`
+on launch. Each `.app` bundle appears as one launchable result, and apps outrank
+file rows with the same score.
 
 ## Files and folders
 
-Search covers filenames and folder paths under the selected folder. The default
-is your home folder.
+Search covers filenames and folder paths under your home directory (`$HOME`)
+using the memory-mapped File Index (`names.flix`).
 
 - Press <kbd>Return</kbd> to open the selected item.
 - Press <kbd>⌘ R</kbd> or <kbd>⌘ Return</kbd> to reveal it in Finder.
-- Press <kbd>⌘ Y</kbd> to toggle Quick Look for a file.
-- Drag a result into another application.
-
-When filename matches are sparse, supported text content can also be searched.
-See [Indexing](../../reference/indexing/) for supported content, live updates,
-and exclusions.
+- Press <kbd>⌘ C</kbd> or <kbd>⌥ Return</kbd> to copy its path or URL.
 
 ## Paths
 
-Path-like queries keep an exact, existing match at the top of the results. You
-can type a path relative to the selected search folder, such as `code/minion`,
-or use `~/code` while your home folder is in scope. Absolute paths work when
-they are inside the selected folder.
+Type a `/` to match against full relative paths under `$HOME` instead of
+matching only the filename. Without `/`, Nanospot matches the filename first and
+checks ancestor folders only if needed.
 
-Add a trailing slash, as in `~/code/`, to show directories only. Paths outside
-the selected folder or locations macOS does not let Floodlight read are not
-available.
+## Inline query completion
 
-## System Settings
+When the caret sits at the end, Nanospot suggests gray completions from local
+query history, the Top Hit title, and Google suggestions.
 
-Search settings by their visible name or a familiar keyword. For example,
-`bluetooth`, `wallpaper`, or `login items` can open the relevant System Settings
-pane directly.
-
-## Floodlight settings
-
-Search for `Floodlight settings`, `permissions`, `shortcut`, or `search scope`
-to open the same settings window available from the menu-bar flashlight.
-
-## Clipboard history
-
-Type `clip` and press <kbd>Tab</kbd> to search recently copied text, files,
-folders, and images. Clipboard mode shows a two-pane board: the history list
-on the left and an inspector for the selected entry on the right.
-
-- Filter with <kbd>⌘ 1</kbd>–<kbd>⌘ 4</kbd> or the chips: **All**, **Text**,
-  **Files**, **Images**. Typing then searches only within that type.
-- The inspector shows full copied text, a large image preview, or file name,
-  path, source, and copy time.
-- Copied files and folders appear with their system icon, file name, and
-  absolute path.
-- Copied images and screenshots appear with a thumbnail, pixel dimensions,
-  and copy time.
-- Press <kbd>Return</kbd> on a file to restore native file references, or on
-  an image to restore PNG/TIFF data, so other apps can paste the original.
-- Press <kbd>⌥ Return</kbd> or <kbd>⌘ C</kbd> to copy a file’s absolute path
-  or an image’s display name as text.
-- Press <kbd>⌘ R</kbd> to reveal a copied file in Finder.
-- Press <kbd>Space</kbd> or <kbd>⌘ Y</kbd> to Quick Look a copied file.
-
-## Calculator
-
-Type an arithmetic expression such as:
-
-```text
-(128 * 3.5) + 20%
-```
-
-Press <kbd>Return</kbd> to copy the result.
+- Press <kbd>→</kbd> or <kbd>Tab</kbd> to accept the full completion.
+- Press <kbd>⌥ →</kbd> to accept the next word.
+- Press <kbd>⇧ ⌘ ⌫</kbd> to clear local query history.
+- Press <kbd>⌥ ⌘ ⌫</kbd> to clear app open counts.
 
 ## Direct links
 
-A query that is itself a web address gets its own row at the top of the list,
-showing the destination host and the exact URL it will open. Press
-<kbd>Return</kbd> to open it in your default browser, or <kbd>⌘ C</kbd> to copy
-the full URL without leaving the panel.
+A query shaped like a web address produces a link row above web searches:
 
 ```text
 https://example.com/docs   opens as typed
 example.com/docs           opens https://example.com/docs
-example.com                opens https://example.com
+localhost:3000             opens http://localhost:3000
+127.0.0.1:8080/a           opens http://127.0.0.1:8080/a
 ```
 
-An address typed without a scheme is opened over `https`, and only if its last
-label is a known top-level domain — every two-letter domain, plus the common
-long ones such as `.com`, `.dev`, and `.app`. Type the scheme yourself for
-anything else, including local development servers: `http://localhost:3000`
-works, `localhost:3000` does not.
+Press <kbd>Return</kbd> to open it in your default browser, or <kbd>⌘ C</kbd>
+to copy the URL. Queries with whitespace or non-`http`/`https` schemes stay
+ordinary searches.
 
-Only `http` and `https` open from the search field. A query with a space in it,
-a local path, an email address, or an address carrying a username before the
-host — `https://example.com@elsewhere.test` — never produces a link row. The
-web fallback below stays one arrow key away, for when you did mean to search
-for the domain name.
+## Web results and suggestions
 
-## Web fallback
+Every non-empty text query includes a **Google** row followed by **YouTube**,
+**X**, and **Grok** search rows. Nanospot shows up to four cached or fetched
+Google suggestions for text queries of two or more characters. Paths and links
+receive no suggestions.
 
-Every non-empty query includes a final web-search action. It stays below local
-results unless the query itself looks like it wants the web — a question, a
-URL, or a query with few local matches — in which case it's promoted higher
-in the list. It always opens in the default browser.
+## Clipboard History
 
-## Keyword search engines
+Press <kbd>⌥ ⇧ C</kbd> from any app to open Clipboard History. History rows
+appear on the left, and the Clipboard Inspector appears on the right.
 
-Start a query with one of these keywords to address a specific engine
-directly, instead of waiting on the general web fallback:
-
-| Keyword | Aliases | Goes to |
-| --- | --- | --- |
-| `x` | `twitter`, `!x` | Twitter/X search, opened in your default browser |
-| `yt` | `youtube`, `!yt` | YouTube search, opened in your default browser |
-| `codex` | `!codex` | Asks the installed `codex` CLI and shows the answer in the panel |
-| `claude` | `!claude` | Asks the installed `claude -p` CLI and shows the answer in the panel |
-
-For example, `yt lofi hip hop` opens a YouTube search for "lofi hip hop", and
-`claude explain this regex` runs `claude -p` locally and streams its answer
-into the result row — no browser or terminal opens for an assistant ask.
-
-The keyword must be the first word of the query. `codex` and `claude` rows
-only appear if that CLI is actually installed; each ask is independent, with
-no memory of earlier asks. See [PopClip](../popclip/) for using these same
-destinations from anywhere on your Mac, not just from inside Floodlight.
-
-## Ranking
-
-Ranking learns from local recency and frequency data. A result you repeatedly
-select for the same query receives a boost the next time. That data remains on
-the Mac.
+- Filter with <kbd>⌘ 1</kbd>–<kbd>⌘ 4</kbd> for **All**, **Text**, **Files**,
+  and **Images**.
+- Inspect full copied text with code line numbers, color swatches, images, or
+  file previews.
+- Press <kbd>Return</kbd> to copy and send <kbd>⌘ V</kbd> to the previous app
+  (requires Accessibility permission), or <kbd>⌘ C</kbd> / <kbd>⌥ Return</kbd>
+  to copy only.
+- Press <kbd>⌘ O</kbd> to open a copied URL.
+- Press <kbd>⌘ R</kbd> to reveal a copied file in Finder.
+- Press <kbd>Space</kbd> or <kbd>⌘ Y</kbd> for Quick Look.
+- Press <kbd>⌘ K</kbd> for actions, <kbd>⌘ .</kbd> to pin, and <kbd>⌘ D</kbd> to
+  delete.
+- Press <kbd>⌫</kbd> when the board filter field is empty to switch back to Search.
 
 ## Not currently searchable
 
-Floodlight does not currently search Mail, Messages, Photos, or Contacts. Those
-sources need dedicated integrations and separate permissions; Full Disk Access
-alone does not add them to results.
+Nanospot matches filenames, app names, URLs, and web engines. It does not index
+file contents, System Settings panes, Mail, Messages, Photos, or Contacts.

@@ -28,7 +28,7 @@ const carbon = struct {
 pub const HotKey = enum(u32) {
     /// ⌥Space, so ⌘Space stays Spotlight's.
     search = 1,
-    /// ⌥⇧C, so ⇧⌘C stays the Swift board's.
+    /// ⌥⇧C opens the clipboard board without clashing with ⇧⌘C.
     clipboard = 2,
 };
 
@@ -60,7 +60,7 @@ pub fn registerHotKeys(ctx: ?*anyopaque, f: *const fn (?*anyopaque, HotKey) void
     };
     for (keys) |k| {
         var ref: ?*anyopaque = null;
-        const id: carbon.HotKeyId = .{ .signature = 0x464c6e75, .id = @backingInt(k[0]) }; // 'FLnu'
+        const id: carbon.HotKeyId = .{ .signature = 0x4e537074, .id = @backingInt(k[0]) }; // 'NSpt'
         if (carbon.RegisterEventHotKey(k[1], k[2], id, target, 0, &ref) != 0) std.log.warn("hotkey {s} is taken", .{@tagName(k[0])});
     }
 }
@@ -77,7 +77,7 @@ fn onReopen(_: objc.Object, _: objc.SEL, _: objc.Object, _: objc.Object) callcon
 pub fn handleReopen(ctx: ?*anyopaque, f: *const fn (?*anyopaque) void) void {
     reopen_fn = f;
     reopen_ctx = ctx;
-    const cls = objc.defineClass(.{ .name = "FloodlightReopenTarget", .methods = &.{
+    const cls = objc.defineClass(.{ .name = "NanospotReopenTarget", .methods = &.{
         .{ .name = "handleReopen:withReplyEvent:", .imp = &onReopen, .types = "v@:@@" },
     } });
     const target = objc.msg(objc.Object, cls, "new", .{});
@@ -106,11 +106,50 @@ fn urlFor(path: []const u8) ?objc.Object {
     return pasteboard.fileURL(path);
 }
 
-pub fn open(path: []const u8) void {
+extern "c" fn dispatch_get_global_queue(identifier: isize, flags: usize) ?*anyopaque;
+extern "c" fn dispatch_async_f(queue: *anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
+const qos_class_user_initiated: isize = 0x19;
+
+const WorkspaceJob = struct {
+    path: []u8,
+    run: *const fn ([]const u8) void,
+};
+
+fn workspaceWorker(ctx: ?*anyopaque) callconv(.c) void {
+    const job: *WorkspaceJob = @ptrCast(@alignCast(ctx));
+    defer {
+        std.heap.c_allocator.free(job.path);
+        std.heap.c_allocator.destroy(job);
+    }
+    job.run(job.path);
+}
+
+fn dispatchWorkspace(path: []const u8, run: *const fn ([]const u8) void) void {
+    const queue = dispatch_get_global_queue(qos_class_user_initiated, 0) orelse return run(path);
+    const alloc = std.heap.c_allocator;
+    const duped = alloc.dupe(u8, path) catch return run(path);
+    const job = alloc.create(WorkspaceJob) catch {
+        alloc.free(duped);
+        return run(path);
+    };
+    job.* = .{ .path = duped, .run = run };
+    dispatch_async_f(queue, job, workspaceWorker);
+}
+
+fn openSync(path: []const u8) void {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const url = urlFor(path) orelse return;
-    _ = objc.msg(objc.BOOL, workspace(), "openURL:", .{url});
+    const url = urlFor(path) orelse {
+        std.log.err("open failed: invalid target {s}", .{path});
+        return;
+    };
+    if (!objc.msg(objc.BOOL, workspace(), "openURL:", .{url})) {
+        std.log.err("open failed: {s}", .{path});
+    }
+}
+
+pub fn open(path: []const u8) void {
+    dispatchWorkspace(path, openSync);
 }
 
 pub fn copy(path: []const u8) void {
@@ -127,21 +166,26 @@ pub fn copy(path: []const u8) void {
 
 pub const RunningApp = struct { pid: i32 = 0, bundle_id: []const u8 = "", name: []const u8 = "" };
 
-/// The frontmost app, its strings in `gpa`'s memory. Named as the Swift
-/// board names a source.
+/// The frontmost app, with strings owned by `gpa`.
 pub fn frontmostApp(gpa: std.mem.Allocator) RunningApp {
     const pool = objc.Pool.push();
     defer pool.pop();
     const app = objc.msg(?objc.Object, workspace(), "frontmostApplication", .{}) orelse return .{};
     const id = objc.fromNSString(objc.msg(?objc.Object, app, "bundleIdentifier", .{}));
+    const bundle_id = gpa.dupe(u8, id) catch return .{};
+    const label = sourceName(id, objc.fromNSString(objc.msg(?objc.Object, app, "localizedName", .{})));
+    const name = gpa.dupe(u8, label) catch {
+        gpa.free(bundle_id);
+        return .{};
+    };
     return .{
         .pid = objc.msg(i32, app, "processIdentifier", .{}),
-        .bundle_id = gpa.dupe(u8, id) catch "",
-        .name = gpa.dupe(u8, sourceName(id, objc.fromNSString(objc.msg(?objc.Object, app, "localizedName", .{})))) catch "Clipboard",
+        .bundle_id = bundle_id,
+        .name = name,
     };
 }
 
-pub fn sourceName(bundle_id: []const u8, localized: []const u8) []const u8 {
+fn sourceName(bundle_id: []const u8, localized: []const u8) []const u8 {
     if (bundle_id.len == 0) return "Clipboard";
     if (std.mem.eql(u8, bundle_id, "com.apple.screencaptureui")) return "Screenshot";
     if (std.mem.eql(u8, bundle_id, "com.apple.finder")) return "Finder";
@@ -176,7 +220,7 @@ pub fn promptAccessibility() void {
     _ = AXIsProcessTrustedWithOptions(options);
 }
 
-/// Brings `pid` forward and types ⌘V into it, as PasteTargetDelivery.
+/// Brings `pid` forward and posts ⌘V into it.
 /// False when the app is gone, never comes forward, or a password field
 /// has secure input on.
 pub fn deliverPaste(pid: i32) bool {
@@ -209,8 +253,6 @@ fn sleepMs(ms: u64) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
-// The ⌘K menu: native, as the Swift board's.
-
 pub const MenuItem = struct { title: []const u8, key: []const u8 = "", modifiers: objc.NSUInteger = 0, enabled: bool = true, separator_before: bool = false };
 
 pub const command_modifier: objc.NSUInteger = 1 << 20;
@@ -218,7 +260,7 @@ pub const command_modifier: objc.NSUInteger = 1 << 20;
 var menu_choice: ?usize = null;
 
 fn menuPicked(_: objc.Object, _: objc.SEL, item: objc.Object) callconv(.c) void {
-    menu_choice = @intCast(objc.msg(objc.NSInteger, item, "tag", .{}));
+    menu_choice = std.math.cast(usize, objc.msg(objc.NSInteger, item, "tag", .{}));
 }
 
 /// Pops up `items` at `at` (flipped points in `window`'s content) and
@@ -226,7 +268,7 @@ fn menuPicked(_: objc.Object, _: objc.SEL, item: objc.Object) callconv(.c) void 
 pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?usize {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const cls = objc.defineClass(.{ .name = "FloodlightMenuTarget", .methods = &.{
+    const cls = objc.defineClass(.{ .name = "NanospotMenuTarget", .methods = &.{
         .{ .name = "pick:", .imp = &menuPicked, .types = "v@:@" },
     } });
     const S = struct {
@@ -251,15 +293,41 @@ pub fn popUpMenu(window: *nanoui.Window, items: []const MenuItem, at: [2]f64) ?u
     return menu_choice;
 }
 
-pub fn reveal(path: []const u8) void {
+fn pathExists(path: []const u8) bool {
+    if (path.len == 0) return false;
     const pool = objc.Pool.push();
     defer pool.pop();
+    const fm = objc.msg(objc.Object, objc.class("NSFileManager"), "defaultManager", .{});
+    const ns_path = objc.nsString(path);
+    if (objc.msg(objc.BOOL, fm, "fileExistsAtPath:", .{ns_path})) return true;
+    return objc.msg(?objc.Object, fm, "destinationOfSymbolicLinkAtPath:error:", .{ ns_path, @as(?*anyopaque, null) }) != null;
+}
+
+fn activateFinder(path: []const u8) void {
     const urls = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{pasteboard.fileURL(path)});
     objc.msg(void, workspace(), "activateFileViewerSelectingURLs:", .{urls});
 }
 
+fn revealChecked(path: []const u8, activate: *const fn ([]const u8) void) bool {
+    if (!pathExists(path)) return false;
+    activate(path);
+    return true;
+}
+
+fn revealSync(path: []const u8) void {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    if (!revealChecked(path, activateFinder)) {
+        std.log.err("reveal failed: {s}", .{path});
+    }
+}
+
+pub fn reveal(path: []const u8) void {
+    dispatchWorkspace(path, revealSync);
+}
+
 /// Full Disk Access is granted when the TCC database opens: it is readable
-/// by nothing else. The Swift shell probes the same file.
+/// by nothing else.
 pub const full_disk_access_probe = "/Library/Application Support/com.apple.TCC/TCC.db";
 
 pub fn fullDiskAccessGranted() bool {
@@ -288,20 +356,107 @@ pub fn bundlePath() []const u8 {
     return objc.fromNSString(objc.msg(?objc.Object, bundle, "bundlePath", .{}));
 }
 
+extern "c" const kCGColorSpaceSRGB: *const anyopaque;
+extern "c" fn CGColorSpaceCreateWithName(name: *const anyopaque) ?*anyopaque;
+extern "c" fn CGContextSetInterpolationQuality(context: *anyopaque, quality: c_int) void;
+const bgra_premultiplied: u32 = 2 | (2 << 12);
+const cg_interpolation_high: c_int = 3;
+
+pub const Icon = struct {
+    bgra: []u8,
+    width: u32,
+    height: u32,
+
+    pub fn deinit(self: Icon, gpa: std.mem.Allocator) void {
+        gpa.free(self.bgra);
+    }
+
+    pub fn pixels(self: Icon) nanoui.ui.ImageSource.Pixels {
+        return .{ .bgra = self.bgra, .width = self.width, .height = self.height };
+    }
+};
+
+fn iconCgImage(path: []const u8, px: f64) ?*anyopaque {
+    const img = objc.msg(objc.Object, workspace(), "iconForFile:", .{objc.nsString(path)});
+    var rect: objc.CGRect = .{ .size = .{ .width = px, .height = px } };
+    return objc.msg(?*anyopaque, img, "CGImageForProposedRect:context:hints:", .{ &rect, @as(?objc.Object, null), @as(?objc.Object, null) });
+}
+
+pub fn iconPixels(gpa: std.mem.Allocator, path: []const u8, px: f64) ?Icon {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const side: u32 = @intFromFloat(@max(1.0, @min(1024.0, @ceil(px))));
+    const cg = iconCgImage(path, px) orelse return null;
+    const iw = pasteboard.CGImageGetWidth(cg);
+    const ih = pasteboard.CGImageGetHeight(cg);
+    if (iw == 0 or ih == 0) return null;
+    const out = gpa.alloc(u8, @as(usize, side) * side * 4) catch return null;
+    @memset(out, 0);
+    const space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(space);
+    const ctx = pasteboard.CGBitmapContextCreate(out.ptr, side, side, 8, @as(usize, side) * 4, space, bgra_premultiplied) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(ctx);
+    CGContextSetInterpolationQuality(ctx, cg_interpolation_high);
+    const s_f: f64 = @floatFromInt(side);
+    const scale = s_f / @as(f64, @floatFromInt(@max(iw, ih)));
+    const dw = @as(f64, @floatFromInt(iw)) * scale;
+    const dh = @as(f64, @floatFromInt(ih)) * scale;
+    pasteboard.CGContextDrawImage(ctx, .{ .origin = .{ .x = (s_f - dw) * 0.5, .y = (s_f - dh) * 0.5 }, .size = .{ .width = dw, .height = dh } }, cg);
+    return .{ .bgra = out, .width = side, .height = side };
+}
+
+pub fn decodePixels(gpa: std.mem.Allocator, bytes: []const u8, max_w: u32, max_h: u32) ?Icon {
+    if (bytes.len == 0 or max_w == 0 or max_h == 0) return null;
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const src = pasteboard.CGImageSourceCreateWithData(pasteboard.nsData(bytes), null) orelse return null;
+    defer pasteboard.CFRelease(src);
+    const cg = pasteboard.CGImageSourceCreateImageAtIndex(src, 0, null) orelse return null;
+    defer pasteboard.CFRelease(cg);
+    const iw = pasteboard.CGImageGetWidth(cg);
+    const ih = pasteboard.CGImageGetHeight(cg);
+    if (iw == 0 or ih == 0) return null;
+    const scale = @min(1.0, @min(
+        @as(f64, @floatFromInt(max_w)) / @as(f64, @floatFromInt(iw)),
+        @as(f64, @floatFromInt(max_h)) / @as(f64, @floatFromInt(ih)),
+    ));
+    const dw: u32 = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(iw)) * scale))));
+    const dh: u32 = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(ih)) * scale))));
+    const out = gpa.alloc(u8, @as(usize, dw) * dh * 4) catch return null;
+    @memset(out, 0);
+    const space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(space);
+    const ctx = pasteboard.CGBitmapContextCreate(out.ptr, dw, dh, 8, @as(usize, dw) * 4, space, bgra_premultiplied) orelse {
+        gpa.free(out);
+        return null;
+    };
+    defer pasteboard.CFRelease(ctx);
+    CGContextSetInterpolationQuality(ctx, cg_interpolation_high);
+    pasteboard.CGContextDrawImage(ctx, .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = @floatFromInt(dw), .height = @floatFromInt(dh) } }, cg);
+    return .{ .bgra = out, .width = dw, .height = dh };
+}
+
 /// An app's icon as PNG at `px` pixels square, in `gpa`'s memory.
 pub fn iconPng(gpa: std.mem.Allocator, path: []const u8, px: f64) ?[]u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
-    const img = objc.msg(objc.Object, workspace(), "iconForFile:", .{objc.nsString(path)});
-    var rect: objc.CGRect = .{ .size = .{ .width = px, .height = px } };
-    const cg = objc.msg(?*anyopaque, img, "CGImageForProposedRect:context:hints:", .{ &rect, @as(?objc.Object, null), @as(?objc.Object, null) }) orelse return null;
+    const cg = iconCgImage(path, px) orelse return null;
     const rep = objc.msg(objc.Object, objc.alloc("NSBitmapImageRep"), "initWithCGImage:", .{cg});
     defer objc.release(rep);
     const data = pasteboard.pngRepresentation(rep) orelse return null;
     return gpa.dupe(u8, pasteboard.dataBytes(data)) catch null;
 }
 
-pub const retention_defaults_key = "sessionRetentionSeconds";
+const retention_defaults_key = "sessionRetentionSeconds";
 
 /// Seconds a hidden panel keeps its session (`sessionRetentionSeconds` in
 /// user defaults; `default_seconds` when unset, `0` when non-positive).
@@ -311,18 +466,19 @@ pub fn retentionSeconds(default_seconds: f64) f64 {
     const defaults = objc.msg(objc.Object, objc.class("NSUserDefaults"), "standardUserDefaults", .{});
     const key = objc.nsString(retention_defaults_key);
     if (objc.msg(?objc.Object, defaults, "objectForKey:", .{key}) == null) return default_seconds;
-    return @max(0.0, objc.msg(f64, defaults, "doubleForKey:", .{key}));
+    const raw = objc.msg(f64, defaults, "doubleForKey:", .{key});
+    if (!std.math.isFinite(raw)) return default_seconds;
+    return std.math.clamp(raw, 0.0, 365.0 * 86400.0);
 }
 
-/// A native view over the guidance card that starts a drag carrying the
-/// app's file URL, as SwiftUI's `.draggable(appURL)`: System Settings' list
-/// takes files, and nanoui's own drags carry text.
+/// A native view over the guidance card that starts a file-URL drag:
+/// System Settings' list takes files, and nanoui's own drags carry text.
 pub const FileDragSource = struct {
     view: objc.Object,
     path: []const u8,
 
     pub fn create(parent: objc.Object, path: []const u8) *FileDragSource {
-        const cls = objc.defineClass(.{ .name = "FloodlightFileDragSource", .superclass = "NSView", .methods = &.{
+        const cls = objc.defineClass(.{ .name = "NanospotFileDragSource", .superclass = "NSView", .methods = &.{
             .{ .name = "mouseDown:", .imp = &mouseDown, .types = "v@:@" },
             .{ .name = "mouseDragged:", .imp = &mouseDragged, .types = "v@:@" },
             .{ .name = "acceptsFirstMouse:", .imp = &yes, .types = "c@:@" },
@@ -376,3 +532,55 @@ pub const FileDragSource = struct {
         _ = objc.msg(?objc.Object, obj, "beginDraggingSessionWithItems:event:source:", .{ items, event, obj });
     }
 };
+
+test "revealChecked skips missing paths and activates existing and symlinked ones" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "present.txt", .data = "" });
+    try tmp.dir.symLink(t.io, "missing-target.txt", "dangling.link", .{});
+    var buf: [std.posix.PATH_MAX]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+
+    const existing = try std.fs.path.join(t.allocator, &.{ root, "present.txt" });
+    defer t.allocator.free(existing);
+    const missing = try std.fs.path.join(t.allocator, &.{ root, "missing.txt" });
+    defer t.allocator.free(missing);
+    const dangling = try std.fs.path.join(t.allocator, &.{ root, "dangling.link" });
+    defer t.allocator.free(dangling);
+
+    const Spy = struct {
+        var activated_len: usize = 0;
+        var activated_buf: [std.posix.PATH_MAX]u8 = undefined;
+        var activated_calls: usize = 0;
+
+        fn reset() void {
+            activated_len = 0;
+            activated_calls = 0;
+        }
+
+        fn activate(path: []const u8) void {
+            activated_calls += 1;
+            @memcpy(activated_buf[0..path.len], path);
+            activated_len = path.len;
+        }
+    };
+
+    Spy.reset();
+    try t.expect(!revealChecked(missing, Spy.activate));
+    try t.expectEqual(@as(usize, 0), Spy.activated_calls);
+
+    Spy.reset();
+    try t.expect(!revealChecked("", Spy.activate));
+    try t.expectEqual(@as(usize, 0), Spy.activated_calls);
+
+    Spy.reset();
+    try t.expect(revealChecked(existing, Spy.activate));
+    try t.expectEqual(@as(usize, 1), Spy.activated_calls);
+    try t.expectEqualStrings(existing, Spy.activated_buf[0..Spy.activated_len]);
+
+    Spy.reset();
+    try t.expect(revealChecked(dangling, Spy.activate));
+    try t.expectEqual(@as(usize, 1), Spy.activated_calls);
+    try t.expectEqualStrings(dangling, Spy.activated_buf[0..Spy.activated_len]);
+}

@@ -1,18 +1,17 @@
 ---
 title: Install & permissions
-description: Install Floodlight and configure macOS file access.
+description: Install Nanospot and grant Full Disk Access and Accessibility.
 ---
 
 import { Steps } from "@astrojs/starlight/components";
 import DownloadButton from "../../../components/DownloadButton.astro";
 
 <div class="fl-download-row">
-  <DownloadButton label="Download Floodlight.dmg" />
+  <DownloadButton label="Download Nanospot.dmg" />
   <span class="fl-system-note">Newest published GitHub release</span>
 </div>
 
-The button resolves to the newest tagged release. Before the first release is
-published, [build Floodlight from source](../../development/building/) instead.
+The button resolves to the newest tagged release. Until a release exists, [build Nanospot from source](../../development/building/) instead.
 
 ## System requirements
 
@@ -24,44 +23,46 @@ published, [build Floodlight from source](../../development/building/) instead.
 
 <Steps>
 
-1. Open `Floodlight.dmg`.
-2. Drag **Floodlight** to **Applications**.
-3. Eject the Floodlight disk image.
-4. Open Floodlight from Applications.
+1. Open `Nanospot.dmg`.
+2. Drag **Nanospot** to **Applications**.
+3. Eject the Nanospot disk image.
+4. Open `/Applications/Nanospot.app`.
 
 </Steps>
 
-## Folder access
-
-Floodlight indexes your home folder by default. You can change that scope from
-the first-launch window or later through **Settings…** in the menu-bar menu.
-Without Full Disk Access, macOS can still prevent Floodlight from reading
-protected locations inside that scope.
+## Permissions
 
 ### Full Disk Access
 
-Full Disk Access is optional. Grant it if you want protected locations in your
-home folder to appear in search. Click **Grant access** in Floodlight settings,
-then:
+Nanospot indexes your home directory (`$HOME`). Without Full Disk Access, macOS
+blocks access to Desktop, Documents, Downloads, and other protected folders.
 
-1. If Floodlight is already listed, enable it. Otherwise, click **+**, choose
-   `/Applications/Floodlight.app`, and select **Open**.
-2. Return to Floodlight. During initial setup, select **Done** to start the
-   index. If you grant access later, press <kbd>⇧ ⌘ R</kbd> to rebuild it.
+On first launch without Full Disk Access, Nanospot opens **System Settings →
+Privacy & Security → Full Disk Access** beside a floating card:
 
-If protected files still do not appear, quit and reopen Floodlight once, then
-rebuild the index.
+1. Drag the Nanospot icon from the floating card into the Full Disk Access list
+   (or click **+** and select `/Applications/Nanospot.app`).
+2. Authenticate when macOS prompts you.
+3. Nanospot detects the grant automatically and rebuilds the File Index in the
+   background.
 
-To remove the permission later, open Floodlight **Settings…**, click
-**Revoke…**, then switch Floodlight off in the Full Disk Access pane.
+If you dismiss the card before granting access, enable Nanospot manually in
+**System Settings** and relaunch Nanospot to trigger a fresh scan.
+
+### Accessibility (for direct paste)
+
+When you press <kbd>Return</kbd> on Clipboard History, Nanospot copies the
+entry and sends <kbd>⌘ V</kbd> to the previously active application. macOS
+prompts for **Accessibility** permission the first time you paste into another
+app. Without Accessibility permission, <kbd>Return</kbd> still copies the entry
+so you can paste it manually.
 
 ## Launch at login
 
-Use the **Launch at Login** switch during setup. You can change it later from
-the menu-bar flashlight or under **System Settings → General → Login Items &
-Extensions**.
+Add **Nanospot** under **System Settings → General → Login Items & Extensions**
+if you want it to start automatically when you sign in.
 
 ## Update
 
-Download the newest DMG, quit Floodlight, and replace the existing copy in
-Applications.
+Download the newest DMG, quit Nanospot, and replace the existing copy in
+`/Applications`.
